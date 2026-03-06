@@ -2,183 +2,82 @@
 
 <img src="man/figures/llamaR.png" alt="llamaR logo" width="200" />
 
-**A CLI-first AI coding agent, written in R.**
+**An AI agent runtime for R.** Self-hosted, model-agnostic, tinyverse.
 
-Built on the Model Context Protocol (MCP). Connects to LLMs (Anthropic, OpenAI, Ollama) and gives them tools to act.
-
-The `llamar` CLI is the human-facing agent.
-The `llamaR` package is the engine and MCP server.
+In Spanish, *llamar* (pronounced ["Ya Mar"](https://www.youtube.com/watch?v=p-2EZXOoFt8)) means "to call."
 
 -----
 
-In Spanish, *llamar* (pronounced [“Ya Mar”](https://www.youtube.com/watch?v=p-2EZXOoFt8)) means “to call.”
+## Quick Start
+
+```r
+library(llamaR)
+chat()
+```
+
+That's it. You're talking to an AI agent inside your R session. It can read files, run shell commands, query git, search the web, and execute R code directly in your environment.
+
+```
+llamaR chat | claude-sonnet-4-20250514 @ anthropic | 24 tools | /r to eval R | /quit to exit
+
+> Create a data frame with 10 random numbers and their squares
+  [run_r] (11 lines)
+Done. The data frame `df` is in your workspace.
+
+> /r df
+    random    squared
+1  0.2876 0.08270083
+2  0.7883 0.62142499
+...
+
+> /quit
+Bye.
+```
+
+The agent evals R code in `.GlobalEnv`. Your objects are its objects. When you `/r df`, you're running R directly, no LLM roundtrip.
+
+Switch providers with one argument:
+
+```r
+chat(provider = "openai")   # GPT-4o
+chat(provider = "ollama")   # Local models
+```
 
 -----
 
 ## Why R?
 
-The same power as [moltbot](https://github.com/moltbot/moltbot) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code), in a language you already know.
+In the agent world, tools, skills, and the servers that expose them are three separate things you have to design, host, and wire together yourself. R packages bundle all three: the capability, the documentation that teaches you how to use it, and the mechanism that makes it available to your session. Versioned, tested, and delivered in a single `install.packages()` call. CRAN has been doing integrated tool distribution for 20 years. The agent ecosystem is just now figuring out that's hard.
 
-- **Readable** — R users can inspect exactly what the agent does
-- **Extensible** — add tools by writing R functions
-- **Tinyverse** — minimize dependencies, maximize stability
-- **Isomorphic** — skills work in llamaR *and* [openclaw](https://github.com/mariozechner/openclaw)
-
------
-
-## What is llamaR?
-
-1. **`llamar` (CLI agent)**
-   An interactive terminal agent that connects to LLMs and uses tools to act.
-1. **MCP server**
-   A standalone server exposing tools for any MCP client (Claude Desktop, Claude Code, etc.).
-
-It can run:
-
-- as a CLI agent for humans
-- as a tool provider for other MCP clients
-- as an MCP client connecting to other servers
+- **`install.packages()`** works the same on Windows, Mac, and Linux. No brew, no nvm, no Docker, no venv.
+- **Packages are tools, skills, and servers in one artifact.** The 20,000+ packages on CRAN are agent capabilities waiting to be wired up.
+- **CRAN** reviews packages by hand and tests on 3 OSs. That's a quality gate most tool registries don't have.
 
 -----
 
-## Relationship to mcptools
+## How It Works
 
-llamaR draws inspiration from [mcptools](https://posit-dev.github.io/mcptools/).
+llamaR has two modes:
 
-The ecosystems have parallel structure:
+### 1. In-session agent (`chat()`)
 
-|Role          |Posit (tidyverse)                      |cornyverse|
-|--------------|---------------------------------------|----------|
-|LLM API client|[ellmer](https://ellmer.tidyverse.org/)|llm.api   |
-|Context tools |[btw](https://posit-dev.github.io/btw/)|fyi       |
-|MCP bridge    |mcptools                               |llamaR    |
+Runs inside your R session. Tools execute as direct function calls via the skill registry. No MCP server, no subprocess.
 
-**Different philosophies:**
-
-mcptools integrates R into the broader MCP ecosystem—Claude Desktop, VS Code Copilot, Positron, shiny apps via ellmer. It’s polished, on CRAN, and backed by Posit.
-
-llamaR is a standalone agent runtime. It ships its own CLI, handles LLM connections internally, and doesn’t require external clients.
-
-|If you want to…                               |Consider|
-|----------------------------------------------|--------|
-|Use R from Claude Desktop / VS Code / Positron|mcptools|
-|Run an AI agent from your terminal            |llamaR  |
-
-AI and CLI coding agents enable bespoke software. This is our take.
-
------
-
-## Tools
-
-llamaR exposes tools to LLMs:
-
-|Tool                |Description                           |
-|--------------------|--------------------------------------|
-|`bash`              |Run shell commands                    |
-|`read_file`         |Read file contents                    |
-|`write_file`        |Write or create files                 |
-|`edit_file`         |Surgical file edits                   |
-|`list_files`        |List directory contents               |
-|`git`               |Status, diff, commit, log             |
-|`run_r`             |Execute R code in a persistent session|
-|`r_help`            |Query R documentation via fyi         |
-|`installed_packages`|List and search R packages            |
-|`web_search`        |Search the web via Tavily             |
-
-Plus any tools from connected MCP servers.
-
-### Web Search
-
-Web search is powered by [Tavily](https://tavily.com), an AI-native search engine with a free tier. Set `TAVILY_API_KEY` in `~/.Renviron` to enable.
-
------
-
-## Skills
-
-Skills are portable agent extensions—Markdown files that teach the LLM how to use shell commands.
-
-```markdown
----
-name: weather
-description: Get current weather (no API key required)
----
-
-# Weather
-
-```bash
-curl -s "wttr.in/London?format=3"
-```
+```r
+chat()                           # Claude (default)
+chat(provider = "openai")        # GPT-4o
+chat(provider = "ollama",        # Local
+     model = "llama3.2")
+chat(tools = "core")             # Minimal tools (file + code + git)
 ```
 
-Drop a `SKILL.md` file in `~/.llamar/skills/weather/` and it's immediately available.
+In-session commands:
+- `/r <code>` evaluates R code directly (auto-prints like the console)
+- `/quit`, `/exit`, `/q` exits the chat
 
-### Isomorphic with openclaw
+### 2. MCP server (`serve()`)
 
-llamaR uses the same skill format as [openclaw](https://github.com/mariozechner/openclaw). Skills are portable between R (llamaR) and TypeScript (openclaw) agent runtimes.
-
-```bash
-# Use openclaw skills in llamaR
-ln -s ~/.openclaw/skills ~/.llamar/skills
-```
-
-**Why this matters:**
-
-- **Write once, run anywhere** — same skill works in both systems
-- **No lock-in** — skills are Markdown, not code
-- **Ecosystem access** — R users get the openclaw skill library
-- **Community leverage** — contributions benefit both communities
-
-**Tested openclaw skills:**
-
-|Skill|Description|
-|-----|-----------|
-|`github`|GitHub CLI (`gh`) for issues, PRs, runs|
-|`weather`|Weather via wttr.in|
-|`tmux`|Remote-control tmux sessions|
-
-See [docs/isomorphism.md](docs/isomorphism.md) for our full interoperability approach.
-
-### R Skills
-
-R runs from shell via [littler](https://github.com/eddelbuettel/littler) (`r`) or `Rscript`:
-
-```markdown
----
-name: r-eval
-description: Execute R code
----
-
-# R Evaluation
-
-```bash
-r -e 'summary(lm(mpg ~ wt, mtcars))'
-```
-```
-
-Shell-based R is **stateless**—each call is a fresh session. For **stateful** R (persistent variables across calls), use llamaR's built-in `run_r` tool. openclaw users can access stateful R by connecting to llamaR as an MCP server.
-
-See [docs/skills.md](docs/skills.md) for the full specification.
-
------
-
-## Architecture
-
-### As a CLI Agent
-
-```bash
-llamar
-```
-
-```
-> summarize this CSV
-> fix the bug in app.R
-> commit with a good message
-> refactor this into smaller functions
-```
-
-### As an MCP Server
-
-For Claude Desktop:
+Exposes tools to external MCP clients (Claude Desktop, VS Code, other agents).
 
 ```json
 {
@@ -191,57 +90,45 @@ For Claude Desktop:
 }
 ```
 
-### As an MCP Client
+### 3. CLI agent (`llamar`)
 
-```r
-web_tools <- mcp_connect(port = 7851)
-db_tools  <- mcp_connect(port = 7852)
+A terminal agent with full session management, voice mode, and context compaction.
 
-all_tools <- c(
-  mcp_tools_for_api(web_tools),
-  mcp_tools_for_api(db_tools)
-)
+```bash
+llamar                    # Start agent
+llamar --resume           # Resume last session
+llamar --provider ollama  # Use local models
 ```
 
-Chain tools from multiple servers.
+-----
+
+## Tools
+
+|Tool                |Description                           |
+|--------------------|--------------------------------------|
+|`bash`              |Run shell commands                    |
+|`read_file`         |Read file contents                    |
+|`write_file`        |Write or create files                 |
+|`list_files`        |List directory contents               |
+|`grep_files`        |Search file contents                  |
+|`run_r`             |Execute R code in the session         |
+|`r_help`            |Query R documentation via fyi         |
+|`installed_packages`|List and search R packages            |
+|`git_status`        |Git working tree status               |
+|`git_diff`          |Git diff                              |
+|`git_log`           |Git commit history                    |
+|`web_search`        |Search the web (requires Tavily key)  |
+|`fetch_url`         |Fetch web content                     |
 
 -----
 
 ## Installation
 
-### System Requirements
-
-- **R** (>= 4.4.0)
-- **littler** — fast R scripting frontend (recommended)
-
-```bash
-# Ubuntu/Debian
-sudo apt install littler
-
-# Or from R
-install.packages("littler")
-```
-
-### R Package
-
 ```r
-# Install llamaR (not yet on CRAN)
+# llamaR (not yet on CRAN)
 remotes::install_github("cornball-ai/llamaR")
 
-# Install the CLI to ~/bin
-llamaR::install_cli()
-
-# Add ~/bin to PATH if needed
-export PATH="$HOME/bin:$PATH"
-```
-
-### Required R Packages
-
-```r
-# Core dependencies (on CRAN)
-install.packages(c("curl", "jsonlite"))
-
-# LLM provider abstraction (not on CRAN)
+# LLM provider abstraction (not yet on CRAN)
 remotes::install_github("cornball-ai/llm.api")
 ```
 
@@ -249,57 +136,45 @@ remotes::install_github("cornball-ai/llm.api")
 
 Set in `~/.Renviron`:
 
-```bash
+```
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 TAVILY_API_KEY=tvly-...   # Optional, for web search
 ```
 
-### Voice Mode (Optional)
-
-Voice mode requires additional packages and services:
+### CLI (Optional)
 
 ```r
-# R packages
-remotes::install_github("cornball-ai/stt.api")  # Speech-to-text
-remotes::install_github("cornball-ai/tts.api")  # Text-to-speech
-
-# System packages (Ubuntu)
-sudo apt install sox alsa-utils ffmpeg
-```
-
-Voice services must be running:
-- STT: `whisper` or compatible API on port 4123
-- TTS: `qwen3-tts-api` or compatible API on port 7812
-
-### Memory Index (Optional)
-
-For searchable conversation history:
-
-```r
-install.packages("duckdb")
-install.packages("digest")
-
-# Import Claude Code history
-llamaR::memory_import_claude()
-
-# Search
-llamaR::memory_search_fts("your query")
+# Install the llamar CLI to ~/bin
+llamaR::install_cli()
 ```
 
 -----
 
-## Quick Start
+## Landscape
 
-```bash
-llamar
-```
+Anthropic's [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) gives you Claude Code as a library, in Python and TypeScript. [nanoclaw](https://github.com/qwibitai/nanoclaw) builds on it. There's no R equivalent.
 
-Or from R:
+llamaR fills that gap. Not by wrapping Anthropic's SDK, but by building an R-native agent runtime from scratch. Model-agnostic (Anthropic, OpenAI, Ollama), small enough to read in an afternoon.
 
-```r
-llamaR::run()
-```
+|Role           |Posit (tidyverse)                      |cornyverse|
+|---------------|---------------------------------------|----------|
+|LLM API client |[ellmer](https://ellmer.tidyverse.org/)|llm.api   |
+|Context tools  |[btw](https://posit-dev.github.io/btw/)|fyi       |
+|MCP bridge     |mcptools                               |llamaR    |
+
+mcptools integrates R into the broader MCP ecosystem (Claude Desktop, VS Code, Positron). It's polished, on CRAN, and backed by Posit.
+
+llamaR is a standalone agent runtime. `chat()` runs inside your R session. The CLI runs from your terminal. No external client required.
+
+-----
+
+## Design Philosophy
+
+- **Small enough to understand**: one package, one import (jsonlite), readable source
+- **Model-agnostic**: Anthropic, OpenAI, Ollama
+- **R-native**: packages are skills, `install.packages()` is the marketplace
+- **Hackable**: add tools by writing R functions
 
 -----
 
@@ -309,18 +184,7 @@ llamaR::run()
 |--------|--------------------------------|
 |Linux   |Fully supported                 |
 |macOS   |Expected to work                |
-|Windows |Partial (stdin handling pending)|
-
------
-
-## Design Philosophy
-
-- CLI-first
-- tinyverse: minimal dependencies
-- model-agnostic (Ollama, Anthropic, OpenAI)
-- MCP-native
-- composable
-- hackable
+|Windows |Partial (stdin handling pending) |
 
 -----
 
