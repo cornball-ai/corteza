@@ -64,6 +64,17 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL) {
     load_skill_docs(path.expand("~/.llamar/skills"))
     load_skill_docs(file.path(getwd(), ".llamar", "skills"))
 
+    # Load skill packages from config
+    config <- load_config(getwd())
+    skill_pkgs <- config$skill_packages %||% character(0)
+    for (pkg in skill_pkgs) {
+        tryCatch(
+                 package_as_skills(pkg),
+                 error = function(e) message(sprintf("  Skipping %s: %s",
+                    pkg, e$message))
+        )
+    }
+
     # Set tool filter option
     options(llamar.tools = tools)
 

@@ -59,6 +59,17 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
     load_skills(file.path(cwd, ".llamar", "skills"))
     load_skill_docs(path.expand("~/.llamar/skills"))
     load_skill_docs(file.path(cwd, ".llamar", "skills"))
+
+    # Load skill packages from config
+    skill_pkgs <- config$skill_packages %||% character(0)
+    for (pkg in skill_pkgs) {
+        tryCatch(
+                 package_as_skills(pkg),
+                 error = function(e) message(sprintf("  Skipping %s: %s",
+                    pkg, e$message))
+        )
+    }
+
     options(llamar.tools = tools)
 
     # Load context + build tool list
