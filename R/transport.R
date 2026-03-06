@@ -7,11 +7,11 @@
 #' @param config Transport-specific configuration
 #' @return Transport object (list with send/receive/close methods)
 #' @noRd
-transport_new <- function (type, config = list()) {
+transport_new <- function(type, config = list()) {
     switch(type,
-        terminal = transport_terminal(config),
-        signal = transport_signal(config),
-        stop("Unknown transport type: ", type)
+           terminal = transport_terminal(config),
+           signal = transport_signal(config),
+           stop("Unknown transport type: ", type)
     )
 }
 
@@ -34,16 +34,17 @@ transport_new <- function (type, config = list()) {
 #' @param metadata Optional metadata list
 #' @return Normalized message list
 #' @noRd
-message_normalize <- function (text, sender, channel, id = NULL,
-                               attachments = list(), metadata = list()) {
+message_normalize <- function(text, sender, channel, id = NULL,
+                              attachments = list(), metadata = list()) {
     list(
-        id = id %||% paste0(channel, "_", format(as.numeric(Sys.time()) * 1000, scientific = FALSE)),
-        channel = channel,
-        sender = sender,
-        text = text,
-        attachments = attachments,
-        timestamp = Sys.time(),
-        metadata = metadata
+         id = id %||% paste0(channel, "_",
+                             format(as.numeric(Sys.time()) * 1000, scientific = FALSE)),
+         channel = channel,
+         sender = sender,
+         text = text,
+         attachments = attachments,
+         timestamp = Sys.time(),
+         metadata = metadata
     )
 }
 
@@ -54,31 +55,27 @@ message_normalize <- function (text, sender, channel, id = NULL,
 #' @param config Configuration (unused for terminal)
 #' @return Transport object
 #' @noRd
-transport_terminal <- function (config = list()) {
+transport_terminal <- function(config = list()) {
     list(
-        type = "terminal",
+         type = "terminal",
 
-        # Read one message from stdin
-        receive = function () {
-            line <- readline("> ")
-            if (nchar(line) == 0) return(NULL)
-            message_normalize(
-                text = line,
-                sender = "user",
-                channel = "terminal"
-            )
-        },
+         # Read one message from stdin
+         receive = function() {
+        line <- readline("> ")
+        if (nchar(line) == 0) return(NULL)
+        message_normalize(text = line, sender = "user", channel = "terminal")
+    },
 
-        # Print response to stdout
-        send = function (msg) {
-            cat(msg$text, "\n")
-            invisible(TRUE)
-        },
+         # Print response to stdout
+         send = function(msg) {
+        cat(msg$text, "\n")
+        invisible(TRUE)
+    },
 
-        # No cleanup needed
-        close = function () {
-            invisible(NULL)
-        }
+         # No cleanup needed
+         close = function() {
+        invisible(NULL)
+    }
     )
 }
 

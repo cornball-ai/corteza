@@ -47,7 +47,7 @@
 #' # Specific categories
 #' serve(port = 7850, tools = c("file", "git"))
 #' }
-serve <- function (port = NULL, cwd = NULL, tools = NULL) {
+serve <- function(port = NULL, cwd = NULL, tools = NULL) {
     # Set working directory if specified
     if (!is.null(cwd) && dir.exists(cwd)) {
         setwd(cwd)

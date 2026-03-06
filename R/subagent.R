@@ -6,11 +6,11 @@
 
 # Default configuration
 SUBAGENT_DEFAULTS <- list(
-    max_concurrent = 3L,
-    timeout_minutes = 30L,
-    allow_nested = FALSE,
-    default_tools = c("read_file", "write_file", "bash", "chat"),
-    base_port = 7851L
+                          max_concurrent = 3L,
+                          timeout_minutes = 30L,
+                          allow_nested = FALSE,
+                          default_tools = c("read_file", "write_file", "bash", "chat"),
+                          base_port = 7851L
 )
 
 #' Get subagent configuration
@@ -18,16 +18,16 @@ SUBAGENT_DEFAULTS <- list(
 #' @param config Config list from load_config()
 #' @return Subagent config with defaults applied
 #' @noRd
-get_subagent_config <- function (config = list()) {
+get_subagent_config <- function(config = list()) {
     cfg <- config$subagents %||% list()
 
     list(
-        enabled = cfg$enabled %||% TRUE,
-        max_concurrent = cfg$max_concurrent %||% SUBAGENT_DEFAULTS$max_concurrent,
-        timeout_minutes = cfg$timeout_minutes %||% SUBAGENT_DEFAULTS$timeout_minutes,
-        allow_nested = cfg$allow_nested %||% SUBAGENT_DEFAULTS$allow_nested,
-        default_tools = cfg$default_tools %||% SUBAGENT_DEFAULTS$default_tools,
-        base_port = cfg$base_port %||% SUBAGENT_DEFAULTS$base_port
+         enabled = cfg$enabled %||% TRUE,
+         max_concurrent = cfg$max_concurrent %||% SUBAGENT_DEFAULTS$max_concurrent,
+         timeout_minutes = cfg$timeout_minutes %||% SUBAGENT_DEFAULTS$timeout_minutes,
+         allow_nested = cfg$allow_nested %||% SUBAGENT_DEFAULTS$allow_nested,
+         default_tools = cfg$default_tools %||% SUBAGENT_DEFAULTS$default_tools,
+         base_port = cfg$base_port %||% SUBAGENT_DEFAULTS$base_port
     )
 }
 
@@ -37,19 +37,21 @@ get_subagent_config <- function (config = list()) {
 #' @param max_tries Number of ports to try
 #' @return Available port number
 #' @noRd
-find_free_port <- function (base = 7851L, max_tries = 100L) {
+find_free_port <- function(base = 7851L, max_tries = 100L) {
     for (i in seq_len(max_tries)) {
         port <- base + i - 1L
         conn <- tryCatch(
-            socketConnection("localhost", port, open = "r+b", blocking = TRUE, timeout = 1),
-            error = function (e) NULL
+                         socketConnection("localhost", port, open = "r+b",
+                blocking = TRUE, timeout = 1),
+                         error = function(e) NULL
         )
         if (is.null(conn)) {
             return(port) # Port is free
         }
         close(conn)
     }
-    stop("No free ports found in range ", base, "-", base + max_tries - 1, call. = FALSE)
+    stop("No free ports found in range ", base, "-", base + max_tries - 1,
+         call. = FALSE)
 }
 
 #' Wait for a port to be available
@@ -63,8 +65,9 @@ wait_for_port <- function(port, timeout_secs = 10L) {
 
     while (difftime(Sys.time(), start_time, units = "secs") < timeout_secs) {
         conn <- tryCatch(
-            socketConnection("localhost", port, open = "r+b", blocking = TRUE, timeout = 1),
-            error = function(e) NULL
+                         socketConnection("localhost", port, open = "r+b",
+                blocking = TRUE, timeout = 1),
+                         error = function(e) NULL
         )
         if (!is.null(conn)) {
             close(conn)
@@ -94,14 +97,14 @@ subagent_session_key <- function(parent_key) {
 #' @noRd
 subagent_system_prompt <- function(task, parent_context = NULL) {
     prompt <- paste0(
-        "You are a specialized subagent spawned to complete a specific task.\n\n",
-        "## Your Task\n", task, "\n\n",
-        "## Guidelines\n",
-        "- Stay focused on the assigned task\n",
-        "- Do not initiate new conversations\n",
-        "- Be concise in responses\n",
-        "- Report completion clearly\n",
-        "- You cannot spawn additional subagents\n"
+                     "You are a specialized subagent spawned to complete a specific task.\n\n",
+                     "## Your Task\n", task, "\n\n",
+                     "## Guidelines\n",
+                     "- Stay focused on the assigned task\n",
+                     "- Do not initiate new conversations\n",
+                     "- Be concise in responses\n",
+                     "- Report completion clearly\n",
+                     "- You cannot spawn additional subagents\n"
     )
 
     if (!is.null(parent_context)) {
@@ -123,7 +126,7 @@ subagent_system_prompt <- function(task, parent_context = NULL) {
 #' @return Subagent ID
 #' @export
 subagent_spawn <- function(task, model = NULL, tools = NULL,
-    parent_session = NULL, config = NULL) {
+                           parent_session = NULL, config = NULL) {
     if (is.null(config)) {
         config <- load_config(getwd())
     }
@@ -138,12 +141,14 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     # Check concurrent limit
     active_count <- length(ls(.subagent_registry))
     if (active_count >= subcfg$max_concurrent) {
-        stop(sprintf("Maximum concurrent subagents reached (%d)", subcfg$max_concurrent),
-            call. = FALSE)
+        stop(sprintf("Maximum concurrent subagents reached (%d)",
+                     subcfg$max_concurrent),
+             call. = FALSE)
     }
 
     # Check for nested spawning
-    if (!is.null(parent_session$is_subagent) && isTRUE(parent_session$is_subagent)) {
+    if (!is.null(parent_session$is_subagent) &&
+        isTRUE(parent_session$is_subagent)) {
         if (!isTRUE(subcfg$allow_nested)) {
             stop("Nested subagent spawning is not allowed", call. = FALSE)
         }
@@ -153,37 +158,46 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     port <- find_free_port(subcfg$base_port)
 
     # Create session key
-    parent_key <- if (!is.null(parent_session)) parent_session$sessionKey else "llamar:main"
+    if (!is.null(parent_session)) {
+        parent_key <- parent_session$sessionKey
+    } else {
+        parent_key <- "llamar:main"
+    }
     session_key <- subagent_session_key(parent_key)
     id <- sub("^agent:main:subagent:", "", session_key)
 
     # Store in session metadata
     store_update(session_key, list(
-            sessionId = id,
-            spawnedBy = parent_key,
-            task = task,
-            port = port,
-            status = "starting",
-            createdAt = as.numeric(Sys.time()) * 1000
+                                   sessionId = id,
+                                   spawnedBy = parent_key,
+                                   task = task,
+                                   port = port,
+                                   status = "starting",
+                                   createdAt = as.numeric(Sys.time()) * 1000
         ))
 
     # Build serve command
     tools_arg <- if (!is.null(tools)) {
         sprintf(', tools = c(%s)', paste0('"', tools, '"', collapse = ", "))
     } else if (!is.null(subcfg$default_tools)) {
-        sprintf(', tools = c(%s)', paste0('"', subcfg$default_tools, '"', collapse = ", "))
+        sprintf(', tools = c(%s)',
+                paste0('"', subcfg$default_tools, '"', collapse = ", "))
     } else {
         ""
     }
 
-    cwd <- if (!is.null(parent_session)) parent_session$cwd else getwd()
+    if (!is.null(parent_session)) {
+        cwd <- parent_session$cwd
+    } else {
+        cwd <- getwd()
+    }
     cmd <- sprintf('llamaR::serve(port = %d, cwd = "%s", agent_id = "subagent-%s"%s)',
-        port, cwd, id, tools_arg)
+                   port, cwd, id, tools_arg)
 
     # Spawn server process
     log_file <- file.path(tempdir(), sprintf("subagent-%s.log", id))
     system2("Rscript", c("-e", shQuote(cmd)), wait = FALSE,
-        stdout = log_file, stderr = log_file)
+            stdout = log_file, stderr = log_file)
 
     # Wait for server to start
     if (!wait_for_port(port, timeout_secs = 10L)) {
@@ -196,13 +210,13 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
 
     # Register locally
     .subagent_registry[[id]] <- list(
-        id = id,
-        session_key = session_key,
-        port = port,
-        task = task,
-        model = model,
-        started_at = Sys.time(),
-        timeout = Sys.time() + subcfg$timeout_minutes * 60
+                                     id = id,
+                                     session_key = session_key,
+                                     port = port,
+                                     task = task,
+                                     model = model,
+                                     started_at = Sys.time(),
+                                     timeout = Sys.time() + subcfg$timeout_minutes * 60
     )
 
     log_event("subagent_spawn", subagent_id = id, port = port, task = task)
@@ -233,19 +247,19 @@ subagent_query <- function(id, prompt, timeout = 60L) {
 
     # Connect to subagent's MCP server
     conn <- tryCatch(
-        mcp_connect(port = info$port, name = "parent"),
-        error = function(e) {
-            stop("Failed to connect to subagent: ", e$message, call. = FALSE)
-        }
+                     mcp_connect(port = info$port, name = "parent"),
+                     error = function(e) {
+        stop("Failed to connect to subagent: ", e$message, call. = FALSE)
+    }
     )
     on.exit(mcp_close(conn))
 
     # Use chat tool to send prompt
     result <- tryCatch(
-        mcp_call(conn, "chat", list(prompt = prompt)),
-        error = function(e) {
-            stop("Subagent query failed: ", e$message, call. = FALSE)
-        }
+                       mcp_call(conn, "chat", list(prompt = prompt)),
+                       error = function(e) {
+        stop("Subagent query failed: ", e$message, call. = FALSE)
+    }
     )
 
     log_event("subagent_query", subagent_id = id, prompt_length = nchar(prompt))
@@ -268,17 +282,17 @@ subagent_kill <- function(id) {
 
     # Update store status
     store_update(info$session_key, list(
-            status = "completed",
-            completedAt = as.numeric(Sys.time()) * 1000
+                                        status = "completed",
+                                        completedAt = as.numeric(Sys.time()) * 1000
         ))
 
     # Try to gracefully close the connection
     tryCatch({
-            conn <- mcp_connect(port = info$port, name = "killer")
-            mcp_close(conn)
-        }, error = function(e) {
-            # Ignore connection errors during shutdown
-        })
+        conn <- mcp_connect(port = info$port, name = "killer")
+        mcp_close(conn)
+    }, error = function(e) {
+        # Ignore connection errors during shutdown
+    })
 
     # Remove from registry
     rm(list = id, envir = .subagent_registry)
@@ -299,15 +313,16 @@ subagent_list <- function() {
     }
 
     lapply(ids, function(id) {
-            info <- .subagent_registry[[id]]
-            list(
-                id = info$id,
-                task = info$task,
-                port = info$port,
-                started_at = info$started_at,
-                time_remaining = as.numeric(difftime(info$timeout, Sys.time(), units = "mins"))
-            )
-        })
+        info <- .subagent_registry[[id]]
+        list(
+             id = info$id,
+             task = info$task,
+             port = info$port,
+             started_at = info$started_at,
+             time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
+                    units = "mins"))
+        )
+    })
 }
 
 #' Clean up expired subagents
@@ -348,7 +363,7 @@ format_subagent_list <- function(agents) {
             "expired"
         }
         lines <- c(lines, sprintf("  [%s] port %d - %s (%s)",
-                a$id, a$port, a$task, time_str))
+                                  a$id, a$port, a$task, time_str))
     }
 
     paste(lines, collapse = "\n")

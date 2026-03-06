@@ -9,7 +9,7 @@
 #' @param cwd Working directory to search
 #' @return Character string with assembled context, or NULL if no files found
 #' @noRd
-load_context <- function (cwd = getwd()) {
+load_context <- function(cwd = getwd()) {
     # Get file list from config (or defaults)
     file_names <- get_context_files(cwd)
 
@@ -18,24 +18,25 @@ load_context <- function (cwd = getwd()) {
 
     # Assemble into system prompt
     parts <- c(
-        "You are an AI assistant with access to tools for working with R and the file system.",
-        "Use the bash tool to run shell commands. Below is context about the current project",
-        "and available skills.",
-        ""
+               "You are an AI assistant with access to tools for working with R and the file system.",
+               "Use the bash tool to run shell commands. Below is context about the current project",
+               "and available skills.",
+               ""
     )
 
     # Load global context files from ~/.llamar/workspace/ (SOUL.md, USER.md, MEMORY.md)
     workspace_dir <- get_workspace_dir()
     global_files <- global_context_files()
     global_labels <- c(
-        "SOUL.md" = "Agent Identity (Global)",
-        "USER.md" = "User Preferences (Global)",
-        "MEMORY.md" = "User Memory (Global)"
+                       "SOUL.md" = "Agent Identity (Global)",
+                       "USER.md" = "User Preferences (Global)",
+                       "MEMORY.md" = "User Memory (Global)"
     )
     for (gf in global_files) {
         global_path <- file.path(workspace_dir, gf)
         if (file.exists(global_path)) {
-            content <- paste(readLines(global_path, warn = FALSE), collapse = "\n")
+            content <- paste(readLines(global_path, warn = FALSE),
+                             collapse = "\n")
             if (nchar(trimws(content)) > 0) {
                 label <- global_labels[[gf]] %||% gf
                 parts <- c(parts, sprintf("## %s", label), "", content, "")
@@ -62,24 +63,19 @@ load_context <- function (cwd = getwd()) {
     }
 
     for (name in names(contents)) {
-        parts <- c(parts,
-            sprintf("## %s", name),
-            "",
-            contents[[name]],
-            ""
-        )
+        parts <- c(parts, sprintf("## %s", name), "", contents[[name]], "")
     }
 
     # Add skill docs if any are loaded
     skill_docs_text <- format_skill_docs()
     if (nchar(skill_docs_text) > 0) {
         parts <- c(parts,
-            "# Available Skills",
-            "",
-            "The following skills describe how to accomplish common tasks using shell commands.",
-            "Use the bash tool to execute the commands shown.",
-            "",
-            skill_docs_text
+                   "# Available Skills",
+                   "",
+                   "The following skills describe how to accomplish common tasks using shell commands.",
+                   "Use the bash tool to execute the commands shown.",
+                   "",
+                   skill_docs_text
         )
     }
 
@@ -96,7 +92,7 @@ load_context <- function (cwd = getwd()) {
 #' @param cwd Working directory to search
 #' @return Character vector of existing context file paths
 #' @noRd
-list_context_files <- function (cwd = getwd()) {
+list_context_files <- function(cwd = getwd()) {
     # Get file list from config (or defaults)
     file_names <- get_context_files(cwd)
 

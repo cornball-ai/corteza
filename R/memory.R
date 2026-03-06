@@ -25,8 +25,10 @@ memory_path <- function(scope = c("project", "global"), cwd = getwd()) {
 #' @noRd
 parse_tags <- function(text) {
     matches <- gregexpr("#[a-zA-Z0-9_-]+", text)
-    tags <- regmatches(text, matches) [[1]]
-    if (length(tags) == 0) return(character())
+    tags <- regmatches(text, matches)[[1]]
+    if (length(tags) == 0) {
+        return(character())
+    }
     # Remove # prefix
     gsub("^#", "", tags)
 }
@@ -48,7 +50,7 @@ strip_tags <- function(text) {
 #' @return Formatted memory line
 #' @noRd
 format_memory_entry <- function(fact, tags = character(),
-    timestamp = Sys.time()) {
+                                timestamp = Sys.time()) {
     date_str <- format(timestamp, "%Y-%m-%d")
     tag_str <- if (length(tags) > 0) {
         paste0(" ", paste0("#", tags, collapse = " "))
@@ -98,7 +100,7 @@ auto_categorize <- function(fact) {
 #' @return Invisible TRUE on success
 #' @noRd
 memory_store <- function(fact, tags = character(), category = NULL,
-    scope = c("project", "global"), cwd = getwd()) {
+                         scope = c("project", "global"), cwd = getwd()) {
     scope <- match.arg(scope)
     path <- memory_path(scope, cwd)
 
@@ -122,14 +124,14 @@ memory_store <- function(fact, tags = character(), category = NULL,
         # Create directory if needed
         dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
         lines <- c(
-            "# Memory",
-            "",
-            "## Preferences",
-            "",
-            "## Facts",
-            "",
-            "## Context",
-            ""
+                   "# Memory",
+                   "",
+                   "## Preferences",
+                   "",
+                   "## Facts",
+                   "",
+                   "## Context",
+                   ""
         )
     }
 
@@ -159,7 +161,8 @@ memory_store <- function(fact, tags = character(), category = NULL,
         if (end_idx > length(lines)) {
             lines <- c(lines, entry)
         } else {
-            lines <- c(lines[1:(end_idx - 1)], entry, lines[end_idx:length(lines)])
+            lines <- c(lines[1:(end_idx - 1)], entry,
+                       lines[end_idx:length(lines)])
         }
     }
 
@@ -178,7 +181,7 @@ memory_store <- function(fact, tags = character(), category = NULL,
 #' @return List of matching entries with metadata
 #' @noRd
 memory_search <- function(query, scope = c("both", "project", "global"),
-    cwd = getwd()) {
+                          cwd = getwd()) {
     scope <- match.arg(scope)
 
     paths <- character()
@@ -192,10 +195,16 @@ memory_search <- function(query, scope = c("both", "project", "global"),
     results <- list()
 
     for (path in paths) {
-        if (!file.exists(path)) next
+        if (!file.exists(path)) {
+            next
+        }
 
         lines <- readLines(path, warn = FALSE)
-        scope_name <- if (grepl("workspace", path)) "global" else "project"
+        if (grepl("workspace", path)) {
+            scope_name <- "global"
+        } else {
+            scope_name <- "project"
+        }
 
         current_section <- NULL
 
@@ -209,7 +218,9 @@ memory_search <- function(query, scope = c("both", "project", "global"),
             }
 
             # Skip non-entry lines
-            if (!grepl("^- ", line)) next
+            if (!grepl("^- ", line)) {
+                next
+            }
 
             # Check if line matches query
             if (grepl(query, line, ignore.case = TRUE)) {
@@ -218,14 +229,19 @@ memory_search <- function(query, scope = c("both", "project", "global"),
 
                 # Extract date if present
                 date_match <- regmatches(entry_text,
-                    regexec("\\(([0-9]{4}-[0-9]{2}-[0-9]{2})\\)", entry_text)) [[1]]
-                date <- if (length(date_match) > 1) date_match[2] else NULL
+                    regexec("\\(([0-9]{4}-[0-9]{2}-[0-9]{2})\\)", entry_text))[[1]]
+                if (length(date_match) > 1) {
+                    date <- date_match[2]
+                } else {
+                    date <- NULL
+                }
 
                 # Extract tags
                 tags <- parse_tags(entry_text)
 
                 # Clean text (remove date and tags)
-                clean_text <- gsub("\\([0-9]{4}-[0-9]{2}-[0-9]{2}\\)", "", entry_text)
+                clean_text <- gsub("\\([0-9]{4}-[0-9]{2}-[0-9]{2}\\)", "",
+                                   entry_text)
                 clean_text <- strip_tags(clean_text)
                 clean_text <- trimws(clean_text)
 
@@ -253,7 +269,7 @@ memory_search <- function(query, scope = c("both", "project", "global"),
 #' @return List of matching entries
 #' @noRd
 memory_search_tag <- function(tag, scope = c("both", "project", "global"),
-    cwd = getwd()) {
+                              cwd = getwd()) {
     scope <- match.arg(scope)
     # Search for the hashtag pattern
     memory_search(sprintf("#%s", tag), scope, cwd)
@@ -266,7 +282,7 @@ memory_search_tag <- function(tag, scope = c("both", "project", "global"),
 #' @return Character vector of unique tags
 #' @noRd
 memory_list_tags <- function(scope = c("both", "project", "global"),
-    cwd = getwd()) {
+                             cwd = getwd()) {
     scope <- match.arg(scope)
 
     paths <- character()
@@ -280,7 +296,9 @@ memory_list_tags <- function(scope = c("both", "project", "global"),
     all_tags <- character()
 
     for (path in paths) {
-        if (!file.exists(path)) next
+        if (!file.exists(path)) {
+            next
+        }
         content <- paste(readLines(path, warn = FALSE), collapse = "\n")
         all_tags <- c(all_tags, parse_tags(content))
     }
@@ -300,17 +318,29 @@ format_memory_results <- function(results) {
 
     lines <- character()
     for (r in results) {
-        scope_marker <- if (r$scope == "global") "[G]" else "[P]"
-        section_marker <- if (!is.null(r$section)) sprintf("[%s]", r$section) else ""
+        if (r$scope == "global") {
+            scope_marker <- "[G]"
+        } else {
+            scope_marker <- "[P]"
+        }
+        if (!is.null(r$section)) {
+            section_marker <- sprintf("[%s]", r$section)
+        } else {
+            section_marker <- ""
+        }
         tag_str <- if (length(r$tags) > 0) {
             sprintf(" #%s", paste(r$tags, collapse = " #"))
         } else {
             ""
         }
-        date_str <- if (!is.null(r$date)) sprintf(" (%s)", r$date) else ""
+        if (!is.null(r$date)) {
+            date_str <- sprintf(" (%s)", r$date)
+        } else {
+            date_str <- ""
+        }
 
         lines <- c(lines, sprintf("%s%s %s%s%s",
-                scope_marker, section_marker, r$text, date_str, tag_str))
+                                  scope_marker, section_marker, r$text, date_str, tag_str))
     }
 
     paste(lines, collapse = "\n")
@@ -366,7 +396,7 @@ memory_log_write <- function(content, date = Sys.Date()) {
 memory_log_list <- function() {
     dir <- memory_log_dir()
     files <- list.files(dir, pattern = "^[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md$",
-        full.names = TRUE)
+                        full.names = TRUE)
     sort(files, decreasing = TRUE)
 }
 
@@ -376,7 +406,9 @@ memory_log_list <- function() {
 #' @noRd
 memory_log_load_all <- function() {
     files <- memory_log_list()
-    if (length(files) == 0) return(NULL)
+    if (length(files) == 0) {
+        return(NULL)
+    }
 
     parts <- character()
     for (f in files) {
@@ -386,7 +418,9 @@ memory_log_load_all <- function() {
         }
     }
 
-    if (length(parts) == 0) return(NULL)
+    if (length(parts) == 0) {
+        return(NULL)
+    }
     paste(parts, collapse = "\n")
 }
 
@@ -415,58 +449,58 @@ memory_db_path <- function(agent_id = "default") {
 memory_db_init_schema <- function(con) {
     # Metadata table
     sql_meta <- paste0(
-        "CREATE TABLE IF NOT EXISTS meta (",
-        "key TEXT PRIMARY KEY,",
-        "value TEXT NOT NULL)")
+                       "CREATE TABLE IF NOT EXISTS meta (",
+                       "key TEXT PRIMARY KEY,",
+                       "value TEXT NOT NULL)")
     DBI::dbExecute(con, sql_meta)
 
     # Files table - tracks what's indexed
     sql_files <- paste0(
-        "CREATE TABLE IF NOT EXISTS files (",
-        "path TEXT PRIMARY KEY,",
-        "source TEXT NOT NULL DEFAULT 'memory',",
-        "hash TEXT NOT NULL,",
-        "mtime INTEGER NOT NULL,",
-        "size INTEGER NOT NULL,",
-        "indexed_at INTEGER NOT NULL)")
+                        "CREATE TABLE IF NOT EXISTS files (",
+                        "path TEXT PRIMARY KEY,",
+                        "source TEXT NOT NULL DEFAULT 'memory',",
+                        "hash TEXT NOT NULL,",
+                        "mtime INTEGER NOT NULL,",
+                        "size INTEGER NOT NULL,",
+                        "indexed_at INTEGER NOT NULL)")
     DBI::dbExecute(con, sql_files)
 
     # Chunks table - text chunks (no embedding columns)
     sql_chunks <- paste0(
-        "CREATE TABLE IF NOT EXISTS chunks (",
-        "id TEXT PRIMARY KEY,",
-        "path TEXT NOT NULL,",
-        "source TEXT NOT NULL DEFAULT 'memory',",
-        "start_line INTEGER NOT NULL,",
-        "end_line INTEGER NOT NULL,",
-        "hash TEXT NOT NULL,",
-        "text TEXT NOT NULL,",
-        "updated_at INTEGER NOT NULL)")
+                         "CREATE TABLE IF NOT EXISTS chunks (",
+                         "id TEXT PRIMARY KEY,",
+                         "path TEXT NOT NULL,",
+                         "source TEXT NOT NULL DEFAULT 'memory',",
+                         "start_line INTEGER NOT NULL,",
+                         "end_line INTEGER NOT NULL,",
+                         "hash TEXT NOT NULL,",
+                         "text TEXT NOT NULL,",
+                         "updated_at INTEGER NOT NULL)")
     DBI::dbExecute(con, sql_chunks)
 
     # FTS5 virtual table for full-text search
     tryCatch({
         DBI::dbExecute(con, paste0(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts ",
-            "USING fts5(id, text, content=chunks, content_rowid=rowid)"))
+                                   "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts ",
+                                   "USING fts5(id, text, content=chunks, content_rowid=rowid)"))
 
         # Auto-sync triggers: keep chunks_fts in sync with chunks
         DBI::dbExecute(con, paste0(
-            "CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN ",
-            "INSERT INTO chunks_fts(rowid, id, text) ",
-            "VALUES (new.rowid, new.id, new.text); END"))
+                                   "CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN ",
+                                   "INSERT INTO chunks_fts(rowid, id, text) ",
+                                   "VALUES (new.rowid, new.id, new.text); END"))
 
         DBI::dbExecute(con, paste0(
-            "CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN ",
-            "INSERT INTO chunks_fts(chunks_fts, rowid, id, text) ",
-            "VALUES('delete', old.rowid, old.id, old.text); END"))
+                                   "CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN ",
+                                   "INSERT INTO chunks_fts(chunks_fts, rowid, id, text) ",
+                                   "VALUES('delete', old.rowid, old.id, old.text); END"))
 
         DBI::dbExecute(con, paste0(
-            "CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN ",
-            "INSERT INTO chunks_fts(chunks_fts, rowid, id, text) ",
-            "VALUES('delete', old.rowid, old.id, old.text); ",
-            "INSERT INTO chunks_fts(rowid, id, text) ",
-            "VALUES (new.rowid, new.id, new.text); END"))
+                                   "CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN ",
+                                   "INSERT INTO chunks_fts(chunks_fts, rowid, id, text) ",
+                                   "VALUES('delete', old.rowid, old.id, old.text); ",
+                                   "INSERT INTO chunks_fts(rowid, id, text) ",
+                                   "VALUES (new.rowid, new.id, new.text); END"))
     }, error = function(e) {
         log_msg("FTS5 index creation failed:", e$message)
     })
@@ -525,7 +559,9 @@ memory_hash <- function(text) {
 #' @return List of chunk objects with start_line, end_line, text
 #' @noRd
 memory_chunk_text <- function(text, chunk_size = 50, overlap = 10) {
-    if (length(text) == 0) return(list())
+    if (length(text) == 0) {
+        return(list())
+    }
 
     chunks <- list()
     start <- 1
@@ -535,12 +571,14 @@ memory_chunk_text <- function(text, chunk_size = 50, overlap = 10) {
         chunk_text <- paste(text[start:end], collapse = "\n")
 
         chunks <- c(chunks, list(list(
-                    start_line = start,
-                    end_line = end,
-                    text = chunk_text
+                                      start_line = start,
+                                      end_line = end,
+                                      text = chunk_text
                 )))
 
-        if (end >= length(text)) break
+        if (end >= length(text)) {
+            break
+        }
         start <- end - overlap + 1
     }
 
@@ -556,7 +594,9 @@ memory_chunk_text <- function(text, chunk_size = 50, overlap = 10) {
 #' @return Number of chunks indexed
 #' @noRd
 memory_index_file <- function(con, path, source = "memory", force = FALSE) {
-    if (!file.exists(path)) return(0)
+    if (!file.exists(path)) {
+        return(0)
+    }
 
     info <- file.info(path)
     mtime <- as.integer(info$mtime)
@@ -565,8 +605,8 @@ memory_index_file <- function(con, path, source = "memory", force = FALSE) {
     # Check if already indexed and unchanged
     if (!force) {
         existing <- DBI::dbGetQuery(con,
-            "SELECT hash, mtime FROM files WHERE path = ?",
-            params = list(path))
+                                    "SELECT hash, mtime FROM files WHERE path = ?",
+                                    params = list(path))
 
         if (nrow(existing) > 0 && existing$mtime >= mtime) {
             return(0) # Already up to date
@@ -581,32 +621,34 @@ memory_index_file <- function(con, path, source = "memory", force = FALSE) {
     # Check hash (content might be same even if mtime changed)
     if (!force) {
         existing <- DBI::dbGetQuery(con,
-            "SELECT hash FROM files WHERE path = ?",
-            params = list(path))
+                                    "SELECT hash FROM files WHERE path = ?",
+                                    params = list(path))
         if (nrow(existing) > 0 && existing$hash == hash) {
             # Update mtime but skip re-indexing
             DBI::dbExecute(con,
-                "UPDATE files SET mtime = ?, indexed_at = ? WHERE path = ?",
-                params = list(mtime, as.integer(Sys.time()), path))
+                           "UPDATE files SET mtime = ?, indexed_at = ? WHERE path = ?",
+                           params = list(mtime, as.integer(Sys.time()), path))
             return(0)
         }
     }
 
     # Delete old chunks for this file
-    DBI::dbExecute(con, "DELETE FROM chunks WHERE path = ?", params = list(path))
+    DBI::dbExecute(con, "DELETE FROM chunks WHERE path = ?",
+                   params = list(path))
 
     # Chunk and index
     chunks <- memory_chunk_text(lines)
     now <- as.integer(Sys.time())
 
     sql_insert_chunk <- paste0(
-        "INSERT OR REPLACE INTO chunks ",
-        "(id, path, source, start_line, end_line, hash, text, updated_at) ",
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                               "INSERT OR REPLACE INTO chunks ",
+                               "(id, path, source, start_line, end_line, hash, text, updated_at) ",
+                               "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
 
     for (chunk in chunks) {
-        chunk_id <- sprintf("%s:%d-%d", basename(path), chunk$start_line, chunk$end_line)
+        chunk_id <- sprintf("%s:%d-%d", basename(path), chunk$start_line,
+                            chunk$end_line)
         chunk_hash <- memory_hash(chunk$text)
 
         DBI::dbExecute(con, sql_insert_chunk, params = list(
@@ -618,12 +660,12 @@ memory_index_file <- function(con, path, source = "memory", force = FALSE) {
 
     # Update files table
     sql_insert_file <- paste0(
-        "INSERT OR REPLACE INTO files ",
-        "(path, source, hash, mtime, size, indexed_at) ",
-        "VALUES (?, ?, ?, ?, ?, ?)"
+                              "INSERT OR REPLACE INTO files ",
+                              "(path, source, hash, mtime, size, indexed_at) ",
+                              "VALUES (?, ?, ?, ?, ?, ?)"
     )
     DBI::dbExecute(con, sql_insert_file,
-        params = list(path, source, hash, mtime, size, now))
+                   params = list(path, source, hash, mtime, size, now))
 
     length(chunks)
 }
@@ -634,26 +676,34 @@ memory_index_file <- function(con, path, source = "memory", force = FALSE) {
 #' @return Character vector of "Role: text" lines
 #' @noRd
 claude_session_to_text <- function(path) {
-    if (!file.exists(path)) return(character())
+    if (!file.exists(path)) {
+        return(character())
+    }
 
     lines <- readLines(path, warn = FALSE)
     result <- character()
 
     for (line in lines) {
-        if (nchar(trimws(line)) == 0) next
+        if (nchar(trimws(line)) == 0) {
+            next
+        }
 
         record <- tryCatch(
-            jsonlite::fromJSON(line, simplifyVector = FALSE),
-            error = function(e) NULL
+                           jsonlite::fromJSON(line, simplifyVector = FALSE),
+                           error = function(e) NULL
         )
-        if (is.null(record)) next
+        if (is.null(record)) {
+            next
+        }
 
         # Claude Code format: type is "user" or "assistant"
         # openclaw format: type is "message" with message.role
         msg_type <- record$type
         message <- record$message
 
-        if (is.null(message)) next
+        if (is.null(message)) {
+            next
+        }
 
         role <- NULL
         if (msg_type %in% c("user", "assistant")) {
@@ -662,26 +712,36 @@ claude_session_to_text <- function(path) {
             role <- message$role
         }
 
-        if (is.null(role) || !role %in% c("user", "assistant")) next
+        if (is.null(role) || !role %in% c("user", "assistant")) {
+            next
+        }
 
         # Extract text content
         content <- message$content
-        if (is.null(content)) next
+        if (is.null(content)) {
+            next
+        }
 
         text_parts <- character()
         if (is.character(content)) {
             text_parts <- content
         } else if (is.list(content)) {
             for (block in content) {
-                if (is.list(block) && block$type == "text" && !is.null(block$text)) {
+                if (is.list(block) && block$type == "text" &&
+                    !is.null(block$text)) {
                     text_parts <- c(text_parts, block$text)
                 }
             }
         }
 
         if (length(text_parts) > 0) {
-            label <- if (role == "user") "User" else "Assistant"
-            result <- c(result, sprintf("%s: %s", label, paste(text_parts, collapse = " ")))
+            if (role == "user") {
+                label <- "User"
+            } else {
+                label <- "Assistant"
+            }
+            result <- c(result,
+                        sprintf("%s: %s", label, paste(text_parts, collapse = " ")))
         }
     }
 
@@ -696,7 +756,9 @@ claude_session_to_text <- function(path) {
 #' @return Number of chunks indexed
 #' @noRd
 memory_index_claude_session <- function(con, path, force = FALSE) {
-    if (!file.exists(path)) return(0)
+    if (!file.exists(path)) {
+        return(0)
+    }
 
     info <- file.info(path)
     mtime <- as.integer(info$mtime)
@@ -705,8 +767,8 @@ memory_index_claude_session <- function(con, path, force = FALSE) {
     # Check if already indexed
     if (!force) {
         existing <- DBI::dbGetQuery(con,
-            "SELECT mtime FROM files WHERE path = ?",
-            params = list(path))
+                                    "SELECT mtime FROM files WHERE path = ?",
+                                    params = list(path))
         if (nrow(existing) > 0 && existing$mtime >= mtime) {
             return(0)
         }
@@ -714,26 +776,30 @@ memory_index_claude_session <- function(con, path, force = FALSE) {
 
     # Extract text
     lines <- claude_session_to_text(path)
-    if (length(lines) == 0) return(0)
+    if (length(lines) == 0) {
+        return(0)
+    }
 
     content <- paste(lines, collapse = "\n")
     hash <- memory_hash(content)
 
     # Delete old chunks
-    DBI::dbExecute(con, "DELETE FROM chunks WHERE path = ?", params = list(path))
+    DBI::dbExecute(con, "DELETE FROM chunks WHERE path = ?",
+                   params = list(path))
 
     # Chunk and index
     chunks <- memory_chunk_text(lines, chunk_size = 30, overlap = 5)
     now <- as.integer(Sys.time())
 
     sql_insert_chunk <- paste0(
-        "INSERT OR REPLACE INTO chunks ",
-        "(id, path, source, start_line, end_line, hash, text, updated_at) ",
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                               "INSERT OR REPLACE INTO chunks ",
+                               "(id, path, source, start_line, end_line, hash, text, updated_at) ",
+                               "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
 
     for (chunk in chunks) {
-        chunk_id <- sprintf("%s:%d-%d", basename(path), chunk$start_line, chunk$end_line)
+        chunk_id <- sprintf("%s:%d-%d", basename(path), chunk$start_line,
+                            chunk$end_line)
         chunk_hash <- memory_hash(chunk$text)
 
         DBI::dbExecute(con, sql_insert_chunk, params = list(
@@ -745,12 +811,12 @@ memory_index_claude_session <- function(con, path, force = FALSE) {
 
     # Update files table
     sql_insert_file <- paste0(
-        "INSERT OR REPLACE INTO files ",
-        "(path, source, hash, mtime, size, indexed_at) ",
-        "VALUES (?, ?, ?, ?, ?, ?)"
+                              "INSERT OR REPLACE INTO files ",
+                              "(path, source, hash, mtime, size, indexed_at) ",
+                              "VALUES (?, ?, ?, ?, ?, ?)"
     )
     DBI::dbExecute(con, sql_insert_file,
-        params = list(path, "claude", hash, mtime, size, now))
+                   params = list(path, "claude", hash, mtime, size, now))
 
     length(chunks)
 }
@@ -764,9 +830,12 @@ find_claude_sessions <- function(base_dir = NULL) {
     if (is.null(base_dir)) {
         base_dir <- file.path(Sys.getenv("HOME"), ".claude", "projects")
     }
-    if (!dir.exists(base_dir)) return(character())
+    if (!dir.exists(base_dir)) {
+        return(character())
+    }
 
-    list.files(base_dir, pattern = "\\.jsonl$", recursive = TRUE, full.names = TRUE)
+    list.files(base_dir, pattern = "\\.jsonl$", recursive = TRUE,
+               full.names = TRUE)
 }
 
 #' Import Claude Code history into memory index
@@ -777,14 +846,18 @@ find_claude_sessions <- function(base_dir = NULL) {
 #' @return List with indexed count and skipped count
 #' @export
 memory_import_claude <- function(agent_id = "default", base_dir = NULL,
-    verbose = TRUE) {
+                                 verbose = TRUE) {
     sessions <- find_claude_sessions(base_dir)
     if (length(sessions) == 0) {
-        if (verbose) message("No Claude Code sessions found")
+        if (verbose) {
+            message("No Claude Code sessions found")
+        }
         return(list(indexed = 0, skipped = 0, total = 0))
     }
 
-    if (verbose) message(sprintf("Found %d Claude Code session files", length(sessions)))
+    if (verbose) {
+        message(sprintf("Found %d Claude Code session files", length(sessions)))
+    }
 
     con <- memory_db_open(agent_id)
     on.exit(memory_db_close(con))
@@ -799,11 +872,12 @@ memory_import_claude <- function(agent_id = "default", base_dir = NULL,
         }
 
         chunks <- tryCatch(
-            memory_index_claude_session(con, path),
-            error = function(e) {
-                if (verbose) message(sprintf("  Error indexing %s: %s", basename(path), e$message))
-                0
-            }
+                           memory_index_claude_session(con, path),
+                           error = function(e) {
+            if (verbose) message(sprintf("  Error indexing %s: %s",
+                    basename(path), e$message))
+            0
+        }
         )
 
         if (chunks > 0) {
@@ -814,7 +888,8 @@ memory_import_claude <- function(agent_id = "default", base_dir = NULL,
     }
 
     if (verbose) {
-        message(sprintf("Indexed %d sessions (%d skipped/unchanged)", indexed, skipped))
+        message(sprintf("Indexed %d sessions (%d skipped/unchanged)", indexed,
+                        skipped))
     }
 
     list(indexed = indexed, skipped = skipped, total = length(sessions))
@@ -829,7 +904,7 @@ memory_import_claude <- function(agent_id = "default", base_dir = NULL,
 #' @return Data frame of matching chunks
 #' @export
 memory_search_fts <- function(query, agent_id = "default", limit = 20,
-    source = NULL) {
+                              source = NULL) {
     con <- memory_db_open(agent_id, read_only = TRUE)
     on.exit(memory_db_close(con))
 
@@ -841,14 +916,14 @@ memory_search_fts <- function(query, agent_id = "default", limit = 20,
     }
 
     sql <- paste0(
-        "SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, ",
-        "chunks_fts.rank AS score ",
-        "FROM chunks_fts ",
-        "JOIN chunks c ON c.id = chunks_fts.id ",
-        "WHERE chunks_fts MATCH ? ",
-        source_filter, " ",
-        "ORDER BY chunks_fts.rank ",
-        "LIMIT ?")
+                  "SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, ",
+                  "chunks_fts.rank AS score ",
+                  "FROM chunks_fts ",
+                  "JOIN chunks c ON c.id = chunks_fts.id ",
+                  "WHERE chunks_fts MATCH ? ",
+                  source_filter, " ",
+                  "ORDER BY chunks_fts.rank ",
+                  "LIMIT ?")
 
     params <- if (!is.null(source)) {
         list(query, source, limit)
@@ -869,19 +944,20 @@ memory_stats <- function(agent_id = "default") {
     on.exit(memory_db_close(con))
 
     files <- DBI::dbGetQuery(con, paste0(
-        "SELECT source, COUNT(*) as count, SUM(size) as total_size ",
-        "FROM files GROUP BY source"
-    ))
+            "SELECT source, COUNT(*) as count, SUM(size) as total_size ",
+            "FROM files GROUP BY source"
+        ))
 
     chunks <- DBI::dbGetQuery(con, paste0(
-        "SELECT source, COUNT(*) as count ",
-        "FROM chunks GROUP BY source"
-    ))
+            "SELECT source, COUNT(*) as count ",
+            "FROM chunks GROUP BY source"
+        ))
 
     list(
-        files = files,
-        chunks = chunks,
-        total_files = sum(files$count),
-        total_chunks = sum(chunks$count)
+         files = files,
+         chunks = chunks,
+         total_files = sum(files$count),
+         total_chunks = sum(chunks$count)
     )
 }
+

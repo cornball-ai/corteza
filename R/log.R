@@ -15,7 +15,7 @@ LOG_LEVELS <- c(debug = 1L, info = 2L, warn = 3L, error = 4L)
 #' @param level Log level: "debug", "info", "warn", "error"
 #' @return Previous log level (invisible)
 #' @noRd
-set_log_level <- function (level) {
+set_log_level <- function(level) {
     old <- .log_state$level
     if (level %in% names(LOG_LEVELS)) {
         .log_state$level <- level
@@ -27,7 +27,7 @@ set_log_level <- function (level) {
 #'
 #' @return Current log level
 #' @noRd
-get_log_level <- function () {
+get_log_level <- function() {
     .log_state$level
 }
 
@@ -36,7 +36,7 @@ get_log_level <- function () {
 #' @param session_id Session identifier
 #' @return Previous session ID (invisible)
 #' @noRd
-set_log_session <- function (session_id) {
+set_log_session <- function(session_id) {
     old <- .log_state$session_id
     .log_state$session_id <- session_id
     invisible(old)
@@ -47,7 +47,7 @@ set_log_session <- function (session_id) {
 #' @param enabled TRUE to enable, FALSE to disable
 #' @return Previous state (invisible)
 #' @noRd
-set_log_enabled <- function (enabled) {
+set_log_enabled <- function(enabled) {
     old <- .log_state$enabled
     .log_state$enabled <- isTRUE(enabled)
     invisible(old)
@@ -62,7 +62,7 @@ set_log_enabled <- function (enabled) {
 #' @param level Log level: "debug", "info", "warn", "error"
 #' @return Invisible NULL
 #' @noRd
-log_event <- function (event, ..., level = "info") {
+log_event <- function(event, ..., level = "info") {
     # Check if logging is enabled
     if (!isTRUE(.log_state$enabled)) {
         return(invisible(NULL))
@@ -77,9 +77,9 @@ log_event <- function (event, ..., level = "info") {
 
     # Build log entry
     entry <- list(
-        timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
-        level = level,
-        event = event
+                  timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
+                  level = level,
+                  event = event
     )
 
     # Add session ID if set
@@ -95,11 +95,11 @@ log_event <- function (event, ..., level = "info") {
 
     # Write JSON to stderr
     json <- tryCatch(
-        jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null"),
-        error = function (e) {
-            # Fallback if JSON serialization fails
-            sprintf('{"event":"%s","error":"json_serialization_failed"}', event)
-        }
+                     jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null"),
+                     error = function(e) {
+        # Fallback if JSON serialization fails
+        sprintf('{"event":"%s","error":"json_serialization_failed"}', event)
+    }
     )
     cat(json, "\n", file = stderr())
 
@@ -115,15 +115,15 @@ log_event <- function (event, ..., level = "info") {
 #' @param level Log level
 #' @return Invisible NULL
 #' @noRd
-log_tool_call <- function (tool, args = list(), level = "info") {
+log_tool_call <- function(tool, args = list(), level = "info") {
     # Truncate large argument values
-    args_summary <- lapply(args, function (x) {
-            if (is.character(x) && nchar(x) > 100) {
-                paste0(substr(x, 1, 97), "...")
-            } else {
-                x
-            }
-        })
+    args_summary <- lapply(args, function(x) {
+        if (is.character(x) && nchar(x) > 100) {
+            paste0(substr(x, 1, 97), "...")
+        } else {
+            x
+        }
+    })
 
     log_event("tool_call", tool = tool, args = args_summary, level = level)
 }
@@ -139,15 +139,15 @@ log_tool_call <- function (tool, args = list(), level = "info") {
 #' @param level Log level
 #' @return Invisible NULL
 #' @noRd
-log_tool_result <- function (tool, success, result_lines = NULL,
-                             elapsed_ms = NULL, level = "info") {
+log_tool_result <- function(tool, success, result_lines = NULL,
+                            elapsed_ms = NULL, level = "info") {
     log_event(
-        "tool_result",
-        tool = tool,
-        success = success,
-        result_lines = result_lines,
-        elapsed_ms = elapsed_ms,
-        level = level
+              "tool_result",
+              tool = tool,
+              success = success,
+              result_lines = result_lines,
+              elapsed_ms = elapsed_ms,
+              level = level
     )
 }
 
@@ -161,17 +161,17 @@ log_tool_result <- function (tool, success, result_lines = NULL,
 #' @param level Log level
 #' @return Invisible NULL
 #' @noRd
-log_llm_call <- function (provider, model, input_tokens = NULL,
-                          output_tokens = NULL, elapsed_ms = NULL,
-                          level = "info") {
+log_llm_call <- function(provider, model, input_tokens = NULL,
+                         output_tokens = NULL, elapsed_ms = NULL,
+                         level = "info") {
     log_event(
-        "llm_call",
-        provider = provider,
-        model = model,
-        input_tokens = input_tokens,
-        output_tokens = output_tokens,
-        elapsed_ms = elapsed_ms,
-        level = level
+              "llm_call",
+              provider = provider,
+              model = model,
+              input_tokens = input_tokens,
+              output_tokens = output_tokens,
+              elapsed_ms = elapsed_ms,
+              level = level
     )
 }
 
@@ -182,13 +182,13 @@ log_llm_call <- function (provider, model, input_tokens = NULL,
 #' @param ... Additional context
 #' @return Invisible NULL
 #' @noRd
-log_error <- function (message, error_type = NULL, ...) {
+log_error <- function(message, error_type = NULL, ...) {
     log_event(
-        "error",
-        message = message,
-        error_type = error_type,
-        ...,
-        level = "error"
+              "error",
+              message = message,
+              error_type = error_type,
+              ...,
+              level = "error"
     )
 }
 
@@ -198,7 +198,7 @@ log_error <- function (message, error_type = NULL, ...) {
 #' @param ... Additional context
 #' @return Invisible NULL
 #' @noRd
-log_warn <- function (message, ...) {
+log_warn <- function(message, ...) {
     log_event("warning", message = message, ..., level = "warn")
 }
 
@@ -208,7 +208,7 @@ log_warn <- function (message, ...) {
 #' @param ... Additional context
 #' @return Invisible NULL
 #' @noRd
-log_debug <- function (message, ...) {
+log_debug <- function(message, ...) {
     log_event("debug", message = message, ..., level = "debug")
 }
 

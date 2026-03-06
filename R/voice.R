@@ -7,12 +7,12 @@
 #' @return List with tts = TRUE/FALSE, stt = TRUE/FALSE, audio = TRUE/FALSE,
 #'         reason = character (if not available)
 #' @noRd
-voice_available <- function (config = list()) {
+voice_available <- function(config = list()) {
     result <- list(
-        tts = FALSE,
-        stt = FALSE,
-        audio = FALSE,
-        reason = character()
+                   tts = FALSE,
+                   stt = FALSE,
+                   audio = FALSE,
+                   reason = character()
     )
 
     # Check audio hardware
@@ -31,20 +31,22 @@ voice_available <- function (config = list()) {
         if (backend == "qwen3") {
             port <- tts_cfg$port %||% 7811L
             result$tts <- tryCatch({
-                    tts.api::qwen3_available(port = port, timeout = 2)
-                }, error = function (e) FALSE)
+                tts.api::qwen3_available(port = port, timeout = 2)
+            }, error = function(e) FALSE)
             if (!result$tts) {
                 result$reason <- c(result$reason,
-                    sprintf("TTS backend (qwen3) not reachable on port %d", port))
+                                   sprintf("TTS backend (qwen3) not reachable on port %d",
+                        port))
             }
         } else if (backend == "chatterbox") {
             port <- tts_cfg$port %||% 7810L
             result$tts <- tryCatch({
-                    tts.api::chatterbox_available(port = port, timeout = 2)
-                }, error = function(e) FALSE)
+                tts.api::chatterbox_available(port = port, timeout = 2)
+            }, error = function(e) FALSE)
             if (!result$tts) {
                 result$reason <- c(result$reason,
-                    sprintf("TTS backend (chatterbox) not reachable on port %d", port))
+                                   sprintf("TTS backend (chatterbox) not reachable on port %d",
+                        port))
             }
         } else if (backend == "openai") {
             # OpenAI TTS doesn't need local server check
@@ -52,16 +54,15 @@ voice_available <- function (config = list()) {
         } else if (backend == "elevenlabs") {
             # ElevenLabs needs API key
             result$tts <- tryCatch({
-                    key <- tts.api:::.elevenlabs_api_key()
-                    !is.null(key) && nchar(key) > 0
-                }, error = function(e) FALSE)
+                key <- tts.api:::.elevenlabs_api_key()
+                !is.null(key) && nchar(key) > 0
+            }, error = function(e) FALSE)
             if (!result$tts) {
-                result$reason <- c(result$reason,
-                    "ElevenLabs API key not set")
+                result$reason <- c(result$reason, "ElevenLabs API key not set")
             }
         } else {
             result$reason <- c(result$reason,
-                sprintf("Unknown TTS backend: %s", backend))
+                               sprintf("Unknown TTS backend: %s", backend))
         }
     } else {
         result$reason <- c(result$reason, "tts.api package not installed")
@@ -77,28 +78,28 @@ voice_available <- function (config = list()) {
             port <- stt_cfg$port %||% 4123L
             base_url <- sprintf("http://127.0.0.1:%d", port)
             health <- tryCatch({
-                    stt.api::set_stt_base(base_url)
-                    stt.api::stt_health()
-                }, error = function(e) list(ok = FALSE))
+                stt.api::set_stt_base(base_url)
+                stt.api::stt_health()
+            }, error = function(e) list(ok = FALSE))
             result$stt <- isTRUE(health$ok)
             if (!result$stt) {
                 result$reason <- c(result$reason,
-                    sprintf("STT backend (API) not reachable on port %d", port))
+                                   sprintf("STT backend (API) not reachable on port %d", port))
             }
         } else if (backend == "whisper") {
             # Native whisper via audio.whisper - use stt_health to check
             health <- tryCatch({
-                    stt.api::stt_health()
-                }, error = function(e) list(ok = FALSE))
+                stt.api::stt_health()
+            }, error = function(e) list(ok = FALSE))
             result$stt <- isTRUE(health$ok)
             if (!result$stt) {
                 result$reason <- c(result$reason,
-                    health$message %||% "audio.whisper not available")
+                                   health$message %||% "audio.whisper not available")
             }
         } else {
             result$stt <- FALSE
             result$reason <- c(result$reason,
-                sprintf("Unknown STT backend: %s", backend))
+                               sprintf("Unknown STT backend: %s", backend))
         }
     } else {
         result$reason <- c(result$reason, "stt.api package not installed")
@@ -146,10 +147,10 @@ voice_listen <- function(config = list(), show_status = TRUE) {
 
     # Start recording in background
     pid <- audio_record_ptt(
-        file = audio_file,
-        max_duration = 60L,
-        device = device,
-        sample_rate = sample_rate
+                            file = audio_file,
+                            max_duration = 60L,
+                            device = device,
+                            sample_rate = sample_rate
     )
 
     # Wait for Enter
@@ -172,18 +173,18 @@ voice_listen <- function(config = list(), show_status = TRUE) {
 
     # Transcribe
     result <- tryCatch({
-            stt.api::stt(
-                file = audio_file,
-                model = model,
-                backend = backend,
-                response_format = "text"
-            )
-        }, error = function(e) {
-            if (show_status) {
-                cat(sprintf("\033[91mError: %s\033[0m\n", e$message))
-            }
-            NULL
-        })
+        stt.api::stt(
+                     file = audio_file,
+                     model = model,
+                     backend = backend,
+                     response_format = "text"
+        )
+    }, error = function(e) {
+        if (show_status) {
+            cat(sprintf("\033[91mError: %s\033[0m\n", e$message))
+        }
+        NULL
+    })
 
     if (!is.null(result) && show_status) {
         # Clear "Transcribing..." line and show result
@@ -231,19 +232,19 @@ voice_speak <- function(text, config = list(), show_status = TRUE) {
 
     # Generate speech
     result <- tryCatch({
-            tts.api::tts(
-                input = text,
-                voice = voice,
-                file = audio_file,
-                backend = backend
-            )
-            TRUE
-        }, error = function(e) {
-            if (show_status) {
-                cat(sprintf("\033[91mTTS error: %s\033[0m\n", e$message))
-            }
-            FALSE
-        })
+        tts.api::tts(
+                     input = text,
+                     voice = voice,
+                     file = audio_file,
+                     backend = backend
+        )
+        TRUE
+    }, error = function(e) {
+        if (show_status) {
+            cat(sprintf("\033[91mTTS error: %s\033[0m\n", e$message))
+        }
+        FALSE
+    })
 
     if (!result) {
         return(invisible(FALSE))
@@ -255,12 +256,12 @@ voice_speak <- function(text, config = list(), show_status = TRUE) {
 
     # Play audio
     tryCatch({
-            audio_play(audio_file, wait = TRUE)
-        }, error = function(e) {
-            if (show_status) {
-                cat(sprintf("\033[91mPlayback error: %s\033[0m\n", e$message))
-            }
-        })
+        audio_play(audio_file, wait = TRUE)
+    }, error = function(e) {
+        if (show_status) {
+            cat(sprintf("\033[91mPlayback error: %s\033[0m\n", e$message))
+        }
+    })
 
     invisible(TRUE)
 }

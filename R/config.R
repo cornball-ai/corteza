@@ -3,19 +3,19 @@
 
 #' Default context files to load
 #' @noRd
-default_context_files <- function () {
+default_context_files <- function() {
     c("README.md", "PLAN.md", "fyi.md", "AGENTS.md", "MEMORY.md")
 }
 
 #' Global context files loaded from ~/.llamar/workspace/
 #' @noRd
-global_context_files <- function () {
+global_context_files <- function() {
     c("SOUL.md", "USER.md", "MEMORY.md")
 }
 
 #' Get workspace directory path
 #' @noRd
-get_workspace_dir <- function () {
+get_workspace_dir <- function() {
     path.expand("~/.llamar/workspace")
 }
 
@@ -24,21 +24,21 @@ get_workspace_dir <- function () {
 #' @param path Path to config file
 #' @return List with config, or empty list if not found
 #' @noRd
-load_config_file <- function (path) {
+load_config_file <- function(path) {
     if (!file.exists(path)) {
         return(list())
     }
 
     tryCatch({
-            cfg <- jsonlite::fromJSON(path, simplifyVector = TRUE)
-            # Ensure context_files is a character vector
-            if (!is.null(cfg$context_files) && is.list(cfg$context_files)) {
-                cfg$context_files <- unlist(cfg$context_files)
-            }
-            cfg
-        }, error = function (e) {
-            list()
-        })
+        cfg <- jsonlite::fromJSON(path, simplifyVector = TRUE)
+        # Ensure context_files is a character vector
+        if (!is.null(cfg$context_files) && is.list(cfg$context_files)) {
+            cfg$context_files <- unlist(cfg$context_files)
+        }
+        cfg
+    }, error = function(e) {
+        list()
+    })
 }
 
 #' Load merged configuration (global + project)
@@ -49,7 +49,7 @@ load_config_file <- function (path) {
 #' @param cwd Working directory for project config
 #' @return List with merged configuration
 #' @noRd
-load_config <- function (cwd = getwd()) {
+load_config <- function(cwd = getwd()) {
     # Global config
     global_path <- path.expand("~/.llamar/config.json")
     global <- load_config_file(global_path)
@@ -103,10 +103,11 @@ load_config <- function (cwd = getwd()) {
 
     # Tool approval settings
     if (is.null(config$approval_mode)) {
-        config$approval_mode <- "ask"# "ask", "allow", "deny"
+        config$approval_mode <- "ask" # "ask", "allow", "deny"
     }
     if (is.null(config$dangerous_tools)) {
-        config$dangerous_tools <- c("bash", "run_r", "run_r_script", "write_file")
+        config$dangerous_tools <- c("bash", "run_r", "run_r_script",
+                                    "write_file")
     }
     # Per-tool permissions (overrides dangerous_tools)
     # config$permissions = list(bash = "deny", read_file = "allow")
@@ -119,12 +120,12 @@ load_config <- function (cwd = getwd()) {
     # config$denied_paths - these paths are always blocked
     if (is.null(config$denied_paths)) {
         config$denied_paths <- c(
-            "~/.ssh",
-            "~/.gnupg",
-            "~/.aws",
-            "~/.config/gcloud",
-            "~/.kube",
-            "~/.docker"
+                                 "~/.ssh",
+                                 "~/.gnupg",
+                                 "~/.aws",
+                                 "~/.config/gcloud",
+                                 "~/.kube",
+                                 "~/.docker"
         )
     }
     # Note: allowed_paths is NULL by default (no restriction)
@@ -155,14 +156,24 @@ load_config <- function (cwd = getwd()) {
         config$subagents <- list()
     }
     sub <- config$subagents
-    if (is.null(sub$enabled)) sub$enabled <- TRUE
-    if (is.null(sub$max_concurrent)) sub$max_concurrent <- 3L
-    if (is.null(sub$timeout_minutes)) sub$timeout_minutes <- 30L
-    if (is.null(sub$allow_nested)) sub$allow_nested <- FALSE
+    if (is.null(sub$enabled)) {
+        sub$enabled <- TRUE
+    }
+    if (is.null(sub$max_concurrent)) {
+        sub$max_concurrent <- 3L
+    }
+    if (is.null(sub$timeout_minutes)) {
+        sub$timeout_minutes <- 30L
+    }
+    if (is.null(sub$allow_nested)) {
+        sub$allow_nested <- FALSE
+    }
     if (is.null(sub$default_tools)) {
         sub$default_tools <- c("read_file", "write_file", "bash", "chat")
     }
-    if (is.null(sub$base_port)) sub$base_port <- 7851L
+    if (is.null(sub$base_port)) {
+        sub$base_port <- 7851L
+    }
     config$subagents <- sub
 
     # Voice mode config
@@ -178,33 +189,33 @@ load_config <- function (cwd = getwd()) {
         voice$tts <- list()
     }
     if (is.null(voice$tts$backend)) {
-        voice$tts$backend <- "qwen3"# qwen3, chatterbox, openai, elevenlabs
+        voice$tts$backend <- "qwen3" # qwen3, chatterbox, openai, elevenlabs
     }
     if (is.null(voice$tts$voice)) {
         voice$tts$voice <- "default"
     }
     if (is.null(voice$tts$port)) {
-        voice$tts$port <- 7812L# qwen3-tts-api default port
+        voice$tts$port <- 7812L # qwen3-tts-api default port
     }
     # STT config
     if (is.null(voice$stt)) {
         voice$stt <- list()
     }
     if (is.null(voice$stt$backend)) {
-        voice$stt$backend <- "whisper"# whisper (native), api
+        voice$stt$backend <- "whisper" # whisper (native), api
     }
     if (is.null(voice$stt$port)) {
-        voice$stt$port <- 4123L# only used for api backend
+        voice$stt$port <- 4123L # only used for api backend
     }
     if (is.null(voice$stt$model)) {
-        voice$stt$model <- "base"# whisper model: tiny, base, small, medium, large
+        voice$stt$model <- "base" # whisper model: tiny, base, small, medium, large
     }
     # Audio config
     if (is.null(voice$audio)) {
         voice$audio <- list()
     }
     if (is.null(voice$audio$input_device)) {
-        voice$audio$input_device <- NULL# Use default device
+        voice$audio$input_device <- NULL # Use default device
     }
     if (is.null(voice$audio$sample_rate)) {
         voice$audio$sample_rate <- 16000L
@@ -242,7 +253,7 @@ load_config <- function (cwd = getwd()) {
         sig$textChunkLimit <- 4000L
     }
     if (is.null(sig$chunkMode)) {
-        sig$chunkMode <- "length"# "length" or "newline"
+        sig$chunkMode <- "length" # "length" or "newline"
     }
     config$channels$signal <- sig
 
@@ -254,7 +265,7 @@ load_config <- function (cwd = getwd()) {
 #' @param cwd Working directory
 #' @return Character vector of context file names to look for
 #' @noRd
-get_context_files <- function (cwd = getwd()) {
+get_context_files <- function(cwd = getwd()) {
     config <- load_config(cwd)
     config$context_files
 }

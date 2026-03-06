@@ -6,7 +6,7 @@
 #' @param agent_id Agent identifier (default: "main")
 #' @return Path to SQLite file
 #' @noRd
-task_db_path <- function (agent_id = "main") {
+task_db_path <- function(agent_id = "main") {
     dir <- file.path(get_workspace_dir(), "tasks")
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
     file.path(dir, sprintf("%s.sqlite", agent_id))
@@ -17,37 +17,37 @@ task_db_path <- function (agent_id = "main") {
 #' @param con SQLite connection
 #' @return Invisible NULL
 #' @noRd
-task_db_init <- function (con) {
+task_db_init <- function(con) {
     sql_tasks <- paste0(
-        "CREATE TABLE IF NOT EXISTS tasks (",
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,",
-        "name TEXT NOT NULL,",
-        "description TEXT,",
-        "schedule TEXT,",
-        "prompt TEXT NOT NULL,",
-        "status TEXT NOT NULL DEFAULT 'active',",
-        "created_at INTEGER NOT NULL,",
-        "updated_at INTEGER NOT NULL,",
-        "last_run INTEGER,",
-        "next_run INTEGER,",
-        "run_count INTEGER DEFAULT 0,",
-        "last_result TEXT,",
-        "last_error TEXT,",
-        "notification_sink TEXT DEFAULT 'console')"
+                        "CREATE TABLE IF NOT EXISTS tasks (",
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT,",
+                        "name TEXT NOT NULL,",
+                        "description TEXT,",
+                        "schedule TEXT,",
+                        "prompt TEXT NOT NULL,",
+                        "status TEXT NOT NULL DEFAULT 'active',",
+                        "created_at INTEGER NOT NULL,",
+                        "updated_at INTEGER NOT NULL,",
+                        "last_run INTEGER,",
+                        "next_run INTEGER,",
+                        "run_count INTEGER DEFAULT 0,",
+                        "last_result TEXT,",
+                        "last_error TEXT,",
+                        "notification_sink TEXT DEFAULT 'console')"
     )
     DBI::dbExecute(con, sql_tasks)
 
     sql_runs <- paste0(
-        "CREATE TABLE IF NOT EXISTS task_runs (",
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,",
-        "task_id INTEGER NOT NULL,",
-        "started_at INTEGER NOT NULL,",
-        "finished_at INTEGER,",
-        "status TEXT NOT NULL,",
-        "result TEXT,",
-        "error TEXT,",
-        "tokens_used INTEGER,",
-        "FOREIGN KEY (task_id) REFERENCES tasks(id))"
+                       "CREATE TABLE IF NOT EXISTS task_runs (",
+                       "id INTEGER PRIMARY KEY AUTOINCREMENT,",
+                       "task_id INTEGER NOT NULL,",
+                       "started_at INTEGER NOT NULL,",
+                       "finished_at INTEGER,",
+                       "status TEXT NOT NULL,",
+                       "result TEXT,",
+                       "error TEXT,",
+                       "tokens_used INTEGER,",
+                       "FOREIGN KEY (task_id) REFERENCES tasks(id))"
     )
     DBI::dbExecute(con, sql_runs)
 
@@ -59,7 +59,7 @@ task_db_init <- function (con) {
 #' @param agent_id Agent identifier
 #' @return SQLite connection
 #' @noRd
-task_db_open <- function (agent_id = "main") {
+task_db_open <- function(agent_id = "main") {
     if (!requireNamespace("RSQLite", quietly = TRUE)) {
         stop("RSQLite package required for task scheduling", call. = FALSE)
     }
@@ -74,7 +74,7 @@ task_db_open <- function (agent_id = "main") {
 #'
 #' @param con SQLite connection
 #' @noRd
-task_db_close <- function (con) {
+task_db_close <- function(con) {
     DBI::dbDisconnect(con)
 }
 
@@ -87,7 +87,7 @@ task_db_close <- function (con) {
 #' @param from Starting time (default: now)
 #' @return POSIXct of next run, or NULL if invalid
 #' @noRd
-parse_cron_next <- function (schedule, from = Sys.time()) {
+parse_cron_next <- function(schedule, from = Sys.time()) {
     schedule <- trimws(schedule)
 
     # Handle special strings
@@ -113,8 +113,16 @@ parse_cron_next <- function (schedule, from = Sys.time()) {
     # Simple implementation: find next matching minute/hour
     now <- as.POSIXlt(from)
 
-    target_minute <- if (minute == "*") now$min else as.integer(minute)
-    target_hour <- if (hour == "*") now$hour else as.integer(hour)
+    if (minute == "*") {
+        target_minute <- now$min
+    } else {
+        target_minute <- as.integer(minute)
+    }
+    if (hour == "*") {
+        target_hour <- now$hour
+    } else {
+        target_hour <- as.integer(hour)
+    }
 
     # Build target time
     target <- now
@@ -147,8 +155,8 @@ parse_cron_next <- function (schedule, from = Sys.time()) {
 #' @param agent_id Agent identifier
 #' @return Task ID
 #' @export
-task_create <- function (name, prompt, schedule = NULL, description = NULL,
-                         notification_sink = "console", agent_id = "main") {
+task_create <- function(name, prompt, schedule = NULL, description = NULL,
+                        notification_sink = "console", agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
@@ -160,12 +168,12 @@ task_create <- function (name, prompt, schedule = NULL, description = NULL,
     }
 
     sql <- paste0(
-        "INSERT INTO tasks (name, description, schedule, prompt, status,",
-        " created_at, updated_at, next_run, notification_sink)",
-        " VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)"
+                  "INSERT INTO tasks (name, description, schedule, prompt, status,",
+                  " created_at, updated_at, next_run, notification_sink)",
+                  " VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)"
     )
     DBI::dbExecute(con, sql, params = list(name, description, schedule, prompt,
-        now, now, next_run, notification_sink))
+            now, now, next_run, notification_sink))
 
     DBI::dbGetQuery(con, "SELECT last_insert_rowid()")[[1]]
 }
@@ -176,7 +184,7 @@ task_create <- function (name, prompt, schedule = NULL, description = NULL,
 #' @param agent_id Agent identifier
 #' @return Data frame of tasks
 #' @export
-task_list <- function (status = "active", agent_id = "main") {
+task_list <- function(status = "active", agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
@@ -184,7 +192,7 @@ task_list <- function (status = "active", agent_id = "main") {
         DBI::dbGetQuery(con, "SELECT * FROM tasks ORDER BY next_run ASC")
     } else {
         DBI::dbGetQuery(con, "SELECT * FROM tasks WHERE status = ? ORDER BY next_run ASC",
-            params = list(status))
+                        params = list(status))
     }
 }
 
@@ -194,18 +202,18 @@ task_list <- function (status = "active", agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Task list, or NULL if not found
 #' @export
-task_get <- function (task_id, agent_id = "main") {
+task_get <- function(task_id, agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
     result <- DBI::dbGetQuery(con, "SELECT * FROM tasks WHERE id = ?",
-        params = list(task_id))
+                              params = list(task_id))
 
     if (nrow(result) == 0) {
         return(NULL)
     }
 
-    as.list(result[1, ])
+    as.list(result[1,])
 }
 
 #' Update a task
@@ -215,7 +223,7 @@ task_get <- function (task_id, agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Invisible TRUE on success
 #' @export
-task_update <- function (task_id, ..., agent_id = "main") {
+task_update <- function(task_id, ..., agent_id = "main") {
     updates <- list(...)
     if (length(updates) == 0) {
         return(invisible(TRUE))
@@ -230,7 +238,7 @@ task_update <- function (task_id, ..., agent_id = "main") {
 
     for (field in names(updates)) {
         if (field %in% c("name", "description", "schedule", "prompt",
-                "status", "notification_sink")) {
+                         "status", "notification_sink")) {
             set_clauses <- c(set_clauses, sprintf("%s = ?", field))
             params <- c(params, list(updates[[field]]))
 
@@ -248,7 +256,7 @@ task_update <- function (task_id, ..., agent_id = "main") {
     params <- c(params, list(task_id))
 
     sql <- sprintf("UPDATE tasks SET %s WHERE id = ?",
-        paste(set_clauses, collapse = ", "))
+                   paste(set_clauses, collapse = ", "))
     DBI::dbExecute(con, sql, params = params)
 
     invisible(TRUE)
@@ -260,14 +268,14 @@ task_update <- function (task_id, ..., agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Invisible TRUE on success
 #' @export
-task_delete <- function (task_id, agent_id = "main") {
+task_delete <- function(task_id, agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
     DBI::dbExecute(con, "DELETE FROM task_runs WHERE task_id = ?",
-        params = list(task_id))
+                   params = list(task_id))
     DBI::dbExecute(con, "DELETE FROM tasks WHERE id = ?",
-        params = list(task_id))
+                   params = list(task_id))
 
     invisible(TRUE)
 }
@@ -278,7 +286,7 @@ task_delete <- function (task_id, agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Invisible TRUE
 #' @export
-task_pause <- function (task_id, agent_id = "main") {
+task_pause <- function(task_id, agent_id = "main") {
     task_update(task_id, status = "paused", agent_id = agent_id)
 }
 
@@ -288,7 +296,7 @@ task_pause <- function (task_id, agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Invisible TRUE
 #' @export
-task_resume <- function (task_id, agent_id = "main") {
+task_resume <- function(task_id, agent_id = "main") {
     task_update(task_id, status = "active", agent_id = agent_id)
 }
 
@@ -302,19 +310,19 @@ task_resume <- function (task_id, agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Run ID
 #' @noRd
-task_record_run <- function (task_id, status, result = NULL, error = NULL,
-                             tokens_used = NULL, agent_id = "main") {
+task_record_run <- function(task_id, status, result = NULL, error = NULL,
+                            tokens_used = NULL, agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
     now <- as.integer(Sys.time())
 
     sql_insert <- paste0(
-        "INSERT INTO task_runs (task_id, started_at, finished_at, status,",
-        " result, error, tokens_used) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                         "INSERT INTO task_runs (task_id, started_at, finished_at, status,",
+                         " result, error, tokens_used) VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
     DBI::dbExecute(con, sql_insert,
-        params = list(task_id, now, now, status, result, error, tokens_used))
+                   params = list(task_id, now, now, status, result, error, tokens_used))
 
     # Update task metadata
     task <- task_get(task_id, agent_id)
@@ -325,12 +333,12 @@ task_record_run <- function (task_id, status, result = NULL, error = NULL,
     }
 
     sql_update <- paste0(
-        "UPDATE tasks SET last_run = ?, next_run = ?,",
-        " run_count = run_count + 1, last_result = ?,",
-        " last_error = ?, updated_at = ? WHERE id = ?"
+                         "UPDATE tasks SET last_run = ?, next_run = ?,",
+                         " run_count = run_count + 1, last_result = ?,",
+                         " last_error = ?, updated_at = ? WHERE id = ?"
     )
     DBI::dbExecute(con, sql_update,
-        params = list(now, next_run, result, error, now, task_id))
+                   params = list(now, next_run, result, error, now, task_id))
 
     DBI::dbGetQuery(con, "SELECT last_insert_rowid()")[[1]]
 }
@@ -342,13 +350,13 @@ task_record_run <- function (task_id, status, result = NULL, error = NULL,
 #' @param agent_id Agent identifier
 #' @return Data frame of runs
 #' @export
-task_runs <- function (task_id, limit = 10L, agent_id = "main") {
+task_runs <- function(task_id, limit = 10L, agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
     sql <- paste0(
-        "SELECT * FROM task_runs WHERE task_id = ?",
-        " ORDER BY started_at DESC LIMIT ?"
+                  "SELECT * FROM task_runs WHERE task_id = ?",
+                  " ORDER BY started_at DESC LIMIT ?"
     )
     DBI::dbGetQuery(con, sql, params = list(task_id, limit))
 }
@@ -358,16 +366,16 @@ task_runs <- function (task_id, limit = 10L, agent_id = "main") {
 #' @param agent_id Agent identifier
 #' @return Data frame of due tasks
 #' @noRd
-task_get_due <- function (agent_id = "main") {
+task_get_due <- function(agent_id = "main") {
     con <- task_db_open(agent_id)
     on.exit(task_db_close(con))
 
     now <- as.integer(Sys.time())
 
     sql <- paste0(
-        "SELECT * FROM tasks WHERE status = 'active'",
-        " AND next_run IS NOT NULL AND next_run <= ?",
-        " ORDER BY next_run ASC"
+                  "SELECT * FROM tasks WHERE status = 'active'",
+                  " AND next_run IS NOT NULL AND next_run <= ?",
+                  " ORDER BY next_run ASC"
     )
     DBI::dbGetQuery(con, sql, params = list(now))
 }
@@ -377,25 +385,27 @@ task_get_due <- function (agent_id = "main") {
 #' @param tasks Data frame from task_list()
 #' @return Character string for display
 #' @noRd
-format_task_list <- function (tasks) {
+format_task_list <- function(tasks) {
     if (nrow(tasks) == 0) {
         return("No scheduled tasks.")
     }
 
-    format_time <- function (ts) {
-        if (is.na(ts) || is.null(ts)) return("--")
+    format_time <- function(ts) {
+        if (is.na(ts) || is.null(ts)) {
+            return("--")
+        }
         format(as.POSIXct(ts, origin = "1970-01-01"), "%Y-%m-%d %H:%M")
     }
 
     lines <- c("Scheduled tasks:")
 
     for (i in seq_len(nrow(tasks))) {
-        t <- tasks[i, ]
+        t <- tasks[i,]
         status_marker <- switch(t$status,
-            active = "",
-            paused = " [PAUSED]",
-            completed = " [DONE]",
-            ""
+                                active = "",
+                                paused = " [PAUSED]",
+                                completed = " [DONE]",
+                                ""
         )
         next_str <- if (!is.na(t$next_run)) {
             sprintf(" -> next: %s", format_time(t$next_run))
@@ -403,7 +413,7 @@ format_task_list <- function (tasks) {
             ""
         }
         lines <- c(lines, sprintf("  [%d] %s%s%s",
-            t$id, t$name, status_marker, next_str))
+                                  t$id, t$name, status_marker, next_str))
         if (!is.null(t$schedule) && !is.na(t$schedule)) {
             lines <- c(lines, sprintf("      schedule: %s", t$schedule))
         }
@@ -411,3 +421,4 @@ format_task_list <- function (tasks) {
 
     paste(lines, collapse = "\n")
 }
+

@@ -25,17 +25,17 @@
 #' @param handler Function(args, ctx) that returns a result
 #' @return Skill specification list
 #' @noRd
-skill_spec <- function (name, description, params = list(), handler) {
+skill_spec <- function(name, description, params = list(), handler) {
     # Build required list from params
-    required <- names(params)[vapply(params, function (p) {
-            isTRUE(p$required)
-        }, logical(1))]
+    required <- names(params)[vapply(params, function(p) {
+        isTRUE(p$required)
+    }, logical(1))]
 
     # Strip 'required' from properties (not part of JSON Schema)
-    properties <- lapply(params, function (p) {
-            p$required <- NULL
-            p
-        })
+    properties <- lapply(params, function(p) {
+        p$required <- NULL
+        p
+    })
 
     # Ensure empty properties serializes as {} not []
     if (length(properties) == 0) {
@@ -43,14 +43,14 @@ skill_spec <- function (name, description, params = list(), handler) {
     }
 
     list(
-        name = name,
-        description = description,
-        inputSchema = list(
-            type = "object",
-            properties = properties,
-            required = if (length(required) > 0) as.list(required) else list()
+         name = name,
+         description = description,
+         inputSchema = list(
+                            type = "object",
+                            properties = properties,
+                            required = if (length(required) > 0) as.list(required) else list()
         ),
-        handler = handler
+         handler = handler
     )
 }
 
@@ -66,8 +66,8 @@ skill_spec <- function (name, description, params = list(), handler) {
 #' @param dry_run If TRUE, validate only without executing (default FALSE)
 #' @return Result from handler (should be ok() or err())
 #' @noRd
-skill_run <- function (skill, args, ctx = list(), timeout = 30L,
-                       dry_run = FALSE) {
+skill_run <- function(skill, args, ctx = list(), timeout = 30L,
+                      dry_run = FALSE) {
     args <- args %||% list()
     start_time <- Sys.time()
 
@@ -79,7 +79,8 @@ skill_run <- function (skill, args, ctx = list(), timeout = 30L,
     if (length(required) > 0) {
         missing <- setdiff(unlist(required), names(args))
         if (length(missing) > 0) {
-            result <- err(paste("Missing required parameters:", paste(missing, collapse = ", ")))
+            result <- err(paste("Missing required parameters:",
+                                paste(missing, collapse = ", ")))
             log_tool_result(skill$name, success = FALSE, elapsed_ms = 0)
             return(result)
         }
@@ -103,26 +104,28 @@ skill_run <- function (skill, args, ctx = list(), timeout = 30L,
     # Execute with optional timeout
     if (!is.null(timeout) && timeout > 0) {
         result <- tryCatch({
-                setTimeLimit(cpu = timeout, elapsed = timeout, transient = TRUE)
-                on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
-                skill$handler(args, ctx)
-            }, error = function (e) {
-                if (grepl("time limit|elapsed time", e$message, ignore.case = TRUE)) {
-                    log_error(sprintf("Skill timed out after %d seconds", timeout),
-                        error_type = "timeout", tool = skill$name)
-                    err(sprintf("Skill timed out after %d seconds", timeout))
-                } else {
-                    log_error(e$message, error_type = "skill_error", tool = skill$name)
-                    err(paste("Skill error:", e$message))
-                }
-            })
-    } else {
-        result <- tryCatch(
-            skill$handler(args, ctx),
-            error = function (e) {
-                log_error(e$message, error_type = "skill_error", tool = skill$name)
+            setTimeLimit(cpu = timeout, elapsed = timeout, transient = TRUE)
+            on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
+            skill$handler(args, ctx)
+        }, error = function(e) {
+            if (grepl("time limit|elapsed time", e$message,
+                      ignore.case = TRUE)) {
+                log_error(sprintf("Skill timed out after %d seconds", timeout),
+                          error_type = "timeout", tool = skill$name)
+                err(sprintf("Skill timed out after %d seconds", timeout))
+            } else {
+                log_error(e$message, error_type = "skill_error",
+                          tool = skill$name)
                 err(paste("Skill error:", e$message))
             }
+        })
+    } else {
+        result <- tryCatch(
+                           skill$handler(args, ctx),
+                           error = function(e) {
+            log_error(e$message, error_type = "skill_error", tool = skill$name)
+            err(paste("Skill error:", e$message))
+        }
         )
     }
 
@@ -130,12 +133,12 @@ skill_run <- function (skill, args, ctx = list(), timeout = 30L,
     elapsed_ms <- as.numeric(difftime(Sys.time(), start_time, units = "secs")) * 1000
     success <- !is.null(result$isError) && !result$isError
     result_lines <- if (!is.null(result$content[[1]]$text)) {
-        length(strsplit(result$content[[1]]$text, "\n") [[1]])
+        length(strsplit(result$content[[1]]$text, "\n")[[1]])
     } else {
         NULL
     }
     log_tool_result(skill$name, success = success, result_lines = result_lines,
-        elapsed_ms = round(elapsed_ms))
+                    elapsed_ms = round(elapsed_ms))
 
     # Add trace entry if session context available
     if (!is.null(ctx$session_id)) {
@@ -145,15 +148,15 @@ skill_run <- function (skill, args, ctx = list(), timeout = 30L,
             ""
         }
         trace_add(
-            session_id = ctx$session_id,
-            tool = skill$name,
-            args = args,
-            result = result_text,
-            success = success,
-            elapsed_ms = round(elapsed_ms),
-            approved_by = ctx$approved_by,
-            turn = ctx$turn,
-            agent_id = ctx$agent_id %||% "main"
+                  session_id = ctx$session_id,
+                  tool = skill$name,
+                  args = args,
+                  result = result_text,
+                  success = success,
+                  elapsed_ms = round(elapsed_ms),
+                  approved_by = ctx$approved_by,
+                  turn = ctx$turn,
+                  agent_id = ctx$agent_id %||% "main"
         )
     }
 
@@ -168,7 +171,7 @@ skill_run <- function (skill, args, ctx = list(), timeout = 30L,
 #' @param args Arguments to validate
 #' @return List with ok (logical) and message (character if error)
 #' @noRd
-validate_skill_args <- function (skill, args) {
+validate_skill_args <- function(skill, args) {
     props <- skill$inputSchema$properties
     if (is.null(props) || length(props) == 0) {
         return(list(ok = TRUE))
@@ -187,27 +190,28 @@ validate_skill_args <- function (skill, args) {
         # Check enum constraint
         if (!is.null(prop$enum) && !value %in% prop$enum) {
             return(list(
-                    ok = FALSE,
-                    message = sprintf("Parameter '%s' must be one of: %s",
+                        ok = FALSE,
+                        message = sprintf("Parameter '%s' must be one of: %s",
                         name, paste(prop$enum, collapse = ", "))
                 ))
         }
 
         # Basic type checking
         type_ok <- switch(expected_type,
-            "string" = is.character(value),
-            "integer" = is.numeric(value) && (is.integer(value) || value == as.integer(value)),
-            "number" = is.numeric(value),
-            "boolean" = is.logical(value),
-            "array" = is.list(value) || is.vector(value),
-            "object" = is.list(value),
-            TRUE# Unknown type, allow
+                          "string" = is.character(value),
+                          "integer" = is.numeric(value) && (is.integer(value) ||
+                          value == as.integer(value)),
+                          "number" = is.numeric(value),
+                          "boolean" = is.logical(value),
+                          "array" = is.list(value) || is.vector(value),
+                          "object" = is.list(value),
+                          TRUE # Unknown type, allow
         )
 
         if (!type_ok) {
             return(list(
-                    ok = FALSE,
-                    message = sprintf("Parameter '%s' should be %s, got %s",
+                        ok = FALSE,
+                        message = sprintf("Parameter '%s' should be %s, got %s",
                         name, expected_type, class(value)[1])
                 ))
         }
@@ -224,10 +228,10 @@ validate_skill_args <- function (skill, args) {
 #' @param args Arguments
 #' @return Character string preview
 #' @noRd
-format_dry_run_preview <- function (skill, args) {
+format_dry_run_preview <- function(skill, args) {
     lines <- c(
-        sprintf("[DRY RUN] Would execute: %s", skill$name),
-        sprintf("Description: %s", skill$description)
+               sprintf("[DRY RUN] Would execute: %s", skill$name),
+               sprintf("Description: %s", skill$description)
     )
 
     if (length(args) > 0) {
@@ -260,30 +264,30 @@ format_dry_run_preview <- function (skill, args) {
 #' @param args Tool arguments
 #' @return Preview hint string or NULL
 #' @noRd
-get_dry_run_hint <- function (tool_name, args) {
+get_dry_run_hint <- function(tool_name, args) {
     switch(tool_name,
-        "write_file" = {
-            if (!is.null(args$path)) {
-                sprintf("Would write %d chars to: %s",
+           "write_file" = {
+        if (!is.null(args$path)) {
+            sprintf("Would write %d chars to: %s",
                     nchar(args$content %||% ""), args$path)
+        }
+    },
+           "bash" = {
+        if (!is.null(args$command)) {
+            sprintf("Would execute shell command: %s", args$command)
+        }
+    },
+           "run_r" = {
+        if (!is.null(args$code)) {
+            code_preview <- if (nchar(args$code) > 200) {
+                paste0(substr(args$code, 1, 197), "...")
+            } else {
+                args$code
             }
-        },
-        "bash" = {
-            if (!is.null(args$command)) {
-                sprintf("Would execute shell command: %s", args$command)
-            }
-        },
-        "run_r" = {
-            if (!is.null(args$code)) {
-                code_preview <- if (nchar(args$code) > 200) {
-                    paste0(substr(args$code, 1, 197), "...")
-                } else {
-                    args$code
-                }
-                sprintf("Would execute R code:\n%s", code_preview)
-            }
-        },
-        NULL
+            sprintf("Would execute R code:\n%s", code_preview)
+        }
+    },
+           NULL
     )
 }
 
@@ -292,7 +296,7 @@ get_dry_run_hint <- function (tool_name, args) {
 #' @param skill Skill spec from skill_spec()
 #' @return Invisible skill name
 #' @noRd
-register_skill <- function (skill) {
+register_skill <- function(skill) {
     if (is.null(skill$name)) {
         stop("Skill must have a name")
     }
@@ -304,7 +308,7 @@ register_skill <- function (skill) {
 #' @param name Skill name
 #' @return Skill spec or NULL if not found
 #' @noRd
-get_skill <- function (name) {
+get_skill <- function(name) {
     if (exists(name, envir = .skill_registry, inherits = FALSE)) {
         .skill_registry[[name]]
     } else {
@@ -316,7 +320,7 @@ get_skill <- function (name) {
 #'
 #' @return Character vector of skill names
 #' @noRd
-list_skills <- function () {
+list_skills <- function() {
     ls(.skill_registry)
 }
 
@@ -324,7 +328,7 @@ list_skills <- function () {
 #'
 #' @return Invisible NULL
 #' @noRd
-clear_skills <- function () {
+clear_skills <- function() {
     rm(list = ls(.skill_registry), envir = .skill_registry)
     invisible(NULL)
 }
@@ -338,7 +342,7 @@ clear_skills <- function () {
 #' @param pattern File pattern to match (default "*.R")
 #' @return Character vector of loaded file names (invisible)
 #' @noRd
-load_skills <- function (path, pattern = "*.R") {
+load_skills <- function(path, pattern = "*.R") {
     path <- path.expand(path)
     if (!dir.exists(path)) {
         return(invisible(character()))
@@ -355,10 +359,10 @@ load_skills <- function (path, pattern = "*.R") {
 
     for (f in files) {
         tryCatch(
-            source(f, local = skill_env),
-            error = function (e) {
-                warning(sprintf("Failed to load skill from %s: %s", f, e$message))
-            }
+                 source(f, local = skill_env),
+                 error = function(e) {
+            warning(sprintf("Failed to load skill from %s: %s", f, e$message))
+        }
         )
     }
 
@@ -371,16 +375,16 @@ load_skills <- function (path, pattern = "*.R") {
 #'
 #' @return List of tool definitions (name, description, inputSchema)
 #' @noRd
-skills_as_tools <- function () {
+skills_as_tools <- function() {
     skill_names <- list_skills()
-    lapply(skill_names, function (name) {
-            skill <- get_skill(name)
-            list(
-                name = skill$name,
-                description = skill$description,
-                inputSchema = skill$inputSchema
-            )
-        })
+    lapply(skill_names, function(name) {
+        skill <- get_skill(name)
+        list(
+             name = skill$name,
+             description = skill$description,
+             inputSchema = skill$inputSchema
+        )
+    })
 }
 
 #' Call a skill by name
@@ -394,8 +398,8 @@ skills_as_tools <- function () {
 #' @param dry_run If TRUE, validate only without executing
 #' @return Result from skill handler
 #' @noRd
-call_skill <- function (name, args, ctx = list(), timeout = 30L,
-                        dry_run = FALSE) {
+call_skill <- function(name, args, ctx = list(), timeout = 30L,
+                       dry_run = FALSE) {
     skill <- get_skill(name)
     if (is.null(skill)) {
         return(err(paste("Unknown skill:", name)))
@@ -413,7 +417,7 @@ call_skill <- function (name, args, ctx = list(), timeout = 30L,
 #' @param path Path to SKILL.md file
 #' @return List with name, description, metadata, and body
 #' @noRd
-parse_skill_md <- function (path) {
+parse_skill_md <- function(path) {
     if (!file.exists(path)) {
         return(NULL)
     }
@@ -429,32 +433,36 @@ parse_skill_md <- function (path) {
         body <- paste(lines, collapse = "\n")
         body <- gsub("\\{baseDir\\}", dirname(path), body)
         return(list(
-                name = tools::file_path_sans_ext(basename(dirname(path))),
-                description = "",
-                metadata = list(),
-                body = body,
-                path = path
+                    name = tools::file_path_sans_ext(basename(dirname(path))),
+                    description = "",
+                    metadata = list(),
+                    body = body,
+                    path = path
             ))
     }
 
     # Find end of frontmatter
-    end_idx <- which(grepl("^---\\s*$", lines[- 1]))[1] + 1
+    end_idx <- which(grepl("^---\\s*$", lines[-1]))[1] + 1
     if (is.na(end_idx)) {
         # No closing ---, treat as no frontmatter
         body <- paste(lines, collapse = "\n")
         body <- gsub("\\{baseDir\\}", dirname(path), body)
         return(list(
-                name = tools::file_path_sans_ext(basename(dirname(path))),
-                description = "",
-                metadata = list(),
-                body = body,
-                path = path
+                    name = tools::file_path_sans_ext(basename(dirname(path))),
+                    description = "",
+                    metadata = list(),
+                    body = body,
+                    path = path
             ))
     }
 
     # Extract frontmatter and body
     frontmatter_lines <- lines[2:(end_idx - 1)]
-    body_lines <- if (end_idx < length(lines)) lines[(end_idx + 1) :length(lines)] else character()
+    if (end_idx < length(lines)) {
+        body_lines <- lines[(end_idx + 1):length(lines)]
+    } else {
+        body_lines <- character()
+    }
 
     # Parse YAML frontmatter (simple key: value parsing)
     frontmatter <- parse_yaml_simple(frontmatter_lines)
@@ -465,11 +473,11 @@ parse_skill_md <- function (path) {
     body <- gsub("\\{baseDir\\}", skill_dir, body)
 
     list(
-        name = frontmatter$name %||% tools::file_path_sans_ext(basename(dirname(path))),
-        description = frontmatter$description %||% "",
-        metadata = frontmatter$metadata %||% list(),
-        body = body,
-        path = path
+         name = frontmatter$name %||% tools::file_path_sans_ext(basename(dirname(path))),
+         description = frontmatter$description %||% "",
+         metadata = frontmatter$metadata %||% list(),
+         body = body,
+         path = path
     )
 }
 
@@ -480,15 +488,18 @@ parse_skill_md <- function (path) {
 #' @param lines Character vector of YAML lines
 #' @return Named list
 #' @noRd
-parse_yaml_simple <- function (lines) {
+parse_yaml_simple <- function(lines) {
     result <- list()
 
     for (line in lines) {
         # Skip empty lines and comments
-        if (grepl("^\\s*$", line) || grepl("^\\s*#", line)) next
+        if (grepl("^\\s*$", line) || grepl("^\\s*#", line)) {
+            next
+        }
 
         # Match key: value
-        match <- regmatches(line, regexec("^([a-zA-Z_][a-zA-Z0-9_]*):\\s*(.*)$", line)) [[1]]
+        match <- regmatches(line,
+                            regexec("^([a-zA-Z_][a-zA-Z0-9_]*):\\s*(.*)$", line))[[1]]
         if (length(match) == 3) {
             key <- match[2]
             value <- match[3]
@@ -500,7 +511,7 @@ parse_yaml_simple <- function (lines) {
             if (key == "metadata" && grepl("^\\{", value)) {
                 result[[key]] <- tryCatch(
                     jsonlite::fromJSON(value, simplifyVector = FALSE),
-                    error = function (e) list()
+                    error = function(e) list()
                 )
             } else {
                 result[[key]] <- value
@@ -606,7 +617,9 @@ format_skill_docs <- function(names = NULL) {
 
     for (name in names) {
         skill <- get_skill_doc(name)
-        if (is.null(skill)) next
+        if (is.null(skill)) {
+            next
+        }
 
         # Format as markdown section
         header <- sprintf("## Skill: %s", skill$name)
@@ -635,22 +648,23 @@ parse_skill_json <- function(path) {
     }
 
     tryCatch({
-            meta <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+        meta <- jsonlite::fromJSON(path, simplifyVector = FALSE)
 
-            list(
-                name = meta$name %||% basename(dirname(path)),
-                version = meta$version %||% "0.0.0",
-                schema_version = meta$schema_version %||% "1",
-                description = meta$description %||% "",
-                tools = meta$tools %||% list(),
-                dependencies = meta$dependencies %||% list(),
-                author = meta$author,
-                license = meta$license
-            )
-        }, error = function(e) {
-            warning(sprintf("Failed to parse SKILL.json at %s: %s", path, e$message))
-            NULL
-        })
+        list(
+             name = meta$name %||% basename(dirname(path)),
+             version = meta$version %||% "0.0.0",
+             schema_version = meta$schema_version %||% "1",
+             description = meta$description %||% "",
+             tools = meta$tools %||% list(),
+             dependencies = meta$dependencies %||% list(),
+             author = meta$author,
+             license = meta$license
+        )
+    }, error = function(e) {
+        warning(sprintf("Failed to parse SKILL.json at %s: %s", path,
+                        e$message))
+        NULL
+    })
 }
 
 #' Validate a skill package
@@ -695,10 +709,7 @@ validate_skill_package <- function(path) {
         }
     }
 
-    list(
-        valid = length(errors) == 0,
-        errors = errors
-    )
+    list(valid = length(errors) == 0, errors = errors)
 }
 
 #' Install a skill from a path or URL
@@ -720,16 +731,18 @@ skill_install <- function(source, target_dir = NULL, force = FALSE) {
         # For GitHub URLs, try git clone
         if (grepl("github.com", source)) {
             temp_dir <- tempfile("skill_")
-            result <- system2("git", c("clone", "--depth", "1", source, temp_dir),
-                stdout = TRUE, stderr = TRUE)
+            result <- system2("git", c("clone", "--depth", "1", source,
+                                       temp_dir),
+                              stdout = TRUE, stderr = TRUE)
             if (!dir.exists(temp_dir)) {
-                stop("Failed to clone repository: ", paste(result, collapse = "\n"),
-                    call. = FALSE)
+                stop("Failed to clone repository: ", paste(result,
+                        collapse = "\n"),
+                     call. = FALSE)
             }
             source <- temp_dir
         } else {
             stop("URL installation only supported for GitHub repositories",
-                call. = FALSE)
+                 call. = FALSE)
         }
     }
 
@@ -738,8 +751,9 @@ skill_install <- function(source, target_dir = NULL, force = FALSE) {
     # Validate source
     validation <- validate_skill_package(source)
     if (!validation$valid) {
-        stop("Invalid skill package: ", paste(validation$errors, collapse = "; "),
-            call. = FALSE)
+        stop("Invalid skill package: ", paste(validation$errors,
+                collapse = "; "),
+             call. = FALSE)
     }
 
     # Get skill name
@@ -756,7 +770,7 @@ skill_install <- function(source, target_dir = NULL, force = FALSE) {
     if (dir.exists(dest)) {
         if (!force) {
             stop("Skill '", skill_name, "' already installed. Use force=TRUE to overwrite.",
-                call. = FALSE)
+                 call. = FALSE)
         }
         unlink(dest, recursive = TRUE)
     }
@@ -817,55 +831,55 @@ skill_list_installed <- function(skill_dir = NULL) {
 
     if (!dir.exists(skill_dir)) {
         return(data.frame(
-                name = character(),
-                version = character(),
-                description = character(),
-                stringsAsFactors = FALSE
+                          name = character(),
+                          version = character(),
+                          description = character(),
+                          stringsAsFactors = FALSE
             ))
     }
 
     dirs <- list.dirs(skill_dir, recursive = FALSE, full.names = TRUE)
 
     skills <- lapply(dirs, function(d) {
-            json_path <- file.path(d, "SKILL.json")
-            md_path <- file.path(d, "SKILL.md")
+        json_path <- file.path(d, "SKILL.json")
+        md_path <- file.path(d, "SKILL.md")
 
-            if (file.exists(json_path)) {
-                meta <- parse_skill_json(json_path)
-                if (!is.null(meta)) {
-                    return(data.frame(
-                            name = meta$name,
-                            version = meta$version,
-                            description = substr(meta$description, 1, 50),
-                            stringsAsFactors = FALSE
-                        ))
-                }
+        if (file.exists(json_path)) {
+            meta <- parse_skill_json(json_path)
+            if (!is.null(meta)) {
+                return(data.frame(
+                                  name = meta$name,
+                                  version = meta$version,
+                                  description = substr(meta$description, 1, 50),
+                                  stringsAsFactors = FALSE
+                    ))
             }
+        }
 
-            if (file.exists(md_path)) {
-                skill <- parse_skill_md(md_path)
-                if (!is.null(skill)) {
-                    return(data.frame(
-                            name = skill$name,
-                            version = "md",
-                            description = substr(skill$description, 1, 50),
-                            stringsAsFactors = FALSE
-                        ))
-                }
+        if (file.exists(md_path)) {
+            skill <- parse_skill_md(md_path)
+            if (!is.null(skill)) {
+                return(data.frame(
+                                  name = skill$name,
+                                  version = "md",
+                                  description = substr(skill$description, 1, 50),
+                                  stringsAsFactors = FALSE
+                    ))
             }
+        }
 
-            # Directory without valid skill files
-            NULL
-        })
+        # Directory without valid skill files
+        NULL
+    })
 
     skills <- Filter(Negate(is.null), skills)
 
     if (length(skills) == 0) {
         return(data.frame(
-                name = character(),
-                version = character(),
-                description = character(),
-                stringsAsFactors = FALSE
+                          name = character(),
+                          version = character(),
+                          description = character(),
+                          stringsAsFactors = FALSE
             ))
     }
 
@@ -890,25 +904,31 @@ skill_test <- function(path, verbose = TRUE) {
     test_files <- Sys.glob(file.path(path, "test_*.R"))
 
     if (length(test_files) == 0) {
-        if (verbose) message("No test files found")
+        if (verbose) {
+            message("No test files found")
+        }
         return(list(passed = 0L, failed = 0L, errors = character()))
     }
 
-    if (verbose) message(sprintf("Running %d test file(s)...", length(test_files)))
+    if (verbose) {
+        message(sprintf("Running %d test file(s)...", length(test_files)))
+    }
 
     passed <- 0L
     failed <- 0L
     errors <- character()
 
     for (tf in test_files) {
-        if (verbose) message(sprintf("  %s", basename(tf)))
+        if (verbose) {
+            message(sprintf("  %s", basename(tf)))
+        }
 
         result <- tryCatch({
-                source(tf, local = TRUE)
-                list(ok = TRUE)
-            }, error = function(e) {
-                list(ok = FALSE, error = e$message)
-            })
+            source(tf, local = TRUE)
+            list(ok = TRUE)
+        }, error = function(e) {
+            list(ok = FALSE, error = e$message)
+        })
 
         if (result$ok) {
             passed <- passed + 1L
@@ -947,7 +967,7 @@ format_skill_list <- function(skills) {
     for (i in seq_len(nrow(skills))) {
         s <- skills[i,]
         lines <- c(lines, sprintf("  %s (v%s) - %s",
-                s$name, s$version, s$description))
+                                  s$name, s$version, s$description))
     }
 
     paste(lines, collapse = "\n")

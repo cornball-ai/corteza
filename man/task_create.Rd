@@ -3,14 +3,8 @@
 \alias{task_create}
 \title{Create a new scheduled task}
 \usage{
-task_create(
-  name,
-  prompt,
-  schedule = NULL,
-  description = NULL,
-  notification_sink = "console",
-  agent_id = "main"
-)
+task_create(name, prompt, schedule = NULL, description = NULL,
+            notification_sink = "console", agent_id = "main")
 }
 \arguments{
 \item{name}{Task name}
