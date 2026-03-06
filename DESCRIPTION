@@ -1,6 +1,6 @@
 Package: llamaR
 Title: CLI-First AI Agent Runtime for R Built on MCP
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: person("Troy", "Hernandez", role = c("aut", "cre"),
                   email = "troy@cornball.ai")
 Description: An interactive CLI agent that connects to LLMs (Anthropic, OpenAI,
