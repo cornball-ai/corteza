@@ -11,12 +11,14 @@ files <- llamaR:::list_context_files(testdir)
 expect_equal(length(files), 0)
 
 # Test load_context with no project files
-# Note: May still contain global files from ~/.llamar/workspace/ if they exist
+# Note: May still contain global files from ~/.llamar/workspace/ or
+# package skill docs (from basalt) if available
 ctx <- llamaR:::load_context(testdir)
 workspace_dir <- llamaR:::get_workspace_dir()
 has_global_files <- any(file.exists(file.path(workspace_dir, llamaR:::global_context_files())))
-if (has_global_files) {
-    # Global files exist, so context won't be NULL
+has_basalt <- requireNamespace("basalt", quietly = TRUE)
+if (has_global_files || has_basalt) {
+    # Global files or package docs exist, so context won't be NULL
     expect_true(is.character(ctx))
 } else {
     expect_null(ctx)

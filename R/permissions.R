@@ -4,7 +4,7 @@
 #' Default dangerous tools (require approval by default)
 #' @noRd
 default_dangerous_tools <- function() {
-    c("bash", "run_r", "run_r_script", "write_file")
+    c("bash", "run_r", "run_r_script", "base::writeLines")
 }
 
 #' Default denied paths for filesystem sandboxing

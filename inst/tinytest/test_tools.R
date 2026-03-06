@@ -12,15 +12,22 @@ for (tool in tools) {
     expect_true("inputSchema" %in% names(tool))
 }
 
-# Test specific tools exist
+# Test built-in tools still exist
 tool_names <- sapply(tools, `[[`, "name")
-expect_true("read_file" %in% tool_names)
-expect_true("write_file" %in% tool_names)
-expect_true("list_files" %in% tool_names)
 expect_true("run_r" %in% tool_names)
 expect_true("bash" %in% tool_names)
 expect_true("r_help" %in% tool_names)
-expect_true("git_status" %in% tool_names)
+expect_true("grep_files" %in% tool_names)
+
+# Test removed tools are gone
+expect_false("read_file" %in% tool_names)
+expect_false("write_file" %in% tool_names)
+expect_false("list_files" %in% tool_names)
+expect_false("git_status" %in% tool_names)
+expect_false("fetch_url" %in% tool_names)
+expect_false("installed_packages" %in% tool_names)
+expect_false("read_csv" %in% tool_names)
+expect_false("chat" %in% tool_names)
 
 # Test ok/err helpers
 ok_result <- llamaR:::ok("test")
@@ -33,3 +40,9 @@ expect_true(is.list(err_result))
 expect_true(err_result$isError)
 expect_equal(err_result$content[[1]]$text, "error")
 
+# Test dynamic tool categories
+cats <- llamaR:::get_tool_categories()
+expect_true("code" %in% names(cats))
+expect_true("run_r" %in% cats$code)
+expect_true("search" %in% names(cats))
+expect_true("grep_files" %in% cats$search)

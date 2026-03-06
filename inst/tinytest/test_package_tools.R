@@ -77,28 +77,64 @@ expect_equal(params3$x$description, "The input value")
 expect_equal(params3$y$description, "Enable verbose mode")
 expect_equal(params3$z$description, "")  # not in help
 
-# --- make_pkg_handler ---
+# --- make_pkg_handler: silent return value ---
 
-# Use a known base-adjacent package (jsonlite is in Imports)
-handler <- llamaR:::make_pkg_handler("jsonlite", "toJSON")
-result <- handler(list(x = list(a = 1)), list())
+# readLines returns silently - handler should capture via print(val)
+tmp <- tempfile()
+writeLines(c("hello", "world"), tmp)
+handler <- llamaR:::make_pkg_handler("base", "readLines")
+result <- handler(list(con = tmp), list())
 expect_true(!is.null(result$content))
-# Should contain JSON output
-expect_true(grepl("\\{", result$content[[1]]$text))
+expect_true(grepl("hello", result$content[[1]]$text))
+expect_true(grepl("world", result$content[[1]]$text))
 
-# --- package_as_skills (integration) ---
+# --- make_pkg_handler: NULL return (side-effect function) ---
 
-# Register jsonlite as skills
+handler2 <- llamaR:::make_pkg_handler("base", "writeLines")
+tmp2 <- tempfile()
+result2 <- handler2(list(text = "test output", con = tmp2), list())
+expect_true(grepl("OK: base::writeLines completed", result2$content[[1]]$text))
+expect_equal(readLines(tmp2), "test output")
+unlink(c(tmp, tmp2))
+
+# --- make_pkg_handler: printed output ---
+
+handler3 <- llamaR:::make_pkg_handler("jsonlite", "toJSON")
+result3 <- handler3(list(x = list(a = 1)), list())
+expect_true(!is.null(result3$content))
+expect_true(grepl("\\{", result3$content[[1]]$text))
+
+# --- package_as_skills: selective loading (functions param) ---
+
+llamaR:::clear_skills()
+registered <- llamaR:::package_as_skills("base",
+    functions = c("readLines", "writeLines"))
+expect_equal(length(registered), 2)
+expect_true("base::readLines" %in% registered)
+expect_true("base::writeLines" %in% registered)
+# Should NOT have registered other base exports
+expect_true(is.null(llamaR:::get_skill("base::list.files")))
+
+# --- package_as_skills: non-existent functions filtered ---
+
+llamaR:::clear_skills()
+registered2 <- llamaR:::package_as_skills("base",
+    functions = c("readLines", "nonexistent_fn_xyz"))
+expect_equal(length(registered2), 1)
+expect_true("base::readLines" %in% registered2)
+
+# --- package_as_skills: full package ---
+
 llamaR:::clear_skills()
 llamaR:::register_builtin_skills()
 n_before <- length(llamaR:::list_skills())
 
-registered <- llamaR:::package_as_skills("jsonlite")
+registered3 <- llamaR:::package_as_skills("jsonlite")
 n_after <- length(llamaR:::list_skills())
 
 expect_true(n_after > n_before)
-expect_true("jsonlite::toJSON" %in% registered)
-expect_true("jsonlite::fromJSON" %in% registered)
+expect_true("jsonlite::toJSON" %in% registered3)
+expect_true("jsonlite::fromJSON" %in% registered3)
 
 # Verify a registered skill has correct structure
 skill <- llamaR:::get_skill("jsonlite::toJSON")
@@ -108,6 +144,25 @@ expect_equal(skill$inputSchema$type, "object")
 
 # Non-installed package errors
 expect_error(llamaR:::package_as_skills("nonexistent_pkg_12345"))
+
+# --- load_skill_packages ---
+
+llamaR:::clear_skills()
+config <- list(skill_packages = list(
+    list(package = "base", functions = c("readLines", "writeLines")),
+    "jsonlite"
+))
+llamaR:::load_skill_packages(config)
+expect_true(!is.null(llamaR:::get_skill("base::readLines")))
+expect_true(!is.null(llamaR:::get_skill("base::writeLines")))
+expect_true(!is.null(llamaR:::get_skill("jsonlite::toJSON")))
+
+# --- dynamic tool categories after package loading ---
+
+cats <- llamaR:::get_tool_categories()
+expect_true("base" %in% names(cats))
+expect_true("base::readLines" %in% cats$base)
+expect_true("jsonlite" %in% names(cats))
 
 # Clean up
 llamaR:::clear_skills()

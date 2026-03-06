@@ -15,7 +15,7 @@
 #' @param pkg Package name (must be installed)
 #' @return Invisible character vector of registered tool names
 #' @noRd
-package_as_skills <- function(pkg) {
+package_as_skills <- function(pkg, functions = NULL) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
         stop(sprintf("Package '%s' not installed", pkg), call. = FALSE)
     }
@@ -32,6 +32,15 @@ package_as_skills <- function(pkg) {
         fn_names <- Filter(function(nm) {
             is.function(get(nm, envir = ns))
         }, all_exports)
+    }
+
+    # Filter to requested functions if specified
+    if (!is.null(functions)) {
+        fn_names <- intersect(functions, fn_names)
+        if (length(fn_names) == 0) {
+            warning(sprintf("No matching exports found in '%s'", pkg))
+            return(invisible(character()))
+        }
     }
 
     ns <- getNamespace(pkg)
@@ -143,13 +152,18 @@ parse_basalt_params <- function(help_md) {
 make_pkg_handler <- function(pkg, fn_name) {
     function(args, ctx) {
         fn <- getExportedValue(pkg, fn_name)
-        result <- tryCatch({
-            out <- capture.output(do.call(fn, args))
-            paste(out, collapse = "\n")
+        tryCatch({
+            printed <- capture.output(val <- do.call(fn, args))
+            if (length(printed) > 0 && any(nchar(printed) > 0)) {
+                ok(paste(printed, collapse = "\n"))
+            } else if (is.null(val)) {
+                ok(sprintf("OK: %s::%s completed", pkg, fn_name))
+            } else {
+                ok(paste(capture.output(print(val)), collapse = "\n"))
+            }
         }, error = function(e) {
-            paste("Error:", e$message)
+            ok(paste("Error:", e$message))
         })
-        ok(result)
     }
 }
 
@@ -198,5 +212,96 @@ extract_rd_title <- function(help_md) {
         }
     }
     NULL
+}
+
+#' Load skill packages from config
+#'
+#' Processes the skill_packages config entry. Supports two formats:
+#' - String: load all exports from the package
+#' - List with package + functions: selective loading
+#'
+#' @param config Config list from load_config()
+#' @return Invisible NULL
+#' @noRd
+load_skill_packages <- function(config) {
+    specs <- config$skill_packages %||% list()
+    for (spec in specs) {
+        tryCatch({
+            if (is.character(spec)) {
+                package_as_skills(spec)
+            } else {
+                package_as_skills(spec$package, functions = spec$functions)
+            }
+        }, error = function(e) {
+            pkg_name <- if (is.character(spec)) spec else spec$package
+            message(sprintf("  Skipping %s: %s", pkg_name, e$message))
+        })
+    }
+    invisible(NULL)
+}
+
+#' Format package documentation for context injection
+#'
+#' Generates markdown documentation for skill packages to inject into
+#' the system prompt. For selective loads, includes per-function docs.
+#' For whole-package loads, includes only the package summary.
+#'
+#' @param config Config list from load_config()
+#' @return Character string with formatted docs, or NULL
+#' @noRd
+format_pkg_skill_docs <- function(config) {
+    if (!requireNamespace("basalt", quietly = TRUE)) {
+        return(NULL)
+    }
+
+    specs <- config$skill_packages %||% list()
+    if (length(specs) == 0) {
+        return(NULL)
+    }
+
+    parts <- character()
+    for (spec in specs) {
+        if (is.character(spec)) {
+            pkg <- spec
+            fns <- NULL
+        } else {
+            pkg <- spec$package
+            fns <- spec$functions
+        }
+
+        if (!requireNamespace(pkg, quietly = TRUE)) {
+            next
+        }
+
+        if (!is.null(fns)) {
+            # Selective: per-function docs
+            for (fn in fns) {
+                doc <- tryCatch(
+                                basalt::pkg_help(fn, pkg),
+                                error = function(e) NULL
+                )
+                if (!is.null(doc)) {
+                    parts <- c(parts, sprintf("### %s::%s", pkg, fn),
+                               "", doc, "")
+                }
+            }
+        } else {
+            # Whole package: summary only
+            doc <- tryCatch(
+                            paste(capture.output(basalt::pkg_exports(pkg)),
+                                  collapse = "\n"),
+                            error = function(e) NULL
+            )
+            if (!is.null(doc)) {
+                parts <- c(parts, sprintf("### %s (all exports)", pkg),
+                           "", doc, "")
+            }
+        }
+    }
+
+    if (length(parts) == 0) {
+        return(NULL)
+    }
+    paste(parts, collapse = "\n")
 }
 
