@@ -64,6 +64,10 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL) {
     load_skill_docs(path.expand("~/.llamar/skills"))
     load_skill_docs(file.path(getwd(), ".llamar", "skills"))
 
+    # Load skill packages from config
+    config <- load_config(getwd())
+    load_skill_packages(config)
+
     # Set tool filter option
     options(llamar.tools = tools)
 

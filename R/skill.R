@@ -266,10 +266,9 @@ format_dry_run_preview <- function(skill, args) {
 #' @noRd
 get_dry_run_hint <- function(tool_name, args) {
     switch(tool_name,
-           "write_file" = {
-        if (!is.null(args$path)) {
-            sprintf("Would write %d chars to: %s",
-                    nchar(args$content %||% ""), args$path)
+           "base::writeLines" = {
+        if (!is.null(args$text)) {
+            sprintf("Would write to: %s", args$con %||% "(stdout)")
         }
     },
            "bash" = {

@@ -107,7 +107,7 @@ load_config <- function(cwd = getwd()) {
     }
     if (is.null(config$dangerous_tools)) {
         config$dangerous_tools <- c("bash", "run_r", "run_r_script",
-                                    "write_file")
+                                    "base::writeLines")
     }
     # Per-tool permissions (overrides dangerous_tools)
     # config$permissions = list(bash = "deny", read_file = "allow")
@@ -133,6 +133,17 @@ load_config <- function(cwd = getwd()) {
     # Skill paths (additional directories to load skills from)
     if (is.null(config$skill_paths)) {
         config$skill_paths <- character()
+    }
+
+    # Default skill packages (R packages registered as tools)
+    if (is.null(config$skill_packages)) {
+        config$skill_packages <- list(
+                                      list(package = "base", functions = c("readLines", "writeLines",
+                    "list.files", "file.exists", "file.copy", "file.remove",
+                    "dir.create", "Sys.glob")),
+                                      list(package = "utils", functions = c("installed.packages",
+                    "read.csv", "head", "tail"))
+        )
     }
 
     # Default timeout for skill execution (seconds)
@@ -169,7 +180,8 @@ load_config <- function(cwd = getwd()) {
         sub$allow_nested <- FALSE
     }
     if (is.null(sub$default_tools)) {
-        sub$default_tools <- c("read_file", "write_file", "bash", "chat")
+        sub$default_tools <- c("base::readLines", "base::writeLines",
+                               "bash", "grep_files")
     }
     if (is.null(sub$base_port)) {
         sub$base_port <- 7851L

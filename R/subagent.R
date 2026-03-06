@@ -9,7 +9,8 @@ SUBAGENT_DEFAULTS <- list(
                           max_concurrent = 3L,
                           timeout_minutes = 30L,
                           allow_nested = FALSE,
-                          default_tools = c("read_file", "write_file", "bash", "chat"),
+                          default_tools = c("base::readLines", "base::writeLines", "bash",
+        "grep_files"),
                           base_port = 7851L
 )
 

@@ -1,17 +1,34 @@
 # MCP Tool Definitions
 # Schema definitions for all tools exposed by the MCP server
 
-# Tool categories for filtering
-tool_categories <- list(
-                        file = c("read_file", "write_file", "list_files", "grep_files"),
-                        code = c("run_r", "run_r_script", "bash"),
-                        r = c("r_help", "installed_packages"),
-                        data = c("read_csv"),
-                        web = c("web_search", "fetch_url"),
-                        git = c("git_status", "git_diff", "git_log"),
-                        chat = c("chat", "chat_models"),
-                        memory = c("memory_store", "memory_recall", "memory_get")
+# Built-in tool categories for filtering
+.builtin_categories <- list(
+                            code = c("run_r", "run_r_script", "bash"),
+                            search = c("grep_files"),
+                            web = c("web_search"),
+                            memory = c("memory_store", "memory_recall", "memory_get"),
+                            r = c("r_help"),
+                            subagent = c("spawn_subagent", "query_subagent",
+        "list_subagents", "kill_subagent")
 )
+
+#' Get tool categories (built-in + package-derived)
+#'
+#' Built-in tools keep named categories. Package tools are auto-categorized
+#' by package name (e.g., base::readLines -> "base" category).
+#'
+#' @return Named list of category -> tool name vectors
+#' @noRd
+get_tool_categories <- function() {
+    cats <- .builtin_categories
+    all_names <- list_skills()
+    pkg_tools <- all_names[grepl("::", all_names, fixed = TRUE)]
+    for (tool_name in pkg_tools) {
+        pkg <- sub("::.*", "", tool_name)
+        cats[[pkg]] <- c(cats[[pkg]], tool_name)
+    }
+    cats
+}
 
 #' Get list of available MCP tools
 #'
@@ -43,14 +60,15 @@ get_tools <- function(filter = NULL) {
         return(all_tools)
     }
     if ("core" %in% filter) {
-        filter <- c(filter[filter != "core"], "file", "code", "git")
+        filter <- c(filter[filter != "core"], "base", "code", "search")
     }
 
     # Expand categories to tool names
+    cats <- get_tool_categories()
     tool_names <- character()
     for (f in filter) {
-        if (f %in% names(tool_categories)) {
-            tool_names <- c(tool_names, tool_categories[[f]])
+        if (f %in% names(cats)) {
+            tool_names <- c(tool_names, cats[[f]])
         } else {
             tool_names <- c(tool_names, f)
         }

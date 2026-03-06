@@ -79,6 +79,19 @@ load_context <- function(cwd = getwd()) {
         )
     }
 
+    # Add package tool documentation
+    config <- load_config(cwd)
+    pkg_docs <- format_pkg_skill_docs(config)
+    if (!is.null(pkg_docs) && nchar(pkg_docs) > 0) {
+        parts <- c(parts,
+                   "# Package Tools",
+                   "",
+                   "Documentation for R package functions available as tools.",
+                   "",
+                   pkg_docs
+        )
+    }
+
     if (length(parts) <= 4 && length(contents) == 0) {
         # Only preamble, no actual content
         return(NULL)

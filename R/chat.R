@@ -59,6 +59,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
     load_skills(file.path(cwd, ".llamar", "skills"))
     load_skill_docs(path.expand("~/.llamar/skills"))
     load_skill_docs(file.path(cwd, ".llamar", "skills"))
+
+    # Load skill packages from config
+    load_skill_packages(config)
+
     options(llamar.tools = tools)
 
     # Load context + build tool list

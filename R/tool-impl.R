@@ -1,57 +1,7 @@
 # MCP Tool Implementations
 # Actual implementations of tools exposed by the MCP server
 
-# File operations ----
-
-tool_read_file <- function(args) {
-    path <- path.expand(args$path)
-    if (!file.exists(path)) {
-        return(err(paste("File not found:", path)))
-    }
-
-    lines <- readLines(path, warn = FALSE)
-    if (!is.null(args$lines)) {
-        lines <- head(lines, args$lines)
-    }
-    ok(paste(lines, collapse = "\n"))
-}
-
-tool_write_file <- function(args) {
-    path <- path.expand(args$path)
-    content <- args$content
-
-    tryCatch({
-        writeLines(content, path)
-        ok(paste("Written", nchar(content), "chars to", path))
-    }, error = function(e) {
-        err(paste("Write failed:", e$message))
-    })
-}
-
-tool_list_files <- function(args) {
-    path <- path.expand(args$path %||% ".")
-    pattern <- args$pattern
-    recursive <- isTRUE(args$recursive)
-
-    if (!dir.exists(path)) {
-        return(err(paste("Directory not found:", path)))
-    }
-
-    if (!is.null(pattern)) {
-        if (recursive) {
-            files <- Sys.glob(file.path(path, "**", pattern))
-        } else {
-            files <- Sys.glob(file.path(path, pattern))
-        }
-    } else {
-        files <- list.files(path, full.names = TRUE, recursive = recursive)
-    }
-
-    if (length(files) == 0) {
-        return(ok("No files found"))
-    }
-    ok(paste(files, collapse = "\n"))
-}
+# Search ----
 
 tool_grep_files <- function(args) {
     pattern <- args$pattern
@@ -170,57 +120,6 @@ tool_r_help <- function(args) {
     })
 }
 
-tool_installed_packages <- function(args) {
-    pattern <- args$pattern
-
-    pkgs <- rownames(installed.packages())
-    if (!is.null(pattern)) {
-        pkgs <- grep(pattern, pkgs, value = TRUE, ignore.case = TRUE)
-    }
-
-    if (length(pkgs) == 0) {
-        return(ok("No packages found"))
-    }
-    ok(paste(sort(pkgs), collapse = "\n"))
-}
-
-# Data ----
-
-tool_read_csv <- function(args) {
-    path <- path.expand(args$path)
-    n_head <- args$head %||% 10
-    show_summary <- args$summary %||% TRUE
-
-    if (!file.exists(path)) {
-        return(err(paste("File not found:", path)))
-    }
-
-    tryCatch({
-        df <- read.csv(path)
-        parts <- character()
-
-        # Dimensions
-        parts <- c(parts,
-                   sprintf("Dimensions: %d rows x %d columns", nrow(df), ncol(df)))
-        parts <- c(parts,
-                   sprintf("Columns: %s", paste(names(df), collapse = ", ")))
-        parts <- c(parts, "")
-
-        # Summary
-        if (show_summary) {
-            parts <- c(parts, "Summary:", capture.output(summary(df)), "")
-        }
-
-        # Head
-        parts <- c(parts, sprintf("First %d rows:", min(n_head, nrow(df))))
-        parts <- c(parts, capture.output(print(head(df, n_head))))
-
-        ok(paste(parts, collapse = "\n"))
-    }, error = function(e) {
-        err(paste("CSV read error:", e$message))
-    })
-}
-
 # Web ----
 
 tool_web_search <- function(args) {
@@ -281,64 +180,6 @@ tool_web_search <- function(args) {
     }, error = function(e) {
         err(paste("Search error:", e$message))
     })
-}
-
-tool_fetch_url <- function(args) {
-    url <- args$url
-    method <- toupper(args$method %||% "GET")
-
-    tryCatch({
-        con <- url(url, method = method)
-        on.exit(close(con))
-        content <- paste(readLines(con, warn = FALSE), collapse = "\n")
-        ok(content)
-    }, error = function(e) {
-        err(paste("Fetch error:", e$message))
-    })
-}
-
-# Git ----
-
-tool_git_status <- function(args) {
-    path <- path.expand(args$path %||% ".")
-    cmd <- sprintf("git -C %s status --short", shQuote(path))
-    result <- tryCatch(
-                       system(cmd, intern = TRUE),
-                       error = function(e) paste("Error:", e$message)
-    )
-    if (length(result) == 0) {
-        result <- "Working tree clean"
-    }
-    ok(paste(result, collapse = "\n"))
-}
-
-tool_git_diff <- function(args) {
-    path <- path.expand(args$path %||% ".")
-    if (isTRUE(args$staged)) {
-        staged <- "--staged"
-    } else {
-        staged <- ""
-    }
-    cmd <- sprintf("git -C %s diff %s", shQuote(path), staged)
-    result <- tryCatch(
-                       system(cmd, intern = TRUE),
-                       error = function(e) paste("Error:", e$message)
-    )
-    if (length(result) == 0) {
-        result <- "No changes"
-    }
-    ok(paste(result, collapse = "\n"))
-}
-
-tool_git_log <- function(args) {
-    path <- path.expand(args$path %||% ".")
-    n <- args$n %||% 10
-    cmd <- sprintf("git -C %s log --oneline -n %d", shQuote(path), n)
-    result <- tryCatch(
-                       system(cmd, intern = TRUE),
-                       error = function(e) paste("Error:", e$message)
-    )
-    ok(paste(result, collapse = "\n"))
 }
 
 # Memory ----
@@ -429,68 +270,6 @@ tool_memory_get <- function(args) {
     ok(paste(lines[from:end], collapse = "\n"))
 }
 
-# Chat (llm.api) ----
-
-tool_chat <- function(args) {
-    if (!requireNamespace("llm.api", quietly = TRUE)) {
-        return(err("llm.api not installed. Install with: install.packages('llm.api')"))
-    }
-
-    prompt <- args$prompt
-    provider <- args$provider %||% "ollama"
-    model <- args$model
-    system_prompt <- args$system
-    temperature <- args$temperature %||% 0.7
-
-    tryCatch({
-        result <- llm.api::chat(
-                                prompt = prompt,
-                                provider = provider,
-                                model = model,
-                                system = system_prompt,
-                                temperature = temperature,
-                                stream = FALSE
-        )
-        ok(result$content)
-    }, error = function(e) {
-        err(paste("Chat error:", e$message))
-    })
-}
-
-tool_chat_models <- function(args) {
-    if (!requireNamespace("llm.api", quietly = TRUE)) {
-        return(err("llm.api not installed"))
-    }
-
-    provider <- args$provider %||% "ollama"
-
-    tryCatch({
-        if (provider == "ollama") {
-            # Query ollama API for models
-            result <- tryCatch({
-                con <- url("http://localhost:11434/api/tags")
-                on.exit(close(con))
-                data <- jsonlite::fromJSON(paste(readLines(con, warn = FALSE),
-                        collapse = ""))
-                models <- data$models$name
-                if (length(models) == 0) "No models found"
-                else paste(models, collapse = "\n")
-            }, error = function(e) {
-                "Ollama not running or no models installed"
-            })
-            ok(result)
-        } else if (provider == "local") {
-            models <- llm.api::list_local_models()
-            if (length(models) == 0) ok("No local models found")
-            else ok(paste(basename(models), collapse = "\n"))
-        } else {
-            ok(paste("Model listing not supported for provider:", provider))
-        }
-    }, error = function(e) {
-        err(paste("Error listing models:", e$message))
-    })
-}
-
 # Skill Registration ----
 
 #' Register all built-in skills
@@ -501,47 +280,7 @@ tool_chat_models <- function(args) {
 #' @return Invisible character vector of registered skill names
 #' @noRd
 register_builtin_skills <- function() {
-    # File operations
-    register_skill(skill_spec(
-                              name = "read_file",
-                              description = "Read contents of a file",
-                              params = list(
-                path = list(type = "string",
-                            description = "File path to read", required = TRUE),
-                lines = list(type = "integer",
-                             description = "Max lines to read (default: all)")
-            ),
-                              handler = function(args, ctx) tool_read_file(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "write_file",
-                              description = "Write content to a file",
-                              params = list(
-                path = list(type = "string",
-                            description = "File path to write",
-                            required = TRUE),
-                content = list(type = "string",
-                               description = "Content to write",
-                               required = TRUE)
-            ),
-                              handler = function(args, ctx) tool_write_file(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "list_files",
-                              description = "List files in a directory",
-                              params = list(
-                path = list(type = "string", description = "Directory path",
-                            required = TRUE),
-                pattern = list(type = "string",
-                               description = "Glob pattern (optional)"),
-                recursive = list(type = "boolean",
-                                 description = "Search recursively (default: false)")
-            ),
-                              handler = function(args, ctx) tool_list_files(args)
-        ))
-
+    # Search
     register_skill(skill_spec(
                               name = "grep_files",
                               description = "Search file contents with regex pattern",
@@ -607,31 +346,6 @@ register_builtin_skills <- function() {
                               handler = function(args, ctx) tool_r_help(args)
         ))
 
-    register_skill(skill_spec(
-                              name = "installed_packages",
-                              description = "List installed R packages, optionally filtered",
-                              params = list(
-                pattern = list(type = "string",
-                               description = "Regex to filter package names")
-            ),
-                              handler = function(args, ctx) tool_installed_packages(args)
-        ))
-
-    # Data
-    register_skill(skill_spec(
-                              name = "read_csv",
-                              description = "Read a CSV file and return summary or head",
-                              params = list(
-                path = list(type = "string", description = "Path to CSV file",
-                            required = TRUE),
-                head = list(type = "integer",
-                            description = "Number of rows to show (default: 10)"),
-                summary = list(type = "boolean",
-                               description = "Include summary statistics (default: true)")
-            ),
-                              handler = function(args, ctx) tool_read_csv(args)
-        ))
-
     # Web
     register_skill(skill_spec(
                               name = "web_search",
@@ -643,83 +357,6 @@ register_builtin_skills <- function() {
                                    description = "Max results to return (default: 5)")
             ),
                               handler = function(args, ctx) tool_web_search(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "fetch_url",
-                              description = "Fetch content from a URL",
-                              params = list(
-                url = list(type = "string", description = "URL to fetch",
-                           required = TRUE),
-                method = list(type = "string",
-                              description = "HTTP method (default: GET)")
-            ),
-                              handler = function(args, ctx) tool_fetch_url(args)
-        ))
-
-    # Git
-    register_skill(skill_spec(
-                              name = "git_status",
-                              description = "Get git repository status",
-                              params = list(
-                path = list(type = "string",
-                            description = "Repository path (default: .)")
-            ),
-                              handler = function(args, ctx) tool_git_status(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "git_diff",
-                              description = "Show git diff",
-                              params = list(
-                path = list(type = "string",
-                            description = "Repository path (default: .)"),
-                staged = list(type = "boolean",
-                              description = "Show staged changes only")
-            ),
-                              handler = function(args, ctx) tool_git_diff(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "git_log",
-                              description = "Show recent git commits",
-                              params = list(
-                path = list(type = "string",
-                            description = "Repository path (default: .)"),
-                n = list(type = "integer",
-                         description = "Number of commits (default: 10)")
-            ),
-                              handler = function(args, ctx) tool_git_log(args)
-        ))
-
-    # Chat
-    register_skill(skill_spec(
-                              name = "chat",
-                              description = "Chat with an LLM (requires llm.api). Supports ollama, claude, openai providers.",
-                              params = list(
-                prompt = list(type = "string",
-                              description = "The message to send",
-                              required = TRUE),
-                provider = list(type = "string",
-                                description = "Provider: ollama, claude, openai (default: ollama)"),
-                model = list(type = "string",
-                             description = "Model name (default: provider-specific)"),
-                system = list(type = "string",
-                              description = "System prompt (optional)"),
-                temperature = list(type = "number",
-                                   description = "Temperature 0-1 (default: 0.7)")
-            ),
-                              handler = function(args, ctx) tool_chat(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "chat_models",
-                              description = "List available models for chat",
-                              params = list(
-                provider = list(type = "string",
-                                description = "Provider to list models for (default: ollama)")
-            ),
-                              handler = function(args, ctx) tool_chat_models(args)
         ))
 
     # Memory
