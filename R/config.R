@@ -237,6 +237,25 @@ load_config <- function(cwd = getwd()) {
     }
     config$voice <- voice
 
+    # Workspace config (managed runtime state)
+    if (is.null(config$workspace)) {
+        config$workspace <- list()
+    }
+    ws <- config$workspace
+    if (is.null(ws$enabled)) {
+        ws$enabled <- TRUE
+    }
+    if (is.null(ws$budget_chars)) {
+        ws$budget_chars <- 8000L
+    }
+    if (is.null(ws$capture_results)) {
+        ws$capture_results <- TRUE
+    }
+    if (is.null(ws$max_result_size)) {
+        ws$max_result_size <- 50000L
+    }
+    config$workspace <- ws
+
     # Channels config (matches openclaw structure)
     if (is.null(config$channels)) {
         config$channels <- list()

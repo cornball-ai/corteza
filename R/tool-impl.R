@@ -38,12 +38,33 @@ tool_grep_files <- function(args) {
 
 tool_run_r <- function(args) {
     code <- args$code
+
+    # Snapshot globalenv before eval for workspace auto-capture
+    before <- ls(globalenv())
+
     result <- tryCatch({
         out <- capture.output(eval(parse(text = code), envir = globalenv()))
         paste(out, collapse = "\n")
     }, error = function(e) {
         paste("Error:", e$message)
     })
+
+    # Auto-capture new bindings into workspace
+    new_names <- setdiff(ls(globalenv()), before)
+    origin <- list(tool = "run_r", args = args)
+    for (nm in new_names) {
+        val <- get(nm, envir = globalenv())
+        if (object.size(val) < 10e6) {
+            # Detect dependencies via codetools (best-effort)
+            deps <- tryCatch({
+                fn <- eval(parse(text = paste0("function() {", code, "}")))
+                referenced <- codetools::findGlobals(fn)
+                intersect(referenced, ws_names())
+            }, error = function(e) character())
+            ws_put(nm, val, origin = origin, deps = deps)
+        }
+    }
+
     ok(result)
 }
 

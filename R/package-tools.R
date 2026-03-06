@@ -51,7 +51,10 @@ package_as_skills <- function(pkg, functions = NULL) {
 
         # Get help text and parse params
         help_md <- if (has_basalt) {
-            tryCatch(basalt::pkg_help(fn_name, pkg), error = function(e) NULL)
+            tryCatch(
+                     basalt::pkg_help(fn_name, pkg),
+                     error = function(e) NULL
+            )
         }
 
         params <- build_params_from_formals(fn, help_md)
