@@ -140,6 +140,18 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
     log_tool_result(skill$name, success = success, result_lines = result_lines,
                     elapsed_ms = round(elapsed_ms))
 
+    # Capture result into workspace (skip run_r, it handles its own capture)
+    if (skill$name != "run_r" && !is.null(result$content[[1]]$text)) {
+        result_text_ws <- result$content[[1]]$text
+        ws_capture_tool_result(skill$name, args, result_text_ws,
+                               ws_current_turn())
+
+        # File write invalidation
+        if (skill$name == "base::writeLines" && !is.null(args$con)) {
+            ws_invalidate_file(args$con)
+        }
+    }
+
     # Add trace entry if session context available
     if (!is.null(ctx$session_id)) {
         result_text <- if (!is.null(result$content[[1]]$text)) {

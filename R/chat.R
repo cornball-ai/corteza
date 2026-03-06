@@ -80,10 +80,15 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
                                        "(default)"
     )
 
+    # Workspace config
+    ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
+    ws_budget <- config$workspace$budget_chars %||% 8000L
+
     # Tool handler - direct function calls, no MCP
     turn_number <- 0L
     tool_handler <- function(name, args) {
         turn_number <<- turn_number + 1L
+        ws_set_turn(turn_number)
         cat(sprintf("  [%s] ", name))
         start <- Sys.time()
         result <- call_tool(name, args %||% list())
@@ -105,6 +110,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
     set_log_enabled(FALSE)
     on.exit(set_log_enabled(TRUE))
 
+    # Initialize workspace
+    ws_clear()
+
     # REPL
     history <- list()
     n_tools <- length(api_tools)
@@ -117,6 +125,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
             next
         }
         if (trimws(prompt) %in% c("/quit", "/exit", "/q")) {
+            if (ws_enabled) {
+                ws_prune()
+                tryCatch(ws_save(session$sessionId), error = function(e) NULL)
+            }
             cat("Bye.\n")
             break
         }
@@ -134,12 +146,25 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
 
         transcript_append(session, "user", prompt)
 
+        # Enrich system prompt with workspace state
+        enriched_system <- if (ws_enabled) {
+            ws_ctx <- ws_format_context(
+                                        ws_retrieve(prompt, budget_chars = ws_budget))
+            if (nchar(ws_ctx) > 0) {
+                paste(system_prompt, "\n\n", ws_ctx)
+            } else {
+                system_prompt
+            }
+        } else {
+            system_prompt
+        }
+
         result <- tryCatch(
                            llm.api::agent(
                 prompt = prompt,
                 tools = api_tools,
                 tool_handler = tool_handler,
-                system = system_prompt,
+                system = enriched_system,
                 model = model,
                 provider = provider,
                 history = history,

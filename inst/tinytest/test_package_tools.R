@@ -123,13 +123,14 @@ registered2 <- llamaR:::package_as_skills("base",
 expect_equal(length(registered2), 1)
 expect_true("base::readLines" %in% registered2)
 
-# --- package_as_skills: full package ---
+# --- package_as_skills: multiple functions from a package ---
 
 llamaR:::clear_skills()
 llamaR:::register_builtin_skills()
 n_before <- length(llamaR:::list_skills())
 
-registered3 <- llamaR:::package_as_skills("jsonlite")
+registered3 <- llamaR:::package_as_skills("jsonlite",
+    functions = c("toJSON", "fromJSON", "read_json", "write_json"))
 n_after <- length(llamaR:::list_skills())
 
 expect_true(n_after > n_before)
@@ -150,7 +151,7 @@ expect_error(llamaR:::package_as_skills("nonexistent_pkg_12345"))
 llamaR:::clear_skills()
 config <- list(skill_packages = list(
     list(package = "base", functions = c("readLines", "writeLines")),
-    "jsonlite"
+    list(package = "jsonlite", functions = c("toJSON", "fromJSON"))
 ))
 llamaR:::load_skill_packages(config)
 expect_true(!is.null(llamaR:::get_skill("base::readLines")))
