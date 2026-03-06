@@ -3,12 +3,8 @@
 \alias{scheduler_daemon}
 \title{Run the scheduler daemon}
 \usage{
-scheduler_daemon(
-  agent_id = "main",
-  config = NULL,
-  check_interval_secs = 60L,
-  verbose = TRUE
-)
+scheduler_daemon(agent_id = "main", config = NULL, check_interval_secs = 60L,
+                 verbose = TRUE)
 }
 \arguments{
 \item{agent_id}{Agent identifier}

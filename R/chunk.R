@@ -13,10 +13,16 @@ DEFAULT_CHUNK_LIMIT <- 4000L
 #' @param limit Maximum characters per chunk (default: 4000)
 #' @return Character vector of chunks
 #' @noRd
-chunk_text <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
-    if (is.null(text) || nchar(text) == 0) return(character())
-    if (limit <= 0) return(text)
-    if (nchar(text) <= limit) return(text)
+chunk_text <- function(text, limit = DEFAULT_CHUNK_LIMIT) {
+    if (is.null(text) || nchar(text) == 0) {
+        return(character())
+    }
+    if (limit <= 0) {
+        return(text)
+    }
+    if (nchar(text) <= limit) {
+        return(text)
+    }
 
     chunks <- character()
     remaining <- text
@@ -28,7 +34,9 @@ chunk_text <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
         break_idx <- find_break_point(window)
 
         # Fallback: hard break at limit
-        if (break_idx <= 0) break_idx <- limit
+        if (break_idx <= 0) {
+            break_idx <- limit
+        }
 
         chunk <- trimws(substr(remaining, 1, break_idx), "right")
         if (nchar(chunk) > 0) {
@@ -37,8 +45,14 @@ chunk_text <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
 
         # Skip the break character if it's whitespace
         next_char <- substr(remaining, break_idx + 1, break_idx + 1)
-        skip <- if (grepl("\\s", next_char)) 1L else 0L
-        remaining <- trimws(substr(remaining, break_idx + 1 + skip, nchar(remaining)), "left")
+        if (grepl("\\s", next_char)) {
+            skip <- 1L
+        } else {
+            skip <- 0L
+        }
+        remaining <- trimws(substr(remaining, break_idx + 1 + skip,
+                                   nchar(remaining)),
+                            "left")
     }
 
     if (nchar(remaining) > 0) {
@@ -57,19 +71,25 @@ chunk_text <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
 #' @param limit Maximum characters per chunk (default: 4000)
 #' @return Character vector of chunks
 #' @noRd
-chunk_by_paragraph <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
-    if (is.null(text) || nchar(text) == 0) return(character())
-    if (limit <= 0) return(text)
+chunk_by_paragraph <- function(text, limit = DEFAULT_CHUNK_LIMIT) {
+    if (is.null(text) || nchar(text) == 0) {
+        return(character())
+    }
+    if (limit <= 0) {
+        return(text)
+    }
 
     # Normalize line endings
     text <- gsub("\r\n?", "\n", text)
 
     # Split on paragraph boundaries (blank lines)
-    paragraphs <- strsplit(text, "\n\\s*\n+") [[1]]
+    paragraphs <- strsplit(text, "\n\\s*\n+")[[1]]
     paragraphs <- trimws(paragraphs)
     paragraphs <- paragraphs[nchar(paragraphs) > 0]
 
-    if (length(paragraphs) == 0) return(character())
+    if (length(paragraphs) == 0) {
+        return(character())
+    }
 
     chunks <- character()
     current <- ""
@@ -88,7 +108,11 @@ chunk_by_paragraph <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
         }
 
         # Try to add to current chunk
-        sep <- if (nchar(current) > 0) "\n\n" else ""
+        if (nchar(current) > 0) {
+            sep <- "\n\n"
+        } else {
+            sep <- ""
+        }
         candidate <- paste0(current, sep, para)
 
         if (nchar(candidate) <= limit) {
@@ -119,8 +143,8 @@ chunk_by_paragraph <- function (text, limit = DEFAULT_CHUNK_LIMIT) {
 #' @param mode Chunking mode: "length" or "newline" (paragraph)
 #' @return Character vector of chunks
 #' @noRd
-chunk_text_with_mode <- function (text, limit = DEFAULT_CHUNK_LIMIT,
-                                  mode = c("length", "newline")) {
+chunk_text_with_mode <- function(text, limit = DEFAULT_CHUNK_LIMIT,
+                                 mode = c("length", "newline")) {
     mode <- match.arg(mode)
     if (mode == "newline") {
         chunk_by_paragraph(text, limit)
@@ -136,9 +160,11 @@ chunk_text_with_mode <- function (text, limit = DEFAULT_CHUNK_LIMIT,
 #' @param text Text window to scan
 #' @return Index of best break point, or -1 if none found
 #' @noRd
-find_break_point <- function (text) {
+find_break_point <- function(text) {
     n <- nchar(text)
-    if (n == 0) return(- 1L)
+    if (n == 0) {
+        return(-1L)
+    }
 
     # Scan backwards for newline first
     for (i in n:1) {
@@ -154,6 +180,6 @@ find_break_point <- function (text) {
         }
     }
 
-    - 1L
+    -1L
 }
 

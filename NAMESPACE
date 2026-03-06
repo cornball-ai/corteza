@@ -1,5 +1,6 @@
 # tinyrox says don't edit this manually, but it can't stop you!
 
+export(chat)
 export(install_cli)
 export(memory_import_claude)
 export(memory_search_fts)

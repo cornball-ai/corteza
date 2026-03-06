@@ -7,10 +7,10 @@
 #'
 #' @return NULL (runs until client disconnects)
 #' @noRd
-run_stdio <- function () {
+run_stdio <- function() {
     log_msg("llamar MCP server starting (stdio)...")
 
-    send_fn <- function (json) {
+    send_fn <- function(json) {
         cat(json, "\n", sep = "", file = stdout())
         flush(stdout())
     }
@@ -34,7 +34,7 @@ run_stdio <- function () {
 #' @param port Port number to listen on
 #' @return NULL (runs until interrupted)
 #' @noRd
-run_socket <- function (port) {
+run_socket <- function(port) {
     log_msg(sprintf("llamar MCP server starting (socket port %d)...", port))
 
     # Create server socket
@@ -46,8 +46,9 @@ run_socket <- function (port) {
     while (TRUE) {
         # Accept client connection
         client <- tryCatch(
-            socketAccept(server, blocking = TRUE, open = "r+b", timeout = 86400),
-            error = function (e) NULL
+                           socketAccept(server, blocking = TRUE, open = "r+b",
+                                        timeout = 86400),
+                           error = function(e) NULL
         )
 
         if (is.null(client)) {
@@ -59,24 +60,24 @@ run_socket <- function (port) {
 
         send_fn <- function(json) {
             tryCatch(
-                writeLines(json, client),
-                error = function(e) log_msg("Send error:", e$message)
+                     writeLines(json, client),
+                     error = function(e) log_msg("Send error:", e$message)
             )
         }
 
         # Handle client requests
         tryCatch({
-                while (TRUE) {
-                    line <- readLines(client, n = 1, warn = FALSE)
-                    if (length(line) == 0) {
-                        log_msg("Client disconnected")
-                        break
-                    }
-                    process_request(line, send_fn)
+            while (TRUE) {
+                line <- readLines(client, n = 1, warn = FALSE)
+                if (length(line) == 0) {
+                    log_msg("Client disconnected")
+                    break
                 }
-            }, error = function(e) {
-                log_msg("Client error:", e$message)
-            })
+                process_request(line, send_fn)
+            }
+        }, error = function(e) {
+            log_msg("Client error:", e$message)
+        })
 
         tryCatch(close(client), error = function(e) NULL)
     }

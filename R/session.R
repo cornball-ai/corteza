@@ -17,7 +17,7 @@ DEFAULT_AGENT_ID <- "main"
 #' @param agent_id Agent ID (default: "main")
 #' @return Path to sessions directory
 #' @noRd
-sessions_dir <- function (agent_id = DEFAULT_AGENT_ID) {
+sessions_dir <- function(agent_id = DEFAULT_AGENT_ID) {
     file.path(path.expand("~/.llamar"), "agents", agent_id, "sessions")
 }
 
@@ -25,22 +25,23 @@ sessions_dir <- function (agent_id = DEFAULT_AGENT_ID) {
 #' @param agent_id Agent ID
 #' @return Path to sessions.json
 #' @noRd
-sessions_store_path <- function (agent_id = DEFAULT_AGENT_ID) {
+sessions_store_path <- function(agent_id = DEFAULT_AGENT_ID) {
     file.path(sessions_dir(agent_id), "sessions.json")
 }
 
 #' Generate a new session ID (UUID format like openclaw)
 #' @return Character string UUID
 #' @noRd
-session_id <- function () {
+session_id <- function() {
     # Generate UUID v4
     hex <- c(0:9, letters[1:6])
     paste0(
-        paste0(sample(hex, 8, replace = TRUE), collapse = ""), "-",
-        paste0(sample(hex, 4, replace = TRUE), collapse = ""), "-",
-        "4", paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
-        sample(c("8", "9", "a", "b"), 1), paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
-        paste0(sample(hex, 12, replace = TRUE), collapse = "")
+           paste0(sample(hex, 8, replace = TRUE), collapse = ""), "-",
+           paste0(sample(hex, 4, replace = TRUE), collapse = ""), "-",
+           "4", paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
+           sample(c("8", "9", "a", "b"), 1), paste0(sample(hex, 3, replace = TRUE),
+            collapse = ""), "-",
+           paste0(sample(hex, 12, replace = TRUE), collapse = "")
     )
 }
 
@@ -49,7 +50,7 @@ session_id <- function () {
 #' @param agent_id Agent ID
 #' @return Path to transcript JSONL file
 #' @noRd
-session_transcript_path <- function (id, agent_id = DEFAULT_AGENT_ID) {
+session_transcript_path <- function(id, agent_id = DEFAULT_AGENT_ID) {
     file.path(sessions_dir(agent_id), paste0(id, ".jsonl"))
 }
 
@@ -59,7 +60,7 @@ session_transcript_path <- function (id, agent_id = DEFAULT_AGENT_ID) {
 #' @param agent_id Agent ID
 #' @return Named list of session entries (keyed by session key)
 #' @noRd
-store_load <- function (agent_id = DEFAULT_AGENT_ID) {
+store_load <- function(agent_id = DEFAULT_AGENT_ID) {
     path <- sessions_store_path(agent_id)
 
     if (!file.exists(path)) {
@@ -67,8 +68,8 @@ store_load <- function (agent_id = DEFAULT_AGENT_ID) {
     }
 
     tryCatch(
-        jsonlite::fromJSON(path, simplifyVector = FALSE),
-        error = function (e) list()
+             jsonlite::fromJSON(path, simplifyVector = FALSE),
+             error = function(e) list()
     )
 }
 
@@ -106,7 +107,7 @@ store_update <- function(session_key, updates, agent_id = DEFAULT_AGENT_ID) {
         store[[session_key]][[key]] <- updates[[key]]
     }
 
-    store[[session_key]]$updatedAt <- as.numeric(Sys.time()) * 1000# milliseconds
+    store[[session_key]]$updatedAt <- as.numeric(Sys.time()) * 1000 # milliseconds
 
     store_save(store, agent_id)
     store[[session_key]]
@@ -123,25 +124,25 @@ store_update <- function(session_key, updates, agent_id = DEFAULT_AGENT_ID) {
 #' @return Session list object
 #' @noRd
 session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
-    session_key = NULL, agent_id = DEFAULT_AGENT_ID) {
+                        session_key = NULL, agent_id = DEFAULT_AGENT_ID) {
     id <- session_id()
     now <- as.numeric(Sys.time()) * 1000
     session_key <- session_key %||% paste0("llamar:", id)
 
     session <- list(
-        sessionId = id,
-        sessionKey = session_key,
-        createdAt = now,
-        updatedAt = now,
-        provider = provider,
-        model = model,
-        cwd = normalizePath(cwd, mustWork = FALSE),
-        inputTokens = 0L,
-        outputTokens = 0L,
-        totalTokens = 0L,
-        compactionCount = 0L,
-        memoryFlushCompactionCount = 0L,
-        messages = list()
+                    sessionId = id,
+                    sessionKey = session_key,
+                    createdAt = now,
+                    updatedAt = now,
+                    provider = provider,
+                    model = model,
+                    cwd = normalizePath(cwd, mustWork = FALSE),
+                    inputTokens = 0L,
+                    outputTokens = 0L,
+                    totalTokens = 0L,
+                    compactionCount = 0L,
+                    memoryFlushCompactionCount = 0L,
+                    messages = list()
     )
 
     # Write session header to transcript
@@ -149,16 +150,16 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
 
     # Save to store
     store_update(session_key, list(
-            sessionId = id,
-            sessionFile = session_transcript_path(id, agent_id),
-            createdAt = now,
-            modelProvider = provider,
-            model = model,
-            inputTokens = 0L,
-            outputTokens = 0L,
-            totalTokens = 0L,
-            compactionCount = 0L,
-            memoryFlushCompactionCount = 0L
+                                   sessionId = id,
+                                   sessionFile = session_transcript_path(id, agent_id),
+                                   createdAt = now,
+                                   modelProvider = provider,
+                                   model = model,
+                                   inputTokens = 0L,
+                                   outputTokens = 0L,
+                                   totalTokens = 0L,
+                                   compactionCount = 0L,
+                                   memoryFlushCompactionCount = 0L
         ), agent_id)
 
     session
@@ -173,15 +174,15 @@ session_save <- function(session, agent_id = DEFAULT_AGENT_ID) {
     session_key <- session$sessionKey %||% paste0("llamar:", session$sessionId)
 
     store_update(session_key, list(
-            sessionId = session$sessionId,
-            sessionFile = session_transcript_path(session$sessionId, agent_id),
-            modelProvider = session$provider,
-            model = session$model,
-            inputTokens = session$inputTokens %||% 0L,
-            outputTokens = session$outputTokens %||% 0L,
-            totalTokens = session$totalTokens %||% 0L,
-            compactionCount = session$compactionCount %||% 0L,
-            memoryFlushCompactionCount = session$memoryFlushCompactionCount %||% 0L
+                                   sessionId = session$sessionId,
+                                   sessionFile = session_transcript_path(session$sessionId, agent_id),
+                                   modelProvider = session$provider,
+                                   model = session$model,
+                                   inputTokens = session$inputTokens %||% 0L,
+                                   outputTokens = session$outputTokens %||% 0L,
+                                   totalTokens = session$totalTokens %||% 0L,
+                                   compactionCount = session$compactionCount %||% 0L,
+                                   memoryFlushCompactionCount = session$memoryFlushCompactionCount %||% 0L
         ), agent_id)
 
     invisible(session_key)
@@ -193,7 +194,8 @@ session_save <- function(session, agent_id = DEFAULT_AGENT_ID) {
 #' @param from_compaction If TRUE, only load messages after last compaction
 #' @return Session object, or NULL if not found
 #' @noRd
-session_load <- function(session_key, agent_id = DEFAULT_AGENT_ID, from_compaction = TRUE) {
+session_load <- function(session_key, agent_id = DEFAULT_AGENT_ID,
+                         from_compaction = TRUE) {
     store <- store_load(agent_id)
     entry <- store[[session_key]]
 
@@ -202,23 +204,26 @@ session_load <- function(session_key, agent_id = DEFAULT_AGENT_ID, from_compacti
     }
 
     id <- entry$sessionId
-    if (is.null(id)) return(NULL)
+    if (is.null(id)) {
+        return(NULL)
+    }
 
     # Build session object from store entry + transcript
     session <- list(
-        sessionId = id,
-        sessionKey = session_key,
-        createdAt = entry$createdAt,
-        updatedAt = entry$updatedAt,
-        provider = entry$modelProvider,
-        model = entry$model,
-        cwd = entry$cwd,
-        inputTokens = entry$inputTokens %||% 0L,
-        outputTokens = entry$outputTokens %||% 0L,
-        totalTokens = entry$totalTokens %||% 0L,
-        compactionCount = entry$compactionCount %||% 0L,
-        memoryFlushCompactionCount = entry$memoryFlushCompactionCount %||% 0L,
-        messages = transcript_load(id, agent_id, from_compaction = from_compaction)
+                    sessionId = id,
+                    sessionKey = session_key,
+                    createdAt = entry$createdAt,
+                    updatedAt = entry$updatedAt,
+                    provider = entry$modelProvider,
+                    model = entry$model,
+                    cwd = entry$cwd,
+                    inputTokens = entry$inputTokens %||% 0L,
+                    outputTokens = entry$outputTokens %||% 0L,
+                    totalTokens = entry$totalTokens %||% 0L,
+                    compactionCount = entry$compactionCount %||% 0L,
+                    memoryFlushCompactionCount = entry$memoryFlushCompactionCount %||% 0L,
+                    messages = transcript_load(id, agent_id,
+            from_compaction = from_compaction)
     )
 
     session
@@ -238,14 +243,15 @@ session_list <- function(agent_id = DEFAULT_AGENT_ID, n = 20) {
 
     # Convert to list and sort by updatedAt
     sessions <- lapply(names(store), function(key) {
-            entry <- store[[key]]
-            entry$sessionKey <- key
-            entry$messages <- transcript_count(entry$sessionId, agent_id)
-            entry
-        })
+        entry <- store[[key]]
+        entry$sessionKey <- key
+        entry$messages <- transcript_count(entry$sessionId, agent_id)
+        entry
+    })
 
     # Sort by updatedAt descending
-    updated_times <- vapply(sessions, function(s) s$updatedAt %||% 0, numeric(1))
+    updated_times <- vapply(sessions, function(s) s$updatedAt %||% 0,
+                            numeric(1))
     sessions <- sessions[order(updated_times, decreasing = TRUE)]
 
     # Limit to n
@@ -275,8 +281,8 @@ session_latest <- function(agent_id = DEFAULT_AGENT_ID) {
 session_add_message <- function(session, role, content) {
     # Store in pi-coding-agent compatible format
     msg <- list(
-        role = role,
-        content = list(list(type = "text", text = content))
+                role = role,
+                content = list(list(type = "text", text = content))
     )
 
     session$messages <- c(session$messages, list(msg))
@@ -305,11 +311,11 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID) {
     }
 
     header <- list(
-        type = "session",
-        version = SESSION_VERSION,
-        id = id,
-        timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
-        cwd = normalizePath(cwd, mustWork = FALSE)
+                   type = "session",
+                   version = SESSION_VERSION,
+                   id = id,
+                   timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
+                   cwd = normalizePath(cwd, mustWork = FALSE)
     )
 
     json <- jsonlite::toJSON(header, auto_unbox = TRUE)
@@ -328,19 +334,21 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID) {
 #' @param agent_id Agent ID
 #' @return Invisible path to transcript file
 #' @noRd
-transcript_append <- function(session, role, content, provider = NULL, model = NULL,
-    usage = NULL, agent_id = DEFAULT_AGENT_ID) {
+transcript_append <- function(session, role, content, provider = NULL,
+                              model = NULL, usage = NULL,
+                              agent_id = DEFAULT_AGENT_ID) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
     if (!file.exists(path)) {
-        transcript_write_header(session$sessionId, session$cwd %||% getwd(), agent_id)
+        transcript_write_header(session$sessionId, session$cwd %||% getwd(),
+                                agent_id)
     }
 
     # Build message in pi-coding-agent format
     msg <- list(
-        role = role,
-        content = list(list(type = "text", text = content))
+                role = role,
+                content = list(list(type = "text", text = content))
     )
 
     if (role == "assistant") {
@@ -349,12 +357,12 @@ transcript_append <- function(session, role, content, provider = NULL, model = N
         msg$provider <- provider %||% session$provider %||% "llamar"
         msg$model <- model %||% session$model %||% "unknown"
         msg$usage <- usage %||% list(
-            input = 0L,
-            output = 0L,
-            cacheRead = 0L,
-            cacheWrite = 0L,
-            totalTokens = 0L,
-            cost = list(
+                                     input = 0L,
+                                     output = 0L,
+                                     cacheRead = 0L,
+                                     cacheWrite = 0L,
+                                     totalTokens = 0L,
+                                     cost = list(
                 input = 0,
                 output = 0,
                 cacheRead = 0,
@@ -377,7 +385,8 @@ transcript_append <- function(session, role, content, provider = NULL, model = N
 #' @param from_compaction If TRUE, only load messages after last compaction
 #' @return List of messages
 #' @noRd
-transcript_load <- function(id, agent_id = DEFAULT_AGENT_ID, from_compaction = TRUE) {
+transcript_load <- function(id, agent_id = DEFAULT_AGENT_ID,
+                            from_compaction = TRUE) {
     path <- session_transcript_path(id, agent_id)
 
     if (!file.exists(path)) {
@@ -393,11 +402,11 @@ transcript_load <- function(id, agent_id = DEFAULT_AGENT_ID, from_compaction = T
 
     # Parse all lines
     entries <- lapply(lines, function(line) {
-            tryCatch(
-                jsonlite::fromJSON(line, simplifyVector = FALSE),
-                error = function(e) NULL
-            )
-        })
+        tryCatch(
+                 jsonlite::fromJSON(line, simplifyVector = FALSE),
+                 error = function(e) NULL
+        )
+    })
 
     entries <- Filter(Negate(is.null), entries)
 
@@ -447,12 +456,12 @@ transcript_compact <- function(session, summary, agent_id = DEFAULT_AGENT_ID) {
     # For now, just append as a regular assistant message
     # TODO: Match exact compaction format from pi-coding-agent
     transcript_append(
-        session,
-        role = "assistant",
-        content = paste0("[Compaction Summary]\n\n", summary),
-        provider = "llamar",
-        model = "compaction",
-        agent_id = agent_id
+                      session,
+                      role = "assistant",
+                      content = paste0("[Compaction Summary]\n\n", summary),
+                      provider = "llamar",
+                      model = "compaction",
+                      agent_id = agent_id
     )
 }
 
@@ -466,27 +475,33 @@ format_session_list <- function(sessions) {
     }
 
     safe_str <- function(x, default = "?") {
-        if (is.null(x) || length(x) == 0 || identical(x, list())) default else as.character(x)
+        if (is.null(x) || length(x) == 0 || identical(x, list())) {
+            default
+        } else {
+            as.character(x)
+        }
     }
 
     format_time <- function(ms) {
-        if (is.null(ms) || !is.numeric(ms)) return("?")
+        if (is.null(ms) || !is.numeric(ms)) {
+            return("?")
+        }
         format(as.POSIXct(ms / 1000, origin = "1970-01-01"), "%Y-%m-%d %H:%M")
     }
 
     lines <- vapply(sessions, function(s) {
-            if (is.null(s)) return("")
-            compactions <- if ((s$compactionCount %||% 0) > 0) {
-                sprintf(" [%d compactions]", s$compactionCount)
-            } else ""
-            sprintf("  %s  %s  %d msgs  %s/%s%s",
+        if (is.null(s)) return("")
+        compactions <- if ((s$compactionCount %||% 0) > 0) {
+            sprintf(" [%d compactions]", s$compactionCount)
+        } else ""
+        sprintf("  %s  %s  %d msgs  %s/%s%s",
                 safe_str(s$sessionKey, "?"),
                 format_time(s$updatedAt),
-                if (is.numeric(s$messages)) s$messages else 0L,
+            if (is.numeric(s$messages)) s$messages else 0L,
                 safe_str(s$modelProvider, "?"),
                 safe_str(s$model, "default"),
                 compactions)
-        }, character(1))
+    }, character(1))
 
     lines <- lines[nchar(lines) > 0]
     paste(c("Sessions:", lines), collapse = "\n")
@@ -516,7 +531,8 @@ trace_path <- function(session_id, agent_id = DEFAULT_AGENT_ID) {
 #' @return Invisible path to trace file
 #' @noRd
 trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
-    approved_by = NULL, turn = NULL, agent_id = DEFAULT_AGENT_ID) {
+                      approved_by = NULL, turn = NULL,
+                      agent_id = DEFAULT_AGENT_ID) {
     path <- trace_path(session_id, agent_id)
 
     dir <- dirname(path)
@@ -526,12 +542,12 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
 
     # Truncate large values
     args_summary <- lapply(args, function(x) {
-            if (is.character(x) && nchar(x) > 200) {
-                paste0(substr(x, 1, 197), "...")
-            } else {
-                x
-            }
-        })
+        if (is.character(x) && nchar(x) > 200) {
+            paste0(substr(x, 1, 197), "...")
+        } else {
+            x
+        }
+    })
 
     result_summary <- if (is.character(result) && nchar(result) > 500) {
         paste0(substr(result, 1, 497), "...")
@@ -540,14 +556,14 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
     }
 
     entry <- list(
-        timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
-        turn = turn,
-        tool = tool,
-        args = args_summary,
-        result = result_summary,
-        success = success,
-        elapsed_ms = elapsed_ms,
-        approved_by = approved_by
+                  timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
+                  turn = turn,
+                  tool = tool,
+                  args = args_summary,
+                  result = result_summary,
+                  success = success,
+                  elapsed_ms = elapsed_ms,
+                  approved_by = approved_by
     )
 
     json <- jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
@@ -580,11 +596,11 @@ trace_load <- function(session_id, agent_id = DEFAULT_AGENT_ID, n = NULL) {
     }
 
     lapply(lines, function(line) {
-            tryCatch(
-                jsonlite::fromJSON(line, simplifyVector = FALSE),
-                error = function(e) NULL
-            )
-        })
+        tryCatch(
+                 jsonlite::fromJSON(line, simplifyVector = FALSE),
+                 error = function(e) NULL
+        )
+    })
 }
 
 #' Format trace for display
@@ -598,35 +614,35 @@ format_trace <- function(trace, show_args = FALSE) {
     }
 
     lines <- vapply(trace, function(entry) {
-            if (is.null(entry)) return("")
+        if (is.null(entry)) return("")
 
-            status <- if (isTRUE(entry$success)) "OK" else "ERR"
-            time_str <- if (!is.null(entry$elapsed_ms)) {
-                sprintf("%dms", entry$elapsed_ms)
-            } else {
-                "?"
-            }
+        status <- if (isTRUE(entry$success)) "OK" else "ERR"
+        time_str <- if (!is.null(entry$elapsed_ms)) {
+            sprintf("%dms", entry$elapsed_ms)
+        } else {
+            "?"
+        }
 
-            base <- sprintf("  [%s] %s %s (%s)",
-                status, entry$tool, time_str,
-                substr(entry$timestamp, 12, 19))
+        base <- sprintf("  [%s] %s %s (%s)",
+                        status, entry$tool, time_str,
+                        substr(entry$timestamp, 12, 19))
 
-            if (show_args && length(entry$args) > 0) {
-                args_str <- paste(names(entry$args), "=",
-                    vapply(entry$args, function(x) {
-                            if (is.character(x)) {
-                                s <- if (nchar(x) > 30) paste0(substr(x, 1, 27), "...") else x
-                                sprintf('"%s"', s)
-                            } else {
-                                as.character(x)
-                            }
-                        }, character(1)),
-                    collapse = ", ")
-                base <- paste0(base, "\n    ", args_str)
-            }
+        if (show_args && length(entry$args) > 0) {
+            args_str <- paste(names(entry$args), "=",
+                              vapply(entry$args, function(x) {
+                if (is.character(x)) {
+                    s <- if (nchar(x) > 30) paste0(substr(x, 1, 27), "...") else x
+                    sprintf('"%s"', s)
+                } else {
+                    as.character(x)
+                }
+            }, character(1)),
+                              collapse = ", ")
+            base <- paste0(base, "\n    ", args_str)
+        }
 
-            base
-        }, character(1))
+        base
+    }, character(1))
 
     lines <- lines[nchar(lines) > 0]
     paste(c("Tool execution trace:", lines), collapse = "\n")

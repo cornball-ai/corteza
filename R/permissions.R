@@ -3,13 +3,13 @@
 
 #' Default dangerous tools (require approval by default)
 #' @noRd
-default_dangerous_tools <- function () {
+default_dangerous_tools <- function() {
     c("bash", "run_r", "run_r_script", "write_file")
 }
 
 #' Default denied paths for filesystem sandboxing
 #' @noRd
-default_denied_paths <- function () {
+default_denied_paths <- function() {
     c(
         "~/.ssh",
         "~/.gnupg",
@@ -28,7 +28,7 @@ default_denied_paths <- function () {
 #' @param config Config list from load_config()
 #' @return "allow", "ask", or "deny"
 #' @noRd
-get_tool_permission <- function (tool_name, config) {
+get_tool_permission <- function(tool_name, config) {
     # Check per-tool permissions first
     perms <- config$permissions
     if (!is.null(perms) && !is.null(perms[[tool_name]])) {
@@ -52,7 +52,7 @@ get_tool_permission <- function (tool_name, config) {
 #' @param config Config list
 #' @return TRUE if tool requires user approval
 #' @noRd
-requires_approval <- function (tool_name, config) {
+requires_approval <- function(tool_name, config) {
     get_tool_permission(tool_name, config) == "ask"
 }
 
@@ -62,7 +62,7 @@ requires_approval <- function (tool_name, config) {
 #' @param config Config list
 #' @return TRUE if tool is denied
 #' @noRd
-is_tool_denied <- function (tool_name, config) {
+is_tool_denied <- function(tool_name, config) {
     get_tool_permission(tool_name, config) == "deny"
 }
 
@@ -73,17 +73,17 @@ is_tool_denied <- function (tool_name, config) {
 #' @param path Path to normalize
 #' @return Normalized absolute path
 #' @noRd
-normalize_path_for_check <- function (path) {
+normalize_path_for_check <- function(path) {
     # Expand ~ first
     path <- path.expand(path)
 
     # Try to normalize (resolve symlinks, etc.)
     # normalizePath fails if path doesn't exist, so handle that
     tryCatch({
-            normalizePath(path, mustWork = FALSE)
-        }, error = function (e) {
-            path
-        })
+        normalizePath(path, mustWork = FALSE)
+    }, error = function(e) {
+        path
+    })
 }
 
 #' Check if path is under a base path
@@ -92,7 +92,7 @@ normalize_path_for_check <- function (path) {
 #' @param base Base path
 #' @return TRUE if path is under base
 #' @noRd
-is_path_under <- function (path, base) {
+is_path_under <- function(path, base) {
     path <- normalize_path_for_check(path)
     base <- normalize_path_for_check(base)
 
@@ -114,7 +114,7 @@ is_path_under <- function (path, base) {
 #' @param operation "read" or "write" (for error messages)
 #' @return List with ok (logical) and message (character)
 #' @noRd
-validate_path <- function (path, config, operation = "access") {
+validate_path <- function(path, config, operation = "access") {
     if (is.null(path) || nchar(path) == 0) {
         return(list(ok = FALSE, message = "Path is empty"))
     }
@@ -126,8 +126,8 @@ validate_path <- function (path, config, operation = "access") {
     for (dp in denied) {
         if (is_path_under(norm_path, dp)) {
             return(list(
-                    ok = FALSE,
-                    message = sprintf("Access denied: %s is in restricted area (%s)",
+                        ok = FALSE,
+                        message = sprintf("Access denied: %s is in restricted area (%s)",
                         path, dp)
                 ))
         }
@@ -145,8 +145,9 @@ validate_path <- function (path, config, operation = "access") {
         }
         if (!is_allowed) {
             return(list(
-                    ok = FALSE,
-                    message = sprintf("Access denied: %s is outside allowed paths", path)
+                        ok = FALSE,
+                        message = sprintf("Access denied: %s is outside allowed paths",
+                        path)
                 ))
         }
     }
@@ -161,7 +162,7 @@ validate_path <- function (path, config, operation = "access") {
 #' @param operation Operation type for error messages
 #' @return List with ok and message (first error if any)
 #' @noRd
-validate_paths <- function (paths, config, operation = "access") {
+validate_paths <- function(paths, config, operation = "access") {
     for (p in paths) {
         result <- validate_path(p, config, operation)
         if (!result$ok) {
@@ -178,25 +179,25 @@ validate_paths <- function (paths, config, operation = "access") {
 #' @param command Shell command string
 #' @return List with ok and message
 #' @noRd
-validate_command <- function (command) {
+validate_command <- function(command) {
     # Check for dangerous patterns
     dangerous_patterns <- c(
-        "rm\\s+-rf\\s+/", # rm -rf /
-        "rm\\s+-rf\\s+~", # rm -rf ~
-        ":\\(\\)\\{.*:\\|:.*\\};:", # Fork bomb  :(){ :|:& };:
-        "> /dev/sd", # Write to disk device
-        "dd\\s+if=.*of=/dev", # dd to device
-        "mkfs", # Format filesystem
-        "chmod\\s+-R\\s+777\\s+/", # Recursive chmod on root
-        "curl.*\\|\\s*bash", # Pipe curl to bash
-        "wget.*\\|\\s*bash"# Pipe wget to bash
+                            "rm\\s+-rf\\s+/", # rm -rf /
+                            "rm\\s+-rf\\s+~", # rm -rf ~
+                            ":\\(\\)\\{.*:\\|:.*\\};:", # Fork bomb  :(){ :|:& };:
+                            "> /dev/sd", # Write to disk device
+                            "dd\\s+if=.*of=/dev", # dd to device
+                            "mkfs", # Format filesystem
+                            "chmod\\s+-R\\s+777\\s+/", # Recursive chmod on root
+                            "curl.*\\|\\s*bash", # Pipe curl to bash
+                            "wget.*\\|\\s*bash" # Pipe wget to bash
     )
 
     for (pattern in dangerous_patterns) {
         if (grepl(pattern, command, ignore.case = TRUE)) {
             return(list(
-                    ok = FALSE,
-                    message = sprintf("Potentially dangerous command pattern detected: %s",
+                        ok = FALSE,
+                        message = sprintf("Potentially dangerous command pattern detected: %s",
                         pattern)
                 ))
         }
@@ -210,7 +211,7 @@ validate_command <- function (command) {
 #' @param config Config list
 #' @return Character string describing current permissions
 #' @noRd
-format_permissions <- function (config) {
+format_permissions <- function(config) {
     lines <- character()
 
     # Global approval mode
@@ -219,7 +220,8 @@ format_permissions <- function (config) {
 
     # Dangerous tools
     dangerous <- config$dangerous_tools %||% default_dangerous_tools()
-    lines <- c(lines, sprintf("Dangerous tools: %s", paste(dangerous, collapse = ", ")))
+    lines <- c(lines,
+               sprintf("Dangerous tools: %s", paste(dangerous, collapse = ", ")))
 
     # Per-tool permissions
     perms <- config$permissions
@@ -233,12 +235,14 @@ format_permissions <- function (config) {
     # Allowed paths
     allowed <- config$allowed_paths
     if (!is.null(allowed) && length(allowed) > 0) {
-        lines <- c(lines, sprintf("Allowed paths: %s", paste(allowed, collapse = ", ")))
+        lines <- c(lines,
+                   sprintf("Allowed paths: %s", paste(allowed, collapse = ", ")))
     }
 
     # Denied paths
     denied <- config$denied_paths %||% default_denied_paths()
-    lines <- c(lines, sprintf("Denied paths: %s", paste(denied, collapse = ", ")))
+    lines <- c(lines,
+               sprintf("Denied paths: %s", paste(denied, collapse = ", ")))
 
     paste(lines, collapse = "\n")
 }

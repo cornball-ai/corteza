@@ -26,7 +26,7 @@
 #' # Install to custom location
 #' install_cli("/usr/local/bin")
 #' }
-install_cli <- function (path = "~/bin", force = FALSE) {
+install_cli <- function(path = "~/bin", force = FALSE) {
     path <- path.expand(path)
 
     # Create directory if needed
@@ -45,7 +45,8 @@ install_cli <- function (path = "~/bin", force = FALSE) {
 
     # Check if exists
     if (file.exists(dest) && !force) {
-        stop("llamar already exists at ", dest, ". Use force = TRUE to overwrite.")
+        stop("llamar already exists at ", dest,
+             ". Use force = TRUE to overwrite.")
     }
 
     # Copy
@@ -59,7 +60,7 @@ install_cli <- function (path = "~/bin", force = FALSE) {
     message("Installed llamar to: ", dest)
 
     # Check if in PATH
-    path_dirs <- strsplit(Sys.getenv("PATH"), .Platform$path.sep) [[1]]
+    path_dirs <- strsplit(Sys.getenv("PATH"), .Platform$path.sep)[[1]]
     if (!path %in% path_dirs) {
         message("\nNote: ", path, " may not be in your PATH.")
         message("Add this to your shell config:")
@@ -82,7 +83,7 @@ install_cli <- function (path = "~/bin", force = FALSE) {
 #' \dontrun{
 #' uninstall_cli()
 #' }
-uninstall_cli <- function (path = "~/bin") {
+uninstall_cli <- function(path = "~/bin") {
     path <- path.expand(path)
     dest <- file.path(path, "llamar")
 
