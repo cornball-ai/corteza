@@ -40,6 +40,7 @@ parse_args <- function() {
     context_crit_pct = config$context_crit_pct %||% 95L,
     context_compact_pct = config$context_compact_pct %||% 80L,  # Auto-compact threshold
     session = NULL,  # Session key (resume if exists, create if not)
+    resume = FALSE,  # Resume latest session
     list = FALSE,
     voice = config$voice$enabled %||% FALSE,  # Voice mode
     dry_run = config$dry_run %||% FALSE  # Dry-run mode
@@ -60,6 +61,9 @@ parse_args <- function() {
     } else if ((arg == "--session" || arg == "-s") && i < length(args)) {
       opts$session <- args[i + 1]
       i <- i + 2
+    } else if (arg == "--resume" || arg == "-r") {
+      opts$resume <- TRUE
+      i <- i + 1
     } else if (arg == "--list") {
       opts$list <- TRUE
       i <- i + 1
@@ -87,6 +91,7 @@ Options:
   --voice, -v     Start with voice mode enabled
   --dry-run       Preview tool calls without executing
   --session, -s   Session key (resume if exists, create if not)
+  --resume, -r    Resume the most recent session
   --list          List sessions
   --help, -h      Show this help
 
@@ -511,8 +516,20 @@ run_agent <- function(opts) {
     return(invisible(NULL))
   }
 
+  # Handle --resume: find latest session key
+  if (isTRUE(opts$resume) && is.null(opts$session)) {
+    latest <- llamaR:::session_latest()
+    if (!is.null(latest)) {
+      opts$session <- latest$sessionKey
+      cat(sprintf("%sResuming latest session: %s%s\n", color$dim, latest$sessionKey, color$reset))
+    } else {
+      cat(sprintf("%sNo sessions to resume. Starting fresh.%s\n", color$dim, color$reset))
+    }
+  }
+
   # Load or create session
   session <- NULL
+  ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
 
   if (!is.null(opts$session)) {
     # Try to resume session by key, create if not found
@@ -527,10 +544,26 @@ run_agent <- function(opts) {
       # Use session's provider/model unless overridden
       if (is.null(opts$model)) opts$model <- session$model
       opts$provider <- session$provider %||% opts$provider
+      # Restore workspace
+      if (ws_enabled) {
+        loaded <- llamaR:::ws_load(session$sessionId)
+        if (loaded) {
+          cat(sprintf("%sWorkspace restored.%s\n", color$dim, color$reset))
+        }
+      }
     }
   } else {
     # No session key specified - create new session
     session <- llamaR:::session_new(opts$provider, opts$model, cwd)
+    # Scan globalenv for existing objects
+    if (ws_enabled && isTRUE(config$workspace$scan_globalenv %||% TRUE)) {
+      registered <- llamaR:::ws_scan_globalenv(
+        max_bytes = config$workspace$scan_max_bytes %||% 50e6)
+      if (length(registered) > 0) {
+        cat(sprintf("%sWorkspace: registered %d objects%s\n",
+                    color$dim, length(registered), color$reset))
+      }
+    }
   }
 
   print_banner(session$sessionKey)

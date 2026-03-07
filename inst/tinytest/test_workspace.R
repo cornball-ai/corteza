@@ -242,3 +242,32 @@ expect_true(llamaR:::ws_exists("pinned_old"))
 
 # Clean up
 llamaR:::ws_clear()
+
+# ---- globalenv scan ----
+
+llamaR:::ws_clear()
+
+# Create test objects in globalenv
+assign("test_scan_df", data.frame(x = 1:10), envir = globalenv())
+assign("test_scan_vec", letters, envir = globalenv())
+
+registered <- llamaR:::ws_scan_globalenv()
+expect_true("test_scan_df" %in% registered)
+expect_true("test_scan_vec" %in% registered)
+
+# Verify they're in workspace
+expect_true(llamaR:::ws_exists("test_scan_df"))
+expect_true(llamaR:::ws_exists("test_scan_vec"))
+
+# Origin should be session_init
+meta <- llamaR:::ws_meta("test_scan_df")
+expect_equal(meta$origin$tool, "session_init")
+
+# Second scan should not re-register
+registered2 <- llamaR:::ws_scan_globalenv()
+expect_false("test_scan_df" %in% registered2)
+expect_false("test_scan_vec" %in% registered2)
+
+# Clean up globalenv
+rm("test_scan_df", "test_scan_vec", envir = globalenv())
+llamaR:::ws_clear()

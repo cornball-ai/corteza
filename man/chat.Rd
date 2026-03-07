@@ -3,7 +3,7 @@
 \alias{chat}
 \title{Start Interactive Chat}
 \usage{
-chat(provider = NULL, model = NULL, tools = NULL)
+chat(provider = NULL, model = NULL, tools = NULL, session = NULL)
 }
 \arguments{
 \item{provider}{LLM provider: "anthropic", "openai", or "ollama".
@@ -14,6 +14,10 @@ Defaults to config value or "anthropic".}
 \item{tools}{Character vector of tool names or categories to enable.
 Categories: file, code, r, data, web, git, chat, memory.
 Use "core" for file+code+git, "all" for everything (default).}
+
+\item{session}{Session resume control. NULL (default) starts fresh,
+TRUE resumes the latest session, or a character session key to
+resume a specific session.}
 }
 \value{
 The session object (invisibly).

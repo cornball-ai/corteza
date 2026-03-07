@@ -491,3 +491,40 @@ ws_prune <- function(max_age_turns = 50L, max_total_bytes = 5e6) {
     invisible(pruned)
 }
 
+# globalenv scan ----
+
+#' Scan globalenv and register existing objects
+#'
+#' Called on new session startup so the agent knows what's already loaded.
+#' Skips objects already in workspace, oversized objects, and package functions.
+#'
+#' @param max_bytes Max object size in bytes (default 50MB)
+#' @return Invisible character vector of registered names
+#' @noRd
+ws_scan_globalenv <- function(max_bytes = 50e6) {
+    nms <- ls(globalenv())
+    registered <- character()
+    origin <- list(tool = "session_init", args = list())
+
+    for (nm in nms) {
+        if (ws_exists(nm)) {
+            next
+        }
+
+        val <- tryCatch(get(nm, envir = globalenv()), error = function(e) NULL)
+        if (is.null(val)) {
+            next
+        }
+
+        sz <- as.integer(object.size(val))
+        if (sz > max_bytes) {
+            next
+        }
+
+        ws_put(nm, val, origin = origin)
+        registered <- c(registered, nm)
+    }
+
+    invisible(registered)
+}
+
