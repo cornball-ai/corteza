@@ -151,30 +151,44 @@ ce_conversation_tokens <- function() {
 #' @return Invisible count of indexed files
 #' @noRd
 ce_index_files <- function(cwd,
-                           patterns = c("R/*.R", "inst/**/*.R", "*.md", "*.json", "man/*.Rd"),
+                           extensions = c("R", "r", "Rmd", "md", "json", "yaml", "yml", "c",
+        "cpp", "h", "js", "css", "html", "sql", "sh", "py",
+        "Rd"),
+                           extra_files = c("DESCRIPTION", "NAMESPACE", "Makefile", "Dockerfile",
+        ".Rbuildignore"),
                            max_file_size = 100000L) {
     index <- list()
+    cwd_norm <- normalizePath(cwd, mustWork = FALSE)
 
-    for (pat in patterns) {
-        files <- Sys.glob(file.path(cwd, pat))
-        for (f in files) {
-            # Skip .git, binary, oversized
-            if (grepl(".git/", f, fixed = TRUE)) {
-                next
-            }
-            sz <- tryCatch(file.size(f), error = function(e) Inf)
-            if (sz > max_file_size) {
-                next
-            }
+    # Recursive list of all files, then filter by extension
+    ext_pattern <- sprintf("\\.(%s)$", paste(extensions, collapse = "|"))
+    all_files <- list.files(cwd, recursive = TRUE, full.names = TRUE)
 
-            lines <- tryCatch(readLines(f, warn = FALSE),
-                              error = function(e) NULL)
-            if (!is.null(lines)) {
-                # Store with path relative to cwd
-                rel <- sub(paste0("^", normalizePath(cwd, mustWork = FALSE),
-                                  "/?"), "", normalizePath(f, mustWork = FALSE))
-                index[[rel]] <- lines
-            }
+    for (f in all_files) {
+        rel <- sub(paste0("^", cwd_norm, "/?"), "",
+                   normalizePath(f, mustWork = FALSE))
+
+        # Skip .git, node_modules, renv
+        if (grepl("^(\\.git|node_modules|renv)/", rel)) {
+            next
+        }
+
+        # Accept by extension or exact name
+        base <- basename(f)
+        if (!grepl(ext_pattern, base, ignore.case = TRUE) &&
+            !base %in% extra_files) {
+            next
+        }
+
+        # Skip binary/oversized
+        sz <- tryCatch(file.size(f), error = function(e) Inf)
+        if (sz > max_file_size) {
+            next
+        }
+
+        lines <- tryCatch(readLines(f, warn = FALSE), error = function(e) NULL)
+        if (!is.null(lines)) {
+            index[[rel]] <- lines
         }
     }
 
