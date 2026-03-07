@@ -472,19 +472,32 @@ ce_compute_payload <- function(prompt, system_base, tools_json = "") {
     # Assemble dynamic context, ranked by relevance
     parts <- character()
 
-    # 1. basalt briefing (if available, most bang per token)
+    # 1. File tree (always: tiny, high value, prevents tool-based exploration)
+    tree <- ce_file_tree()
+    if (nchar(tree) > 0) {
+        parts <- c(parts, "## Project Files", "", "```", tree, "```", "")
+    }
+
+    # 2. basalt briefing (if available, most bang per token)
     briefing <- ce_get_briefing()
     if (nchar(briefing) > 0) {
         parts <- c(parts, "## Project Briefing", "", briefing, "")
     }
 
-    # 2. Relevant code from symbol index
+    # 3. Key file contents (high-priority files the LLM should know upfront)
+    key_budget <- min(budget_chars %/% 3, 60000L)
+    key_context <- ce_key_files(prompt, max_chars = key_budget)
+    if (nchar(key_context) > 0) {
+        parts <- c(parts, "## Key Files", "", key_context, "")
+    }
+
+    # 4. Relevant code from symbol index
     related <- ce_related_code(prompt, max_results = 8L)
     if (nchar(related) > 0) {
         parts <- c(parts, "## Relevant Code", "", related, "")
     }
 
-    # 3. Files recently touched in conversation
+    # 5. Files recently touched in conversation
     recent_files <- ce_recent_files(n = 5L)
     if (length(recent_files) > 0) {
         file_context <- ce_format_files(recent_files,
@@ -494,7 +507,7 @@ ce_compute_payload <- function(prompt, system_base, tools_json = "") {
         }
     }
 
-    # 4. Workspace state
+    # 6. Workspace state
     ws_budget <- min(budget_chars %/% 4, 40000L)
     ws_context <- ws_format_context(
                                     ws_retrieve(prompt, budget_chars = ws_budget)
@@ -597,6 +610,108 @@ ce_format_files <- function(paths, max_chars = 20000L) {
 
         parts <- c(parts, sprintf("### %s\n```\n%s\n```", p, content))
         used <- used + nchar(content)
+    }
+
+    paste(parts, collapse = "\n\n")
+}
+
+#' Generate a compact file tree from the index
+#'
+#' @return Character string, one path per line
+#' @noRd
+ce_file_tree <- function() {
+    idx <- .context_engine$file_index
+    if (is.null(idx) || length(idx) == 0) {
+        return("")
+    }
+    paths <- sort(names(idx))
+    # Add line counts for each file
+    tree_lines <- vapply(paths, function(p) {
+        n <- length(idx[[p]])
+        sprintf("%s (%d lines)", p, n)
+    }, character(1))
+    paste(tree_lines, collapse = "\n")
+}
+
+#' Inject key project files into context
+#'
+#' Prioritizes files that give the LLM immediate understanding of the project:
+#' DESCRIPTION, README, entry points (app.R, server.R, main.R), config files.
+#' Remaining budget goes to small R source files ranked by size (small first).
+#'
+#' @param prompt User prompt (for relevance scoring)
+#' @param max_chars Max total characters
+#' @return Character string of file contents
+#' @noRd
+ce_key_files <- function(prompt, max_chars = 60000L) {
+    idx <- .context_engine$file_index
+    if (is.null(idx) || length(idx) == 0) {
+        return("")
+    }
+
+    paths <- names(idx)
+
+    # Priority tiers (order matters within tiers)
+    tier1 <- c("DESCRIPTION", "README.md", "README.Rmd")
+    tier2 <- c("app.R", "server.R", "ui.R", "main.R", "global.R",
+               "NAMESPACE", "AGENTS.md", "PLAN.md")
+
+    # Score each file: tier membership + prompt keyword match + size penalty
+    prompt_words <- unique(tolower(strsplit(prompt, "[^a-zA-Z0-9_]+")[[1]]))
+    prompt_words <- prompt_words[nchar(prompt_words) > 2]
+
+    scores <- vapply(paths, function(p) {
+        base <- basename(p)
+        score <- 0
+
+        # Tier bonuses
+        if (base %in% tier1) score <- score + 100
+        if (base %in% tier2) score <- score + 50
+        if (grepl("^R/", p)) score <- score + 10
+
+        # Prompt keyword match against filename
+        p_lower <- tolower(p)
+        for (w in prompt_words) {
+            if (grepl(w, p_lower, fixed = TRUE)) {
+                score <- score + 20
+            }
+        }
+
+        # Prefer smaller files (more files fit in budget)
+        n_chars <- sum(nchar(idx[[p]])) + length(idx[[p]])
+        score <- score - (n_chars / 1000)
+
+        score
+    }, numeric(1))
+
+    # Sort by score descending
+    ordered <- paths[order(scores, decreasing = TRUE)]
+
+    # Pack files into budget
+    parts <- character()
+    used <- 0L
+
+    for (p in ordered) {
+        lines <- idx[[p]]
+        content <- paste(lines, collapse = "\n")
+        nc <- nchar(content)
+
+        if (used + nc > max_chars) {
+            # Try truncating if file is high priority
+            remaining <- max_chars - used
+            if (remaining > 500 && basename(p) %in% c(tier1, tier2)) {
+                content <- paste0(substr(content, 1, remaining - 20),
+                                  "\n... (truncated)")
+                nc <- nchar(content)
+            } else if (remaining < 200) {
+                break
+            } else {
+                next
+            }
+        }
+
+        parts <- c(parts, sprintf("### %s\n```\n%s\n```", p, content))
+        used <- used + nc
     }
 
     paste(parts, collapse = "\n\n")
