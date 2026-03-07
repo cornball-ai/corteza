@@ -639,7 +639,8 @@ ce_rerank <- function(prompt, system_base, tools_json = "") {
 #' @return Logical
 #' @noRd
 ce_should_precompute <- function(assistant_response) {
-    if (nchar(assistant_response) < 200) {
+    if (is.null(assistant_response) || length(assistant_response) == 0 ||
+        nchar(assistant_response) < 200) {
         return(FALSE)
     }
 

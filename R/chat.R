@@ -1,5 +1,38 @@
 # Interactive chat inside an R session
 
+# Brief context hint for tool calls shown in REPL
+# @noRd
+tool_hint <- function(name, args) {
+    hint <- if (name %in% c("base::readLines", "read_file")) {
+        args$con %||% args$path %||% args$file
+    } else if (name %in% c("base::writeLines", "write_file")) {
+        args$con %||% args$path %||% args$file
+    } else if (name == "base::list.files") {
+        args$path %||% "."
+    } else if (name == "bash") {
+        cmd <- args$command %||% ""
+        if (nchar(cmd) > 60) paste0(substr(cmd, 1, 57), "...") else cmd
+    } else if (name == "grep_files") {
+        paste0("/", args$pattern %||% "", "/")
+    } else if (name == "run_r") {
+        code <- args$code %||% ""
+        if (nchar(code) > 60) paste0(substr(code, 1, 57), "...") else code
+    } else if (name == "run_r_script") {
+        args$path %||% args$file %||% ""
+    } else if (name == "r_help") {
+        args$topic %||% ""
+    } else if (name == "web_search") {
+        args$query %||% ""
+    } else if (name == "fetch_url") {
+        args$url %||% ""
+    } else if (name == "git_diff") {
+        args$ref %||% ""
+    } else {
+        NULL
+    }
+    if (is.null(hint) || nchar(hint) == 0) "" else paste0(" ", hint)
+}
+
 #' Start Interactive Chat
 #'
 #' Run a conversational agent inside your R session. Tools execute as direct
@@ -167,13 +200,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         turn_number <<- turn_number + 1L
         ws_set_turn(turn_number)
         name <- unsanitize_tool_name(name)
-        cat(sprintf("  [%s] ", name))
+        hint <- tool_hint(name, args)
+        cat(sprintf("  [%s]%s ", name, hint))
         start <- Sys.time()
         result <- call_tool(name, args %||% list())
-        text <- result$content[[1]]$text
+        text <- result$content[[1]]$text %||% ""
         elapsed <- as.numeric(
                               difftime(Sys.time(), start, units = "secs")) * 1000
-        lines <- length(strsplit(text, "\n")[[1]])
+        lines <- if (nchar(text) > 0) length(strsplit(text, "\n")[[1]]) else 0L
         cat(sprintf("(%d lines)\n", lines))
         tryCatch(
                  trace_add(session$sessionId, name, args, text,
@@ -267,14 +301,20 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
             next
         }
 
-        cat(result$content, "\n\n")
-        transcript_append(session, "assistant", result$content)
+        # Guard against NULL/empty content (e.g. max_turns reached)
+        content <- result$content %||% ""
+        if (nchar(content) == 0) {
+            cat("[No response text]\n\n")
+        } else {
+            cat(content, "\n\n")
+        }
+        transcript_append(session, "assistant", content)
         history <- result$history
 
         # Index assistant turn + extract metadata
         tool_calls <- ce_extract_tool_calls(result)
         files_touched <- ce_extract_files_touched(result)
-        ce_index_turn(turn_number, "assistant", result$content,
+        ce_index_turn(turn_number, "assistant", content,
                       tool_calls = tool_calls,
                       files_touched = files_touched)
 
@@ -284,7 +324,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         }
 
         # Pre-compute next context (async if callr available)
-        if (ce_should_precompute(result$content)) {
+        if (nchar(content) > 0 && ce_should_precompute(content)) {
             ce_precompute(system_prompt, tools_json)
         }
     }
