@@ -1,5 +1,33 @@
 # Interactive chat inside an R session
 
+# Validate model availability before starting the chat loop
+# @noRd
+validate_model <- function(provider, model) {
+    if (provider == "ollama") {
+        # Check ollama is running and model exists
+        models <- tryCatch({
+            url <- paste0(Sys.getenv("OLLAMA_HOST", "http://localhost:11434"),
+                          "/api/tags")
+            resp <- jsonlite::fromJSON(url, simplifyVector = FALSE)
+            vapply(resp$models %||% list(), function(m) {
+                m$name %||% m$model %||% ""
+            }, character(1))
+        }, error = function(e) {
+            stop("Can't connect to ollama. Is it running?", call. = FALSE)
+        })
+        if (!is.null(model)) {
+            # ollama models can be "qwen2.5-coder" or "qwen2.5-coder:latest"
+            matched <- model %in% models || paste0(model, ":latest") %in% models
+            if (!matched) {
+                available <- paste(models, collapse = ", ")
+                stop(sprintf("Model '%s' not found in ollama. Available: %s\nPull with: ollama pull %s",
+                             model, available, model), call. = FALSE)
+            }
+        }
+    }
+    invisible(TRUE)
+}
+
 # Brief context hint for tool calls shown in REPL
 # @noRd
 tool_hint <- function(name, args) {
@@ -88,6 +116,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         stop(sprintf("%s not set. Add it to ~/.Renviron", key_var),
              call. = FALSE)
     }
+
+    # Validate model exists before entering the loop
+    validate_model(provider, model)
 
     # Register skills (same as serve())
     ensure_skills()
