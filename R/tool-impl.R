@@ -90,6 +90,16 @@ tool_run_r_script <- function(args) {
 tool_bash <- function(args) {
     cmd <- args$command
     timeout <- args$timeout %||% 30
+    background <- isTRUE(args$background)
+
+    if (background) {
+        # Launch in background, return immediately
+        log_file <- tempfile("bg_", fileext = ".log")
+        bg_cmd <- sprintf("nohup %s > %s 2>&1 &", cmd, log_file)
+        system(bg_cmd, wait = FALSE)
+        return(ok(sprintf("Started in background. Log: %s\nCheck with: tail %s",
+                          log_file, log_file)))
+    }
 
     result <- tryCatch({
         out <- system(cmd, intern = TRUE, timeout = timeout)
@@ -342,13 +352,15 @@ register_builtin_skills <- function() {
 
     register_skill(skill_spec(
                               name = "bash",
-                              description = "Run a shell command",
+                              description = "Run a shell command. Use background=true for long-running servers or processes.",
                               params = list(
                 command = list(type = "string",
                                description = "Shell command to execute",
                                required = TRUE),
                 timeout = list(type = "integer",
-                               description = "Timeout in seconds (default: 30)")
+                               description = "Timeout in seconds (default: 30)"),
+                background = list(type = "boolean",
+                                  description = "Run in background and return immediately (default: false)")
             ),
                               handler = function(args, ctx) tool_bash(args)
         ))
