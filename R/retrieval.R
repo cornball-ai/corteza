@@ -119,6 +119,9 @@ ws_retrieve <- function(prompt, budget_chars = 8000L, current_turn = NULL) {
 #' @return Character string summary
 #' @noRd
 ws_summarize <- function(name, value, meta, max_chars = 2000L) {
+    if (is.null(value)) {
+        return(sprintf("%s: NULL", name))
+    }
     cls <- meta$class
 
     body <- if (cls == "data.frame") {
@@ -170,7 +173,9 @@ ws_summarize <- function(name, value, meta, max_chars = 2000L) {
         sprintf("matrix %s %s%s", dims, tp, rng_str)
 
     } else if (cls == "character") {
-        if (length(value) > 1) {
+        if (length(value) == 0) {
+            "character(0)"
+        } else if (length(value) > 1) {
             sample_items <- head(value, 3)
             sample_str <- paste(sprintf('"%s"',
                                         substr(sample_items, 1, 50)), collapse = ", ")
