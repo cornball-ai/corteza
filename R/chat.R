@@ -89,6 +89,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL) {
     tool_handler <- function(name, args) {
         turn_number <<- turn_number + 1L
         ws_set_turn(turn_number)
+        name <- unsanitize_tool_name(name)
         cat(sprintf("  [%s] ", name))
         start <- Sys.time()
         result <- call_tool(name, args %||% list())

@@ -104,10 +104,35 @@ skills_as_api_tools <- function(filter = NULL) {
     mcp_tools <- get_tools(filter)
     lapply(mcp_tools, function(t) {
         list(
-             name = t$name,
+             name = sanitize_tool_name(t$name),
              description = t$description,
              input_schema = t$inputSchema
         )
     })
+}
+
+#' Sanitize tool name for LLM API compatibility
+#'
+#' Anthropic/OpenAI require tool names to match [a-zA-Z0-9_-].
+#' Converts "::" to "__" for the API.
+#'
+#' @param name Internal tool name (e.g. "base::readLines")
+#' @return API-safe name (e.g. "base__readLines")
+#' @noRd
+sanitize_tool_name <- function(name) {
+    name <- gsub("::", "__", name, fixed = TRUE)
+    gsub(".", "-", name, fixed = TRUE)
+}
+
+#' Restore internal tool name from API-safe name
+#'
+#' Reverses sanitize_tool_name. Dot becomes "-", "::" becomes "__".
+#'
+#' @param name API-safe name (e.g. "base__list-files")
+#' @return Internal name (e.g. "base::list.files")
+#' @noRd
+unsanitize_tool_name <- function(name) {
+    name <- gsub("__", "::", name, fixed = TRUE)
+    gsub("-", ".", name, fixed = TRUE)
 }
 
