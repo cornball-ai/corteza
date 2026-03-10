@@ -246,13 +246,22 @@ load_config <- function(cwd = getwd()) {
         ws$enabled <- TRUE
     }
     if (is.null(ws$budget_chars)) {
-        ws$budget_chars <- 8000L
+        ws$budget_chars <- 32000L
     }
     if (is.null(ws$capture_results)) {
         ws$capture_results <- TRUE
     }
     if (is.null(ws$max_result_size)) {
         ws$max_result_size <- 50000L
+    }
+    if (is.null(ws$scan_globalenv)) {
+        ws$scan_globalenv <- TRUE
+    }
+    if (is.null(ws$scan_max_bytes)) {
+        ws$scan_max_bytes <- 52428800L # 50MB
+    }
+    if (is.null(ws$max_object_summary_chars)) {
+        ws$max_object_summary_chars <- 2000L
     }
     config$workspace <- ws
 

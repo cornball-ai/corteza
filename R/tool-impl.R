@@ -90,6 +90,19 @@ tool_run_r_script <- function(args) {
 tool_bash <- function(args) {
     cmd <- args$command
     timeout <- args$timeout %||% 30
+    background <- isTRUE(args$background)
+
+    if (background) {
+        if (!requireNamespace("processx", quietly = TRUE)) {
+            return(err("processx package required for background processes. Install with: install.packages('processx')"))
+        }
+        proc <- processx::process$new("bash", c("-c", cmd),
+                                      stdout = "|", stderr = "|",
+                                      cleanup_tree = TRUE)
+        id <- bg_register(cmd, proc)
+        return(ok(sprintf("Started background process [%s] (pid %d)\nCheck with: bg_status tool",
+                          id, proc$get_pid())))
+    }
 
     result <- tryCatch({
         out <- system(cmd, intern = TRUE, timeout = timeout)
@@ -98,6 +111,75 @@ tool_bash <- function(args) {
         paste("Error:", e$message)
     })
     ok(result)
+}
+
+# Background process registry ----
+
+.bg_processes <- new.env(parent = emptyenv())
+
+bg_register <- function(cmd, proc) {
+    id <- sprintf("bg_%d", length(ls(.bg_processes)) + 1L)
+    .bg_processes[[id]] <- list(
+                                id = id,
+                                command = substr(cmd, 1, 80),
+                                process = proc,
+                                started = Sys.time()
+    )
+    id
+}
+
+tool_bg_status <- function(args) {
+    ids <- ls(.bg_processes)
+    if (length(ids) == 0) {
+        return(ok("No background processes."))
+    }
+
+    lines <- vapply(ids, function(id) {
+        entry <- .bg_processes[[id]]
+        proc <- entry$process
+        alive <- proc$is_alive()
+        status <- if (alive) "running" else paste("exited",
+            proc$get_exit_status())
+        elapsed <- round(as.numeric(difftime(Sys.time(), entry$started,
+                    units = "secs")))
+
+        # Read available output
+        out <- ""
+        if (!alive) {
+            out <- tryCatch(proc$read_all_output(), error = function(e) "")
+            err_out <- tryCatch(proc$read_all_error(), error = function(e) "")
+            if (nchar(err_out) > 0) out <- paste(out, err_out, sep = "\n")
+        } else {
+            out <- tryCatch(proc$read_output(), error = function(e) "")
+        }
+
+        tail_out <- if (nchar(out) > 500) {
+            paste0("...\n", substr(out, nchar(out) - 499, nchar(out)))
+        } else {
+            out
+        }
+
+        sprintf("[%s] %s | %s | %ds | pid %d%s",
+                id, entry$command, status, elapsed, proc$get_pid(),
+            if (nchar(tail_out) > 0) paste0("\n", tail_out) else "")
+    }, character(1))
+
+    ok(paste(lines, collapse = "\n\n"))
+}
+
+tool_bg_kill <- function(args) {
+    id <- args$id
+    if (!exists(id, envir = .bg_processes, inherits = FALSE)) {
+        return(err(sprintf("No background process with id '%s'", id)))
+    }
+    entry <- .bg_processes[[id]]
+    if (entry$process$is_alive()) {
+        entry$process$kill_tree()
+        ok(sprintf("Killed process [%s] (pid %d)", id, entry$process$get_pid()))
+    } else {
+        ok(sprintf("Process [%s] already exited with status %d",
+                   id, entry$process$get_exit_status()))
+    }
 }
 
 # R-specific ----
@@ -342,15 +424,36 @@ register_builtin_skills <- function() {
 
     register_skill(skill_spec(
                               name = "bash",
-                              description = "Run a shell command",
+                              description = "Run a shell command. Use background=true for long-running servers or processes.",
                               params = list(
                 command = list(type = "string",
                                description = "Shell command to execute",
                                required = TRUE),
                 timeout = list(type = "integer",
-                               description = "Timeout in seconds (default: 30)")
+                               description = "Timeout in seconds (default: 30)"),
+                background = list(type = "boolean",
+                                  description = "Run in background and return immediately (default: false)")
             ),
                               handler = function(args, ctx) tool_bash(args)
+        ))
+
+    # Background process management
+    register_skill(skill_spec(
+                              name = "bg_status",
+                              description = "Check status and output of background processes",
+                              params = list(),
+                              handler = function(args, ctx) tool_bg_status(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "bg_kill",
+                              description = "Kill a background process by id",
+                              params = list(
+                id = list(type = "string",
+                          description = "Process id (e.g. bg_1)",
+                          required = TRUE)
+            ),
+                              handler = function(args, ctx) tool_bg_kill(args)
         ))
 
     # R-specific

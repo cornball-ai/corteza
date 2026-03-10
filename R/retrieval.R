@@ -115,19 +115,45 @@ ws_retrieve <- function(prompt, budget_chars = 8000L, current_turn = NULL) {
 #' @param name Object name
 #' @param value The R value
 #' @param meta Provenance metadata
+#' @param max_chars Max characters for the summary (default 2000)
 #' @return Character string summary
 #' @noRd
-ws_summarize <- function(name, value, meta) {
+ws_summarize <- function(name, value, meta, max_chars = 2000L) {
+    if (is.null(value)) {
+        return(sprintf("%s: NULL", name))
+    }
     cls <- meta$class
 
     body <- if (cls == "data.frame") {
         dims <- sprintf("[%dx%d]", nrow(value), ncol(value))
         col_info <- vapply(names(value), function(cn) {
-            sprintf("%s(%s)", cn, class(value[[cn]])[1])
+            col <- value[[cn]]
+            cl <- class(col)[1]
+            na_count <- sum(is.na(col))
+            na_str <- if (na_count > 0) sprintf(" %dNA", na_count) else ""
+
+            extra <- if (is.numeric(col) && length(col) > 0) {
+                rng <- range(col, na.rm = TRUE)
+                sprintf(" [%.4g,%.4g]", rng[1], rng[2])
+            } else if (is.factor(col)) {
+                lvls <- levels(col)
+                if (length(lvls) <= 5) {
+                    sprintf(" {%s}", paste(lvls, collapse = ","))
+                } else {
+                    sprintf(" {%d levels}", length(lvls))
+                }
+            } else if (is.character(col) && length(col) > 0) {
+                n_unique <- length(unique(col))
+                sprintf(" %d unique", n_unique)
+            } else {
+                ""
+            }
+
+            sprintf("%s(%s%s%s)", cn, cl, na_str, extra)
         }, character(1))
         col_str <- paste(col_info, collapse = ", ")
-        if (nchar(col_str) > 200) {
-            col_str <- paste0(substr(col_str, 1, 197), "...")
+        if (nchar(col_str) > 400) {
+            col_str <- paste0(substr(col_str, 1, 397), "...")
         }
         head_str <- tryCatch({
             h <- capture.output(print(head(value, 3)))
@@ -135,12 +161,33 @@ ws_summarize <- function(name, value, meta) {
         }, error = function(e) "(head unavailable)")
         sprintf("data.frame %s: %s\n%s", dims, col_str, head_str)
 
-    } else if (cls == "character") {
-        text <- paste(value, collapse = "\n")
-        if (nchar(text) > 500) {
-            paste0(substr(text, 1, 497), "...")
+    } else if (inherits(value, "matrix")) {
+        dims <- sprintf("[%dx%d]", nrow(value), ncol(value))
+        tp <- typeof(value)
+        rng_str <- if (is.numeric(value) && length(value) > 0) {
+            rng <- range(value, na.rm = TRUE)
+            sprintf(" range [%.4g, %.4g]", rng[1], rng[2])
         } else {
-            text
+            ""
+        }
+        sprintf("matrix %s %s%s", dims, tp, rng_str)
+
+    } else if (cls == "character") {
+        if (length(value) == 0) {
+            "character(0)"
+        } else if (length(value) > 1) {
+            sample_items <- head(value, 3)
+            sample_str <- paste(sprintf('"%s"',
+                                        substr(sample_items, 1, 50)), collapse = ", ")
+            sprintf("character[%d]: %s%s", length(value), sample_str,
+                if (length(value) > 3) ", ..." else "")
+        } else {
+            text <- value
+            if (nchar(text) > 500) {
+                paste0(substr(text, 1, 497), "...")
+            } else {
+                text
+            }
         }
 
     } else if (cls == "function") {
@@ -179,8 +226,51 @@ ws_summarize <- function(name, value, meta) {
         sprintf(" (turn %d)", meta$turn)
     }
 
-    sprintf("**%s**%s%s%s\n%s", name, stale_marker, pinned_marker,
-            origin_str, body)
+    result <- sprintf("**%s**%s%s%s\n%s", name, stale_marker,
+                      pinned_marker, origin_str, body)
+
+    # Truncate if over budget
+    if (nchar(result) > max_chars) {
+        result <- paste0(substr(result, 1, max_chars - 3), "...")
+    }
+    result
+}
+
+#' Compact one-liner digest of entire workspace
+#'
+#' Always included in context so the LLM knows what exists, even when
+#' individual summaries exceed the budget.
+#'
+#' @return Character string (empty if workspace is empty)
+#' @noRd
+ws_digest <- function() {
+    nms <- ws_names()
+    if (length(nms) == 0) {
+        return("")
+    }
+
+    total_bytes <- ws_size()
+    total_mb <- round(total_bytes / 1e6, 1)
+
+    items <- vapply(nms, function(nm) {
+        meta <- ws_meta(nm)
+        val <- ws_get(nm)
+        desc <- if (meta$class == "data.frame") {
+            sprintf("%s (data.frame %dx%d)", nm, nrow(val), ncol(val))
+        } else if (inherits(val, "matrix")) {
+            sprintf("%s (matrix %dx%d)", nm, nrow(val), ncol(val))
+        } else if (meta$class == "list") {
+            sprintf("%s (list of %d)", nm, length(val))
+        } else {
+            sprintf("%s (%s)", nm, meta$class)
+        }
+        if (isTRUE(meta$pinned)) desc <- paste0(desc, "*")
+        if (isTRUE(meta$stale)) desc <- paste0(desc, "~")
+        desc
+    }, character(1))
+
+    sprintf("Workspace: %d objects, %.1fMB. Items: %s",
+            length(nms), total_mb, paste(items, collapse = ", "))
 }
 
 #' Format retrieved objects as markdown context for system prompt
@@ -189,11 +279,16 @@ ws_summarize <- function(name, value, meta) {
 #' @return Character string (empty if nothing retrieved)
 #' @noRd
 ws_format_context <- function(retrieved) {
-    if (length(retrieved) == 0) {
+    digest <- ws_digest()
+
+    if (length(retrieved) == 0 && nchar(digest) == 0) {
         return("")
     }
 
     parts <- c("## Workspace State", "")
+    if (nchar(digest) > 0) {
+        parts <- c(parts, digest, "")
+    }
     for (item in retrieved) {
         parts <- c(parts, item$summary, "")
     }

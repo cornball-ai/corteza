@@ -150,6 +150,8 @@ parse_basalt_params <- function(help_md) {
 #' @return Handler function(args, ctx)
 #' @noRd
 make_pkg_handler <- function(pkg, fn_name) {
+    force(pkg)
+    force(fn_name)
     function(args, ctx) {
         fn <- getExportedValue(pkg, fn_name)
         tryCatch({
