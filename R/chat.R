@@ -215,8 +215,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         }
     }
 
-    # Initialize context engine
+    # Initialize context engine and heartbeat
     ce_init(cwd, config)
+    hb_init(config)
 
     # If resuming, rebuild conversation index from history
     if (length(history) > 0) {
@@ -236,16 +237,21 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         start <- Sys.time()
         result <- call_tool(name, args %||% list())
         text <- result$content[[1]]$text %||% ""
+        success <- !isTRUE(result$isError)
         elapsed <- as.numeric(
                               difftime(Sys.time(), start, units = "secs")) * 1000
         lines <- if (nchar(text) > 0) length(strsplit(text, "\n")[[1]]) else 0L
         cat(sprintf("(%d lines)\n", lines))
         tryCatch(
                  trace_add(session$sessionId, name, args, text,
-                           success = TRUE, elapsed_ms = round(elapsed),
+                           success = success, elapsed_ms = round(elapsed),
                            turn = turn_number),
                  error = function(e) NULL
         )
+
+        # Record for heartbeat detection
+        hb_record_tool(name, args, text, success)
+        if (success) hb_clear_suppression("failure_streak")
 
         # Update file index if a file was written
         if (name %in% c("base::writeLines", "write_file")) {
@@ -311,6 +317,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         # Compute context payload (uses context engine)
         payload <- ce_rerank(prompt, system_prompt, tools_json)
 
+        # Heartbeat: check for behavioral reminders
+        token_pct <- (payload$tokens_used / 100000) * 100
+        reminder <- hb_check(token_pct = token_pct,
+                             project_rules = config$heartbeat_rules)
+        if (!is.null(reminder)) {
+            history <- c(history, list(list(role = "user", content = reminder)))
+        }
+
         result <- tryCatch(
                            llm.api::agent(
                 prompt = prompt,
@@ -341,6 +355,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         }
         transcript_append(session, "assistant", content)
         history <- result$history
+
+        # Record turn for heartbeat
+        hb_record_turn()
 
         # Index assistant turn + extract metadata
         tool_calls <- ce_extract_tool_calls(result)
