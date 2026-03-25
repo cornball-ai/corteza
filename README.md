@@ -10,37 +10,24 @@ In Spanish, *llamar* (pronounced ["Ya Mar"](https://www.youtube.com/watch?v=p-2E
 
 ## Quick Start
 
-```r
-library(llamaR)
-chat()
+```bash
+# Install the CLI
+r -e 'llamaR::install_cli()'
+
+# Start the agent
+llamar
 ```
 
-That's it. You're talking to an AI agent inside your R session. It can read files, run shell commands, query git, search the web, and execute R code directly in your environment.
+That's it. You're talking to an AI agent that can read files, run shell commands, query git, search the web, and execute R code in a persistent session.
 
 ```
-llamaR chat | claude-sonnet-4-20250514 @ anthropic | 24 tools | /r to eval R | /quit to exit
+llamar | claude-sonnet-4-20250514 @ anthropic | 24 tools
 
-> Create a data frame with 10 random numbers and their squares
-  [run_r] (11 lines)
-Done. The data frame `df` is in your workspace.
+> What R packages are loaded?
+  [run_r] Running: loadedNamespaces()
+12 packages loaded: base, utils, stats, ...
 
-> /r df
-    random    squared
-1  0.2876 0.08270083
-2  0.7883 0.62142499
-...
-
-> /quit
-Bye.
-```
-
-The agent evals R code in `.GlobalEnv`. Your objects are its objects. When you `/r df`, you're running R directly, no LLM roundtrip.
-
-Switch providers with one argument:
-
-```r
-chat(provider = "openai")   # GPT-4o
-chat(provider = "ollama")   # Local models
+> llamar --provider ollama --model llama3.2
 ```
 
 -----
@@ -55,29 +42,21 @@ In the agent world, tools, skills, and the servers that expose them are three se
 
 -----
 
-## How It Works
+## Three Ways to Use llamaR
 
-llamaR has two modes:
+### 1. CLI agent (`llamar`)
 
-### 1. In-session agent (`chat()`)
+The primary interface. A terminal agent with session management, voice mode, and context compaction. Uses the MCP server internally for tool execution.
 
-Runs inside your R session. Tools execute as direct function calls via the skill registry. No MCP server, no subprocess.
-
-```r
-chat()                           # Claude (default)
-chat(provider = "openai")        # GPT-4o
-chat(provider = "ollama",        # Local
-     model = "llama3.2")
-chat(tools = "core")             # Minimal tools (file + code + git)
+```bash
+llamar                    # Start agent
+llamar --resume           # Resume last session
+llamar --provider ollama  # Use local models
 ```
-
-In-session commands:
-- `/r <code>` evaluates R code directly (auto-prints like the console)
-- `/quit`, `/exit`, `/q` exits the chat
 
 ### 2. MCP server (`serve()`)
 
-Exposes tools to external MCP clients (Claude Desktop, VS Code, other agents).
+Exposes a persistent R session to external MCP clients (Claude Code, Claude Desktop, VS Code). This is how other tools get stateful R access: objects persist across tool calls, packages stay loaded, and runtime inspection tools like `mirar` work on real session state.
 
 ```json
 {
@@ -90,15 +69,18 @@ Exposes tools to external MCP clients (Claude Desktop, VS Code, other agents).
 }
 ```
 
-### 3. CLI agent (`llamar`)
+### 3. In-session agent (`chat()`)
 
-A terminal agent with full session management, voice mode, and context compaction.
+Runs inside your R console. Tools execute as direct function calls, no MCP server, no subprocess. Your `.GlobalEnv` objects are the agent's objects.
 
-```bash
-llamar                    # Start agent
-llamar --resume           # Resume last session
-llamar --provider ollama  # Use local models
+```r
+chat()                           # Claude (default)
+chat(provider = "openai")        # GPT-4o
+chat(provider = "ollama",        # Local
+     model = "llama3.2")
 ```
+
+This is the most interesting mode architecturally (the agent lives in the same process as the data), but current LLMs are trained on bash-style CLIs, so they perform better through the terminal interface. The `/r <code>` command lets you eval R directly without an LLM roundtrip.
 
 -----
 

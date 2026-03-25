@@ -6,8 +6,9 @@ Authors@R: person("Troy", "Hernandez", role = c("aut", "cre"),
 Description: An AI agent runtime that gives LLMs (Anthropic, OpenAI, Ollama)
     direct access to a live R session with managed workspace state. Tools
     execute as R function calls with provenance tracking, and a deterministic
-    retrieval system keeps relevant objects in context across turns. Runs as
-    an in-session agent via chat() or as an MCP server for external clients.
+    retrieval system keeps relevant objects in context across turns. Three
+    modes: CLI agent (llamar), MCP server for external clients (serve()),
+    and in-session agent (chat()).
 License: MIT + file LICENSE
 URL: https://github.com/cornball-ai/llamaR
 BugReports: https://github.com/cornball-ai/llamaR/issues
