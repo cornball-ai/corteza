@@ -215,13 +215,15 @@ ce_update_files <- function(paths) {
         }
         if (!file.exists(abs_path)) {
             # File deleted: remove from index
-            # Can't normalizePath a deleted file, use raw relative
-            rel <- if (startsWith(p, "/")) {
-                sub(paste0("^", normalizePath(cwd, mustWork = FALSE),
-                           "/?"), "", p)
-            } else {
-                p
-            }
+            # Can't normalizePath a deleted file, but we can normalize its
+            # parent dir (which still exists) and append the basename. This
+            # handles macOS where /var -> /private/var: the stored key used
+            # fully-normalized paths, so the deletion key must match.
+            parent <- dirname(abs_path)
+            norm_parent <- normalizePath(parent, mustWork = FALSE)
+            norm_abs <- file.path(norm_parent, basename(abs_path))
+            norm_cwd <- normalizePath(cwd, mustWork = FALSE)
+            rel <- sub(paste0("^", norm_cwd, "/?"), "", norm_abs)
             if (nchar(rel) > 0) {
                 .context_engine$file_index[[rel]] <- NULL
             }
