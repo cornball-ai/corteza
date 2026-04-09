@@ -97,7 +97,13 @@ Options:
 
 Commands (in chat):
   /quit, /exit   Exit llamar
+  /status        Show current runtime/session status
+  /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
+  /diff [ref]    Show git diff against HEAD or a ref
+  /review [ref]  Review local changes with the current model
+  /config        Show active runtime configuration
+  /permissions   Show tool approval and sandbox settings
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /sessions      List sessions
@@ -113,6 +119,9 @@ Context files (auto-loaded if present):
   PLAN.md        Development roadmap
   fyi.md         Package introspection (from fyi package)
   AGENTS.md      Agent behavior guidelines
+
+Legacy llamaR memory injection is disabled by default.
+Use config to opt back into MEMORY.md or daily memory logs.
 
 Config files:
   ~/.llamar/config.json        Global defaults
@@ -503,11 +512,253 @@ ask_approval <- function(name, args) {
 }
 
 # ============================================================================
+# CLI status helpers
+# ============================================================================
+
+capture_command <- function(command, args = character()) {
+  output <- tryCatch(
+    system2(command, args, stdout = TRUE, stderr = TRUE),
+    error = function(e) structure(paste("Error:", e$message), status = 1L)
+  )
+
+  list(
+    lines = output,
+    text = paste(output, collapse = "\n"),
+    status = attr(output, "status") %||% 0L
+  )
+}
+
+truncate_output <- function(text, max_lines = 300L, max_chars = 60000L) {
+  if (is.null(text) || nchar(text) == 0) {
+    return("")
+  }
+
+  lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
+  if (length(lines) > max_lines) {
+    lines <- c(lines[seq_len(max_lines)],
+               sprintf("[truncated at %d lines]", max_lines))
+  }
+  text <- paste(lines, collapse = "\n")
+
+  if (nchar(text) > max_chars) {
+    text <- paste0(substr(text, 1, max_chars), "\n[truncated by character limit]")
+  }
+
+  text
+}
+
+provider_env_var <- function(provider) {
+  switch(provider,
+         anthropic = "ANTHROPIC_API_KEY",
+         openai = "OPENAI_API_KEY",
+         paste0(toupper(provider), "_API_KEY"))
+}
+
+provider_status <- function(provider, model = NULL) {
+  if (provider == "ollama") {
+    err <- tryCatch({
+      validate_model(provider, model)
+      NULL
+    }, error = function(e) e$message)
+
+    if (is.null(err)) {
+      return(list(ok = TRUE, message = "ollama reachable"))
+    }
+    return(list(ok = FALSE, message = err))
+  }
+
+  env_var <- provider_env_var(provider)
+  if (nchar(Sys.getenv(env_var, "")) == 0) {
+    return(list(ok = FALSE, message = paste("missing", env_var)))
+  }
+
+  list(ok = TRUE, message = paste(env_var, "set"))
+}
+
+in_git_repo <- function() {
+  result <- capture_command("git", c("rev-parse", "--is-inside-work-tree"))
+  result$status == 0L && identical(trimws(result$text), "true")
+}
+
+collect_git_diff <- function(ref = NULL) {
+  if (!in_git_repo()) {
+    return(list(ok = FALSE, text = "Not inside a git repository."))
+  }
+
+  target <- trimws(ref %||% "")
+  target <- if (nchar(target) > 0) target else "HEAD"
+
+  status <- capture_command("git", c("status", "--short"))
+  diff <- capture_command(
+    "git",
+    c("diff", "--no-ext-diff", "--find-renames", "--unified=3", target)
+  )
+
+  if (diff$status != 0L) {
+    return(list(ok = FALSE, text = diff$text))
+  }
+
+  if (nchar(trimws(diff$text)) == 0) {
+    if (nchar(trimws(status$text)) > 0) {
+      return(list(
+        ok = FALSE,
+        text = paste0(
+          "No tracked diff against ", target,
+          ". Untracked or ignored files may still be present.\n\n",
+          truncate_output(status$text, max_lines = 50L, max_chars = 4000L)
+        )
+      ))
+    }
+    return(list(ok = FALSE, text = paste("No git diff against", target, ".")))
+  }
+
+  list(
+    ok = TRUE,
+    target = target,
+    status = truncate_output(status$text, max_lines = 80L, max_chars = 6000L),
+    diff = truncate_output(diff$text, max_lines = 500L, max_chars = 70000L)
+  )
+}
+
+format_status_summary <- function(session, provider, display_model, conn, opts,
+                                  config, session_tokens, context_limit,
+                                  context_files, skill_docs, voice_mode) {
+  memory_mode <- if (isTRUE(config$context_include_global_memory) ||
+                     isTRUE(config$context_include_memory_logs) ||
+                     isTRUE(config$memory_flush_enabled)) {
+    "legacy llamaR memory enabled"
+  } else {
+    "legacy llamaR memory disabled"
+  }
+
+  paste(
+    c(
+      sprintf("Session: %s", session$sessionKey),
+      sprintf("Model: %s @ %s", display_model, provider),
+      sprintf("Tools: %d | Dry-run: %s | Voice: %s",
+              length(conn$tools),
+              if (isTRUE(opts$dry_run)) "on" else "off",
+              if (isTRUE(voice_mode)) "on" else "off"),
+      sprintf("Context: %d project file(s) | %d skill doc(s) | %s",
+              length(context_files), length(skill_docs), memory_mode),
+      sprintf("Legacy memory tools: %s",
+              if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
+      sprintf("Usage: %s / %s tokens",
+              format_tokens(session_tokens), format_tokens(context_limit)),
+      sprintf("Approval mode: %s", config$approval_mode %||% "ask")
+    ),
+    collapse = "\n"
+  )
+}
+
+format_config_summary <- function(config, provider, display_model, opts) {
+  paste(
+    c(
+      "Runtime config",
+      sprintf("provider: %s", provider),
+      sprintf("model: %s", display_model),
+      sprintf("port: %d", opts$port),
+      sprintf("tools: %s",
+              if (is.null(opts$tools)) "all" else paste(opts$tools, collapse = ", ")),
+      sprintf("context files: %s",
+              if (length(config$context_files) > 0) {
+                paste(config$context_files, collapse = ", ")
+              } else {
+                "(none)"
+              }),
+      sprintf("legacy workspace memory: %s",
+              if (isTRUE(config$context_include_global_memory)) "enabled" else "disabled"),
+      sprintf("daily memory logs: %s",
+              if (isTRUE(config$context_include_memory_logs)) "enabled" else "disabled"),
+      sprintf("compaction memory flush: %s",
+              if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
+      sprintf("legacy memory tools: %s",
+              if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
+      sprintf("approval mode: %s", config$approval_mode %||% "ask"),
+      sprintf("dangerous tools: %s",
+              paste(config$dangerous_tools %||%
+                    llamaR:::default_dangerous_tools(),
+                    collapse = ", ")),
+      sprintf("voice default: %s",
+              if (isTRUE(config$voice$enabled %||% FALSE)) "on" else "off")
+    ),
+    collapse = "\n"
+  )
+}
+
+format_doctor_report <- function(cwd, session, provider, display_model, conn,
+                                 config, context_files, skill_docs) {
+  provider_check <- provider_status(provider, model = if (!is.null(session$model)) session$model else NULL)
+  approvals_path <- file.path(cwd, ".llamar", "approvals.json")
+
+  paste(
+    c(
+      "llamar doctor",
+      sprintf("cwd: %s", cwd),
+      sprintf("session: %s", session$sessionKey),
+      sprintf("provider: %s (%s)",
+              provider,
+              if (isTRUE(provider_check$ok)) provider_check$message else paste("check failed:", provider_check$message)),
+      sprintf("model: %s", display_model),
+      sprintf("mcp: connected (%d tools)", length(conn$tools)),
+      sprintf("git: %s", if (in_git_repo()) "repository detected" else "not a git repository"),
+      sprintf("context files: %d", length(context_files)),
+      sprintf("skill docs: %d", length(skill_docs)),
+      sprintf("legacy workspace memory: %s",
+              if (isTRUE(config$context_include_global_memory)) "enabled" else "disabled"),
+      sprintf("daily memory logs: %s",
+              if (isTRUE(config$context_include_memory_logs)) "enabled" else "disabled"),
+      sprintf("compaction memory flush: %s",
+              if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
+      sprintf("legacy memory tools: %s",
+              if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
+      sprintf("voice: %s", llamaR:::voice_status(config)),
+      sprintf("approval mode: %s", config$approval_mode %||% "ask"),
+      sprintf("project approvals: %s",
+              if (file.exists(approvals_path)) approvals_path else "none")
+    ),
+    collapse = "\n"
+  )
+}
+
+run_review <- function(provider, model, diff_target, diff_status, diff_text) {
+  review_prompt <- paste(
+    "Review the current git changes.",
+    "Focus on bugs, behavioral regressions, risky assumptions, and missing tests.",
+    "List concrete findings first with file paths and line references when the diff makes them available.",
+    "If there are no material issues, reply with exactly: No findings.",
+    "",
+    sprintf("Git diff target: %s", diff_target),
+    "",
+    "Git status:",
+    diff_status %||% "(clean)",
+    "",
+    "Diff:",
+    diff_text,
+    sep = "\n"
+  )
+
+  tryCatch({
+    llm.api::chat(
+      prompt = review_prompt,
+      provider = provider,
+      model = model,
+      system = paste(
+        "You are performing code review on local changes.",
+        "Findings must come first and should prioritize correctness over style."
+      ),
+      temperature = 0.1
+    )
+  }, error = function(e) e)
+}
+
+# ============================================================================
 # Main agent loop
 # ============================================================================
 
 run_agent <- function(opts) {
   cwd <- getwd()
+  config <- llamaR:::load_config(cwd)
 
   # Handle --list (exit early)
   if (isTRUE(opts$list)) {
@@ -618,9 +869,8 @@ run_agent <- function(opts) {
   tools <- mcp_tools_for_api(conn)
 
   # Get approval settings from config
-  config <- llamaR:::load_config(cwd)
   approval_mode <- config$approval_mode %||% "ask"
-  dangerous_tools <- config$dangerous_tools %||% c("bash", "run_r", "run_r_script", "write_file")
+  dangerous_tools <- config$dangerous_tools %||% llamaR:::default_dangerous_tools()
 
   # Track turn number for trace
   turn_number <- 0L
@@ -820,6 +1070,7 @@ run_agent <- function(opts) {
       cmd_parts <- strsplit(prompt, "\\s+")[[1]]
       cmd <- tolower(cmd_parts[1])
       cmd_arg <- if (length(cmd_parts) > 1) cmd_parts[2] else NULL
+      cmd_rest <- trimws(sub("^/\\S+\\s*", "", prompt, perl = TRUE))
 
       if (cmd %in% c("/quit", "/exit", "/q")) {
         break
@@ -863,14 +1114,98 @@ run_agent <- function(opts) {
         sessions <- llamaR:::session_list()
         cat(llamaR:::format_session_list(sessions), "\n")
         next
-      } else if (cmd == "/model" && !is.null(cmd_arg)) {
-        model <- cmd_arg
+      } else if (cmd == "/status") {
+        config <- llamaR:::load_config(cwd)
+        cat(sprintf("\n%s%s%s\n\n",
+                    color$bold,
+                    format_status_summary(session, provider, display_model, conn,
+                                          opts, config, session_tokens,
+                                          context_limit, context_files,
+                                          skill_docs, voice_mode),
+                    color$reset))
+        next
+      } else if (cmd == "/doctor") {
+        config <- llamaR:::load_config(cwd)
+        cat(sprintf("\n%s%s%s\n\n",
+                    color$bold,
+                    format_doctor_report(cwd, session, provider, display_model,
+                                         conn, config, context_files,
+                                         skill_docs),
+                    color$reset))
+        next
+      } else if (cmd == "/config") {
+        config <- llamaR:::load_config(cwd)
+        cat(sprintf("\n%s%s%s\n\n",
+                    color$bold,
+                    format_config_summary(config, provider, display_model, opts),
+                    color$reset))
+        next
+      } else if (cmd == "/permissions") {
+        config <- llamaR:::load_config(cwd)
+        approvals_path <- file.path(cwd, ".llamar", "approvals.json")
+        cat(sprintf("\n%s%s%s\n",
+                    color$bold,
+                    llamaR:::format_permissions(config),
+                    color$reset))
+        cat(sprintf("%sProject approvals:%s %s\n\n",
+                    color$dim, color$reset,
+                    if (file.exists(approvals_path)) approvals_path else "none"))
+        next
+      } else if (cmd == "/diff") {
+        material <- collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
+        if (!isTRUE(material$ok)) {
+          cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
+        } else {
+          tool_buffer_add("git_diff", list(ref = material$target), material$diff)
+          cat(sprintf("\n%sDiff against %s%s\n", color$cyan, material$target, color$reset))
+          cat(material$diff, "\n")
+        }
+        next
+      } else if (cmd == "/review") {
+        material <- collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
+        if (!isTRUE(material$ok)) {
+          cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
+          next
+        }
+
+        provider_check <- provider_status(provider, model)
+        if (!isTRUE(provider_check$ok)) {
+          cat(sprintf("%sReview unavailable: %s%s\n",
+                      color$yellow, provider_check$message, color$reset))
+          next
+        }
+
+        cat(sprintf("%sReviewing diff against %s...%s\n",
+                    color$dim, material$target, color$reset))
+        review_result <- run_review(provider, model, material$target,
+                                    material$status, material$diff)
+        if (inherits(review_result, "error")) {
+          cat(sprintf("%sReview failed: %s%s\n",
+                      color$bright_magenta, review_result$message,
+                      color$reset))
+        } else {
+          tool_buffer_add("review", list(ref = material$target),
+                          review_result$content)
+          print_response(review_result$content)
+        }
+        next
+      } else if (cmd == "/model" && nchar(cmd_rest) > 0) {
+        model <- cmd_rest
+        display_model <- model
+        context_limit <- get_context_limit(display_model)
         session$model <- model
         llamaR:::session_save(session)
         cat(sprintf("%sModel set to: %s%s\n", color$dim, model, color$reset))
         next
-      } else if (cmd == "/provider" && !is.null(cmd_arg)) {
-        provider <- cmd_arg
+      } else if (cmd == "/provider" && nchar(cmd_rest) > 0) {
+        provider <- cmd_rest
+        display_model <- model %||% switch(provider,
+          anthropic = "claude-sonnet-4-20250514",
+          openai = "gpt-4o",
+          ollama = "llama3.2",
+          "(default)"
+        )
+        context_limit <- get_context_limit(display_model)
         session$provider <- provider
         llamaR:::session_save(session)
         cat(sprintf("%sProvider set to: %s%s\n", color$dim, provider, color$reset))
@@ -895,7 +1230,7 @@ run_agent <- function(opts) {
       } else if (cmd == "/context") {
         if (length(context_files) == 0) {
           cat(sprintf("%sNo context files loaded.%s\n", color$dim, color$reset))
-          cat("Create LLAMAR.md or fyi.md in this directory to add context.\n")
+          cat("Create README.md, PLAN.md, AGENTS.md, or fyi.md to add project context.\n")
         } else {
           cat(sprintf("%sLoaded context files:%s\n", color$bold, color$reset))
           for (f in context_files) {
@@ -1303,7 +1638,13 @@ run_agent <- function(opts) {
         cat("
 Commands:
   /quit, /exit   Exit llamar
+  /status        Show runtime and session status
+  /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
+  /diff [ref]    Show git diff against HEAD or a ref
+  /review [ref]  Review local changes with the current model
+  /config        Show active runtime configuration
+  /permissions   Show tool approval and sandbox settings
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /sessions      List sessions for this directory
@@ -1345,6 +1686,9 @@ Tool output:
   /last [N]      Show tool output (1=most recent)
   /outputs       List recent tool outputs
   /help          Show this help
+
+Legacy llamaR memory injection is off by default.
+Use config if you want MEMORY.md or memory logs back in prompt context.
 
 ")
         next

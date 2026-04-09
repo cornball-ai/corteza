@@ -91,6 +91,7 @@ This is the most interesting mode architecturally (the agent lives in the same p
 |`bash`              |Run shell commands                    |
 |`read_file`         |Read file contents                    |
 |`write_file`        |Write or create files                 |
+|`replace_in_file`   |Make exact text replacements in files |
 |`list_files`        |List directory contents               |
 |`grep_files`        |Search file contents                  |
 |`run_r`             |Execute R code in the session         |

@@ -10,8 +10,8 @@
 #' @return Character string with assembled context, or NULL if no files found
 #' @noRd
 load_context <- function(cwd = getwd()) {
-    # Get file list from config (or defaults)
-    file_names <- get_context_files(cwd)
+    config <- load_config(cwd)
+    file_names <- config$context_files %||% default_context_files()
 
     # Build full paths
     context_files <- file.path(cwd, file_names)
@@ -24,13 +24,15 @@ load_context <- function(cwd = getwd()) {
                ""
     )
 
-    # Load global context files from ~/.llamar/workspace/ (SOUL.md, USER.md, MEMORY.md)
+    # Load selected workspace context from ~/.llamar/workspace/
     workspace_dir <- get_workspace_dir()
-    global_files <- global_context_files()
+    global_files <- global_context_files(
+        include_memory = isTRUE(config$context_include_global_memory)
+    )
     global_labels <- c(
-                       "SOUL.md" = "Agent Identity (Global)",
-                       "USER.md" = "User Preferences (Global)",
-                       "MEMORY.md" = "User Memory (Global)"
+                       "SOUL.md" = "Agent Identity (Workspace)",
+                       "USER.md" = "User Preferences (Workspace)",
+                       "MEMORY.md" = "Legacy Workspace Memory"
     )
     for (gf in global_files) {
         global_path <- file.path(workspace_dir, gf)
@@ -44,10 +46,11 @@ load_context <- function(cwd = getwd()) {
         }
     }
 
-    # Load daily memory logs from ~/.llamar/workspace/memory/*.md
-    memory_logs <- memory_log_load_all()
-    if (!is.null(memory_logs)) {
-        parts <- c(parts, "## Daily Memory Logs", "", memory_logs, "")
+    if (isTRUE(config$context_include_memory_logs)) {
+        memory_logs <- memory_log_load_all()
+        if (!is.null(memory_logs)) {
+            parts <- c(parts, "## Daily Memory Logs", "", memory_logs, "")
+        }
     }
 
     # Read existing project files
@@ -80,7 +83,6 @@ load_context <- function(cwd = getwd()) {
     }
 
     # Add package tool documentation
-    config <- load_config(cwd)
     pkg_docs <- format_pkg_skill_docs(config)
     if (!is.null(pkg_docs) && nchar(pkg_docs) > 0) {
         parts <- c(parts,
@@ -115,4 +117,3 @@ list_context_files <- function(cwd = getwd()) {
     # Return only existing files
     context_files[file.exists(context_files)]
 }
-

@@ -3,14 +3,34 @@
 
 # Built-in tool categories for filtering
 .builtin_categories <- list(
+                            file = c("read_file", "write_file", "replace_in_file",
+        "list_files"),
                             code = c("run_r", "run_r_script", "bash"),
                             search = c("grep_files"),
-                            web = c("web_search"),
-                            memory = c("memory_store", "memory_recall", "memory_get"),
-                            r = c("r_help"),
+                            web = c("web_search", "fetch_url"),
+                            git = c("git_status", "git_diff", "git_log"),
+                            memory = c("memory_store", "memory_recall",
+        "memory_get"),
+                            r = c("r_help", "installed_packages"),
                             subagent = c("spawn_subagent", "query_subagent",
         "list_subagents", "kill_subagent")
 )
+
+#' Tools hidden by config
+#'
+#' @param cwd Working directory
+#' @return Character vector of hidden tool names
+#' @noRd
+hidden_tools <- function(cwd = getwd()) {
+    config <- load_config(cwd)
+    hidden <- character()
+
+    if (!isTRUE(config$legacy_memory_tools_enabled)) {
+        hidden <- c(hidden, .builtin_categories$memory)
+    }
+
+    unique(hidden)
+}
 
 #' Get tool categories (built-in + package-derived)
 #'
@@ -50,6 +70,11 @@ get_tools <- function(filter = NULL) {
         all_tools <- skills_as_tools()
     }
 
+    hidden <- hidden_tools()
+    if (length(hidden) > 0) {
+        all_tools <- Filter(function(t) !t$name %in% hidden, all_tools)
+    }
+
     # No filter = all tools
     if (is.null(filter)) {
         return(all_tools)
@@ -60,7 +85,7 @@ get_tools <- function(filter = NULL) {
         return(all_tools)
     }
     if ("core" %in% filter) {
-        filter <- c(filter[filter != "core"], "base", "code", "search")
+        filter <- c(filter[filter != "core"], "file", "git", "code", "search")
     }
 
     # Expand categories to tool names
@@ -135,4 +160,3 @@ unsanitize_tool_name <- function(name) {
     name <- gsub("__", "::", name, fixed = TRUE)
     gsub("-", ".", name, fixed = TRUE)
 }
-

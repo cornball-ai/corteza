@@ -1,11 +1,332 @@
 # MCP Tool Implementations
 # Actual implementations of tools exposed by the MCP server
 
+# Shared helpers ----
+
+tool_config <- function() {
+    load_config(getwd())
+}
+
+tool_resolve_path <- function(path = ".") {
+    target <- path %||% "."
+    if (nchar(trimws(target)) == 0) {
+        target <- "."
+    }
+    normalizePath(path.expand(target), mustWork = FALSE)
+}
+
+tool_check_path <- function(path, operation = "access") {
+    full_path <- tool_resolve_path(path)
+    validation <- validate_path(full_path, tool_config(), operation = operation)
+
+    list(
+         ok = validation$ok,
+         message = validation$message,
+         path = full_path
+    )
+}
+
+tool_read_text <- function(path) {
+    info <- file.info(path)
+    size <- info$size[[1]]
+
+    if (is.na(size) || size <= 0) {
+        return("")
+    }
+
+    con <- file(path, open = "rb")
+    on.exit(close(con), add = TRUE)
+    readChar(con, nchars = size, useBytes = TRUE)
+}
+
+tool_write_text <- function(path, text, append = FALSE) {
+    mode <- if (isTRUE(append)) "ab" else "wb"
+    con <- file(path, open = mode)
+    on.exit(close(con), add = TRUE)
+    writeChar(text %||% "", con, eos = NULL, useBytes = TRUE)
+    invisible(TRUE)
+}
+
+format_numbered_lines <- function(lines, start = 1L) {
+    if (length(lines) == 0) {
+        return("")
+    }
+
+    width <- nchar(as.character(start + length(lines) - 1L))
+    numbered <- sprintf(paste0("%", width, "d | %s"),
+                        seq.int(start, length.out = length(lines)),
+                        lines)
+    paste(numbered, collapse = "\n")
+}
+
+git_run <- function(args, path = ".") {
+    repo_path <- tool_resolve_path(path)
+    output <- tryCatch(
+                     system2("git", c("-C", repo_path, args),
+                             stdout = TRUE, stderr = TRUE),
+                     error = function(e) structure(paste("Error:", e$message),
+                                                   status = 1L)
+    )
+
+    list(
+         status = attr(output, "status") %||% 0L,
+         text = paste(output, collapse = "\n")
+    )
+}
+
+git_repo_available <- function(path = ".") {
+    result <- git_run(c("rev-parse", "--is-inside-work-tree"), path = path)
+    identical(trimws(result$text), "true") && result$status == 0L
+}
+
+# File tools ----
+
+tool_list_files <- function(args) {
+    checked <- tool_check_path(args$path %||% ".", operation = "read")
+    if (!checked$ok) {
+        return(err(checked$message))
+    }
+
+    path <- checked$path
+    if (!dir.exists(path)) {
+        return(err(paste("Directory not found:", path)))
+    }
+
+    pattern <- args$pattern
+    recursive <- isTRUE(args$recursive)
+    all_files <- isTRUE(args$all_files)
+    limit <- as.integer(args$limit %||% 200L)
+    if (is.na(limit) || limit < 1) {
+        limit <- 200L
+    }
+
+    entries <- list.files(
+        path = path,
+        pattern = pattern %||% NULL,
+        all.files = all_files,
+        recursive = recursive,
+        full.names = TRUE,
+        include.dirs = TRUE,
+        no.. = TRUE
+    )
+    entries <- sort(entries)
+
+    if (length(entries) == 0) {
+        return(ok(paste("No files found in", path)))
+    }
+
+    prefix <- if (endsWith(path, .Platform$file.sep)) path else {
+        paste0(path, .Platform$file.sep)
+    }
+
+    display <- vapply(entries, function(entry) {
+        rel <- if (startsWith(entry, prefix)) {
+            substr(entry, nchar(prefix) + 1L, nchar(entry))
+        } else {
+            basename(entry)
+        }
+        if (dir.exists(entry)) {
+            paste0(rel, "/")
+        } else {
+            rel
+        }
+    }, character(1))
+
+    truncated <- length(display) > limit
+    if (truncated) {
+        display <- display[seq_len(limit)]
+    }
+
+    header <- sprintf("Directory: %s", path)
+    if (truncated) {
+        header <- paste0(header, sprintf("\nShowing first %d entries.", limit))
+    }
+
+    ok(paste(c(header, "", display), collapse = "\n"))
+}
+
+tool_read_file <- function(args) {
+    checked <- tool_check_path(args$path, operation = "read")
+    if (!checked$ok) {
+        return(err(checked$message))
+    }
+
+    path <- checked$path
+    if (!file.exists(path)) {
+        return(err(paste("File not found:", path)))
+    }
+    if (dir.exists(path)) {
+        return(err(paste("Path is a directory, not a file:", path)))
+    }
+
+    lines <- tryCatch(readLines(path, warn = FALSE),
+                      error = function(e) structure(e$message,
+                                                    class = "tool_read_error"))
+    if (inherits(lines, "tool_read_error")) {
+        return(err(paste("Read error:", unclass(lines))))
+    }
+
+    total <- length(lines)
+    if (total == 0) {
+        return(ok(paste(c(sprintf("File: %s", path), "(empty file)"),
+                        collapse = "\n")))
+    }
+
+    from <- as.integer(args$from %||% 1L)
+    if (is.na(from) || from < 1L) {
+        from <- 1L
+    }
+
+    count <- args$lines
+    if (!is.null(count)) {
+        count <- as.integer(count)
+    }
+
+    if (from > total) {
+        return(ok(sprintf("File: %s\nLines: %d-%d of %d\n(no content in requested range)",
+                          path, from, total, total)))
+    }
+
+    end <- if (is.null(count) || is.na(count)) {
+        total
+    } else {
+        min(total, from + max(count, 1L) - 1L)
+    }
+
+    selected <- lines[from:end]
+    body <- if (isFALSE(args$line_numbers)) {
+        paste(selected, collapse = "\n")
+    } else {
+        format_numbered_lines(selected, start = from)
+    }
+
+    ok(paste(
+        c(
+            sprintf("File: %s", path),
+            sprintf("Lines: %d-%d of %d", from, end, total),
+            "",
+            body
+        ),
+        collapse = "\n"
+    ))
+}
+
+tool_write_file <- function(args) {
+    checked <- tool_check_path(args$path, operation = "write")
+    if (!checked$ok) {
+        return(err(checked$message))
+    }
+
+    path <- checked$path
+    parent <- tool_check_path(dirname(path), operation = "write")
+    if (!parent$ok) {
+        return(err(parent$message))
+    }
+
+    create_dirs <- !isFALSE(args$create_dirs)
+    if (!dir.exists(dirname(path))) {
+        if (!create_dirs) {
+            return(err(paste("Parent directory does not exist:", dirname(path))))
+        }
+        dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    }
+
+    content <- args$content %||% ""
+    append <- isTRUE(args$append)
+
+    write_error <- tryCatch({
+        tool_write_text(path, content, append = append)
+        NULL
+    }, error = function(e) e$message)
+    if (!is.null(write_error)) {
+        return(err(paste("Write error:", write_error)))
+    }
+
+    ok(sprintf("%s %d byte(s) to %s",
+               if (append) "Appended" else "Wrote",
+               nchar(content, type = "bytes"),
+               path))
+}
+
+tool_replace_in_file <- function(args) {
+    checked <- tool_check_path(args$path, operation = "write")
+    if (!checked$ok) {
+        return(err(checked$message))
+    }
+
+    path <- checked$path
+    if (!file.exists(path)) {
+        return(err(paste("File not found:", path)))
+    }
+    if (dir.exists(path)) {
+        return(err(paste("Path is a directory, not a file:", path)))
+    }
+
+    old_text <- args$old_text %||% ""
+    new_text <- args$new_text %||% ""
+    replace_all <- isTRUE(args$all)
+
+    if (nchar(old_text) == 0) {
+        return(err("old_text must not be empty"))
+    }
+
+    original <- tryCatch(tool_read_text(path),
+                         error = function(e) structure(e$message,
+                                                       class = "tool_read_error"))
+    if (inherits(original, "tool_read_error")) {
+        return(err(paste("Read error:", unclass(original))))
+    }
+
+    matches <- gregexpr(old_text, original, fixed = TRUE)[[1]]
+    if (length(matches) == 1L && identical(matches[[1]], -1L)) {
+        return(err("old_text not found"))
+    }
+
+    match_count <- length(matches)
+    expected_count <- args$expected_count
+    if (!is.null(expected_count)) {
+        expected_count <- as.integer(expected_count)
+        if (!is.na(expected_count) && expected_count != match_count) {
+            return(err(sprintf("Expected %d match(es), found %d",
+                               expected_count, match_count)))
+        }
+    } else if (!replace_all && match_count != 1L) {
+        return(err(sprintf(
+            "old_text matched %d times; set all=TRUE or expected_count",
+            match_count
+        )))
+    }
+
+    updated <- if (replace_all) {
+        gsub(old_text, new_text, original, fixed = TRUE)
+    } else {
+        sub(old_text, new_text, original, fixed = TRUE)
+    }
+
+    write_error <- tryCatch({
+        tool_write_text(path, updated, append = FALSE)
+        NULL
+    }, error = function(e) e$message)
+    if (!is.null(write_error)) {
+        return(err(paste("Write error:", write_error)))
+    }
+
+    ok(sprintf("Updated %s (%d replacement%s)",
+               path,
+               if (replace_all) match_count else 1L,
+               if ((if (replace_all) match_count else 1L) == 1L) "" else "s"))
+}
+
 # Search ----
 
 tool_grep_files <- function(args) {
     pattern <- args$pattern
-    path <- path.expand(args$path %||% ".")
+    checked <- tool_check_path(args$path %||% ".", operation = "read")
+    if (!checked$ok) {
+        return(err(checked$message))
+    }
+
+    path <- checked$path
     file_pattern <- args$file_pattern %||% "*.R"
 
     files <- Sys.glob(file.path(path, file_pattern))
@@ -91,12 +412,17 @@ tool_bash <- function(args) {
     cmd <- args$command
     timeout <- args$timeout %||% 30
     background <- isTRUE(args$background)
+    command_check <- validate_command(cmd)
+
+    if (!command_check$ok) {
+        return(err(command_check$message))
+    }
 
     if (background) {
         if (!requireNamespace("processx", quietly = TRUE)) {
             return(err("processx package required for background processes. Install with: install.packages('processx')"))
         }
-        proc <- processx::process$new("bash", c("-c", cmd),
+        proc <- processx::process$new("bash", c("-lc", cmd),
                                       stdout = "|", stderr = "|",
                                       cleanup_tree = TRUE)
         id <- bg_register(cmd, proc)
@@ -105,7 +431,8 @@ tool_bash <- function(args) {
     }
 
     result <- tryCatch({
-        out <- system(cmd, intern = TRUE, timeout = timeout)
+        out <- system2("bash", c("-lc", cmd), stdout = TRUE, stderr = TRUE,
+                       timeout = timeout)
         paste(out, collapse = "\n")
     }, error = function(e) {
         paste("Error:", e$message)
@@ -223,6 +550,38 @@ tool_r_help <- function(args) {
     })
 }
 
+tool_installed_packages <- function(args) {
+    pattern <- args$pattern
+    limit <- as.integer(args$limit %||% 100L)
+    if (is.na(limit) || limit < 1L) {
+        limit <- 100L
+    }
+
+    pkgs <- as.data.frame(installed.packages()[, c("Package", "Version")],
+                          stringsAsFactors = FALSE)
+    pkgs <- pkgs[order(pkgs$Package), , drop = FALSE]
+
+    if (!is.null(pattern) && nchar(pattern) > 0) {
+        keep <- grepl(pattern, pkgs$Package, ignore.case = TRUE)
+        pkgs <- pkgs[keep, , drop = FALSE]
+    }
+
+    if (nrow(pkgs) == 0) {
+        return(ok("No installed packages matched."))
+    }
+
+    truncated <- nrow(pkgs) > limit
+    shown <- head(pkgs, limit)
+    body <- sprintf("%-30s %s", shown$Package, shown$Version)
+
+    header <- sprintf("Installed packages: %d match(es)", nrow(pkgs))
+    if (truncated) {
+        header <- paste0(header, sprintf(" (showing first %d)", limit))
+    }
+
+    ok(paste(c(header, "", body), collapse = "\n"))
+}
+
 # Web ----
 
 tool_web_search <- function(args) {
@@ -283,6 +642,117 @@ tool_web_search <- function(args) {
     }, error = function(e) {
         err(paste("Search error:", e$message))
     })
+}
+
+tool_fetch_url <- function(args) {
+    url <- args$url
+    max_chars <- as.integer(args$max_chars %||% 8000L)
+    if (is.na(max_chars) || max_chars < 1L) {
+        max_chars <- 8000L
+    }
+
+    tryCatch({
+        h <- curl::new_handle()
+        curl::handle_setopt(h, followlocation = TRUE)
+        resp <- curl::curl_fetch_memory(url, handle = h)
+
+        text <- tryCatch(rawToChar(resp$content),
+                         error = function(e) paste(resp$content, collapse = " "))
+        if (nchar(text) > max_chars) {
+            text <- paste0(substr(text, 1, max_chars),
+                           "\n[truncated by max_chars]")
+        }
+
+        ok(paste(
+            c(
+                sprintf("URL: %s", url),
+                sprintf("Status: %d", resp$status_code),
+                "",
+                text
+            ),
+            collapse = "\n"
+        ))
+    }, error = function(e) {
+        err(paste("Fetch error:", e$message))
+    })
+}
+
+# Git ----
+
+tool_git_status <- function(args) {
+    repo_path <- args$path %||% "."
+    if (!git_repo_available(repo_path)) {
+        return(err("Not inside a git repository"))
+    }
+
+    result <- git_run(c("status", "--short", "--branch"), path = repo_path)
+    if (result$status != 0L) {
+        return(err(result$text))
+    }
+
+    ok(result$text)
+}
+
+tool_git_diff <- function(args) {
+    repo_path <- args$path %||% "."
+    if (!git_repo_available(repo_path)) {
+        return(err("Not inside a git repository"))
+    }
+
+    ref <- trimws(args$ref %||% "HEAD")
+    file_path <- trimws(args$file_path %||% "")
+    staged <- isTRUE(args$staged)
+    context_lines <- as.integer(args$context_lines %||% 3L)
+    if (is.na(context_lines) || context_lines < 0L) {
+        context_lines <- 3L
+    }
+
+    cmd <- c("diff", "--no-ext-diff", "--find-renames",
+             sprintf("--unified=%d", context_lines))
+    if (staged) {
+        cmd <- c(cmd, "--cached")
+    }
+    if (nchar(ref) > 0) {
+        cmd <- c(cmd, ref)
+    }
+    if (nchar(file_path) > 0) {
+        cmd <- c(cmd, "--", file_path)
+    }
+
+    result <- git_run(cmd, path = repo_path)
+    if (result$status != 0L) {
+        return(err(result$text))
+    }
+    if (nchar(trimws(result$text)) == 0) {
+        return(ok("No diff."))
+    }
+
+    ok(result$text)
+}
+
+tool_git_log <- function(args) {
+    repo_path <- args$path %||% "."
+    if (!git_repo_available(repo_path)) {
+        return(err("Not inside a git repository"))
+    }
+
+    n <- as.integer(args$n %||% 10L)
+    if (is.na(n) || n < 1L) {
+        n <- 10L
+    }
+    ref <- trimws(args$ref %||% "HEAD")
+
+    cmd <- c("log", "--oneline", "--decorate", sprintf("-n%d", n))
+    if (nchar(ref) > 0) {
+        cmd <- c(cmd, ref)
+    }
+
+    result <- git_run(cmd, path = repo_path)
+    if (result$status != 0L) {
+        return(err(result$text))
+    }
+
+    ok(result$text)
 }
 
 # Memory ----
@@ -383,6 +853,81 @@ tool_memory_get <- function(args) {
 #' @return Invisible character vector of registered skill names
 #' @noRd
 register_builtin_skills <- function() {
+    # File tools
+    register_skill(skill_spec(
+                              name = "read_file",
+                              description = "Read a text file with optional line ranges and line numbers.",
+                              params = list(
+                path = list(type = "string",
+                            description = "Path to the file",
+                            required = TRUE),
+                from = list(type = "integer",
+                            description = "Start line number (1-based)"),
+                lines = list(type = "integer",
+                             description = "Number of lines to return"),
+                line_numbers = list(type = "boolean",
+                                    description = "Include line numbers in the output (default: true)")
+            ),
+                              handler = function(args, ctx) tool_read_file(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "write_file",
+                              description = "Write text to a file. Creates parent directories by default.",
+                              params = list(
+                path = list(type = "string",
+                            description = "Path to the file",
+                            required = TRUE),
+                content = list(type = "string",
+                               description = "Text to write",
+                               required = TRUE),
+                append = list(type = "boolean",
+                              description = "Append instead of overwrite"),
+                create_dirs = list(type = "boolean",
+                                   description = "Create parent directories if needed (default: true)")
+            ),
+                              handler = function(args, ctx) tool_write_file(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "replace_in_file",
+                              description = "Replace exact text in a file without rewriting the whole file manually.",
+                              params = list(
+                path = list(type = "string",
+                            description = "Path to the file",
+                            required = TRUE),
+                old_text = list(type = "string",
+                                description = "Exact text to replace",
+                                required = TRUE),
+                new_text = list(type = "string",
+                                description = "Replacement text",
+                                required = TRUE),
+                all = list(type = "boolean",
+                           description = "Replace all matches instead of exactly one"),
+                expected_count = list(type = "integer",
+                                      description = "Fail unless this many matches are found")
+            ),
+                              handler = function(args, ctx) tool_replace_in_file(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "list_files",
+                              description = "List files in a directory.",
+                              params = list(
+                path = list(type = "string",
+                            description = "Directory to inspect"),
+                pattern = list(type = "string",
+                               description = "Regex pattern to filter file names"),
+                recursive = list(type = "boolean",
+                                 description = "Recurse into subdirectories"),
+                all_files = list(type = "boolean",
+                                 description = "Include hidden files"),
+                limit = list(type = "integer",
+                             description = "Maximum number of entries to return")
+            ),
+                              handler = function(args, ctx) tool_list_files(args)
+        ))
+
     # Search
     register_skill(skill_spec(
                               name = "grep_files",
@@ -470,6 +1015,18 @@ register_builtin_skills <- function() {
                               handler = function(args, ctx) tool_r_help(args)
         ))
 
+    register_skill(skill_spec(
+                              name = "installed_packages",
+                              description = "List installed R packages, optionally filtered by name.",
+                              params = list(
+                pattern = list(type = "string",
+                               description = "Case-insensitive package-name filter"),
+                limit = list(type = "integer",
+                             description = "Maximum number of packages to return")
+            ),
+                              handler = function(args, ctx) tool_installed_packages(args)
+        ))
+
     # Web
     register_skill(skill_spec(
                               name = "web_search",
@@ -481,6 +1038,62 @@ register_builtin_skills <- function() {
                                    description = "Max results to return (default: 5)")
             ),
                               handler = function(args, ctx) tool_web_search(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "fetch_url",
+                              description = "Fetch the contents of a URL and return the response body.",
+                              params = list(
+                url = list(type = "string",
+                           description = "URL to fetch",
+                           required = TRUE),
+                max_chars = list(type = "integer",
+                                 description = "Maximum number of characters to return")
+            ),
+                              handler = function(args, ctx) tool_fetch_url(args)
+        ))
+
+    # Git
+    register_skill(skill_spec(
+                              name = "git_status",
+                              description = "Show git working tree status.",
+                              params = list(
+                path = list(type = "string",
+                            description = "Repository path (default: current directory)")
+            ),
+                              handler = function(args, ctx) tool_git_status(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "git_diff",
+                              description = "Show git diff for the current repository.",
+                              params = list(
+                ref = list(type = "string",
+                           description = "Diff against this ref (default: HEAD)"),
+                path = list(type = "string",
+                            description = "Repository path or file path filter when combined with file_path"),
+                file_path = list(type = "string",
+                                 description = "Optional file path filter within the repository"),
+                staged = list(type = "boolean",
+                              description = "Diff staged changes instead of the worktree"),
+                context_lines = list(type = "integer",
+                                     description = "Number of context lines around changes")
+            ),
+                              handler = function(args, ctx) tool_git_diff(args)
+        ))
+
+    register_skill(skill_spec(
+                              name = "git_log",
+                              description = "Show recent git commits.",
+                              params = list(
+                n = list(type = "integer",
+                         description = "Number of commits to return"),
+                ref = list(type = "string",
+                           description = "Optional ref to log from (default: HEAD)"),
+                path = list(type = "string",
+                            description = "Repository path (default: current directory)")
+            ),
+                              handler = function(args, ctx) tool_git_log(args)
         ))
 
     # Memory
@@ -629,4 +1242,3 @@ call_tool <- function(name, args, ctx = list(), timeout = 30L,
     # Fallback: unknown tool
     err(paste("Unknown tool:", name))
 }
-

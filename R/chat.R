@@ -35,6 +35,10 @@ tool_hint <- function(name, args) {
         args$con %||% args$path %||% args$file
     } else if (name %in% c("base::writeLines", "write_file")) {
         args$con %||% args$path %||% args$file
+    } else if (name == "replace_in_file") {
+        args$path %||% args$file
+    } else if (name == "list_files") {
+        args$path %||% "."
     } else if (name == "base::list.files") {
         args$path %||% "."
     } else if (name == "bash") {
@@ -53,8 +57,14 @@ tool_hint <- function(name, args) {
         args$query %||% ""
     } else if (name == "fetch_url") {
         args$url %||% ""
+    } else if (name == "git_status") {
+        args$path %||% "status"
     } else if (name == "git_diff") {
-        args$ref %||% ""
+        args$file_path %||% args$ref %||% args$path %||% ""
+    } else if (name == "git_log") {
+        args$path %||% as.character(args$n %||% 10L)
+    } else if (name == "installed_packages") {
+        args$pattern %||% ""
     } else {
         NULL
     }
@@ -379,4 +389,3 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
 
     invisible(session)
 }
-
