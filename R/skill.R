@@ -150,6 +150,10 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
         if (skill$name == "base::writeLines" && !is.null(args$con)) {
             ws_invalidate_file(args$con)
         }
+        if (skill$name %in% c("write_file", "replace_in_file") &&
+            !is.null(args$path)) {
+            ws_invalidate_file(args$path)
+        }
     }
 
     # Add trace entry if session context available
@@ -283,10 +287,23 @@ get_dry_run_hint <- function(tool_name, args) {
             sprintf("Would write to: %s", args$con %||% "(stdout)")
         }
     },
+           "write_file" = {
+        if (!is.null(args$path)) {
+            sprintf("Would write to file: %s", args$path)
+        }
+    },
+           "replace_in_file" = {
+        if (!is.null(args$path)) {
+            sprintf("Would replace text in file: %s", args$path)
+        }
+    },
            "bash" = {
         if (!is.null(args$command)) {
             sprintf("Would execute shell command: %s", args$command)
         }
+    },
+           "git_diff" = {
+        sprintf("Would diff against: %s", args$ref %||% "HEAD")
     },
            "run_r" = {
         if (!is.null(args$code)) {
@@ -983,4 +1000,3 @@ format_skill_list <- function(skills) {
 
     paste(lines, collapse = "\n")
 }
-

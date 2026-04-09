@@ -56,6 +56,13 @@ writeLines("# Agent Guidelines", file.path(testdir, "AGENTS.md"))
 files <- llamaR:::list_context_files(testdir)
 expect_equal(length(files), 4)
 
+# Project MEMORY.md no longer loads by default
+writeLines("# Memory\n\nProject memory should stay out by default.",
+    file.path(testdir, "MEMORY.md"))
+
+files <- llamaR:::list_context_files(testdir)
+expect_equal(length(files), 4)
+
 # Test all are included in context
 ctx <- llamaR:::load_context(testdir)
 expect_true(grepl("README.md", ctx))
@@ -63,6 +70,7 @@ expect_true(grepl("PLAN.md", ctx))
 expect_true(grepl("fyi.md", ctx))
 expect_true(grepl("AGENTS.md", ctx))
 expect_true(grepl("Agent Guidelines", ctx))
+expect_false(grepl("Project memory should stay out by default.", ctx, fixed = TRUE))
 
 # Test system prompt structure
 expect_true(grepl("You are an AI assistant", ctx))
@@ -70,12 +78,16 @@ expect_true(grepl("context about the current project", ctx))
 
 # Test custom config overrides default file list
 dir.create(file.path(testdir, ".llamar"), showWarnings = FALSE)
-writeLines('{"context_files": ["README.md"]}', file.path(testdir, ".llamar", "config.json"))
+writeLines('{"context_files": ["README.md", "MEMORY.md"]}',
+    file.path(testdir, ".llamar", "config.json"))
 
 files <- llamaR:::list_context_files(testdir)
-expect_equal(length(files), 1)
+expect_equal(length(files), 2)
 expect_true(grepl("README.md", files[1]))
+
+ctx <- llamaR:::load_context(testdir)
+expect_true(grepl("MEMORY.md", ctx))
+expect_true(grepl("Project memory should stay out by default.", ctx, fixed = TRUE))
 
 # Cleanup
 unlink(testdir, recursive = TRUE)
-

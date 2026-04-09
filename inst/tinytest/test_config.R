@@ -6,6 +6,10 @@ expect_true("README.md" %in% defaults)
 expect_true("PLAN.md" %in% defaults)
 expect_true("fyi.md" %in% defaults)
 expect_true("AGENTS.md" %in% defaults)
+expect_false("MEMORY.md" %in% defaults)
+
+global_defaults <- llamaR:::global_context_files()
+expect_equal(global_defaults, c("SOUL.md", "USER.md"))
 
 # Setup: use a fresh temp directory
 tmpdir <- tempdir()
@@ -17,6 +21,11 @@ dir.create(testdir, recursive = TRUE)
 config <- llamaR:::load_config(testdir)
 expect_equal(config$provider, "anthropic")
 expect_equal(config$context_files, defaults)
+expect_false(isTRUE(config$context_include_global_memory))
+expect_false(isTRUE(config$context_include_memory_logs))
+expect_false(isTRUE(config$memory_flush_enabled))
+expect_false(isTRUE(config$legacy_memory_tools_enabled))
+expect_true("write_file" %in% config$dangerous_tools)
 
 # Create project config
 dir.create(file.path(testdir, ".llamar"), showWarnings = FALSE)
@@ -46,4 +55,3 @@ expect_equal(config$context_files, defaults) # Falls back to defaults
 
 # Cleanup
 unlink(testdir, recursive = TRUE)
-

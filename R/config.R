@@ -4,13 +4,17 @@
 #' Default context files to load
 #' @noRd
 default_context_files <- function() {
-    c("README.md", "PLAN.md", "fyi.md", "AGENTS.md", "MEMORY.md")
+    c("README.md", "PLAN.md", "fyi.md", "AGENTS.md")
 }
 
 #' Global context files loaded from ~/.llamar/workspace/
 #' @noRd
-global_context_files <- function() {
-    c("SOUL.md", "USER.md", "MEMORY.md")
+global_context_files <- function(include_memory = FALSE) {
+    files <- c("SOUL.md", "USER.md")
+    if (isTRUE(include_memory)) {
+        files <- c(files, "MEMORY.md")
+    }
+    files
 }
 
 #' Get workspace directory path
@@ -88,9 +92,17 @@ load_config <- function(cwd = getwd()) {
         config$context_compact_pct <- 80L
     }
 
+    # Legacy llamaR memory injection is opt-in.
+    if (is.null(config$context_include_global_memory)) {
+        config$context_include_global_memory <- FALSE
+    }
+    if (is.null(config$context_include_memory_logs)) {
+        config$context_include_memory_logs <- FALSE
+    }
+
     # Memory flush before compaction
     if (is.null(config$memory_flush_enabled)) {
-        config$memory_flush_enabled <- TRUE
+        config$memory_flush_enabled <- FALSE
     }
     if (is.null(config$memory_flush_prompt)) {
         config$memory_flush_prompt <- paste0(
@@ -106,8 +118,14 @@ load_config <- function(cwd = getwd()) {
         config$approval_mode <- "ask" # "ask", "allow", "deny"
     }
     if (is.null(config$dangerous_tools)) {
-        config$dangerous_tools <- c("bash", "run_r", "run_r_script",
-                                    "base::writeLines")
+        config$dangerous_tools <- c(
+            "bash",
+            "run_r",
+            "run_r_script",
+            "write_file",
+            "replace_in_file",
+            "base::writeLines"
+        )
     }
     # Per-tool permissions (overrides dangerous_tools)
     # config$permissions = list(bash = "deny", read_file = "allow")
@@ -130,6 +148,10 @@ load_config <- function(cwd = getwd()) {
     }
     # Note: allowed_paths is NULL by default (no restriction)
 
+    if (is.null(config$legacy_memory_tools_enabled)) {
+        config$legacy_memory_tools_enabled <- FALSE
+    }
+
     # Skill paths (additional directories to load skills from)
     if (is.null(config$skill_paths)) {
         config$skill_paths <- character()
@@ -138,11 +160,14 @@ load_config <- function(cwd = getwd()) {
     # Default skill packages (R packages registered as tools)
     if (is.null(config$skill_packages)) {
         config$skill_packages <- list(
-                                      list(package = "base", functions = c("readLines", "writeLines",
-                    "list.files", "file.exists", "file.copy", "file.remove",
-                    "dir.create", "Sys.glob")),
-                                      list(package = "utils", functions = c("installed.packages",
-                    "read.csv", "head", "tail"))
+                                      list(package = "base", functions = c(
+                                          "file.exists", "file.copy",
+                                          "file.remove", "dir.create",
+                                          "Sys.glob"
+                                      )),
+                                      list(package = "utils", functions = c(
+                                          "read.csv", "head", "tail"
+                                      ))
         )
     }
 
@@ -309,4 +334,3 @@ get_context_files <- function(cwd = getwd()) {
     config <- load_config(cwd)
     config$context_files
 }
-
