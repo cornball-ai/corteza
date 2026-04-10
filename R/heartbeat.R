@@ -66,10 +66,10 @@ hb_record_tool <- function(name, args, result_text, success) {
     }
 
     entry <- list(
-        name = name,
-        args_hash = hb_hash_args(name, args),
-        success = success,
-        timestamp = Sys.time()
+                  name = name,
+                  args_hash = hb_hash_args(name, args),
+                  success = success,
+                  timestamp = Sys.time()
     )
 
     .heartbeat$tool_history <- c(.heartbeat$tool_history, list(entry))
@@ -79,7 +79,7 @@ hb_record_tool <- function(name, args, result_text, success) {
         .heartbeat$consecutive_failures <- 0L
     } else {
         .heartbeat$consecutive_failures <-
-            .heartbeat$consecutive_failures + 1L
+        .heartbeat$consecutive_failures + 1L
     }
 
     invisible(NULL)
@@ -112,16 +112,24 @@ hb_check <- function(token_pct = 0, project_rules = NULL) {
 
     # Check detectors in priority order (most urgent first)
     reminder <- hb_detect_doom_loop()
-    if (!is.null(reminder)) return(reminder)
+    if (!is.null(reminder)) {
+        return(reminder)
+    }
 
     reminder <- hb_detect_failure_streak()
-    if (!is.null(reminder)) return(reminder)
+    if (!is.null(reminder)) {
+        return(reminder)
+    }
 
     reminder <- hb_detect_high_context(token_pct)
-    if (!is.null(reminder)) return(reminder)
+    if (!is.null(reminder)) {
+        return(reminder)
+    }
 
     reminder <- hb_detect_periodic(project_rules)
-    if (!is.null(reminder)) return(reminder)
+    if (!is.null(reminder)) {
+        return(reminder)
+    }
 
     NULL
 }
@@ -137,12 +145,12 @@ hb_detect_failure_streak <- function() {
     }
 
     hb_fire("failure_streak", paste0(
-        "[Reminder] ", .heartbeat$consecutive_failures,
-        " consecutive tool failures. Step back and reconsider:\n",
-        "- Check file paths with list_files before file operations\n",
-        "- Read error messages carefully for the actual cause\n",
-        "- Try a different approach instead of retrying the same thing"
-    ))
+                                     "[Reminder] ", .heartbeat$consecutive_failures,
+                                     " consecutive tool failures. Step back and reconsider:\n",
+                                     "- Check file paths with list_files before file operations\n",
+                                     "- Read error messages carefully for the actual cause\n",
+                                     "- Try a different approach instead of retrying the same thing"
+        ))
 }
 
 #' Detect doom loop (same tool+args repeated)
@@ -164,11 +172,11 @@ hb_detect_doom_loop <- function() {
     if (length(unique(hashes)) == 1L) {
         tool_name <- recent[[1]]$name
         hb_fire("doom_loop", paste0(
-            "[Reminder] You've called ", tool_name, " ", threshold,
-            " times with the same arguments. This looks like a loop.\n",
-            "Stop and try a different approach. If the tool keeps failing,\n",
-            "the problem is upstream of the tool call."
-        ))
+                                    "[Reminder] You've called ", tool_name, " ", threshold,
+                                    " times with the same arguments. This looks like a loop.\n",
+                                    "Stop and try a different approach. If the tool keeps failing,\n",
+                                    "the problem is upstream of the tool call."
+            ))
     } else {
         NULL
     }
@@ -186,12 +194,12 @@ hb_detect_high_context <- function(token_pct) {
     }
 
     hb_fire("high_context", paste0(
-        "[Reminder] Context window is ", round(token_pct),
-        "% full. Be concise:\n",
-        "- Avoid reading entire files when you can search\n",
-        "- Keep tool outputs focused\n",
-        "- Wrap up the current task soon"
-    ))
+                                   "[Reminder] Context window is ", round(token_pct),
+                                   "% full. Be concise:\n",
+                                   "- Avoid reading entire files when you can search\n",
+                                   "- Keep tool outputs focused\n",
+                                   "- Wrap up the current task soon"
+        ))
 }
 
 #' Periodic reinforcement of key instructions
@@ -218,9 +226,9 @@ hb_detect_periodic <- function(project_rules = NULL) {
     .heartbeat$last_periodic_turn <- turn
 
     hb_fire("periodic", paste0(
-        "[Reminder] Key guidelines for this session:\n",
-        project_rules
-    ))
+                               "[Reminder] Key guidelines for this session:\n",
+                               project_rules
+        ))
 }
 
 # Suppression ----
@@ -290,10 +298,11 @@ hb_hash_args <- function(name, args) {
 #' @noRd
 hb_status <- function() {
     list(
-        enabled = .heartbeat$enabled %||% FALSE,
-        turn_count = .heartbeat$turn_count %||% 0L,
-        consecutive_failures = .heartbeat$consecutive_failures %||% 0L,
-        tool_history_length = length(.heartbeat$tool_history %||% list()),
-        suppression = .heartbeat$suppression %||% list()
+         enabled = .heartbeat$enabled %||% FALSE,
+         turn_count = .heartbeat$turn_count %||% 0L,
+         consecutive_failures = .heartbeat$consecutive_failures %||% 0L,
+         tool_history_length = length(.heartbeat$tool_history %||% list()),
+         suppression = .heartbeat$suppression %||% list()
     )
 }
+

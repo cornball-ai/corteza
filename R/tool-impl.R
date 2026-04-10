@@ -19,11 +19,7 @@ tool_check_path <- function(path, operation = "access") {
     full_path <- tool_resolve_path(path)
     validation <- validate_path(full_path, tool_config(), operation = operation)
 
-    list(
-         ok = validation$ok,
-         message = validation$message,
-         path = full_path
-    )
+    list(ok = validation$ok, message = validation$message, path = full_path)
 }
 
 tool_read_text <- function(path) {
@@ -40,7 +36,11 @@ tool_read_text <- function(path) {
 }
 
 tool_write_text <- function(path, text, append = FALSE) {
-    mode <- if (isTRUE(append)) "ab" else "wb"
+    if (isTRUE(append)) {
+        mode <- "ab"
+    } else {
+        mode <- "wb"
+    }
     con <- file(path, open = mode)
     on.exit(close(con), add = TRUE)
     writeChar(text %||% "", con, eos = NULL, useBytes = TRUE)
@@ -62,10 +62,8 @@ format_numbered_lines <- function(lines, start = 1L) {
 git_run <- function(args, path = ".") {
     repo_path <- tool_resolve_path(path)
     output <- tryCatch(
-                     system2("git", c("-C", repo_path, args),
-                             stdout = TRUE, stderr = TRUE),
-                     error = function(e) structure(paste("Error:", e$message),
-                                                   status = 1L)
+                       system2("git", c("-C", repo_path, args), stdout = TRUE, stderr = TRUE),
+                       error = function(e) structure(paste("Error:", e$message), status = 1L)
     )
 
     list(
@@ -101,13 +99,13 @@ tool_list_files <- function(args) {
     }
 
     entries <- list.files(
-        path = path,
-        pattern = pattern %||% NULL,
-        all.files = all_files,
-        recursive = recursive,
-        full.names = TRUE,
-        include.dirs = TRUE,
-        no.. = TRUE
+                          path = path,
+                          pattern = pattern %||% NULL,
+                          all.files = all_files,
+                          recursive = recursive,
+                          full.names = TRUE,
+                          include.dirs = TRUE,
+                          no.. = TRUE
     )
     entries <- sort(entries)
 
@@ -160,8 +158,7 @@ tool_read_file <- function(args) {
     }
 
     lines <- tryCatch(readLines(path, warn = FALSE),
-                      error = function(e) structure(e$message,
-                                                    class = "tool_read_error"))
+                      error = function(e) structure(e$message, class = "tool_read_error"))
     if (inherits(lines, "tool_read_error")) {
         return(err(paste("Read error:", unclass(lines))))
     }
@@ -201,14 +198,14 @@ tool_read_file <- function(args) {
     }
 
     ok(paste(
-        c(
-            sprintf("File: %s", path),
-            sprintf("Lines: %d-%d of %d", from, end, total),
-            "",
-            body
-        ),
-        collapse = "\n"
-    ))
+             c(
+                sprintf("File: %s", path),
+                sprintf("Lines: %d-%d of %d", from, end, total),
+                "",
+                body
+            ),
+             collapse = "\n"
+        ))
 }
 
 tool_write_file <- function(args) {
@@ -243,7 +240,7 @@ tool_write_file <- function(args) {
     }
 
     ok(sprintf("%s %d byte(s) to %s",
-               if (append) "Appended" else "Wrote",
+            if (append) "Appended" else "Wrote",
                nchar(content, type = "bytes"),
                path))
 }
@@ -271,8 +268,7 @@ tool_replace_in_file <- function(args) {
     }
 
     original <- tryCatch(tool_read_text(path),
-                         error = function(e) structure(e$message,
-                                                       class = "tool_read_error"))
+                         error = function(e) structure(e$message, class = "tool_read_error"))
     if (inherits(original, "tool_read_error")) {
         return(err(paste("Read error:", unclass(original))))
     }
@@ -292,9 +288,9 @@ tool_replace_in_file <- function(args) {
         }
     } else if (!replace_all && match_count != 1L) {
         return(err(sprintf(
-            "old_text matched %d times; set all=TRUE or expected_count",
-            match_count
-        )))
+                           "old_text matched %d times; set all=TRUE or expected_count",
+                           match_count
+                )))
     }
 
     updated <- if (replace_all) {
@@ -313,8 +309,8 @@ tool_replace_in_file <- function(args) {
 
     ok(sprintf("Updated %s (%d replacement%s)",
                path,
-               if (replace_all) match_count else 1L,
-               if ((if (replace_all) match_count else 1L) == 1L) "" else "s"))
+            if (replace_all) match_count else 1L,
+            if ((if (replace_all) match_count else 1L) == 1L) "" else "s"))
 }
 
 # Search ----
@@ -561,11 +557,11 @@ tool_installed_packages <- function(args) {
 
     pkgs <- as.data.frame(installed.packages()[, c("Package", "Version")],
                           stringsAsFactors = FALSE)
-    pkgs <- pkgs[order(pkgs$Package), , drop = FALSE]
+    pkgs <- pkgs[order(pkgs$Package),, drop = FALSE]
 
     if (!is.null(pattern) && nchar(pattern) > 0) {
         keep <- grepl(pattern, pkgs$Package, ignore.case = TRUE)
-        pkgs <- pkgs[keep, , drop = FALSE]
+        pkgs <- pkgs[keep,, drop = FALSE]
     }
 
     if (nrow(pkgs) == 0) {
@@ -666,14 +662,14 @@ tool_fetch_url <- function(args) {
         }
 
         ok(paste(
-            c(
-                sprintf("URL: %s", url),
-                sprintf("Status: %d", resp$status_code),
-                "",
-                text
-            ),
-            collapse = "\n"
-        ))
+                 c(
+                    sprintf("URL: %s", url),
+                    sprintf("Status: %d", resp$status_code),
+                    "",
+                    text
+                ),
+                 collapse = "\n"
+            ))
     }, error = function(e) {
         err(paste("Fetch error:", e$message))
     })
@@ -1244,3 +1240,4 @@ call_tool <- function(name, args, ctx = list(), timeout = 30L,
     # Fallback: unknown tool
     err(paste("Unknown tool:", name))
 }
+

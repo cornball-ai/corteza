@@ -5,7 +5,7 @@
 #' @noRd
 default_dangerous_tools <- function() {
     c("bash", "run_r", "run_r_script", "write_file", "replace_in_file",
-      "base::writeLines")
+        "base::writeLines")
 }
 
 #' Default denied paths for filesystem sandboxing
@@ -247,3 +247,4 @@ format_permissions <- function(config) {
 
     paste(lines, collapse = "\n")
 }
+
