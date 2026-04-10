@@ -431,8 +431,10 @@ tool_bash <- function(args) {
     }
 
     result <- tryCatch({
-        out <- system2("bash", c("-lc", cmd), stdout = TRUE, stderr = TRUE,
-                       timeout = timeout)
+        # system2() does not preserve spaces inside the -c command string
+        # unless we quote it ourselves on Unix.
+        out <- system2("bash", c("-lc", shQuote(cmd)), stdout = TRUE,
+                       stderr = TRUE, timeout = timeout)
         paste(out, collapse = "\n")
     }, error = function(e) {
         paste("Error:", e$message)
