@@ -1,8 +1,9 @@
 Package: llamaR
 Title: AI Agent Runtime in R with Context Managed via Workspace
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: person("Troy", "Hernandez", role = c("aut", "cre"),
-                  email = "troy@cornball.ai")
+                  email = "troy@cornball.ai",
+                  comment = c(ORCID = "0009-0005-4248-604X"))
 Description: An AI agent runtime that gives LLMs (Anthropic, OpenAI, Ollama)
     direct access to a live R session with managed workspace state. Tools
     execute as R function calls with provenance tracking, and a deterministic
@@ -16,11 +17,11 @@ Depends:
     R (>= 4.4.0)
 Imports:
     curl,
-    jsonlite
+    jsonlite,
+    saber
 Suggests:
     DBI,
     digest,
-    fyi,
     llm.api,
     RSQLite,
     stt.api,

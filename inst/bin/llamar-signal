@@ -7,7 +7,7 @@
 #   --host       signal-cli daemon host (default: 127.0.0.1)
 #   --port       signal-cli daemon port (default: 8080)
 #   --allow      Comma-separated list of allowed sender numbers
-#   --provider   LLM provider: anthropic, openai, ollama (default: anthropic)
+#   --provider   LLM provider: anthropic, openai, moonshot, ollama (default: anthropic)
 #   --model      Model name (default: provider-specific)
 #
 # Requires signal-cli running in daemon mode:
@@ -78,7 +78,7 @@ Options:
   --port       signal-cli daemon port (default: 8080)
   --url        signal-cli daemon URL (overrides --host/--port)
   --allow      Comma-separated allowed sender numbers
-  --provider   LLM provider: anthropic, openai, ollama
+  --provider   LLM provider: anthropic, openai, moonshot, ollama
   --model      Model name
 
 Prerequisites:

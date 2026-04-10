@@ -1,5 +1,62 @@
 # Interactive chat inside an R session
 
+# Detect providers supported by the currently loaded llm.api namespace.
+# @noRd
+llm_api_supported_providers <- function() {
+    if (!requireNamespace("llm.api", quietly = TRUE)) {
+        return(character())
+    }
+
+    providers <- tryCatch(
+                          eval(formals(llm.api::agent)$provider),
+                          error = function(e) character()
+    )
+
+    unique(as.character(providers %||% character()))
+}
+
+# Reload llm.api from disk so chat() can pick up newly installed providers
+# without requiring a full R restart.
+# @noRd
+reload_llm_api_namespace <- function() {
+    if ("package:llm.api" %in% search()) {
+        try(detach("package:llm.api", unload = TRUE, character.only = TRUE),
+            silent = TRUE)
+    }
+
+    if ("llm.api" %in% loadedNamespaces()) {
+        try(unloadNamespace("llm.api"), silent = TRUE)
+    }
+
+    requireNamespace("llm.api", quietly = TRUE)
+}
+
+# Ensure the active llm.api namespace supports the requested provider.
+# @noRd
+ensure_llm_api_provider <- function(provider) {
+    supported <- llm_api_supported_providers()
+    if (provider %in% supported) {
+        return(invisible(supported))
+    }
+
+    reload_llm_api_namespace()
+    supported <- llm_api_supported_providers()
+    if (provider %in% supported) {
+        return(invisible(supported))
+    }
+
+    supported_text <- if (length(supported) > 0) {
+        paste(supported, collapse = ", ")
+    } else {
+        "unknown"
+    }
+
+    stop(sprintf(
+                 "Current llm.api namespace does not support provider '%s'. Restart R after reinstalling llm.api. Supported providers: %s",
+                 provider, supported_text
+        ), call. = FALSE)
+}
+
 # Validate model availability before starting the chat loop
 # @noRd
 validate_model <- function(provider, model) {
@@ -43,12 +100,20 @@ tool_hint <- function(name, args) {
         args$path %||% "."
     } else if (name == "bash") {
         cmd <- args$command %||% ""
-        if (nchar(cmd) > 60) paste0(substr(cmd, 1, 57), "...") else cmd
+        if (nchar(cmd) > 60) {
+            paste0(substr(cmd, 1, 57), "...")
+        } else {
+            cmd
+        }
     } else if (name == "grep_files") {
         paste0("/", args$pattern %||% "", "/")
     } else if (name == "run_r") {
         code <- args$code %||% ""
-        if (nchar(code) > 60) paste0(substr(code, 1, 57), "...") else code
+        if (nchar(code) > 60) {
+            paste0(substr(code, 1, 57), "...")
+        } else {
+            code
+        }
     } else if (name == "run_r_script") {
         args$path %||% args$file %||% ""
     } else if (name == "r_help") {
@@ -68,7 +133,11 @@ tool_hint <- function(name, args) {
     } else {
         NULL
     }
-    if (is.null(hint) || nchar(hint) == 0) "" else paste0(" ", hint)
+    if (is.null(hint) || nchar(hint) == 0) {
+        ""
+    } else {
+        paste0(" ", hint)
+    }
 }
 
 #' Start Interactive Chat
@@ -76,7 +145,8 @@ tool_hint <- function(name, args) {
 #' Run a conversational agent inside your R session. Tools execute as direct
 #' function calls, no MCP server needed.
 #'
-#' @param provider LLM provider: "anthropic", "openai", or "ollama".
+#' @param provider LLM provider: "anthropic", "openai", "moonshot", or
+#'   "ollama".
 #'   Defaults to config value or "anthropic".
 #' @param model Model name. Defaults to config value or provider default.
 #' @param tools Character vector of tool names or categories to enable.
@@ -115,11 +185,13 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
     config <- load_config(cwd)
     provider <- provider %||% config$provider %||% "anthropic"
     model <- model %||% config$model
+    ensure_llm_api_provider(provider)
 
     # Check API key before entering the loop
     key_var <- switch(provider,
                       anthropic = "ANTHROPIC_API_KEY",
                       openai = "OPENAI_API_KEY",
+                      moonshot = "MOONSHOT_API_KEY",
                       NULL
     )
     if (!is.null(key_var) && nchar(Sys.getenv(key_var, "")) == 0) {
@@ -154,6 +226,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
     display_model <- model %||% switch(provider,
                                        anthropic = "claude-sonnet-4-20250514",
                                        openai = "gpt-4o",
+                                       moonshot = "kimi-k2",
                                        ollama = "llama3.2",
                                        "(default)"
     )
@@ -250,7 +323,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         success <- !isTRUE(result$isError)
         elapsed <- as.numeric(
                               difftime(Sys.time(), start, units = "secs")) * 1000
-        lines <- if (nchar(text) > 0) length(strsplit(text, "\n")[[1]]) else 0L
+        if (nchar(text) > 0) {
+            lines <- length(strsplit(text, "\n")[[1]])
+        } else {
+            lines <- 0L
+        }
         cat(sprintf("(%d lines)\n", lines))
         tryCatch(
                  trace_add(session$sessionId, name, args, text,
@@ -261,7 +338,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
 
         # Record for heartbeat detection
         hb_record_tool(name, args, text, success)
-        if (success) hb_clear_suppression("failure_streak")
+        if (success) {
+            hb_clear_suppression("failure_streak")
+        }
 
         # Update file index if a file was written
         if (name %in% c("base::writeLines", "write_file")) {
@@ -389,3 +468,4 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
 
     invisible(session)
 }
+
