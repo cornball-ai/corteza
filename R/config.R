@@ -1,22 +1,6 @@
 # Configuration management for llamaR
 # Handles global and project-level config
 
-#' Default context files to load
-#' @noRd
-default_context_files <- function() {
-    c("README.md", "PLAN.md", "fyi.md", "AGENTS.md")
-}
-
-#' Global context files loaded from ~/.llamar/workspace/
-#' @noRd
-global_context_files <- function(include_memory = FALSE) {
-    files <- c("SOUL.md", "USER.md")
-    if (isTRUE(include_memory)) {
-        files <- c(files, "MEMORY.md")
-    }
-    files
-}
-
 #' Get workspace directory path
 #' @noRd
 get_workspace_dir <- function() {
@@ -71,7 +55,7 @@ load_config <- function(cwd = getwd()) {
 
     # Apply defaults
     if (is.null(config$context_files)) {
-        config$context_files <- default_context_files()
+        config$context_files <- character(0)
     }
     if (is.null(config$provider)) {
         config$provider <- "anthropic"
@@ -92,10 +76,16 @@ load_config <- function(cwd = getwd()) {
         config$context_compact_pct <- 80L
     }
 
-    # Legacy llamaR memory injection is opt-in.
-    if (is.null(config$context_include_global_memory)) {
-        config$context_include_global_memory <- FALSE
+    # SOUL.md and USER.md inclusion (passed to saber::agent_context).
+    # NULL = use saber's default for the agent (which includes them).
+    # FALSE = explicitly skip.
+    if (is.null(config$context_include_soul)) {
+        config$context_include_soul <- NULL
     }
+    if (is.null(config$context_include_user)) {
+        config$context_include_user <- NULL
+    }
+    # Legacy: daily memory log injection (opt-in)
     if (is.null(config$context_include_memory_logs)) {
         config$context_include_memory_logs <- FALSE
     }
@@ -119,12 +109,12 @@ load_config <- function(cwd = getwd()) {
     }
     if (is.null(config$dangerous_tools)) {
         config$dangerous_tools <- c(
-            "bash",
-            "run_r",
-            "run_r_script",
-            "write_file",
-            "replace_in_file",
-            "base::writeLines"
+                                    "bash",
+                                    "run_r",
+                                    "run_r_script",
+                                    "write_file",
+                                    "replace_in_file",
+                                    "base::writeLines"
         )
     }
     # Per-tool permissions (overrides dangerous_tools)
@@ -161,13 +151,11 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$skill_packages)) {
         config$skill_packages <- list(
                                       list(package = "base", functions = c(
-                                          "file.exists", "file.copy",
-                                          "file.remove", "dir.create",
-                                          "Sys.glob"
-                                      )),
-                                      list(package = "utils", functions = c(
-                                          "read.csv", "head", "tail"
-                                      ))
+                    "file.exists", "file.copy",
+                    "file.remove", "dir.create",
+                    "Sys.glob"
+                )),
+                                      list(package = "utils", functions = c("read.csv", "head", "tail"))
         )
     }
 
@@ -334,3 +322,4 @@ get_context_files <- function(cwd = getwd()) {
     config <- load_config(cwd)
     config$context_files
 }
+

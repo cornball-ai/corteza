@@ -52,6 +52,7 @@ The primary interface. A terminal agent with session management, voice mode, and
 llamar                    # Start agent
 llamar --resume           # Resume last session
 llamar --provider ollama  # Use local models
+llamar --provider moonshot --model kimi-k2
 ```
 
 ### 2. MCP server (`serve()`)
@@ -76,6 +77,7 @@ Runs inside your R console. Tools execute as direct function calls, no MCP serve
 ```r
 chat()                           # Claude (default)
 chat(provider = "openai")        # GPT-4o
+chat(provider = "moonshot")      # Kimi K2
 chat(provider = "ollama",        # Local
      model = "llama3.2")
 ```
@@ -122,6 +124,7 @@ Set in `~/.Renviron`:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
+MOONSHOT_API_KEY=sk-...
 TAVILY_API_KEY=tvly-...   # Optional, for web search
 ```
 
@@ -138,7 +141,7 @@ llamaR::install_cli()
 
 Anthropic's [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) gives you Claude Code as a library, in Python and TypeScript. [nanoclaw](https://github.com/qwibitai/nanoclaw) builds on it. There's no R equivalent.
 
-llamaR fills that gap. Not by wrapping Anthropic's SDK, but by building an R-native agent runtime from scratch. Model-agnostic (Anthropic, OpenAI, Ollama), small enough to read in an afternoon.
+llamaR fills that gap. Not by wrapping Anthropic's SDK, but by building an R-native agent runtime from scratch. Model-agnostic (Anthropic, OpenAI, Moonshot, Ollama), small enough to read in an afternoon.
 
 |Role           |Posit (tidyverse)                      |cornyverse|
 |---------------|---------------------------------------|----------|
@@ -155,7 +158,7 @@ llamaR is a standalone agent runtime. `chat()` runs inside your R session. The C
 ## Design Philosophy
 
 - **Small enough to understand**: one package, one import (jsonlite), readable source
-- **Model-agnostic**: Anthropic, OpenAI, Ollama
+- **Model-agnostic**: Anthropic, OpenAI, Moonshot, Ollama
 - **R-native**: packages are skills, `install.packages()` is the marketplace
 - **Hackable**: add tools by writing R functions
 

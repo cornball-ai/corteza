@@ -3,7 +3,7 @@
 # llamar - An open-source interactive CLI agent in R
 #
 # Usage: llamar [options]
-#   --provider   anthropic|openai|ollama (default: anthropic)
+#   --provider   anthropic|openai|moonshot|ollama (default: anthropic)
 #   --model      model name (default: provider-specific)
 #   --port       MCP server port (default: 7850)
 #   --session    Session key (resume if exists, create if not)
@@ -83,7 +83,7 @@ llamar - An open-source interactive CLI agent
 Usage: llamar [options]
 
 Options:
-  --provider      LLM provider: anthropic, openai, ollama (default: anthropic)
+  --provider      LLM provider: anthropic, openai, moonshot, ollama (default: anthropic)
   --model         Model name (default: auto per provider)
   --port          MCP server port (default: 7850)
   --tools         Tool filter: core, file, code, git, r, data, web, chat (default: all)
@@ -623,8 +623,7 @@ collect_git_diff <- function(ref = NULL) {
 format_status_summary <- function(session, provider, display_model, conn, opts,
                                   config, session_tokens, context_limit,
                                   context_files, skill_docs, voice_mode) {
-  memory_mode <- if (isTRUE(config$context_include_global_memory) ||
-                     isTRUE(config$context_include_memory_logs) ||
+  memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
                      isTRUE(config$memory_flush_enabled)) {
     "legacy llamaR memory enabled"
   } else {
@@ -666,8 +665,6 @@ format_config_summary <- function(config, provider, display_model, opts) {
               } else {
                 "(none)"
               }),
-      sprintf("legacy workspace memory: %s",
-              if (isTRUE(config$context_include_global_memory)) "enabled" else "disabled"),
       sprintf("daily memory logs: %s",
               if (isTRUE(config$context_include_memory_logs)) "enabled" else "disabled"),
       sprintf("compaction memory flush: %s",
@@ -704,8 +701,6 @@ format_doctor_report <- function(cwd, session, provider, display_model, conn,
       sprintf("git: %s", if (in_git_repo()) "repository detected" else "not a git repository"),
       sprintf("context files: %d", length(context_files)),
       sprintf("skill docs: %d", length(skill_docs)),
-      sprintf("legacy workspace memory: %s",
-              if (isTRUE(config$context_include_global_memory)) "enabled" else "disabled"),
       sprintf("daily memory logs: %s",
               if (isTRUE(config$context_include_memory_logs)) "enabled" else "disabled"),
       sprintf("compaction memory flush: %s",
@@ -985,6 +980,7 @@ run_agent <- function(opts) {
   display_model <- model %||% switch(provider,
     anthropic = "claude-sonnet-4-20250514",
     openai = "gpt-4o",
+    moonshot = "kimi-k2",
     ollama = "llama3.2"
   )
 
@@ -1202,6 +1198,7 @@ run_agent <- function(opts) {
         display_model <- model %||% switch(provider,
           anthropic = "claude-sonnet-4-20250514",
           openai = "gpt-4o",
+          moonshot = "kimi-k2",
           ollama = "llama3.2",
           "(default)"
         )
@@ -1650,7 +1647,7 @@ Commands:
   /sessions      List sessions for this directory
   /context       Show loaded context files
   /model <name>  Switch model
-  /provider <p>  Switch provider (anthropic, openai, ollama)
+  /provider <p>  Switch provider (anthropic, openai, moonshot, ollama)
   /voice         Toggle voice mode (requires tts.api, stt.api)
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)

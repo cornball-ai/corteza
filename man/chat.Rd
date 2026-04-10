@@ -6,7 +6,8 @@
 chat(provider = NULL, model = NULL, tools = NULL, session = NULL)
 }
 \arguments{
-\item{provider}{LLM provider: "anthropic", "openai", or "ollama".
+\item{provider}{LLM provider: "anthropic", "openai", "moonshot", or
+"ollama".
 Defaults to config value or "anthropic".}
 
 \item{model}{Model name. Defaults to config value or provider default.}

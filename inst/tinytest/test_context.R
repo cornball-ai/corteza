@@ -1,4 +1,9 @@
 # Test context loading
+#
+# Standard context files (memory, SOUL.md, USER.md, CLAUDE.md, AGENTS.md)
+# are loaded via saber::agent_context(). Tests for that logic live in saber.
+# Here we test the llamaR-side assembly: preamble, custom context_files,
+# briefing integration, and skill docs.
 
 # Setup: use a fresh temp directory
 tmpdir <- tempdir()
@@ -6,88 +11,55 @@ testdir <- file.path(tmpdir, paste0("ctx_test_", Sys.getpid()))
 if (dir.exists(testdir)) unlink(testdir, recursive = TRUE)
 dir.create(testdir, recursive = TRUE)
 
-# Test list_context_files with no files
+# --- list_context_files returns empty when no custom files configured ---
 files <- llamaR:::list_context_files(testdir)
 expect_equal(length(files), 0)
 
-# Test load_context with no project files
-# Note: May still contain global files from ~/.llamar/workspace/ or
-# package skill docs (from basalt) if available
+# --- load_context with no project files returns NULL or system prompt ---
+# (depends on whether workspace files / packages exist on the host)
 ctx <- llamaR:::load_context(testdir)
-workspace_dir <- llamaR:::get_workspace_dir()
-has_global_files <- any(file.exists(file.path(workspace_dir, llamaR:::global_context_files())))
-has_basalt <- requireNamespace("basalt", quietly = TRUE)
-if (has_global_files || has_basalt) {
-    # Global files or package docs exist, so context won't be NULL
-    expect_true(is.character(ctx))
-} else {
-    expect_null(ctx)
-}
+expect_true(is.null(ctx) || is.character(ctx))
 
-# Create README.md (now in defaults)
-writeLines(c("# My Project", "", "This is the readme."), file.path(testdir, "README.md"))
+# --- Custom context_files via project config ---
+dir.create(file.path(testdir, ".llamar"), showWarnings = FALSE)
+writeLines(c("# My Project", "", "This is the readme."),
+           file.path(testdir, "README.md"))
+writeLines('{"context_files": ["README.md"]}',
+           file.path(testdir, ".llamar", "config.json"))
 
-# Test list_context_files finds README.md
 files <- llamaR:::list_context_files(testdir)
 expect_equal(length(files), 1)
 expect_true(grepl("README.md", files[1]))
 
-# Test load_context includes README.md content
 ctx <- llamaR:::load_context(testdir)
+expect_true(is.character(ctx))
 expect_true(grepl("README.md", ctx))
 expect_true(grepl("My Project", ctx))
+expect_true(grepl("You are an AI assistant", ctx))
 
-# Create PLAN.md
-writeLines(c("# Development Plan", "", "Phase 1: Core"), file.path(testdir, "PLAN.md"))
+# --- Multiple custom files ---
+writeLines(c("# Plan", "", "Phase 1: Core"), file.path(testdir, "PLAN.md"))
+writeLines('{"context_files": ["README.md", "PLAN.md"]}',
+           file.path(testdir, ".llamar", "config.json"))
 
-# Test both files are found
 files <- llamaR:::list_context_files(testdir)
 expect_equal(length(files), 2)
 
-# Create fyi.md
-writeLines(c("# fyi: mypackage", "", "This is package info."), file.path(testdir, "fyi.md"))
-
-files <- llamaR:::list_context_files(testdir)
-expect_equal(length(files), 3)
-
-# Create AGENTS.md
-writeLines("# Agent Guidelines", file.path(testdir, "AGENTS.md"))
-
-files <- llamaR:::list_context_files(testdir)
-expect_equal(length(files), 4)
-
-# Project MEMORY.md no longer loads by default
-writeLines("# Memory\n\nProject memory should stay out by default.",
-    file.path(testdir, "MEMORY.md"))
-
-files <- llamaR:::list_context_files(testdir)
-expect_equal(length(files), 4)
-
-# Test all are included in context
 ctx <- llamaR:::load_context(testdir)
 expect_true(grepl("README.md", ctx))
 expect_true(grepl("PLAN.md", ctx))
-expect_true(grepl("fyi.md", ctx))
-expect_true(grepl("AGENTS.md", ctx))
-expect_true(grepl("Agent Guidelines", ctx))
-expect_false(grepl("Project memory should stay out by default.", ctx, fixed = TRUE))
+expect_true(grepl("Phase 1: Core", ctx))
 
-# Test system prompt structure
-expect_true(grepl("You are an AI assistant", ctx))
-expect_true(grepl("context about the current project", ctx))
-
-# Test custom config overrides default file list
-dir.create(file.path(testdir, ".llamar"), showWarnings = FALSE)
-writeLines('{"context_files": ["README.md", "MEMORY.md"]}',
-    file.path(testdir, ".llamar", "config.json"))
+# --- Missing custom files are silently skipped ---
+writeLines('{"context_files": ["README.md", "DOES_NOT_EXIST.md"]}',
+           file.path(testdir, ".llamar", "config.json"))
 
 files <- llamaR:::list_context_files(testdir)
-expect_equal(length(files), 2)
-expect_true(grepl("README.md", files[1]))
+expect_equal(length(files), 1)
 
 ctx <- llamaR:::load_context(testdir)
-expect_true(grepl("MEMORY.md", ctx))
-expect_true(grepl("Project memory should stay out by default.", ctx, fixed = TRUE))
+expect_true(grepl("My Project", ctx))
+expect_false(grepl("DOES_NOT_EXIST", ctx))
 
 # Cleanup
 unlink(testdir, recursive = TRUE)
