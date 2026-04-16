@@ -39,7 +39,7 @@ matrix_save_config <- function(cfg) {
     invisible(cfg)
 }
 
-matrix_session <- function(cfg) {
+matrix_mx_session <- function(cfg) {
     mx.api::mx_session(
                        server = cfg$server,
                        token = cfg$token,
@@ -52,8 +52,9 @@ matrix_session <- function(cfg) {
 #'
 #' Logs in to a Matrix homeserver as the bot account, joins (or records)
 #' the target room, and writes credentials to ~/.llamar/matrix.json with
-#' file mode 0600. Call once per host. Model and provider are optional
-#' defaults the poll loop uses unless overridden at call time.
+#' file mode 0600. Call once per host. Model, provider, tools_filter,
+#' and auto_approve_asks are defaults the poll loop uses unless
+#' overridden at call time.
 #'
 #' @param server Character. Homeserver base URL.
 #' @param user Character. Bot localpart or full Matrix ID.
@@ -61,15 +62,25 @@ matrix_session <- function(cfg) {
 #'   can re-authenticate if its access token is invalidated.
 #' @param room Character. Room ID or alias the bot should read and post
 #'   to. If the bot has been invited but not joined, it will be joined.
-#' @param model Character or NULL. Default model name passed to
-#'   \code{llm.api::chat}.
-#' @param provider Character. Default LLM provider.
+#' @param model Character or NULL. Default model name.
+#' @param provider Character. LLM provider: "anthropic", "openai",
+#'   "moonshot", or "ollama".
+#' @param tools_filter Character vector or NULL. Passed to
+#'   \code{get_tools()} to restrict which tools the bot can invoke.
+#'   NULL allows all registered tools.
+#' @param auto_approve_asks Logical. When TRUE, tool calls that policy
+#'   returns \code{"ask"} for are auto-approved. Suitable for a
+#'   personal bot on a trusted tailnet. When FALSE (default) asks are
+#'   declined until the thumbs-up reaction protocol lands.
 #'
 #' @return The saved configuration, invisibly.
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
-                             provider = "auto") {
+                             provider = c("anthropic", "openai", "moonshot", "ollama"),
+                             tools_filter = NULL, auto_approve_asks = FALSE) {
     matrix_require_mx()
+    provider <- match.arg(provider)
+
     s <- mx.api::mx_login(server, user, password)
     room_id <- mx.api::mx_room_join(s, room)
 
@@ -83,6 +94,8 @@ matrix_configure <- function(server, user, password, room, model = NULL,
                 room_id = room_id,
                 model = model,
                 provider = provider,
+                tools_filter = tools_filter,
+                auto_approve_asks = isTRUE(auto_approve_asks),
                 sync_token = NULL
     )
     matrix_save_config(cfg)
@@ -100,7 +113,7 @@ matrix_configure <- function(server, user, password, room, model = NULL,
 matrix_send <- function(text, msgtype = "m.text") {
     matrix_require_mx()
     cfg <- matrix_load_config()
-    s <- matrix_session(cfg)
+    s <- matrix_mx_session(cfg)
     mx.api::mx_send(s, cfg$room_id, text, msgtype = msgtype)
 }
 
@@ -135,38 +148,28 @@ matrix_default_system <- function(cfg) {
             paste(
                   "You are %s, an assistant running in R on behalf of %s.",
                   "Reply concisely over Matrix chat. Plain text, no markdown",
-                  "headings. Assume messages may be received out of order."
+                  "headings. You have access to tools for the local filesystem,",
+                  "shell, and R session; use them when helpful and report what",
+                  "you did. Assume messages may be received out of order."
         ),
             cfg$user_id, cfg$user
     )
 }
 
-#' One iteration of sync-and-reply
-#'
-#' Fetches new messages from the configured room, passes each user
-#' message to \code{\link[llm.api]{chat}}, posts the reply back, and
-#' persists the sync token. Safe to call repeatedly (idempotent per
-#' sync token).
-#'
-#' On first run there is no saved sync token, so this call establishes
-#' a baseline and returns without processing any history.
-#'
-#' @param system Character or NULL. System prompt; default derived
-#'   from the bot identity.
-#' @param model Character or NULL. Model override; falls back to the
-#'   model stored in the saved configuration.
-#' @param provider Character or NULL. Provider override; falls back to
-#'   the provider stored in the saved configuration.
-#' @param timeout Integer. Long-poll timeout in milliseconds. 0 returns
-#'   immediately.
-#'
-#' @return An integer count of messages replied to, invisibly.
-#' @export
-matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
-                        timeout = 0L) {
-    matrix_require_mx()
-    cfg <- matrix_load_config()
-    s <- matrix_session(cfg)
+# Build the approval callback for the Matrix channel. Until the thumbs-up
+# reaction protocol lands (PR F), the only options are auto-approve or
+# auto-decline. Policy handles the hard cases (personal paths already
+# deny outright on matrix); this callback only fires for "ask" verdicts.
+matrix_approval_cb <- function(cfg) {
+    auto <- isTRUE(cfg$auto_approve_asks)
+    function(call, decision) auto
+}
+
+# Build a fresh llamaR session from a Matrix config. Does not fetch any
+# room history; in-memory history accumulates across turn() calls made
+# inside one matrix_run process.
+matrix_new_session <- function(cfg, system = NULL, model = NULL,
+                               provider = NULL, tools_filter = NULL) {
     if (is.null(system)) {
         system <- matrix_default_system(cfg)
     }
@@ -174,11 +177,54 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         model <- cfg$model
     }
     if (is.null(provider)) {
-        provider <- cfg$provider %||% "auto"
+        provider <- cfg$provider
+    }
+    if (is.null(tools_filter)) {
+        tools_filter <- cfg$tools_filter
     }
 
+    new_session(
+                channel = "matrix",
+                provider = provider %||% "anthropic",
+                model_map = list(cloud = model, local = NULL),
+                tools_filter = tools_filter,
+                system = system,
+                approval_cb = matrix_approval_cb(cfg),
+                verbose = FALSE
+    )
+}
+
+#' One iteration of sync-and-reply
+#'
+#' Fetches new messages from the configured room and runs \code{\link{turn}}
+#' against each. On first run there is no saved sync token, so this call
+#' establishes a baseline and returns without processing any history.
+#'
+#' Pass \code{session = NULL} (the default) for a stateless one-shot that
+#' cron can invoke. Pass a session created by \code{matrix_new_session} to
+#' accumulate conversation history across polls within one process.
+#'
+#' @param system Character or NULL. System prompt override.
+#' @param model Character or NULL. Model override.
+#' @param provider Character or NULL. Provider override.
+#' @param tools_filter Character vector or NULL. Tool filter override.
+#' @param timeout Integer. Long-poll timeout in milliseconds. 0 returns
+#'   immediately.
+#' @param session Session environment from \code{matrix_new_session}, or
+#'   NULL to build a fresh session each call.
+#'
+#' @return An integer count of messages replied to, invisibly.
+#' @export
+matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
+                        tools_filter = NULL, timeout = 0L, session = NULL) {
+    matrix_require_mx()
+    cfg <- matrix_load_config()
+    mx_sess <- matrix_mx_session(cfg)
+
     sync <- mx.api::mx_sync(
-                            s, since = cfg$sync_token, timeout = as.integer(timeout)
+                            mx_sess,
+                            since = cfg$sync_token,
+                            timeout = as.integer(timeout)
     )
 
     first_run <- is.null(cfg$sync_token)
@@ -195,43 +241,55 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         return(invisible(0L))
     }
 
+    if (is.null(session)) {
+        session <- matrix_new_session(
+                                      cfg,
+                                      system = system, model = model,
+                                      provider = provider, tools_filter = tools_filter
+        )
+    }
+
     for (m in msgs) {
         reply <- tryCatch(
-                          llm.api::chat(
-                                        prompt = m$body,
-                                        model = model,
-                                        system = system,
-                                        provider = provider
-            )$content,
-                          error = function(e) sprintf("(llm error: %s)", conditionMessage(e))
+                          turn(m$body, session)$reply,
+                          error = function(e) sprintf("(agent error: %s)",
+                conditionMessage(e))
         )
-        mx.api::mx_send(s, cfg$room_id, reply)
+        if (is.null(reply) || !nzchar(reply)) {
+            reply <- "(no reply)"
+        }
+        mx.api::mx_send(mx_sess, cfg$room_id, reply)
     }
     invisible(length(msgs))
 }
 
 #' Run the Matrix adapter as a long-poll loop
 #'
-#' Calls \code{matrix_poll} in a loop with a long-poll timeout so new
-#' messages trigger replies within ~1 second. Intended as the entry
+#' Creates one session up front and reuses it across polls so conversation
+#' history accumulates within the process lifetime. Intended as the entry
 #' point for a systemd user unit.
 #'
 #' @param timeout Integer. Long-poll timeout in milliseconds.
 #' @param system Character or NULL. System prompt override.
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
+#' @param tools_filter Character vector or NULL. Tool filter override.
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
 #' @export
 matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
-                       provider = NULL) {
+                       provider = NULL, tools_filter = NULL) {
+    matrix_require_mx()
+    cfg <- matrix_load_config()
+    session <- matrix_new_session(
+                                  cfg,
+                                  system = system, model = model,
+                                  provider = provider, tools_filter = tools_filter
+    )
     message("matrix_run: starting long-poll loop")
     repeat {
-        matrix_poll(
-                    system = system, model = model,
-                    provider = provider, timeout = timeout
-        )
+        matrix_poll(timeout = timeout, session = session)
     }
 }
 

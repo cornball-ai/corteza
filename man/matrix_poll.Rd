@@ -3,29 +3,32 @@
 \alias{matrix_poll}
 \title{One iteration of sync-and-reply}
 \usage{
-matrix_poll(system = NULL, model = NULL, provider = NULL, timeout = 0L)
+matrix_poll(system = NULL, model = NULL, provider = NULL, tools_filter = NULL,
+            timeout = 0L, session = NULL)
 }
 \arguments{
-\item{system}{Character or NULL. System prompt; default derived
-from the bot identity.}
+\item{system}{Character or NULL. System prompt override.}
 
-\item{model}{Character or NULL. Model override; falls back to the
-model stored in the saved configuration.}
+\item{model}{Character or NULL. Model override.}
 
-\item{provider}{Character or NULL. Provider override; falls back to
-the provider stored in the saved configuration.}
+\item{provider}{Character or NULL. Provider override.}
+
+\item{tools_filter}{Character vector or NULL. Tool filter override.}
 
 \item{timeout}{Integer. Long-poll timeout in milliseconds. 0 returns
 immediately.}
+
+\item{session}{Session environment from \code{matrix_new_session}, or
+NULL to build a fresh session each call.}
 }
 \value{
 An integer count of messages replied to, invisibly.
 }
 \description{
-Fetches new messages from the configured room, passes each user
-message to \code{\link[llm.api]{chat}}, posts the reply back, and
-persists the sync token. Safe to call repeatedly (idempotent per
-sync token).
-On first run there is no saved sync token, so this call establishes
-a baseline and returns without processing any history.
+Fetches new messages from the configured room and runs \code{\link{turn}}
+against each. On first run there is no saved sync token, so this call
+establishes a baseline and returns without processing any history.
+Pass \code{session = NULL} (the default) for a stateless one-shot that
+cron can invoke. Pass a session created by \code{matrix_new_session} to
+accumulate conversation history across polls within one process.
 }
