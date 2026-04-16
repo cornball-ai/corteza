@@ -3,6 +3,20 @@
 # Exposes the llamaR agent over a Matrix room via the mx.api package.
 # The bot long-polls /sync so incoming messages are handled with
 # sub-second latency; no cron or webhook plumbing required.
+#
+# mx.api is in Suggests since most users won't enable a Matrix channel.
+# The matrix_* functions hard-stop with an install hint if it's missing.
+
+matrix_require_mx <- function() {
+    if (!requireNamespace("mx.api", quietly = TRUE)) {
+        stop(
+             "Matrix integration requires the 'mx.api' package. ",
+             "Install it with install.packages(\"mx.api\") ",
+             "(or remotes::install_github(\"cornball-ai/mx.api\")).",
+             call. = FALSE
+        )
+    }
+}
 
 matrix_config_path <- function() path.expand("~/.llamar/matrix.json")
 
@@ -55,6 +69,7 @@ matrix_session <- function(cfg) {
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
                              provider = "auto") {
+    matrix_require_mx()
     s <- mx.api::mx_login(server, user, password)
     room_id <- mx.api::mx_room_join(s, room)
 
@@ -83,6 +98,7 @@ matrix_configure <- function(server, user, password, room, model = NULL,
 #' @return The event ID of the sent message.
 #' @export
 matrix_send <- function(text, msgtype = "m.text") {
+    matrix_require_mx()
     cfg <- matrix_load_config()
     s <- matrix_session(cfg)
     mx.api::mx_send(s, cfg$room_id, text, msgtype = msgtype)
@@ -148,6 +164,7 @@ matrix_default_system <- function(cfg) {
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                         timeout = 0L) {
+    matrix_require_mx()
     cfg <- matrix_load_config()
     s <- matrix_session(cfg)
     if (is.null(system)) {
