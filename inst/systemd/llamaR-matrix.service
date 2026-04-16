@@ -1,0 +1,15 @@
+[Unit]
+Description=llamaR Matrix bot (long-poll loop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Rscript -e 'llamaR::matrix_run()'
+Restart=always
+RestartSec=5
+StandardOutput=append:%h/.local/state/llamaR/matrix.log
+StandardError=append:%h/.local/state/llamaR/matrix.log
+
+[Install]
+WantedBy=default.target
