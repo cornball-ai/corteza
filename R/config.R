@@ -85,24 +85,6 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$context_include_user)) {
         config$context_include_user <- NULL
     }
-    # Legacy: daily memory log injection (opt-in)
-    if (is.null(config$context_include_memory_logs)) {
-        config$context_include_memory_logs <- FALSE
-    }
-
-    # Memory flush before compaction
-    if (is.null(config$memory_flush_enabled)) {
-        config$memory_flush_enabled <- FALSE
-    }
-    if (is.null(config$memory_flush_prompt)) {
-        config$memory_flush_prompt <- paste0(
-            "Pre-compaction memory flush. ",
-            "Store durable memories now using write_file to memory/YYYY-MM-DD.md ",
-            "in the workspace. Include: preferences discovered, decisions made, ",
-            "technical details worth preserving. ",
-            "If nothing to store, reply with exactly: NO_REPLY")
-    }
-
     # Tool approval settings
     if (is.null(config$approval_mode)) {
         config$approval_mode <- "ask" # "ask", "allow", "deny"
@@ -137,10 +119,6 @@ load_config <- function(cwd = getwd()) {
         )
     }
     # Note: allowed_paths is NULL by default (no restriction)
-
-    if (is.null(config$legacy_memory_tools_enabled)) {
-        config$legacy_memory_tools_enabled <- FALSE
-    }
 
     # Skill paths (additional directories to load skills from)
     if (is.null(config$skill_paths)) {
@@ -200,55 +178,6 @@ load_config <- function(cwd = getwd()) {
         sub$base_port <- 7851L
     }
     config$subagents <- sub
-
-    # Voice mode config
-    if (is.null(config$voice)) {
-        config$voice <- list()
-    }
-    voice <- config$voice
-    if (is.null(voice$enabled)) {
-        voice$enabled <- FALSE
-    }
-    # TTS config
-    if (is.null(voice$tts)) {
-        voice$tts <- list()
-    }
-    if (is.null(voice$tts$backend)) {
-        voice$tts$backend <- "qwen3" # qwen3, chatterbox, openai, elevenlabs
-    }
-    if (is.null(voice$tts$voice)) {
-        voice$tts$voice <- "default"
-    }
-    if (is.null(voice$tts$port)) {
-        voice$tts$port <- 7812L # qwen3-tts-api default port
-    }
-    # STT config
-    if (is.null(voice$stt)) {
-        voice$stt <- list()
-    }
-    if (is.null(voice$stt$backend)) {
-        voice$stt$backend <- "whisper" # whisper (native), api
-    }
-    if (is.null(voice$stt$port)) {
-        voice$stt$port <- 4123L # only used for api backend
-    }
-    if (is.null(voice$stt$model)) {
-        voice$stt$model <- "base" # whisper model: tiny, base, small, medium, large
-    }
-    # Audio config
-    if (is.null(voice$audio)) {
-        voice$audio <- list()
-    }
-    if (is.null(voice$audio$input_device)) {
-        voice$audio$input_device <- NULL # Use default device
-    }
-    if (is.null(voice$audio$sample_rate)) {
-        voice$audio$sample_rate <- 16000L
-    }
-    if (is.null(voice$audio$format)) {
-        voice$audio$format <- "wav"
-    }
-    config$voice <- voice
 
     # Workspace config (managed runtime state)
     if (is.null(config$workspace)) {

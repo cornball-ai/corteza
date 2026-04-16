@@ -22,7 +22,7 @@
 #' - `read_file`, `write_file`, `replace_in_file`, `list_files`, `grep_files` - File operations
 #' - `run_r` - Execute R code in the server session
 #' - `bash` - Run shell commands
-#' - `r_help` - Query package docs via fyi (exports, internals, options)
+#' - `r_help` - Query package docs via saber (exports, function help)
 #' - `installed_packages` - List installed packages
 #' - `web_search` - Search the web via Tavily (requires TAVILY_API_KEY)
 #' - `fetch_url` - Fetch web content

@@ -8,7 +8,6 @@
                             search = c("grep_files"),
                             web = c("web_search", "fetch_url"),
                             git = c("git_status", "git_diff", "git_log"),
-                            memory = c("memory_store", "memory_recall", "memory_get"),
                             r = c("r_help", "installed_packages"),
                             subagent = c("spawn_subagent", "query_subagent",
         "list_subagents", "kill_subagent")
@@ -20,14 +19,7 @@
 #' @return Character vector of hidden tool names
 #' @noRd
 hidden_tools <- function(cwd = getwd()) {
-    config <- load_config(cwd)
-    hidden <- character()
-
-    if (!isTRUE(config$legacy_memory_tools_enabled)) {
-        hidden <- c(hidden, .builtin_categories$memory)
-    }
-
-    unique(hidden)
+    character()
 }
 
 #' Get tool categories (built-in + package-derived)
@@ -54,7 +46,7 @@ get_tool_categories <- function() {
 #' otherwise returns empty list. Use ensure_skills() first to register built-in skills.
 #'
 #' @param filter Character vector of tool names or categories to include.
-#'   Categories: file, code, r, data, web, git, chat, memory.
+#'   Categories: file, code, r, search, web, git, subagent.
 #'   Use "core" for file+code+git, "all" for everything.
 #' @return List of tool definitions with names, descriptions, and schemas
 #' @noRd

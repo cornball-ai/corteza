@@ -415,9 +415,6 @@ tool_bash <- function(args) {
     }
 
     if (background) {
-        if (!requireNamespace("processx", quietly = TRUE)) {
-            return(err("processx package required for background processes. Install with: install.packages('processx')"))
-        }
         proc <- processx::process$new("bash", c("-lc", cmd),
                                       stdout = "|", stderr = "|",
                                       cleanup_tree = TRUE)
@@ -513,36 +510,36 @@ tool_r_help <- function(args) {
     topic <- args$topic
     pkg <- args$package
 
-    # Use fyi package for documentation (generates fyi.md-style output)
-    if (!requireNamespace("fyi", quietly = TRUE)) {
-        return(err("fyi package not installed. Install with: install.packages('fyi')"))
+    # Accept pkg::fn notation in the topic as a convenience
+    if (is.null(pkg) && grepl("::", topic, fixed = TRUE)) {
+        parts <- strsplit(topic, "::", fixed = TRUE)[[1]]
+        pkg <- parts[1]
+        topic <- parts[2]
     }
 
     tryCatch({
-        # If topic looks like a package name, get full package info
+        # Bare package name: return the exports table
         if (is.null(pkg) && topic %in% rownames(installed.packages())) {
-            out <- capture.output(fyi::fyi(topic))
-            ok(paste(out, collapse = "\n"))
-        } else {
-            # For functions, try to find the package and get info
-            pkg_name <- pkg %||% tryCatch({
-                # Find which package contains this function
-                envs <- search()
-                for (e in envs) {
-                    if (exists(topic, where = e, mode = "function")) {
-                        sub("^package:", "", e)
-                    }
-                }
-                NULL
-            }, error = function(e) NULL)
+            out <- capture.output(print(saber::pkg_exports(topic)))
+            return(ok(paste(out, collapse = "\n")))
+        }
 
-            if (!is.null(pkg_name) && pkg_name != ".GlobalEnv") {
-                out <- capture.output(fyi::fyi(pkg_name))
-                ok(paste(out, collapse = "\n"))
-            } else {
-                err(paste("Could not find package for:", topic))
+        # Function: resolve its package if not given
+        if (is.null(pkg)) {
+            for (e in search()) {
+                if (exists(topic, where = e, mode = "function")) {
+                    pkg <- sub("^package:", "", e)
+                    break
+                }
             }
         }
+
+        if (is.null(pkg) || pkg == ".GlobalEnv") {
+            return(err(paste("Could not find package for:", topic)))
+        }
+
+        md <- saber::pkg_help(topic, pkg)
+        ok(md)
     }, error = function(e) {
         err(paste("Help error:", e$message))
     })
@@ -753,94 +750,6 @@ tool_git_log <- function(args) {
     ok(result$text)
 }
 
-# Memory ----
-
-tool_memory_store <- function(args) {
-    fact <- args$fact
-    scope <- args$scope %||% "project"
-
-    # Use memory module for storage (handles tags, categorization)
-    tryCatch({
-        memory_store(fact, scope = scope, cwd = getwd())
-        clean_fact <- strip_tags(fact)
-        tags <- parse_tags(fact)
-        tag_str <- if (length(tags) > 0) {
-            sprintf(" [%s]", paste0("#", tags, collapse = " "))
-        } else {
-            ""
-        }
-        ok(sprintf("Stored%s: %s%s",
-                if (scope == "global") " (global)" else "",
-                   clean_fact, tag_str))
-    }, error = function(e) {
-        err(paste("Memory store error:", e$message))
-    })
-}
-
-tool_memory_recall <- function(args) {
-    query <- args$query
-    scope <- args$scope %||% "both"
-
-    tryCatch({
-        results <- memory_search(query, scope = scope, cwd = getwd())
-        if (length(results) == 0) {
-            ok(sprintf("No memories found matching: %s", query))
-        } else {
-            formatted <- format_memory_results(results)
-            ok(formatted)
-        }
-    }, error = function(e) {
-        err(paste("Memory search error:", e$message))
-    })
-}
-
-# Memory file access ----
-
-tool_memory_get <- function(args) {
-    path <- args$path
-    if (is.null(path) || nchar(trimws(path)) == 0) {
-        return(err("path is required"))
-    }
-
-    workspace <- get_workspace_dir()
-
-    # Security: only allow MEMORY.md or files under memory/ within workspace
-    # Validate relative path first (no traversal)
-    if (grepl("\\.\\.", path)) {
-        return(err("Access denied: path must be within workspace"))
-    }
-
-    # Only allow MEMORY.md or memory/*.md
-    if (path != "MEMORY.md" && !grepl("^memory/", path)) {
-        return(err("Access denied: only MEMORY.md or memory/*.md files allowed"))
-    }
-
-    full_path <- file.path(workspace, path)
-
-    if (!file.exists(full_path)) {
-        return(err(paste("File not found:", path)))
-    }
-
-    lines <- readLines(full_path, warn = FALSE)
-
-    # Apply line range if specified
-    from <- args$from %||% 1L
-    if (from < 1) {
-        from <- 1L
-    }
-    if (from > length(lines)) {
-        return(ok("(no content at specified line range)"))
-    }
-
-    if (!is.null(args$lines)) {
-        end <- min(from + args$lines - 1L, length(lines))
-    } else {
-        end <- length(lines)
-    }
-
-    ok(paste(lines[from:end], collapse = "\n"))
-}
-
 # Skill Registration ----
 
 #' Register all built-in skills
@@ -1002,7 +911,7 @@ register_builtin_skills <- function() {
     # R-specific
     register_skill(skill_spec(
                               name = "r_help",
-                              description = "Get R package documentation using fyi (exports, internals, options)",
+                              description = "Get R package documentation via saber (exports, function help)",
                               params = list(
                 topic = list(type = "string",
                              description = "Package or function name",
@@ -1092,47 +1001,6 @@ register_builtin_skills <- function() {
                             description = "Repository path (default: current directory)")
             ),
                               handler = function(args, ctx) tool_git_log(args)
-        ))
-
-    # Memory
-    register_skill(skill_spec(
-                              name = "memory_store",
-                              description = "Store a fact or preference for future sessions. Use for user preferences, project conventions, or important context worth remembering.",
-                              params = list(
-                fact = list(type = "string",
-                            description = "The fact or preference to remember",
-                            required = TRUE),
-                scope = list(type = "string", description = "project = this directory only, global = all projects",
-                             enum = list("project", "global"))
-            ),
-                              handler = function(args, ctx) tool_memory_store(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "memory_recall",
-                              description = "Search memories for facts, preferences, or context. Use to recall user preferences, project conventions, or past decisions.",
-                              params = list(
-                query = list(type = "string",
-                             description = "Search query (keyword or #tag)",
-                             required = TRUE),
-                scope = list(type = "string", description = "Where to search: project, global, or both",
-                             enum = list("both", "project", "global"))
-            ),
-                              handler = function(args, ctx) tool_memory_recall(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "memory_get",
-                              description = "Read a memory file (MEMORY.md or memory/*.md) with optional line range",
-                              params = list(
-                path = list(type = "string",
-                            description = "File path relative to workspace (e.g., MEMORY.md or memory/2025-01-15.md)", required = TRUE),
-                from = list(type = "integer",
-                            description = "Start line (1-based)"),
-                lines = list(type = "integer",
-                             description = "Number of lines to return")
-            ),
-                              handler = function(args, ctx) tool_memory_get(args)
         ))
 
     # Subagent tools

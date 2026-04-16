@@ -78,29 +78,6 @@ expect_equal(nrow(no_hits), 0)
 tokens <- llamaR:::ce_conversation_tokens()
 expect_true(tokens > 0)
 
-# Skip heuristic ----
-
-# Short response: skip
-expect_false(llamaR:::ce_should_precompute("OK"))
-
-# Question ending: skip
-long_question <- paste0(strrep("word ", 50), "Which option do you prefer?")
-expect_false(llamaR:::ce_should_precompute(long_question))
-
-# Long substantive response: precompute
-long_response <- paste(rep("This is a detailed explanation.", 20),
-                       collapse = " ")
-expect_true(llamaR:::ce_should_precompute(long_response))
-
-# Enumerated options: skip
-options_response <- paste0(
-    strrep("x ", 100), "\n",
-    "1. Option A\n",
-    "2. Option B\n",
-    "3. Option C"
-)
-expect_false(llamaR:::ce_should_precompute(options_response))
-
 # Payload assembly ----
 
 llamaR:::ce_init(tmp_proj)

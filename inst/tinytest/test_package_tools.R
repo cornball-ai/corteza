@@ -20,7 +20,7 @@ fmls <- formals(f1)
 expect_true(llamaR:::is_missing_formal(fmls, 1))   # x has no default
 expect_false(llamaR:::is_missing_formal(fmls, 2))   # y = 1
 
-# --- parse_basalt_params ---
+# --- parse_saber_params ---
 
 md <- paste(
     "#### Arguments",
@@ -31,13 +31,13 @@ md <- paste(
     "#### Value",
     sep = "\n"
 )
-params <- llamaR:::parse_basalt_params(md)
+params <- llamaR:::parse_saber_params(md)
 expect_equal(params$short, "Show short format output")
 expect_equal(params$branch, "Show branch and tracking info")
 expect_equal(length(params), 2)
 
 # NULL input returns empty
-expect_equal(length(llamaR:::parse_basalt_params(NULL)), 0)
+expect_equal(length(llamaR:::parse_saber_params(NULL)), 0)
 
 # --- extract_rd_title ---
 
@@ -64,7 +64,7 @@ expect_false(params2$y$required)
 expect_equal(params2$z$type, "number")
 expect_equal(params2$w$type, "string")
 
-# With basalt markdown for descriptions
+# With saber markdown for descriptions
 md3 <- paste(
     "#### Arguments",
     "",

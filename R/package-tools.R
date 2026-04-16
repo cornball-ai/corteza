@@ -5,12 +5,12 @@
 # delivery mechanism (MCP server). This module introspects installed packages
 # and registers their exports as skills that the LLM can call.
 #
-# Config: "skill_packages": ["gitr", "basalt"]
+# Config: "skill_packages": ["gitr", "saber"]
 
 #' Register all exports of an R package as skills
 #'
 #' Introspects the package namespace, builds JSON Schema parameters from
-#' formals() + basalt docs, and registers each exported function as a skill.
+#' formals() + saber docs, and registers each exported function as a skill.
 #'
 #' @param pkg Package name (must be installed)
 #' @return Invisible character vector of registered tool names
@@ -20,11 +20,11 @@ package_as_skills <- function(pkg, functions = NULL) {
         stop(sprintf("Package '%s' not installed", pkg), call. = FALSE)
     }
 
-    # Use basalt if available (already filters to functions, gives arg sigs)
-    has_basalt <- requireNamespace("basalt", quietly = TRUE)
+    # Use saber if available (already filters to functions, gives arg sigs)
+    has_saber <- requireNamespace("saber", quietly = TRUE)
 
-    if (has_basalt) {
-        exports_df <- basalt::pkg_exports(pkg)
+    if (has_saber) {
+        exports_df <- saber::pkg_exports(pkg)
         fn_names <- exports_df$name
     } else {
         ns <- getNamespace(pkg)
@@ -50,8 +50,8 @@ package_as_skills <- function(pkg, functions = NULL) {
         fn <- get(fn_name, envir = ns)
 
         # Get help text and parse params
-        help_md <- if (has_basalt) {
-            tryCatch(basalt::pkg_help(fn_name, pkg), error = function(e) NULL)
+        help_md <- if (has_saber) {
+            tryCatch(saber::pkg_help(fn_name, pkg), error = function(e) NULL)
         }
 
         params <- build_params_from_formals(fn, help_md)
@@ -72,13 +72,13 @@ package_as_skills <- function(pkg, functions = NULL) {
     invisible(registered)
 }
 
-#' Build skill params from formals + basalt docs
+#' Build skill params from formals + saber docs
 #'
 #' Combines type inference from default values with parameter descriptions
-#' parsed from basalt::pkg_help() markdown output.
+#' parsed from saber::pkg_help() markdown output.
 #'
 #' @param fn Function to introspect
-#' @param help_md Markdown string from basalt::pkg_help(), or NULL
+#' @param help_md Markdown string from saber::pkg_help(), or NULL
 #' @return Named list of param specs (type, description, required)
 #' @noRd
 build_params_from_formals <- function(fn, help_md) {
@@ -87,7 +87,7 @@ build_params_from_formals <- function(fn, help_md) {
         return(list())
     }
 
-    rd_descs <- parse_basalt_params(help_md)
+    rd_descs <- parse_saber_params(help_md)
 
     params <- list()
     for (i in seq_along(f)) {
@@ -112,15 +112,15 @@ build_params_from_formals <- function(fn, help_md) {
     params
 }
 
-#' Parse parameter descriptions from basalt help markdown
+#' Parse parameter descriptions from saber help markdown
 #'
 #' Extracts name/description pairs from the Arguments section of
-#' basalt::pkg_help() output.
+#' saber::pkg_help() output.
 #'
 #' @param help_md Markdown string, or NULL
 #' @return Named list of descriptions keyed by param name
 #' @noRd
-parse_basalt_params <- function(help_md) {
+parse_saber_params <- function(help_md) {
     if (is.null(help_md)) {
         return(list())
     }
@@ -196,9 +196,9 @@ is_missing_formal <- function(formals_list, i) {
     identical(formals_list[[i]], alist(x =)[[1]])
 }
 
-#' Extract the title line from basalt help markdown
+#' Extract the title line from saber help markdown
 #'
-#' The first ### heading in basalt output is the Rd title.
+#' The first ### heading in saber output is the Rd title.
 #'
 #' @param help_md Markdown string, or NULL
 #' @return Title string, or NULL
@@ -252,7 +252,7 @@ load_skill_packages <- function(config) {
 #' @return Character string with formatted docs, or NULL
 #' @noRd
 format_pkg_skill_docs <- function(config) {
-    if (!requireNamespace("basalt", quietly = TRUE)) {
+    if (!requireNamespace("saber", quietly = TRUE)) {
         return(NULL)
     }
 
@@ -279,7 +279,7 @@ format_pkg_skill_docs <- function(config) {
             # Selective: per-function docs
             for (fn in fns) {
                 doc <- tryCatch(
-                                basalt::pkg_help(fn, pkg),
+                                saber::pkg_help(fn, pkg),
                                 error = function(e) NULL
                 )
                 if (!is.null(doc)) {
@@ -290,8 +290,7 @@ format_pkg_skill_docs <- function(config) {
         } else {
             # Whole package: summary only
             doc <- tryCatch(
-                            paste(capture.output(basalt::pkg_exports(pkg)),
-                                  collapse = "\n"),
+                            paste(capture.output(saber::pkg_exports(pkg)), collapse = "\n"),
                             error = function(e) NULL
             )
             if (!is.null(doc)) {

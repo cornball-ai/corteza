@@ -2,14 +2,12 @@
 # R as the thalamic filter: decides what reaches the LLM's attention.
 #
 # Target: pack ~100K tokens (400KB) of the best possible context every turn.
-# Async pre-computation runs in dead time while user thinks/types.
 #
 # Components:
 #   .context_engine$conversation  - data.frame: queryable conversation index
 #   .context_engine$file_index    - named list: path -> lines (in-memory project)
-#   .context_engine$symbol_index  - basalt symbols() output, cached
+#   .context_engine$symbol_index  - saber symbols() output, cached
 #   .context_engine$payload       - pre-computed context, ready to splice
-#   .context_engine$bg_process    - callr::r_bg handle (NULL when idle)
 #   .context_engine$cwd           - project working directory
 #   .context_engine$config        - config snapshot
 
@@ -19,7 +17,7 @@
 
 #' Initialize the context engine
 #'
-#' Loads file index, basalt symbols, and prepares for payload assembly.
+#' Loads file index, saber symbols, and prepares for payload assembly.
 #'
 #' @param cwd Project working directory
 #' @param config Config list from load_config()
@@ -28,7 +26,6 @@
 ce_init <- function(cwd, config = list()) {
     .context_engine$cwd <- cwd
     .context_engine$config <- config
-    .context_engine$bg_process <- NULL
     .context_engine$payload <- NULL
     .context_engine$dirty <- TRUE
 
@@ -47,7 +44,7 @@ ce_init <- function(cwd, config = list()) {
     # Build in-memory file index
     ce_index_files(cwd)
 
-    # Cache basalt symbols (best-effort)
+    # Cache saber symbols (best-effort)
     ce_update_symbols(cwd)
 
     invisible(NULL)
@@ -55,16 +52,9 @@ ce_init <- function(cwd, config = list()) {
 
 #' Shut down the context engine
 #'
-#' Cleans up background processes.
-#'
 #' @return Invisible NULL
 #' @noRd
 ce_shutdown <- function() {
-    proc <- .context_engine$bg_process
-    if (!is.null(proc) && inherits(proc, "r_process") && proc$is_alive()) {
-        proc$kill()
-    }
-    .context_engine$bg_process <- NULL
     invisible(NULL)
 }
 
@@ -318,21 +308,21 @@ ce_file_stats <- function() {
     c(files = length(index), lines = n_lines, chars = as.integer(n_chars))
 }
 
-# Symbol/AST layer (via basalt) ----
+# Symbol/AST layer (via saber) ----
 
-#' Update symbol index from basalt
+#' Update symbol index from saber
 #'
 #' @param cwd Project directory
 #' @return Invisible logical (TRUE if updated)
 #' @noRd
 ce_update_symbols <- function(cwd) {
-    if (!requireNamespace("basalt", quietly = TRUE)) {
+    if (!requireNamespace("saber", quietly = TRUE)) {
         .context_engine$symbol_index <- NULL
         return(invisible(FALSE))
     }
 
     .context_engine$symbol_index <- tryCatch(
-        basalt::symbols(cwd),
+        saber::symbols(cwd),
         error = function(e) NULL
     )
     invisible(!is.null(.context_engine$symbol_index))
@@ -368,14 +358,14 @@ ce_call_graph <- function() {
 #' @return data.frame of callers, or empty data.frame
 #' @noRd
 ce_blast_radius <- function(fn) {
-    if (!requireNamespace("basalt", quietly = TRUE)) {
+    if (!requireNamespace("saber", quietly = TRUE)) {
         return(data.frame(caller = character(), project = character(),
                           file = character(), line = integer(),
                           stringsAsFactors = FALSE))
     }
     cwd <- .context_engine$cwd %||% getwd()
     tryCatch(
-             basalt::blast_radius(fn, project = cwd),
+             saber::blast_radius(fn, project = cwd),
              error = function(e) {
         data.frame(caller = character(), project = character(),
                    file = character(), line = integer(),
@@ -494,7 +484,7 @@ ce_compute_payload <- function(prompt, system_base, tools_json = "") {
         parts <- c(parts, "## Project Files", "", "```", tree, "```", "")
     }
 
-    # 2. basalt briefing (if available, most bang per token)
+    # 2. saber briefing (if available, most bang per token)
     briefing <- ce_get_briefing()
     if (nchar(briefing) > 0) {
         parts <- c(parts, "## Project Briefing", "", briefing, "")
@@ -554,12 +544,12 @@ ce_compute_payload <- function(prompt, system_base, tools_json = "") {
     )
 }
 
-#' Get basalt briefing for current project
+#' Get saber briefing for current project
 #'
-#' @return Character string (empty if basalt not available)
+#' @return Character string (empty if saber not available)
 #' @noRd
 ce_get_briefing <- function() {
-    if (!requireNamespace("basalt", quietly = TRUE)) {
+    if (!requireNamespace("saber", quietly = TRUE)) {
         return("")
     }
 
@@ -567,7 +557,7 @@ ce_get_briefing <- function() {
     project <- basename(cwd)
 
     tryCatch({
-        text <- basalt::briefing(project = project)
+        text <- saber::briefing(project = project)
         if (is.character(text) && nchar(text) > 0) text else ""
     }, error = function(e) "")
 }
@@ -757,96 +747,6 @@ ce_rerank <- function(prompt, system_base, tools_json = "") {
     # For now, always compute fresh. Pre-computed payload is a future
     # optimization once we verify the synchronous path is fast enough.
     ce_compute_payload(prompt, system_base, tools_json)
-}
-
-# Async pre-computation ----
-
-#' Check if pre-computation should run
-#'
-#' Skip when the assistant just asked a question or presented options.
-#' User's next message is probably a short selection.
-#'
-#' @param assistant_response Last assistant response text
-#' @return Logical
-#' @noRd
-ce_should_precompute <- function(assistant_response) {
-    if (is.null(assistant_response) || length(assistant_response) == 0 ||
-        nchar(assistant_response) < 200) {
-        return(FALSE)
-    }
-
-    lines <- strsplit(assistant_response, "\n")[[1]]
-    last_line <- trimws(tail(lines, 1))
-
-    # Ends with question
-    if (grepl("\\?\\s*$", last_line)) {
-        return(FALSE)
-    }
-
-    # Contains enumerated options
-    if (any(grepl("^\\s*[1-9ABC][\\.\\)]\\s", lines))) {
-        return(FALSE)
-    }
-
-    TRUE
-}
-
-#' Kick off background pre-computation
-#'
-#' Runs payload assembly in a callr::r_bg process.
-#' Falls back to synchronous if callr not available.
-#'
-#' @param system_base Base system prompt
-#' @param tools_json Tool definitions as JSON
-#' @return Invisible NULL
-#' @noRd
-ce_precompute <- function(system_base, tools_json = "") {
-    if (!isTRUE(.context_engine$dirty)) {
-        return(invisible(NULL))
-    }
-
-    # Don't stack background jobs
-    if (!is.null(.context_engine$bg_process)) {
-        if (inherits(.context_engine$bg_process, "r_process") &&
-            .context_engine$bg_process$is_alive()) {
-            return(invisible(NULL))
-        }
-        ce_poll()
-    }
-
-    # For now: synchronous pre-computation
-    # The async callr path will be added once we verify this works
-    if (!requireNamespace("callr", quietly = TRUE)) {
-        # Synchronous fallback: just mark as ready
-        .context_engine$dirty <- FALSE
-        return(invisible(NULL))
-    }
-
-    # Async path: serialize state and compute in background
-    # (Placeholder for Phase 8 of implementation)
-    .context_engine$dirty <- FALSE
-    invisible(NULL)
-}
-
-#' Poll background process for results
-#'
-#' @return Invisible NULL
-#' @noRd
-ce_poll <- function() {
-    proc <- .context_engine$bg_process
-    if (is.null(proc)) {
-        return(invisible(NULL))
-    }
-
-    if (inherits(proc, "r_process") && !proc$is_alive()) {
-        result <- tryCatch(proc$get_result(), error = function(e) NULL)
-        if (!is.null(result)) {
-            .context_engine$payload <- result
-        }
-        .context_engine$bg_process <- NULL
-    }
-
-    invisible(NULL)
 }
 
 # Utility ----
