@@ -19,11 +19,11 @@ Imports:
     curl,
     jsonlite,
     llm.api,
-    mx.api,
     saber
 Suggests:
     DBI,
     digest,
+    mx.api,
     RSQLite,
     stt.api,
     tinytest,
