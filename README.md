@@ -97,7 +97,7 @@ This is the most interesting mode architecturally (the agent lives in the same p
 |`list_files`        |List directory contents               |
 |`grep_files`        |Search file contents                  |
 |`run_r`             |Execute R code in the session         |
-|`r_help`            |Query R documentation via fyi         |
+|`r_help`            |Query R documentation via saber       |
 |`installed_packages`|List and search R packages            |
 |`git_status`        |Git working tree status               |
 |`git_diff`          |Git diff                              |
@@ -146,7 +146,7 @@ llamaR fills that gap. Not by wrapping Anthropic's SDK, but by building an R-nat
 |Role           |Posit (tidyverse)                      |cornyverse|
 |---------------|---------------------------------------|----------|
 |LLM API client |[ellmer](https://ellmer.tidyverse.org/)|llm.api   |
-|Context tools  |[btw](https://posit-dev.github.io/btw/)|fyi       |
+|Context tools  |[btw](https://posit-dev.github.io/btw/)|saber     |
 |MCP bridge     |mcptools                               |llamaR    |
 
 mcptools integrates R into the broader MCP ecosystem (Claude Desktop, VS Code, Positron). It's polished, on CRAN, and backed by Posit.

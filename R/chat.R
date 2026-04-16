@@ -395,9 +395,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
 
         transcript_append(session, "user", prompt)
 
-        # Poll pre-computed context
-        ce_poll()
-
         # Index user turn
         turn_number <- turn_number + 1L
         ws_set_turn(turn_number)
@@ -458,11 +455,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         # Update symbols if files changed
         if (length(files_touched) > 0) {
             ce_update_symbols(.context_engine$cwd %||% cwd)
-        }
-
-        # Pre-compute next context (async if callr available)
-        if (nchar(content) > 0 && ce_should_precompute(content)) {
-            ce_precompute(system_prompt, tools_json)
         }
     }
 

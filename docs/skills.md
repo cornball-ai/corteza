@@ -280,7 +280,7 @@ llamaR includes these built-in tools (not skills):
 |------|---------|-----------|
 | `run_r` | Execute R in persistent session | Yes |
 | `run_r_script` | Execute R in subprocess (via littler) | No |
-| `r_help` | Query R documentation via fyi | No |
+| `r_help` | Query R documentation via saber | No |
 | `installed_packages` | List installed R packages | No |
 
 These are MCP tools, not SKILL.md files. They're always available in llamaR and can be exposed to other agents via the MCP server.

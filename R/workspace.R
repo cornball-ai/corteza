@@ -251,7 +251,7 @@ ws_clear <- function() {
 #' No-capture tool list
 #' @noRd
 ws_no_capture_tools <- function() {
-    c("base::writeLines", "memory_store", "memory_recall", "memory_get",
+    c("base::writeLines",
         "spawn_subagent", "query_subagent", "list_subagents", "kill_subagent")
 }
 

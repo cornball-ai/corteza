@@ -85,10 +85,9 @@ Make the agent remember.
 
 ### 3.2 Context Injection ✅
 - [x] Global context: SOUL.md, USER.md, MEMORY.md from `~/.llamar/workspace/`
-- [x] Project context: README.md, PLAN.md, fyi.md, AGENTS.md
-- [x] Auto-load on startup, inject as system prompt
+- [x] Project briefing via `saber::briefing()` and `saber::agent_context()`
+- [x] User-specified project files via `context_files` config key (default: empty)
 - [x] `/context` command to show loaded files
-- [x] Configurable via `context_files` in config
 
 ### 3.3 Long-term Memory ✅
 - [x] `/remember` with tags and auto-categorization
@@ -134,12 +133,10 @@ Messaging integrations. Personal use first.
 
 Let the agent initiate. Earn trust first.
 
-### 5.1 Scheduled Tasks ✅
-- [x] SQLite-backed task storage (`R/task.R`)
-- [x] Cron-like scheduling (`R/scheduler.R`)
-- [x] `/task` CLI commands (add, run, pause, resume, delete, list)
-- [ ] Built-in daily summary task
-- [ ] Reminder system
+### 5.1 Scheduled Tasks (removed in 0.4.0)
+
+The SQLite-backed scheduler was removed in 0.4.0 in favor of cron. Users
+who want recurring agent runs invoke `llamar` from a crontab.
 
 ### 5.2 Event Triggers
 - [ ] File watchers
@@ -151,7 +148,6 @@ Let the agent initiate. Earn trust first.
 - [x] Project-local approval persistence (`.llamar/approvals.json`)
 - [x] Tool execution trace with timing and approval audit
 - [x] Dry-run mode (`/dryrun`, `--dry-run`)
-- [ ] Kill switch for background tasks
 
 ---
 
@@ -167,14 +163,11 @@ Parallel work via child agent processes.
 
 ---
 
-## Phase 7: Voice Mode ✅
+## Phase 7: Voice Mode (removed in 0.4.0)
 
-Speech input/output via local TTS/STT servers.
-
-- [x] STT integration (stt.api) — record and transcribe
-- [x] TTS integration (tts.api) — speak responses
-- [x] `/voice` toggle and `--voice` flag
-- [x] Configurable via `voice` section in config
+Speech input/output via local TTS/STT servers. Shipped in 0.3.0, removed in
+0.4.0 to drop stt.api and tts.api from the dependency surface. Rebuild on top
+of an external voice wrapper if needed.
 
 ---
 
@@ -186,16 +179,17 @@ Speech input/output via local TTS/STT servers.
 ### 8.2 Remaining Work
 - [ ] Aggregate tools from multiple MCP servers (Phase 2.2)
 - [ ] Auto-inject relevant memories into context via RAG (Phase 3.3)
-- [ ] Built-in scheduled tasks (daily summary, reminders)
 - [ ] Event triggers (file watchers, webhooks)
-- [ ] Kill switch for autonomous background tasks
+
+Scheduled tasks were removed in 0.4.0 along with the SQLite-backed scheduler
+in favor of cron. The kill-switch idea went with them.
 
 ---
 
 ## Architecture
 
 ```
-User (terminal / Signal / voice)
+User (terminal / Signal)
      │
      ▼
 ┌─────────────────┐
@@ -221,7 +215,7 @@ User (terminal / Signal / voice)
 
 ## Non-Goals (for now)
 
-- Shiny UI (beyond voice demo)
+- Shiny UI
 - RStudio integration
 - Cloud deployment
 - Multi-user / auth

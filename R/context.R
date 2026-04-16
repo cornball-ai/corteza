@@ -12,7 +12,6 @@
 #'   \item \code{saber::briefing()} project metadata (if available)
 #'   \item \code{saber::agent_context()} runtime context files (memory,
 #'         SOUL.md, USER.md, CLAUDE.md, AGENTS.md)
-#'   \item Optional daily memory logs (legacy, opt-in)
 #'   \item Any custom \code{context_files} from \code{.llamar/config.json}
 #'   \item Loaded skill docs and package tool docs
 #' }
@@ -40,14 +39,6 @@ load_context <- function(cwd = getwd()) {
     agent_ctx <- load_saber_agent_context(cwd, config)
     if (!is.null(agent_ctx) && nchar(agent_ctx) > 0L) {
         parts <- c(parts, agent_ctx, "")
-    }
-
-    # Legacy: daily memory logs (opt-in)
-    if (isTRUE(config$context_include_memory_logs)) {
-        memory_logs <- memory_log_load_all()
-        if (!is.null(memory_logs)) {
-            parts <- c(parts, "## Daily Memory Logs", "", memory_logs, "")
-        }
     }
 
     # Custom user-specified context files (default: empty)

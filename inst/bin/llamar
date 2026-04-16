@@ -42,7 +42,6 @@ parse_args <- function() {
     session = NULL,  # Session key (resume if exists, create if not)
     resume = FALSE,  # Resume latest session
     list = FALSE,
-    voice = config$voice$enabled %||% FALSE,  # Voice mode
     dry_run = config$dry_run %||% FALSE  # Dry-run mode
   )
 
@@ -70,9 +69,6 @@ parse_args <- function() {
     } else if (arg == "--tools" && i < length(args)) {
       opts$tools <- strsplit(args[i + 1], ",")[[1]]
       i <- i + 2
-    } else if (arg == "--voice" || arg == "-v") {
-      opts$voice <- TRUE
-      i <- i + 1
     } else if (arg == "--dry-run") {
       opts$dry_run <- TRUE
       i <- i + 1
@@ -88,7 +84,6 @@ Options:
   --port          MCP server port (default: 7850)
   --tools         Tool filter: core, file, code, git, r, data, web, chat (default: all)
                   Example: --tools core or --tools file,git,code
-  --voice, -v     Start with voice mode enabled
   --dry-run       Preview tool calls without executing
   --session, -s   Session key (resume if exists, create if not)
   --resume, -r    Resume the most recent session
@@ -110,15 +105,11 @@ Commands (in chat):
   /context       Show loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider
-  /voice         Toggle voice mode (requires tts.api, stt.api)
   /remember      Store fact with #tags (auto-categorized)
   /recall        Search memories by keyword or tag
 
-Context files (auto-loaded if present):
-  README.md      Project description
-  PLAN.md        Development roadmap
-  fyi.md         Package introspection (from fyi package)
-  AGENTS.md      Agent behavior guidelines
+Project context is loaded from saber::briefing() and saber::agent_context().
+Additional files can be loaded via the `context_files` config key.
 
 Legacy llamaR memory injection is disabled by default.
 Use config to opt back into MEMORY.md or daily memory logs.
@@ -622,7 +613,7 @@ collect_git_diff <- function(ref = NULL) {
 
 format_status_summary <- function(session, provider, display_model, conn, opts,
                                   config, session_tokens, context_limit,
-                                  context_files, skill_docs, voice_mode) {
+                                  context_files, skill_docs) {
   memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
                      isTRUE(config$memory_flush_enabled)) {
     "legacy llamaR memory enabled"
@@ -634,10 +625,9 @@ format_status_summary <- function(session, provider, display_model, conn, opts,
     c(
       sprintf("Session: %s", session$sessionKey),
       sprintf("Model: %s @ %s", display_model, provider),
-      sprintf("Tools: %d | Dry-run: %s | Voice: %s",
+      sprintf("Tools: %d | Dry-run: %s",
               length(conn$tools),
-              if (isTRUE(opts$dry_run)) "on" else "off",
-              if (isTRUE(voice_mode)) "on" else "off"),
+              if (isTRUE(opts$dry_run)) "on" else "off"),
       sprintf("Context: %d project file(s) | %d skill doc(s) | %s",
               length(context_files), length(skill_docs), memory_mode),
       sprintf("Legacy memory tools: %s",
@@ -675,9 +665,7 @@ format_config_summary <- function(config, provider, display_model, opts) {
       sprintf("dangerous tools: %s",
               paste(config$dangerous_tools %||%
                     llamaR:::default_dangerous_tools(),
-                    collapse = ", ")),
-      sprintf("voice default: %s",
-              if (isTRUE(config$voice$enabled %||% FALSE)) "on" else "off")
+                    collapse = ", "))
     ),
     collapse = "\n"
   )
@@ -707,7 +695,6 @@ format_doctor_report <- function(cwd, session, provider, display_model, conn,
               if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
       sprintf("legacy memory tools: %s",
               if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("voice: %s", llamaR:::voice_status(config)),
       sprintf("approval mode: %s", config$approval_mode %||% "ask"),
       sprintf("project approvals: %s",
               if (file.exists(approvals_path)) approvals_path else "none")
@@ -986,21 +973,6 @@ run_agent <- function(opts) {
 
   cat(sprintf("%s%s @ %s%s\n", color$dim, display_model, provider, color$reset))
 
-  # Voice mode state
-  voice_mode <- opts$voice %||% FALSE
-  if (voice_mode) {
-    # Check if voice is available
-    if (!llamaR:::voice_can_enable(config)) {
-      status <- llamaR:::voice_status(config)
-      cat(sprintf("%sVoice mode unavailable: %s%s\n", color$yellow, status, color$reset))
-      voice_mode <- FALSE
-    } else {
-      status <- llamaR:::voice_status(config)
-      cat(sprintf("%sVoice mode enabled (%s)%s\n", color$green, status, color$reset))
-      cat(sprintf("%sPress Enter to speak, type /voice to disable%s\n", color$dim, color$reset))
-    }
-  }
-
   # Track token usage for context indicator
   session_tokens <- session$tokens %||% 0L
   context_limit <- get_context_limit(display_model)
@@ -1017,49 +989,19 @@ run_agent <- function(opts) {
 
   # REPL
   while (TRUE) {
-    # Read input - voice mode or text mode
-    if (voice_mode) {
-      # Voice mode: show prompt, wait for Enter, then record
-      cat(sprintf("%s[voice]%s ", color$magenta, color$reset))
-      # Wait for Enter to start recording
-      ready <- system(
-        sprintf('bash -c \'read -e -p "%s> %s" line && echo "$line"\'', color$green, color$reset),
-        intern = TRUE
-      )
+    prompt <- system(
+      sprintf('bash -c \'read -e -p "%s> %s" line && echo "$line"\'', color$green, color$reset),
+      intern = TRUE
+    )
 
-      # Handle EOF
-      if (length(ready) == 0) {
-        cat("\n")
-        break
-      }
-
-      # Check for commands typed instead of pressing Enter
-      ready <- trimws(ready)
-      if (nchar(ready) > 0 && startsWith(ready, "/")) {
-        prompt <- ready  # Process as command
-      } else {
-        # Record and transcribe
-        prompt <- llamaR:::voice_listen(config, show_status = TRUE)
-        if (is.null(prompt) || nchar(trimws(prompt)) == 0) {
-          next
-        }
-      }
-    } else {
-      # Text mode: standard readline input
-      prompt <- system(
-        sprintf('bash -c \'read -e -p "%s> %s" line && echo "$line"\'', color$green, color$reset),
-        intern = TRUE
-      )
-
-      # Handle EOF (Ctrl+D)
-      if (length(prompt) == 0) {
-        cat("\n")
-        break
-      }
-
-      prompt <- trimws(prompt)
-      if (nchar(prompt) == 0) next
+    # Handle EOF (Ctrl+D)
+    if (length(prompt) == 0) {
+      cat("\n")
+      break
     }
+
+    prompt <- trimws(prompt)
+    if (nchar(prompt) == 0) next
 
     # Handle commands
     if (startsWith(prompt, "/")) {
@@ -1117,7 +1059,7 @@ run_agent <- function(opts) {
                     format_status_summary(session, provider, display_model, conn,
                                           opts, config, session_tokens,
                                           context_limit, context_files,
-                                          skill_docs, voice_mode),
+                                          skill_docs),
                     color$reset))
         next
       } else if (cmd == "/doctor") {
@@ -1207,27 +1149,11 @@ run_agent <- function(opts) {
         llamaR:::session_save(session)
         cat(sprintf("%sProvider set to: %s%s\n", color$dim, provider, color$reset))
         next
-      } else if (cmd == "/voice") {
-        # Toggle voice mode
-        if (voice_mode) {
-          voice_mode <- FALSE
-          cat(sprintf("%sVoice mode disabled%s\n", color$dim, color$reset))
-        } else {
-          if (!llamaR:::voice_can_enable(config)) {
-            status <- llamaR:::voice_status(config)
-            cat(sprintf("%sVoice mode unavailable: %s%s\n", color$yellow, status, color$reset))
-          } else {
-            voice_mode <- TRUE
-            status <- llamaR:::voice_status(config)
-            cat(sprintf("%sVoice mode enabled (%s)%s\n", color$green, status, color$reset))
-            cat(sprintf("%sPress Enter to speak, type /voice to disable%s\n", color$dim, color$reset))
-          }
-        }
-        next
       } else if (cmd == "/context") {
         if (length(context_files) == 0) {
           cat(sprintf("%sNo context files loaded.%s\n", color$dim, color$reset))
-          cat("Create README.md, PLAN.md, AGENTS.md, or fyi.md to add project context.\n")
+          cat("Project context comes from saber::briefing() and saber::agent_context().\n")
+          cat("Add files via the `context_files` config key.\n")
         } else {
           cat(sprintf("%sLoaded context files:%s\n", color$bold, color$reset))
           for (f in context_files) {
@@ -1535,102 +1461,6 @@ run_agent <- function(opts) {
           cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
         })
         next
-      } else if (cmd == "/task" || cmd == "/tasks") {
-        # Task/scheduler commands
-        subcmd <- if (length(cmd_parts) > 1) cmd_parts[2] else "list"
-
-        if (subcmd == "list") {
-          tryCatch({
-            tasks <- llamaR::task_list(status = "all")
-            cat(llamaR:::format_task_list(tasks), "\n")
-          }, error = function(e) {
-            if (grepl("RSQLite", e$message)) {
-              cat(sprintf("%sTask scheduling requires RSQLite package%s\n", color$yellow, color$reset))
-            } else {
-              cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-            }
-          })
-        } else if (subcmd == "add" && length(cmd_parts) >= 3) {
-          # /task add "name" --schedule "0 8 * * *" --prompt "do something"
-          # Simple parsing: /task add "name" "prompt" [schedule]
-          name <- cmd_parts[3]
-          prompt <- if (length(cmd_parts) >= 4) paste(cmd_parts[4:length(cmd_parts)], collapse = " ") else ""
-
-          if (nchar(prompt) == 0) {
-            cat("Usage: /task add <name> <prompt> [--schedule <cron>]\n")
-            next
-          }
-
-          # Parse --schedule if present
-          schedule <- NULL
-          if (grepl("--schedule", prompt)) {
-            parts <- strsplit(prompt, "--schedule\\s+")[[1]]
-            prompt <- trimws(parts[1])
-            schedule <- trimws(parts[2])
-          }
-
-          tryCatch({
-            id <- llamaR::task_create(name = name, prompt = prompt, schedule = schedule)
-            cat(sprintf("%sTask created with ID %d%s\n", color$green, id, color$reset))
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "run" && length(cmd_parts) >= 3) {
-          task_id <- as.integer(cmd_parts[3])
-          tryCatch({
-            task <- llamaR::task_get(task_id)
-            if (is.null(task)) {
-              cat(sprintf("%sTask not found: %d%s\n", color$yellow, task_id, color$reset))
-            } else {
-              cat(sprintf("%sRunning task: %s%s\n", color$cyan, task$name, color$reset))
-              result <- llamaR:::scheduler_execute_task(task, config, verbose = FALSE)
-              if (result$success) {
-                cat(sprintf("%s%s%s\n", color$dim, result$result, color$reset))
-                llamaR:::task_record_run(task_id, "success", result = result$result,
-                                         tokens_used = result$tokens_used)
-              } else {
-                cat(sprintf("%sError: %s%s\n", color$red, result$error, color$reset))
-                llamaR:::task_record_run(task_id, "error", error = result$error)
-              }
-            }
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "pause" && length(cmd_parts) >= 3) {
-          task_id <- as.integer(cmd_parts[3])
-          tryCatch({
-            llamaR::task_pause(task_id)
-            cat(sprintf("%sTask %d paused%s\n", color$dim, task_id, color$reset))
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "resume" && length(cmd_parts) >= 3) {
-          task_id <- as.integer(cmd_parts[3])
-          tryCatch({
-            llamaR::task_resume(task_id)
-            cat(sprintf("%sTask %d resumed%s\n", color$green, task_id, color$reset))
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "delete" && length(cmd_parts) >= 3) {
-          task_id <- as.integer(cmd_parts[3])
-          tryCatch({
-            llamaR::task_delete(task_id)
-            cat(sprintf("%sTask %d deleted%s\n", color$dim, task_id, color$reset))
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else {
-          cat("Usage:
-  /task list              List all scheduled tasks
-  /task add <name> <prompt> [--schedule <cron>]
-  /task run <id>          Run a task immediately
-  /task pause <id>        Pause a scheduled task
-  /task resume <id>       Resume a paused task
-  /task delete <id>       Delete a task
-")
-        }
-        next
       } else if (cmd == "/help") {
         cat("
 Commands:
@@ -1648,7 +1478,6 @@ Commands:
   /context       Show loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider (anthropic, openai, moonshot, ollama)
-  /voice         Toggle voice mode (requires tts.api, stt.api)
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)
 
@@ -1658,13 +1487,6 @@ Memory:
   /recall <query>             Search memories
   /recall --tags              List all memory tags
   /flush                      Flush durable memories to daily log
-
-Scheduler:
-  /task list                  List scheduled tasks
-  /task add <name> <prompt>   Create a task
-  /task run <id>              Run a task now
-  /task pause/resume <id>     Pause or resume a task
-  /task delete <id>           Delete a task
 
 Subagents:
   /spawn <task>               Spawn a subagent for task
@@ -1748,11 +1570,6 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
 
     if (!is.null(result)) {
       print_response(result$content)
-
-      # Speak response in voice mode
-      if (voice_mode) {
-        llamaR:::voice_speak(result$content, config, show_status = TRUE)
-      }
 
       # Update token count and show context indicator
       if (!is.null(result$usage)) {

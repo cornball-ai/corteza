@@ -127,9 +127,9 @@ expect_equal(key, "grep:foo")
 expect_equal(llamaR:::ws_get("grep:foo"), "file.R:10: foo bar")
 
 # Skip no-capture tools
-key <- llamaR:::ws_capture_tool_result("memory_store",
-                                       list(fact = "test"),
-                                       "Stored: test", 3L)
+key <- llamaR:::ws_capture_tool_result("spawn_subagent",
+                                       list(task = "demo"),
+                                       "Spawned agent abc", 3L)
 expect_null(key)
 
 # Skip errors
