@@ -18,11 +18,12 @@ Depends:
 Imports:
     curl,
     jsonlite,
+    llm.api,
+    mx.api,
     saber
 Suggests:
     DBI,
     digest,
-    llm.api,
     RSQLite,
     stt.api,
     tinytest,

@@ -2,6 +2,10 @@
 
 export(chat)
 export(install_cli)
+export(matrix_configure)
+export(matrix_poll)
+export(matrix_run)
+export(matrix_send)
 export(memory_import_claude)
 export(memory_search_fts)
 export(memory_stats)
