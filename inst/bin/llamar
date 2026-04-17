@@ -1552,16 +1552,49 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
       }
     }
 
+    # Build a per-turn llamaR session so policy gating + observers layer
+    # on top of the existing CLI handler. The CLI still runs its own
+    # approval UX inside tool_handler, so we pass an always-approve
+    # approval_cb — policy "deny" verdicts still short-circuit (e.g.
+    # for ~/.ssh), but "ask" verdicts fall through to the CLI's own
+    # ask_approval flow.
+    turn_session <- llamaR::new_session(
+      channel = "cli",
+      provider = provider,
+      model_map = list(cloud = model,
+                       local = llamaR::default_local_model()),
+      system = system_prompt,
+      history = api_history,
+      approval_cb = function(call, decision) TRUE,
+      max_turns = 20L
+    )
+
+    # CLI tool_handler returns plain strings; turn() expects MCP-format.
+    # Wrap: any "Tool execution denied" / "[DRY RUN]" etc. is still a
+    # valid text response, just inside the MCP shape.
+    cli_executor <- function(name, args) {
+      text <- tool_handler(name, args)
+      if (is.character(text) && length(text) == 1L) {
+        list(content = list(list(type = "text", text = text)))
+      } else {
+        # Tool handler already returned MCP format (mcp_call passthrough)
+        text
+      }
+    }
+
     result <- tryCatch({
-      agent(
+      r <- llamaR::turn(
         prompt = prompt,
-        tools = tools,
-        tool_handler = tool_handler,
-        system = system_prompt,
-        model = model,
-        provider = provider,
-        history = api_history,
-        verbose = FALSE  # We handle display ourselves
+        session = turn_session,
+        tool_executor = cli_executor,
+        tools = tools
+      )
+      # Reshape to the llm.api::agent result shape so downstream
+      # compaction / token-tracking code keeps working unchanged.
+      list(
+        content = r$reply,
+        history = turn_session$history,
+        usage = r$usage
       )
     }, error = function(e) {
       cat(sprintf("%sError: %s%s\n", color$bright_magenta, e$message, color$reset))
