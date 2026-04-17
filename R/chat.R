@@ -180,42 +180,27 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         stop("chat() requires an interactive R session", call. = FALSE)
     }
 
-    # Load config
+    # Shared pre-session setup: config, provider, API key, skills,
+    # system prompt. Returns a new_session() env we'll use to drive
+    # the REPL below.
     cwd <- getwd()
-    config <- load_config(cwd)
-    provider <- provider %||% config$provider %||% "anthropic"
-    model <- model %||% config$model
-    ensure_llm_api_provider(provider)
-
-    # Check API key before entering the loop
-    key_var <- switch(provider,
-                      anthropic = "ANTHROPIC_API_KEY",
-                      openai = "OPENAI_API_KEY",
-                      moonshot = "MOONSHOT_API_KEY",
-                      NULL
+    turn_session <- session_setup(
+                                  channel = "console",
+                                  cwd = cwd,
+                                  provider = provider,
+                                  model = model,
+                                  tools = tools,
+                                  load_project_context = TRUE,
+                                  validate_api_key = TRUE
     )
-    if (!is.null(key_var) && nchar(Sys.getenv(key_var, "")) == 0) {
-        stop(sprintf("%s not set. Add it to ~/.Renviron", key_var),
-             call. = FALSE)
-    }
+    config <- turn_session$config
+    provider <- turn_session$provider
+    model <- turn_session$model_map$cloud
 
-    # Validate model exists before entering the loop
+    # Ollama-specific: check the model actually exists before the loop.
     validate_model(provider, model)
 
-    # Register skills (same as serve())
-    ensure_skills()
-    load_skills(path.expand("~/.llamar/skills"))
-    load_skills(file.path(cwd, ".llamar", "skills"))
-    load_skill_docs(path.expand("~/.llamar/skills"))
-    load_skill_docs(file.path(cwd, ".llamar", "skills"))
-
-    # Load skill packages from config
-    load_skill_packages(config)
-
-    options(llamar.tools = tools)
-
-    # Load context + build tool list
-    system_prompt <- load_context(cwd)
+    system_prompt <- turn_session$system
     api_tools <- skills_as_api_tools(tools)
     tools_json <- tryCatch(
                            jsonlite::toJSON(api_tools, auto_unbox = TRUE),
