@@ -1,5 +1,6 @@
 # tinyrox says don't edit this manually, but it can't stop you!
 
+export(add_observer)
 export(chat)
 export(default_local_model)
 export(install_cli)
@@ -8,6 +9,7 @@ export(matrix_poll)
 export(matrix_run)
 export(matrix_send)
 export(new_session)
+export(observer_progress)
 export(policy)
 export(serve)
 export(session_setup)

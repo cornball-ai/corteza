@@ -106,6 +106,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$max_turns <- as.integer(max_turns)
     s$verbose <- isTRUE(verbose)
     s$recent_classes <- character()
+    s$on_tool <- list()
+    s$turn_number <- 0L
     s
 }
 
@@ -143,6 +145,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 
 # Build the closure passed as tool_handler to llm.api::agent. Closes over
 # the session so sticky classifications persist across tool calls.
+.fire_observers <- function(session, event) {
+    observers <- session$on_tool %||% list()
+    for (obs in observers) {
+        tryCatch(obs(event), error = function(e) NULL)
+    }
+    invisible(NULL)
+}
+
 .make_tool_handler <- function(session) {
     ensure_skills()
     function(name, args) {
@@ -165,9 +175,32 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         klass <- classify_data(call,
                                list(recent_classes = session$recent_classes))
         session$recent_classes <- unique(c(session$recent_classes, klass))
+        session$turn_number <- (session$turn_number %||% 0L) + 1L
+
+        start <- Sys.time()
+
+        outcome_text <- function(kind, text, success) {
+            event <- list(
+                          call = call,
+                          decision = decision,
+                          outcome = kind,
+                          result = text,
+                          success = isTRUE(success),
+                          elapsed_ms = as.numeric(
+                    difftime(Sys.time(), start, units = "secs")
+                ) * 1000,
+                          turn_number = session$turn_number
+            )
+            .fire_observers(session, event)
+            text
+        }
 
         if (identical(decision$approval, "deny")) {
-            return(sprintf("[llamaR policy denied: %s]", decision$reason))
+            return(outcome_text(
+                                "deny",
+                                sprintf("[llamaR policy denied: %s]", decision$reason),
+                                FALSE
+                ))
         }
         if (identical(decision$approval, "ask")) {
             approved <- tryCatch(
@@ -175,15 +208,20 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                                  error = function(e) FALSE
             )
             if (!isTRUE(approved)) {
-                return(sprintf("[user declined: %s]", decision$reason))
+                return(outcome_text(
+                                    "declined",
+                                    sprintf("[user declined: %s]", decision$reason),
+                                    FALSE
+                    ))
             }
         }
 
-        result <- tryCatch(
-                           call_skill(internal_name, as.list(args)),
-                           error = function(e) err(paste("Tool error:", conditionMessage(e)))
+        raw <- tryCatch(
+                        call_skill(internal_name, as.list(args)),
+                        error = function(e) err(paste("Tool error:", conditionMessage(e)))
         )
-        .flatten_mcp_result(result)
+        success <- !isTRUE(raw$isError)
+        outcome_text("ran", .flatten_mcp_result(raw), success)
     }
 }
 
@@ -195,6 +233,66 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 # ---- Public entry point ----
+
+#' Add a tool-call observer to a session
+#'
+#' Observers run after every tool call (run, denied, or declined). They
+#' receive a single \code{event} list with fields:
+#'
+#' \itemize{
+#'   \item \code{call} — the call list passed to \code{policy()}.
+#'   \item \code{decision} — the policy decision for the call.
+#'   \item \code{outcome} — one of \code{"ran"}, \code{"deny"},
+#'     \code{"declined"}.
+#'   \item \code{result} — the string returned to the LLM.
+#'   \item \code{success} — logical; TRUE only for \code{"ran"} with no
+#'     tool error.
+#'   \item \code{elapsed_ms} — wall time including policy overhead.
+#'   \item \code{turn_number} — the session's tool-call counter.
+#' }
+#'
+#' Errors raised inside an observer are swallowed.
+#'
+#' @param session A session environment from \code{\link{new_session}}.
+#' @param observer A function of one argument (the event list).
+#'
+#' @return The session, invisibly.
+#' @export
+add_observer <- function(session, observer) {
+    stopifnot(is.environment(session), is.function(observer))
+    session$on_tool <- c(session$on_tool, list(observer))
+    invisible(session)
+}
+
+#' Built-in progress observer that prints to stdout
+#'
+#' Prints one line per tool call suitable for an interactive REPL:
+#' \code{"  [tool] hint (N lines)\n"}.
+#'
+#' @return A function to pass to \code{\link{add_observer}}.
+#' @export
+observer_progress <- function() {
+    function(event) {
+        if (!identical(event$outcome, "ran")) {
+            cat(sprintf("  [%s] %s\n",
+                        event$call$tool,
+                        sub("^\\[", "", sub("\\]$", "", event$result))))
+            return(invisible())
+        }
+        result <- event$result %||% ""
+        lines <- if (nchar(result) > 0L) {
+            length(strsplit(result, "\n", fixed = TRUE)[[1L]])
+        } else {
+            0L
+        }
+        if (isTRUE(event$success)) {
+            status <- ""
+        } else {
+            status <- " (error)"
+        }
+        cat(sprintf("  [%s] (%d lines)%s\n", event$call$tool, lines, status))
+    }
+}
 
 #' Run one agent turn
 #'
