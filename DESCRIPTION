@@ -25,6 +25,5 @@ Imports:
     processx,
     saber
 Suggests:
-    mx.api,
     tinytest
 Encoding: UTF-8
