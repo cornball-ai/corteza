@@ -31,6 +31,10 @@ otherwise left NULL (channel supplies its own).}
 \item{approval_cb}{Function or NULL. Approval callback for
 \code{"ask"} verdicts; see \code{\link{new_session}}.}
 
+\item{history}{List or NULL. Prior conversation messages to seed
+the session with (each entry a list with \code{role} and
+\code{content}).}
+
 \item{load_project_context}{Logical. When TRUE, auto-call
 \code{load_context(cwd)} to assemble the system prompt. Channels
 with their own short system prompt (like matrix) pass FALSE.}
