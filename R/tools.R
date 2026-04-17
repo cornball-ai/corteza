@@ -4,7 +4,7 @@
 # Built-in tool categories for filtering
 .builtin_categories <- list(
                             file = c("read_file", "write_file", "replace_in_file", "list_files"),
-                            code = c("run_r", "run_r_script", "bash"),
+                            code = c("run_r", "run_r_script", "bash", "cmd"),
                             search = c("grep_files"),
                             web = c("web_search", "fetch_url"),
                             git = c("git_status", "git_diff", "git_log"),
