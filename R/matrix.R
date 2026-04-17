@@ -138,12 +138,42 @@ matrix_extract_messages <- function(sync_resp, self_id) {
                     room_id = rid,
                     event_id = ev$event_id,
                     sender = ev$sender,
-                    body = ev$content$body
+                    body = ev$content$body,
+                    mentions = ev$content$`m.mentions`$user_ids
                 )
             }
         }
     }
     out
+}
+
+# Does this message mention the bot? Checks the explicit m.mentions
+# field (emitted by Element and most modern clients) first, then falls
+# back to substring matching on the body for @localpart and full MXID.
+matrix_message_mentions_self <- function(msg, self_id) {
+    mentions <- msg$mentions
+    if (length(mentions) && any(self_id %in% unlist(mentions))) {
+        return(TRUE)
+    }
+    body <- msg$body %||% ""
+    if (!nzchar(body)) {
+        return(FALSE)
+    }
+    if (grepl(self_id, body, fixed = TRUE)) {
+        return(TRUE)
+    }
+    localpart <- sub("^@", "", sub(":.*$", "", self_id))
+    grepl(sprintf("@%s\\b", localpart), body, perl = TRUE, ignore.case = TRUE)
+}
+
+# Should the bot respond to this message? DMs: always. Group rooms
+# (3+ members, or anything the session recorded as non-DM): only when
+# the bot is explicitly mentioned.
+matrix_should_respond <- function(msg, session, self_id) {
+    if (isTRUE(session$is_dm)) {
+        return(TRUE)
+    }
+    matrix_message_mentions_self(msg, self_id)
 }
 
 # Pending invites from a sync response: character vector of room_ids
@@ -398,8 +428,24 @@ matrix_get_or_create_session <- function(registry, room_id, cfg,
                             provider = provider, tools_filter = tools_filter,
                             room_id = room_id
     )
+    s$is_dm <- matrix_detect_dm(cfg, room_id)
     assign(room_id, s, envir = registry)
     s
+}
+
+# A DM is a 2-member room where one of the members is the bot itself.
+# Anything else (3+ members, or just the bot alone) is a group room
+# subject to mention-gating.
+matrix_detect_dm <- function(cfg, room_id) {
+    mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
+    if (is.null(mx_sess)) {
+        return(TRUE) # conservative fallback
+    }
+    members <- tryCatch(
+                        mx.api::mx_room_members(mx_sess, room_id),
+                        error = function(e) character()
+    )
+    length(members) == 2L && cfg$user_id %in% members
 }
 
 # Auto-join any rooms the bot has been invited to. Best-effort: failures
@@ -486,10 +532,11 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         sessions <- matrix_new_session_registry()
     }
 
+    replied <- 0L
     for (m in msgs) {
-        # Post a read receipt before running the agent so the user sees
-        # "seen by <bot>" update immediately, not after the reply is
-        # composed. Best-effort — failures don't block the turn.
+        # Read receipt runs even when we don't reply: the bot has still
+        # "seen" the message, and clients use receipts for the
+        # latest-read marker.
         tryCatch(
                  mx.api::mx_read_receipt(mx_sess, m$room_id, m$event_id),
                  error = function(e) NULL
@@ -499,6 +546,13 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             system = system, model = model,
             provider = provider, tools_filter = tools_filter
         )
+        # Group rooms: only respond when @-mentioned. DMs: always.
+        # Prevents bot-loops between two AIs and stops noise in
+        # multi-human rooms.
+        if (!matrix_should_respond(m, session, cfg$user_id)) {
+            next
+        }
+
         reply <- tryCatch(
                           turn(m$body, session)$reply,
                           error = function(e) sprintf("(agent error: %s)",
@@ -508,8 +562,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- "(no reply)"
         }
         mx.api::mx_send(mx_sess, m$room_id, reply)
+        replied <- replied + 1L
     }
-    invisible(length(msgs))
+    invisible(replied)
 }
 
 #' Run the Matrix adapter as a long-poll loop
