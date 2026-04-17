@@ -4,7 +4,7 @@
 #' Get workspace directory path
 #' @noRd
 get_workspace_dir <- function() {
-    path.expand("~/.corteza/workspace")
+    corteza_data_path("workspace")
 }
 
 #' Load configuration from JSON file
@@ -31,15 +31,15 @@ load_config_file <- function(path) {
 
 #' Load merged configuration (global + project)
 #'
-#' Merges global config (~/.corteza/config.json) with project config
-#' (.corteza/config.json). Project config takes precedence.
+#' Merges global config from \code{tools::R_user_dir("corteza", "config")}
+#' with project config (\code{.corteza/config.json}). Project config
+#' takes precedence.
 #'
 #' @param cwd Working directory for project config
 #' @return List with merged configuration
 #' @noRd
 load_config <- function(cwd = getwd()) {
-    # Global config
-    global_path <- path.expand("~/.corteza/config.json")
+    global_path <- corteza_config_path("config.json")
     global <- load_config_file(global_path)
 
     # Project config

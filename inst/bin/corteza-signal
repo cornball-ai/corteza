@@ -91,7 +91,7 @@ Prerequisites:
      corteza-signal --account +15551234567
 
 Config (matches openclaw channels.signal.*):
-  ~/.corteza/config.json:
+  tools::R_user_dir('corteza', 'config')/config.json:
   {
     \"channels\": {
       \"signal\": {
