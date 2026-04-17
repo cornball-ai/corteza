@@ -169,6 +169,53 @@ local({
     "@cornelius:cornball.ai"))
 })
 
+# Agent name capitalization.
+expect_equal(
+  llamaR:::matrix_agent_name(list(user_id = "@cornelius:cornball.ai")),
+  "Cornelius"
+)
+expect_equal(
+  llamaR:::matrix_agent_name(list(user_id = "@cloptimus:example")),
+  "Cloptimus"
+)
+expect_equal(
+  llamaR:::matrix_agent_name(list(user_id = "")),
+  "agent"
+)
+
+# Topic parser.
+expect_equal(
+  llamaR:::matrix_parse_topic("~/To_Do | todo management"),
+  list(cwd = "~/To_Do", description = "todo management")
+)
+expect_equal(
+  llamaR:::matrix_parse_topic("/tmp/scratch | quick stuff"),
+  list(cwd = "/tmp/scratch", description = "quick stuff")
+)
+expect_equal(
+  llamaR:::matrix_parse_topic("./relative | works"),
+  list(cwd = "./relative", description = "works")
+)
+# Description-only topic (no leading path).
+expect_equal(
+  llamaR:::matrix_parse_topic("Discussing the wiki contents"),
+  list(cwd = NULL, description = "Discussing the wiki contents")
+)
+# Pipe without leading path — treated as description containing a pipe.
+expect_equal(
+  llamaR:::matrix_parse_topic("a | b | c"),
+  list(cwd = NULL, description = "a | b | c")
+)
+# Empty / NULL topic.
+expect_equal(
+  llamaR:::matrix_parse_topic(NULL),
+  list(cwd = NULL, description = NULL)
+)
+expect_equal(
+  llamaR:::matrix_parse_topic("   "),
+  list(cwd = NULL, description = NULL)
+)
+
 if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # Live round-trip would configure, send, and poll here. Skipped in
   # package check.
