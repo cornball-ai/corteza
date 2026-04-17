@@ -144,8 +144,7 @@ matrix_extract_messages <- function(sync_resp, room_id, self_id) {
 }
 
 matrix_default_system <- function(cfg) {
-    sprintf("You are %s, a helpful assistant for %s.",
-            cfg$user_id, cfg$user)
+    sprintf("You are %s, a helpful assistant for %s.", cfg$user_id, cfg$user)
 }
 
 # Build the approval callback for the Matrix channel. Until the thumbs-up
@@ -183,7 +182,7 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     new_session(
                 channel = "matrix",
                 provider = provider %||% "anthropic",
-                model_map = list(cloud = model, local = NULL),
+                model_map = list(cloud = model, local = default_local_model()),
                 tools_filter = tools_filter,
                 system = system,
                 approval_cb = matrix_approval_cb(cfg),

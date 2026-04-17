@@ -1,6 +1,7 @@
 # tinyrox says don't edit this manually, but it can't stop you!
 
 export(chat)
+export(default_local_model)
 export(install_cli)
 export(matrix_configure)
 export(matrix_poll)
