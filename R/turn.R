@@ -153,8 +153,11 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     invisible(NULL)
 }
 
-.make_tool_handler <- function(session) {
-    ensure_skills()
+.make_tool_handler <- function(session, tool_executor = NULL) {
+    if (is.null(tool_executor)) {
+        ensure_skills()
+        tool_executor <- function(name, args) call_skill(name, as.list(args))
+    }
     function(name, args) {
         internal_name <- unsanitize_tool_name(name)
         call <- list(
@@ -217,7 +220,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         }
 
         raw <- tryCatch(
-                        call_skill(internal_name, as.list(args)),
+                        tool_executor(internal_name, as.list(args)),
                         error = function(e) err(paste("Tool error:", conditionMessage(e)))
         )
         success <- !isTRUE(raw$isError)
@@ -233,6 +236,23 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 # ---- Public entry point ----
+
+#' Build a tool executor that routes through an MCP connection
+#'
+#' Returns a closure suitable for the \code{tool_executor} argument of
+#' \code{\link{turn}}. Each tool call is forwarded to the connected MCP
+#' server via \code{llm.api::mcp_call}.
+#'
+#' @param conn An open MCP connection (from \code{llm.api::mcp_connect}).
+#' @return A function with signature \code{function(name, args)} that
+#'   returns an MCP-format result list.
+#' @export
+mcp_tool_executor <- function(conn) {
+    force(conn)
+    function(name, args) {
+        llm.api::mcp_call(conn, name, args)
+    }
+}
 
 #' Add a tool-call observer to a session
 #'
@@ -298,20 +318,35 @@ observer_progress <- function() {
 #'
 #' Sends \code{prompt} to the configured LLM with tool use enabled. Every
 #' tool call the LLM makes is routed through \code{\link{policy}} before
-#' being dispatched to the skill registry.
+#' being dispatched.
+#'
+#' Tool dispatch is pluggable via \code{tool_executor}. The default is an
+#' in-process dispatcher that calls the local skill registry — suitable
+#' for \code{chat()} and matrix adapters running in the same R process as
+#' their skills. Pass \code{\link{mcp_tool_executor}} (or any
+#' \code{function(name, args) -> MCP-format result}) to run tools in a
+#' separate process, which is how the CLI talks to \code{serve()}.
 #'
 #' @param prompt Character. User prompt.
 #' @param session A session environment created by \code{\link{new_session}}.
+#' @param tool_executor Function or NULL. Dispatcher with signature
+#'   \code{function(name, args) -> list}. NULL uses the in-process
+#'   \code{call_skill} path.
+#' @param tools List or NULL. Tool schemas to pass the LLM. NULL uses
+#'   the in-process skill registry (filtered by \code{session$tools_filter}).
+#'   Pass explicit schemas when running against a remote skill source.
 #'
 #' @return A list with \code{reply} (character) and \code{session} (the
 #'   updated session environment; also mutated in place).
 #' @export
-turn <- function(prompt, session) {
+turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     stopifnot(is.environment(session))
 
-    ensure_skills()
-    tools <- skills_as_api_tools(session$tools_filter)
-    tool_handler <- .make_tool_handler(session)
+    if (is.null(tools)) {
+        ensure_skills()
+        tools <- skills_as_api_tools(session$tools_filter)
+    }
+    tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     response <- llm.api::agent(
                                prompt = prompt,
