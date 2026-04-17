@@ -364,6 +364,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         session$history <- response$history
     }
 
-    list(reply = response$content, session = session)
+    list(
+         reply = response$content,
+         session = session,
+         usage = response$usage,
+         raw = response
+    )
 }
 
