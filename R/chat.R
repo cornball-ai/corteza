@@ -221,14 +221,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
     add_observer(turn_session, chat_trace_observer(turn_session))
 
     # Optional experimental layers — off by default; opt in via options.
-    if (isTRUE(getOption("llamaR.experimental_ce", FALSE))) {
+    if (isTRUE(getOption("corteza.experimental_ce", FALSE))) {
         ce_init(cwd, config)
         for (i in seq_along(history)) {
             ce_index_turn(i, history[[i]]$role, history[[i]]$content %||% "")
         }
         on.exit(ce_shutdown(), add = TRUE)
     }
-    if (isTRUE(getOption("llamaR.experimental_heartbeat", FALSE))) {
+    if (isTRUE(getOption("corteza.experimental_heartbeat", FALSE))) {
         hb_init(config)
     }
 
@@ -238,7 +238,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
     n_tools <- length(skills_as_api_tools(tools))
     display_model <- model %||% "(provider default)"
     cat(sprintf(
-                "llamaR chat | %s @ %s | %d tools | /quit to exit%s\n\n",
+                "corteza chat | %s @ %s | %d tools | /quit to exit%s\n\n",
                 display_model, provider, n_tools,
             if (resumed_count > 0L) {
                 sprintf(" | resumed (%d msgs)", resumed_count)

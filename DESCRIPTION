@@ -1,17 +1,18 @@
-Package: llamaR
-Title: AI Agent Runtime in R with Context Managed via Workspace
-Version: 0.4.0
+Package: corteza
+Title: AI Agent Runtime for R
+Version: 0.5.0
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
            comment = c(ORCID = "0009-0005-4248-604X")),
     person("cornball.ai", role = "cph"))
-Description: An AI agent runtime that gives LLMs (Anthropic, OpenAI, Ollama)
-    direct access to a live R session with managed workspace state. Tools
-    execute as R function calls with provenance tracking, and a deterministic
-    retrieval system keeps relevant objects in context across turns. Three
-    modes: CLI agent (llamar), MCP server for external clients (serve()),
-    and in-session agent (chat()).
+Description: An AI agent runtime that gives LLMs (Anthropic, OpenAI,
+    Moonshot, Ollama) direct access to a live R session with managed
+    workspace state. Tools execute as R function calls with provenance
+    tracking, and a deterministic retrieval system keeps relevant objects
+    in context across turns. Three entry points: a shell CLI (corteza),
+    a console REPL (chat()), and an MCP server (serve()) for external
+    clients.
 License: MIT + file LICENSE
 URL: https://github.com/cornball-ai/llamaR
 BugReports: https://github.com/cornball-ai/llamaR/issues
@@ -25,6 +26,5 @@ Imports:
     processx,
     saber
 Suggests:
-    mx.api,
     tinytest
 Encoding: UTF-8

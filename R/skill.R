@@ -1,4 +1,4 @@
-# Skill System for llamaR
+# Skill System for corteza
 # Defines the standard interface for tools/skills
 #
 # Two types of skills:
@@ -743,7 +743,7 @@ validate_skill_package <- function(path) {
 #' Install a skill from a path or URL
 #'
 #' @param source Path to skill directory or URL
-#' @param target_dir Installation directory (default: ~/.llamar/skills)
+#' @param target_dir Installation directory (default: ~/.corteza/skills)
 #' @param force Overwrite if exists
 #' @return Installed skill name
 #' @export

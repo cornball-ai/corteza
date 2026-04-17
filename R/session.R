@@ -1,9 +1,9 @@
-# Session management for llamaR
+# Session management for corteza
 # Full compatibility with openclaw session format
 #
 # Storage format (matches openclaw / pi-coding-agent):
-#   ~/.llamar/agents/main/sessions/sessions.json  - Session metadata store
-#   ~/.llamar/agents/main/sessions/{id}.jsonl     - Transcript per session
+#   ~/.corteza/agents/main/sessions/sessions.json  - Session metadata store
+#   ~/.corteza/agents/main/sessions/{id}.jsonl     - Transcript per session
 #
 # JSONL transcript format:
 #   Line 1: {"type":"session","version":2,"id":"...","timestamp":"...","cwd":"..."}
@@ -18,7 +18,7 @@ DEFAULT_AGENT_ID <- "main"
 #' @return Path to sessions directory
 #' @noRd
 sessions_dir <- function(agent_id = DEFAULT_AGENT_ID) {
-    file.path(path.expand("~/.llamar"), "agents", agent_id, "sessions")
+    file.path(path.expand("~/.corteza"), "agents", agent_id, "sessions")
 }
 
 #' Get path to sessions store (metadata for all sessions)
@@ -127,7 +127,7 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
                         session_key = NULL, agent_id = DEFAULT_AGENT_ID) {
     id <- session_id()
     now <- as.numeric(Sys.time()) * 1000
-    session_key <- session_key %||% paste0("llamar:", id)
+    session_key <- session_key %||% paste0("corteza:", id)
 
     session <- list(
                     sessionId = id,
@@ -171,7 +171,7 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
 #' @return Invisible session key
 #' @noRd
 session_save <- function(session, agent_id = DEFAULT_AGENT_ID) {
-    session_key <- session$sessionKey %||% paste0("llamar:", session$sessionId)
+    session_key <- session$sessionKey %||% paste0("corteza:", session$sessionId)
 
     store_update(session_key, list(
                                    sessionId = session$sessionId,
@@ -354,7 +354,7 @@ transcript_append <- function(session, role, content, provider = NULL,
     if (role == "assistant") {
         msg$stopReason <- "stop"
         msg$api <- "openai-responses"
-        msg$provider <- provider %||% session$provider %||% "llamar"
+        msg$provider <- provider %||% session$provider %||% "corteza"
         msg$model <- model %||% session$model %||% "unknown"
         msg$usage <- usage %||% list(
                                      input = 0L,
@@ -459,7 +459,7 @@ transcript_compact <- function(session, summary, agent_id = DEFAULT_AGENT_ID) {
                       session,
                       role = "assistant",
                       content = paste0("[Compaction Summary]\n\n", summary),
-                      provider = "llamar",
+                      provider = "corteza",
                       model = "compaction",
                       agent_id = agent_id
     )
@@ -649,13 +649,13 @@ format_trace <- function(trace, show_args = FALSE) {
 }
 
 # Backward compatibility - project-local sessions ----
-# These functions allow using project-local .llamar/sessions/ if needed
+# These functions allow using project-local .corteza/sessions/ if needed
 
 #' Get project-local sessions directory
 #' @param cwd Working directory
 #' @return Path to sessions directory
 #' @noRd
 sessions_dir_local <- function(cwd = getwd()) {
-    file.path(cwd, ".llamar", "sessions")
+    file.path(cwd, ".corteza", "sessions")
 }
 

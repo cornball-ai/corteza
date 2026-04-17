@@ -1,7 +1,7 @@
 # Test transport layer
 
 # Test message_normalize
-msg <- llamaR:::message_normalize(
+msg <- corteza:::message_normalize(
     text = "Hello",
     sender = "user1",
     channel = "test"
@@ -16,7 +16,7 @@ expect_equal(length(msg$attachments), 0)
 expect_true(is.list(msg$metadata))
 
 # Test message_normalize with explicit id
-msg <- llamaR:::message_normalize(
+msg <- corteza:::message_normalize(
     text = "Test",
     sender = "user",
     channel = "signal",
@@ -25,7 +25,7 @@ msg <- llamaR:::message_normalize(
 expect_equal(msg$id, "custom_id_123")
 
 # Test message_normalize with attachments
-msg <- llamaR:::message_normalize(
+msg <- corteza:::message_normalize(
     text = "Photo",
     sender = "user",
     channel = "signal",
@@ -38,7 +38,7 @@ expect_equal(msg$attachments[[1]]$path, "/tmp/photo.jpg")
 expect_equal(msg$attachments[[1]]$contentType, "image/jpeg")
 
 # Test message_normalize with metadata
-msg <- llamaR:::message_normalize(
+msg <- corteza:::message_normalize(
     text = "Group msg",
     sender = "user",
     channel = "signal",
@@ -54,12 +54,12 @@ expect_true(msg$metadata$is_group)
 
 # Test transport_new with unknown type
 expect_error(
-    llamaR:::transport_new("unknown_type"),
+    corteza:::transport_new("unknown_type"),
     "Unknown transport type"
 )
 
 # Test terminal transport creation
-term <- llamaR:::transport_terminal()
+term <- corteza:::transport_terminal()
 expect_equal(term$type, "terminal")
 expect_true(is.function(term$receive))
 expect_true(is.function(term$send))
@@ -70,17 +70,17 @@ result <- term$close()
 expect_null(result)
 
 # Test transport_new creates terminal transport
-term2 <- llamaR:::transport_new("terminal")
+term2 <- corteza:::transport_new("terminal")
 expect_equal(term2$type, "terminal")
 
 # Test signal transport creation requires account
 expect_error(
-    llamaR:::transport_signal(list()),
+    corteza:::transport_signal(list()),
     "account"
 )
 
 # Test signal transport with config
-sig <- llamaR:::transport_signal(list(
+sig <- corteza:::transport_signal(list(
     account = "+15551234567",
     httpHost = "127.0.0.1",
     httpPort = 8080
@@ -96,7 +96,7 @@ expect_true(is.function(sig$get_account))
 expect_true(is.function(sig$check))
 
 # Test signal transport with httpUrl override
-sig2 <- llamaR:::transport_signal(list(
+sig2 <- corteza:::transport_signal(list(
     account = "+15551234567",
     httpUrl = "http://custom.host:9000"
 ))
@@ -111,15 +111,15 @@ expect_null(result)
 # ============================================================================
 
 # Test signal_parse_attachments with NULL
-atts <- llamaR:::signal_parse_attachments(NULL)
+atts <- corteza:::signal_parse_attachments(NULL)
 expect_equal(length(atts), 0)
 
 # Test signal_parse_attachments with empty list
-atts <- llamaR:::signal_parse_attachments(list())
+atts <- corteza:::signal_parse_attachments(list())
 expect_equal(length(atts), 0)
 
 # Test signal_parse_attachments with data
-atts <- llamaR:::signal_parse_attachments(list(
+atts <- corteza:::signal_parse_attachments(list(
     list(id = "123", contentType = "image/png", filename = "test.png",
          size = 1024, width = 100, height = 100, file = "/tmp/test.png")
 ))
@@ -129,11 +129,11 @@ expect_equal(atts[[1]]$contentType, "image/png")
 expect_equal(atts[[1]]$path, "/tmp/test.png")
 
 # Test signal_parse_envelope with NULL
-msg <- llamaR:::signal_parse_envelope(NULL)
+msg <- corteza:::signal_parse_envelope(NULL)
 expect_null(msg)
 
 # Test signal_parse_envelope with missing sender
-msg <- llamaR:::signal_parse_envelope(list(timestamp = 123))
+msg <- corteza:::signal_parse_envelope(list(timestamp = 123))
 expect_null(msg)
 
 # Test signal_parse_envelope with receipt
@@ -142,7 +142,7 @@ envelope <- list(
     timestamp = 1234567890,
     receiptMessage = list(isDelivery = TRUE, timestamps = c(123, 456))
 )
-msg <- llamaR:::signal_parse_envelope(envelope)
+msg <- corteza:::signal_parse_envelope(envelope)
 expect_equal(msg$metadata$type, "receipt")
 expect_equal(msg$metadata$receipt_type, "delivery")
 expect_equal(msg$sender, "+15551234567")
@@ -160,7 +160,7 @@ envelope <- list(
         )
     )
 )
-msg <- llamaR:::signal_parse_envelope(envelope)
+msg <- corteza:::signal_parse_envelope(envelope)
 expect_equal(msg$metadata$type, "reaction")
 expect_equal(msg$metadata$emoji, "👍")
 expect_false(msg$metadata$is_remove)
@@ -171,7 +171,7 @@ envelope <- list(
     timestamp = 1234567890,
     dataMessage = list(message = "Hello world")
 )
-msg <- llamaR:::signal_parse_envelope(envelope)
+msg <- corteza:::signal_parse_envelope(envelope)
 expect_equal(msg$text, "Hello world")
 expect_equal(msg$sender, "+15551234567")
 expect_equal(msg$channel, "signal")
@@ -186,7 +186,7 @@ envelope <- list(
         groupInfo = list(groupId = "group123", groupName = "Test Group")
     )
 )
-msg <- llamaR:::signal_parse_envelope(envelope)
+msg <- corteza:::signal_parse_envelope(envelope)
 expect_equal(msg$text, "Group hello")
 expect_equal(msg$metadata$group_id, "group123")
 expect_equal(msg$metadata$group_name, "Test Group")
@@ -198,39 +198,39 @@ envelope <- list(
     timestamp = 1234567890,
     dataMessage = list(message = "Blocked")
 )
-msg <- llamaR:::signal_parse_envelope(envelope, allow_from = c("+15559999999"))
+msg <- corteza:::signal_parse_envelope(envelope, allow_from = c("+15559999999"))
 expect_null(msg)
 
 # Test signal_parse_envelope with allowlist (allowed)
-msg <- llamaR:::signal_parse_envelope(envelope, allow_from = c("+15551234567"))
+msg <- corteza:::signal_parse_envelope(envelope, allow_from = c("+15551234567"))
 expect_equal(msg$text, "Blocked")
 
 # Test sse_process_buffer with empty buffer
-result <- llamaR:::sse_process_buffer("", list())
+result <- corteza:::sse_process_buffer("", list())
 expect_equal(result$buffer, "")
 expect_equal(length(result$messages), 0)
 
 # Test sse_process_buffer with partial line (no newline)
-result <- llamaR:::sse_process_buffer("data: partial", list())
+result <- corteza:::sse_process_buffer("data: partial", list())
 expect_equal(result$buffer, "data: partial")
 expect_equal(length(result$messages), 0)
 
 # Test sse_process_buffer with complete event
 json_data <- '{"envelope":{"source":"+15551234567","timestamp":123,"dataMessage":{"message":"Hi"}}}'
 buffer <- sprintf("data: %s\n\n", json_data)
-result <- llamaR:::sse_process_buffer(buffer, list())
+result <- corteza:::sse_process_buffer(buffer, list())
 expect_equal(result$buffer, "")
 expect_equal(length(result$messages), 1)
 expect_equal(result$messages[[1]]$text, "Hi")
 
 # Test sse_process_buffer with multiple events
 buffer <- sprintf("data: %s\n\ndata: %s\n\n", json_data, json_data)
-result <- llamaR:::sse_process_buffer(buffer, list())
+result <- corteza:::sse_process_buffer(buffer, list())
 expect_equal(length(result$messages), 2)
 
 # Test sse_process_buffer preserves partial event
 buffer <- sprintf("data: %s\n\ndata: partial", json_data)
-result <- llamaR:::sse_process_buffer(buffer, list())
+result <- corteza:::sse_process_buffer(buffer, list())
 expect_equal(length(result$messages), 1)
 expect_equal(result$buffer, "data: partial")
 

@@ -1,14 +1,14 @@
 library(tinytest)
 
-expect_true(is.function(llamaR::add_observer))
-expect_true(is.function(llamaR::observer_progress))
+expect_true(is.function(corteza::add_observer))
+expect_true(is.function(corteza::observer_progress))
 
 # Observer receives event for allow+success.
 local({
     seen <- list()
-    s <- llamaR::new_session("cli",
+    s <- corteza::new_session("cli",
                              approval_cb = function(call, decision) TRUE)
-    llamaR::add_observer(s, function(event) {
+    corteza::add_observer(s, function(event) {
         seen[[length(seen) + 1L]] <<- event
     })
 
@@ -18,13 +18,13 @@ local({
     on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
     op <- options(
-        llamaR.code_paths = c(tmp),
-        llamaR.personal_paths = character(),
-        llamaR.policy = NULL
+        corteza.code_paths = c(tmp),
+        corteza.personal_paths = character(),
+        corteza.policy = NULL
     )
     on.exit(options(op), add = TRUE)
 
-    h <- llamaR:::.make_tool_handler(s)
+    h <- corteza:::.make_tool_handler(s)
     h("list_files", list(path = tmp))
 
     expect_equal(length(seen), 1L)
@@ -38,17 +38,17 @@ local({
 local({
     seen <- list()
     op <- options(
-        llamaR.personal_paths = c("~/Documents"),
-        llamaR.policy = NULL
+        corteza.personal_paths = c("~/Documents"),
+        corteza.policy = NULL
     )
     on.exit(options(op), add = TRUE)
 
-    s <- llamaR::new_session("matrix")
-    llamaR::add_observer(s, function(event) {
+    s <- corteza::new_session("matrix")
+    corteza::add_observer(s, function(event) {
         seen[[length(seen) + 1L]] <<- event
     })
 
-    h <- llamaR:::.make_tool_handler(s)
+    h <- corteza:::.make_tool_handler(s)
     h("write_file", list(path = "~/Documents/secret.md", content = "x"))
 
     expect_equal(length(seen), 1L)
@@ -58,9 +58,9 @@ local({
 
 # Observer error doesn't break tool dispatch.
 local({
-    s <- llamaR::new_session("cli",
+    s <- corteza::new_session("cli",
                              approval_cb = function(call, decision) TRUE)
-    llamaR::add_observer(s, function(event) {
+    corteza::add_observer(s, function(event) {
         stop("boom")
     })
 
@@ -68,11 +68,11 @@ local({
     dir.create(tmp)
     on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
-    op <- options(llamaR.personal_paths = character(),
-                  llamaR.policy = NULL)
+    op <- options(corteza.personal_paths = character(),
+                  corteza.policy = NULL)
     on.exit(options(op), add = TRUE)
 
-    h <- llamaR:::.make_tool_handler(s)
+    h <- corteza:::.make_tool_handler(s)
     # Should not raise.
     out <- h("list_files", list(path = tmp))
     expect_true(is.character(out))
@@ -81,20 +81,20 @@ local({
 # Multiple observers run in order.
 local({
     order <- character()
-    s <- llamaR::new_session("cli",
+    s <- corteza::new_session("cli",
                              approval_cb = function(call, decision) TRUE)
-    llamaR::add_observer(s, function(event) order <<- c(order, "a"))
-    llamaR::add_observer(s, function(event) order <<- c(order, "b"))
+    corteza::add_observer(s, function(event) order <<- c(order, "a"))
+    corteza::add_observer(s, function(event) order <<- c(order, "b"))
 
     tmp <- tempfile("obs-")
     dir.create(tmp)
     on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
-    op <- options(llamaR.personal_paths = character(),
-                  llamaR.policy = NULL)
+    op <- options(corteza.personal_paths = character(),
+                  corteza.policy = NULL)
     on.exit(options(op), add = TRUE)
 
-    h <- llamaR:::.make_tool_handler(s)
+    h <- corteza:::.make_tool_handler(s)
     h("list_files", list(path = tmp))
     expect_equal(order, c("a", "b"))
 })

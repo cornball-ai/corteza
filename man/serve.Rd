@@ -18,8 +18,8 @@ file, code, r, data, web, git, chat. Use "core" for file+code+git,
 NULL (runs until interrupted or client disconnects)
 }
 \description{
-Start the llamaR MCP server. This exposes R tools to MCP clients like
-Claude Desktop, VS Code, or the llamar CLI.
+Start the corteza MCP server. This exposes R tools to MCP clients like
+Claude Desktop, VS Code, or the corteza CLI.
 }
 \details{
 The server supports two transport modes:
@@ -27,7 +27,7 @@ The server supports two transport modes:
 - **stdio** (default): For Claude Desktop and other MCP clients.
   Communication happens via stdin/stdout.
 
-- **socket**: For the llamar CLI and R clients. Listens on a TCP port.
+- **socket**: For the corteza CLI and R clients. Listens on a TCP port.
 
 ## Tools Provided
 
@@ -46,7 +46,7 @@ The server supports two transport modes:
 # For Claude Desktop (stdio)
 serve()
 
-# For llamar CLI (socket) with all tools
+# For corteza CLI (socket) with all tools
 serve(port = 7850)
 
 # Minimal tools for small context models

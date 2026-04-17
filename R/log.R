@@ -1,4 +1,4 @@
-# Structured Logging for llamaR
+# Structured Logging for corteza
 # JSON-formatted logs to stderr for observability
 
 # Log level enum

@@ -1,7 +1,7 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{install_cli}
 \alias{install_cli}
-\title{Install llamar CLI}
+\title{Install corteza CLI}
 \usage{
 install_cli(path = "~/bin", force = FALSE)
 }
@@ -14,17 +14,17 @@ install_cli(path = "~/bin", force = FALSE)
 The path to the installed script (invisibly).
 }
 \description{
-Install the `llamar` command-line tool to a directory in your PATH.
+Install the `corteza` command-line tool to a directory in your PATH.
 }
 \details{
-This copies the `llamar` script from the package to the specified directory.
+This copies the `corteza` script from the package to the specified directory.
 The script requires:
 
 - `r` (littler) for fast R script execution
 - The `llm.api` package for LLM connectivity
-- The `llamaR` package itself
+- The `corteza` package itself
 
-After installation, you can run `llamar` from any terminal.
+After installation, you can run `corteza` from any terminal.
 }
 \examples{
 \dontrun{

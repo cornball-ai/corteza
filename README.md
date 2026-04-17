@@ -1,10 +1,10 @@
-# llamaR
+# corteza
 
-<img src="man/figures/llamaR.png" alt="llamaR logo" width="200" />
+<img src="man/figures/corteza.png" alt="corteza logo" width="200" />
 
 **An AI agent runtime for R.** Self-hosted, model-agnostic, tinyverse.
 
-In Spanish, *llamar* (pronounced ["Ya Mar"](https://www.youtube.com/watch?v=p-2EZXOoFt8)) means "to call."
+In Spanish, *corteza* (pronounced ["Ya Mar"](https://www.youtube.com/watch?v=p-2EZXOoFt8)) means "to call."
 
 -----
 
@@ -12,22 +12,22 @@ In Spanish, *llamar* (pronounced ["Ya Mar"](https://www.youtube.com/watch?v=p-2E
 
 ```bash
 # Install the CLI
-r -e 'llamaR::install_cli()'
+r -e 'corteza::install_cli()'
 
 # Start the agent
-llamar
+corteza
 ```
 
 That's it. You're talking to an AI agent that can read files, run shell commands, query git, search the web, and execute R code in a persistent session.
 
 ```
-llamar | claude-sonnet-4-20250514 @ anthropic | 24 tools
+corteza | claude-sonnet-4-20250514 @ anthropic | 24 tools
 
 > What R packages are loaded?
   [run_r] Running: loadedNamespaces()
 12 packages loaded: base, utils, stats, ...
 
-> llamar --provider ollama --model llama3.2
+> corteza --provider ollama --model llama3.2
 ```
 
 -----
@@ -42,17 +42,17 @@ In the agent world, tools, skills, and the servers that expose them are three se
 
 -----
 
-## Three Ways to Use llamaR
+## Three Ways to Use corteza
 
-### 1. CLI agent (`llamar`)
+### 1. CLI agent (`corteza`)
 
 The primary interface. A terminal agent with session management, voice mode, and context compaction. Uses the MCP server internally for tool execution.
 
 ```bash
-llamar                    # Start agent
-llamar --resume           # Resume last session
-llamar --provider ollama  # Use local models
-llamar --provider moonshot --model kimi-k2
+corteza                    # Start agent
+corteza --resume           # Resume last session
+corteza --provider ollama  # Use local models
+corteza --provider moonshot --model kimi-k2
 ```
 
 ### 2. MCP server (`serve()`)
@@ -62,9 +62,9 @@ Exposes a persistent R session to external MCP clients (Claude Code, Claude Desk
 ```json
 {
   "mcpServers": {
-    "llamaR": {
+    "corteza": {
       "command": "Rscript",
-      "args": ["-e", "llamaR::serve()"]
+      "args": ["-e", "corteza::serve()"]
     }
   }
 }
@@ -110,8 +110,8 @@ This is the most interesting mode architecturally (the agent lives in the same p
 ## Installation
 
 ```r
-# llamaR (not yet on CRAN)
-remotes::install_github("cornball-ai/llamaR")
+# corteza (not yet on CRAN)
+remotes::install_github("cornball-ai/corteza")
 
 # LLM provider abstraction (not yet on CRAN)
 remotes::install_github("cornball-ai/llm.api")
@@ -131,8 +131,8 @@ TAVILY_API_KEY=tvly-...   # Optional, for web search
 ### CLI (Optional)
 
 ```r
-# Install the llamar CLI to ~/bin
-llamaR::install_cli()
+# Install the corteza CLI to ~/bin
+corteza::install_cli()
 ```
 
 -----
@@ -141,17 +141,17 @@ llamaR::install_cli()
 
 Anthropic's [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) gives you Claude Code as a library, in Python and TypeScript. [nanoclaw](https://github.com/qwibitai/nanoclaw) builds on it. There's no R equivalent.
 
-llamaR fills that gap. Not by wrapping Anthropic's SDK, but by building an R-native agent runtime from scratch. Model-agnostic (Anthropic, OpenAI, Moonshot, Ollama), small enough to read in an afternoon.
+corteza fills that gap. Not by wrapping Anthropic's SDK, but by building an R-native agent runtime from scratch. Model-agnostic (Anthropic, OpenAI, Moonshot, Ollama), small enough to read in an afternoon.
 
 |Role           |Posit (tidyverse)                      |cornyverse|
 |---------------|---------------------------------------|----------|
 |LLM API client |[ellmer](https://ellmer.tidyverse.org/)|llm.api   |
 |Context tools  |[btw](https://posit-dev.github.io/btw/)|saber     |
-|MCP bridge     |mcptools                               |llamaR    |
+|MCP bridge     |mcptools                               |corteza    |
 
 mcptools integrates R into the broader MCP ecosystem (Claude Desktop, VS Code, Positron). It's polished, on CRAN, and backed by Posit.
 
-llamaR is a standalone agent runtime. `chat()` runs inside your R session. The CLI runs from your terminal. No external client required.
+corteza is a standalone agent runtime. `chat()` runs inside your R session. The CLI runs from your terminal. No external client required.
 
 -----
 
