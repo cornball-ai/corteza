@@ -179,14 +179,17 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
         tools_filter <- NULL
     }
 
-    new_session(
-                channel = "matrix",
-                provider = provider %||% "anthropic",
-                model_map = list(cloud = model, local = default_local_model()),
-                tools_filter = tools_filter,
-                system = system,
-                approval_cb = matrix_approval_cb(cfg),
-                verbose = FALSE
+    session_setup(
+                  channel = "matrix",
+                  cwd = getwd(),
+                  provider = provider %||% "anthropic",
+                  model = model,
+                  tools = tools_filter,
+                  system = system,
+                  approval_cb = matrix_approval_cb(cfg),
+                  load_project_context = FALSE,
+                  validate_api_key = TRUE,
+                  verbose = FALSE
     )
 }
 
