@@ -144,16 +144,8 @@ matrix_extract_messages <- function(sync_resp, room_id, self_id) {
 }
 
 matrix_default_system <- function(cfg) {
-    sprintf(
-            paste(
-                  "You are %s, an assistant running in R on behalf of %s.",
-                  "Reply concisely over Matrix chat. Plain text, no markdown",
-                  "headings. You have access to tools for the local filesystem,",
-                  "shell, and R session; use them when helpful and report what",
-                  "you did. Assume messages may be received out of order."
-        ),
-            cfg$user_id, cfg$user
-    )
+    sprintf("You are %s, a helpful assistant for %s.",
+            cfg$user_id, cfg$user)
 }
 
 # Build the approval callback for the Matrix channel. Until the thumbs-up
@@ -181,6 +173,11 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     }
     if (is.null(tools_filter)) {
         tools_filter <- cfg$tools_filter
+    }
+    # JSON round-tripping can turn a NULL tools_filter into list(). Treat
+    # anything empty as NULL so the session gets all registered tools.
+    if (length(tools_filter) == 0L) {
+        tools_filter <- NULL
     }
 
     new_session(
