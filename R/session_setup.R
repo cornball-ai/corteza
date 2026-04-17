@@ -50,7 +50,7 @@
 session_setup <- function(channel = c("cli", "console", "matrix"),
                           cwd = getwd(), provider = NULL, model = NULL,
                           tools = NULL, system = NULL, approval_cb = NULL,
-                          load_project_context = TRUE,
+                          history = NULL, load_project_context = TRUE,
                           validate_api_key = TRUE, verbose = FALSE,
                           max_turns = 10L) {
     channel <- match.arg(channel)
@@ -89,6 +89,7 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
 
     session <- new_session(
                            channel = channel,
+                           history = history,
                            model_map = list(cloud = model, local = default_local_model()),
                            provider = provider,
                            tools_filter = tools,
