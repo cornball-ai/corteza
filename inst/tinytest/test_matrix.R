@@ -117,6 +117,58 @@ local({
   expect_equal(s3$room_id, "!vault:ex")
 })
 
+# Mention detection: explicit m.mentions takes precedence.
+local({
+  msg <- list(body = "hey",
+              mentions = list("@cornelius:cornball.ai"))
+  expect_true(llamaR:::matrix_message_mentions_self(
+    msg, "@cornelius:cornball.ai"))
+  expect_false(llamaR:::matrix_message_mentions_self(
+    msg, "@other:cornball.ai"))
+})
+
+# Mention detection: fallback to @localpart substring.
+local({
+  expect_true(llamaR:::matrix_message_mentions_self(
+    list(body = "hey @cornelius what do you think?"),
+    "@cornelius:cornball.ai"))
+  expect_true(llamaR:::matrix_message_mentions_self(
+    list(body = "@CORNELIUS help"),
+    "@cornelius:cornball.ai"))
+  expect_true(llamaR:::matrix_message_mentions_self(
+    list(body = "please @cornelius:cornball.ai"),
+    "@cornelius:cornball.ai"))
+  # Bare "cornelius" without @ is not a mention.
+  expect_false(llamaR:::matrix_message_mentions_self(
+    list(body = "cornelius is great"),
+    "@cornelius:cornball.ai"))
+  expect_false(llamaR:::matrix_message_mentions_self(
+    list(body = "hello world"),
+    "@cornelius:cornball.ai"))
+  expect_false(llamaR:::matrix_message_mentions_self(
+    list(body = ""), "@cornelius:cornball.ai"))
+})
+
+# matrix_should_respond: DM always -> TRUE regardless of mention.
+local({
+  s <- new.env(parent = emptyenv())
+  s$is_dm <- TRUE
+  expect_true(llamaR:::matrix_should_respond(
+    list(body = "hi"), s, "@cornelius:cornball.ai"))
+})
+
+# matrix_should_respond: group room requires mention.
+local({
+  s <- new.env(parent = emptyenv())
+  s$is_dm <- FALSE
+  expect_false(llamaR:::matrix_should_respond(
+    list(body = "chatter among humans"), s,
+    "@cornelius:cornball.ai"))
+  expect_true(llamaR:::matrix_should_respond(
+    list(body = "@cornelius what?"), s,
+    "@cornelius:cornball.ai"))
+})
+
 if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # Live round-trip would configure, send, and poll here. Skipped in
   # package check.
