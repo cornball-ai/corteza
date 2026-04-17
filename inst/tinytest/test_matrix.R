@@ -34,6 +34,31 @@ local({
                as.octmode("0600"))
 })
 
+# matrix_new_session wires config into a turn session.
+local({
+  cfg <- list(
+    server = "https://example",
+    user = "bot",
+    user_id = "@bot:example",
+    room_id = "!abc:example",
+    model = "kimi-k2.5",
+    provider = "moonshot",
+    tools_filter = NULL,
+    auto_approve_asks = FALSE
+  )
+  s <- llamaR:::matrix_new_session(cfg)
+  expect_true(is.environment(s))
+  expect_equal(s$channel, "matrix")
+  expect_equal(s$provider, "moonshot")
+  expect_equal(s$model_map$cloud, "kimi-k2.5")
+  # Default approval_cb declines (auto_approve_asks = FALSE)
+  expect_false(s$approval_cb(list(), list()))
+
+  cfg$auto_approve_asks <- TRUE
+  s2 <- llamaR:::matrix_new_session(cfg)
+  expect_true(s2$approval_cb(list(), list()))
+})
+
 if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # Live round-trip would configure, send, and poll here. Skipped in
   # package check.
