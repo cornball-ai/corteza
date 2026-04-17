@@ -1,4 +1,4 @@
-# Context loading for llamaR
+# Context loading for corteza
 # Loads project context for the system prompt. Standard files (memory,
 # SOUL.md, USER.md, CLAUDE.md, AGENTS.md) and project briefings are
 # delegated to saber. Custom user-specified files and skill docs are
@@ -8,11 +8,11 @@
 #'
 #' Assembles a system prompt for the LLM by combining:
 #' \enumerate{
-#'   \item llamaR's preamble
+#'   \item corteza's preamble
 #'   \item \code{saber::briefing()} project metadata (if available)
 #'   \item \code{saber::agent_context()} runtime context files (memory,
 #'         SOUL.md, USER.md, CLAUDE.md, AGENTS.md)
-#'   \item Any custom \code{context_files} from \code{.llamar/config.json}
+#'   \item Any custom \code{context_files} from \code{.corteza/config.json}
 #'   \item Loaded skill docs and package tool docs
 #' }
 #'
@@ -121,7 +121,7 @@ load_saber_agent_context <- function(cwd, config) {
     workspace_dir <- get_workspace_dir()
     tryCatch({
         text <- saber::agent_context(
-                                     agent = "llamar",
+                                     agent = "corteza",
                                      project_dir = cwd,
                                      workspace_dir = workspace_dir,
                                      include_soul = config$context_include_soul,

@@ -1,19 +1,19 @@
-#' Install llamar CLI
+#' Install corteza CLI
 #'
-#' Install the `llamar` command-line tool to a directory in your PATH.
+#' Install the `corteza` command-line tool to a directory in your PATH.
 #'
 #' @param path Directory to install to. Defaults to `~/bin`.
 #' @param force Overwrite existing installation. Defaults to FALSE.
 #'
 #' @details
-#' This copies the `llamar` script from the package to the specified directory.
+#' This copies the `corteza` script from the package to the specified directory.
 #' The script requires:
 #'
 #' - `r` (littler) for fast R script execution
 #' - The `llm.api` package for LLM connectivity
-#' - The `llamaR` package itself
+#' - The `corteza` package itself
 #'
-#' After installation, you can run `llamar` from any terminal.
+#' After installation, you can run `corteza` from any terminal.
 #'
 #' @return The path to the installed script (invisibly).
 #' @export
@@ -36,16 +36,16 @@ install_cli <- function(path = "~/bin", force = FALSE) {
     }
 
     # Source and destination
-    src <- system.file("bin", "llamar", package = "llamaR")
+    src <- system.file("bin", "corteza", package = "corteza")
     if (!file.exists(src)) {
         stop("CLI script not found in package. This may be a development install.")
     }
 
-    dest <- file.path(path, "llamar")
+    dest <- file.path(path, "corteza")
 
     # Check if exists
     if (file.exists(dest) && !force) {
-        stop("llamar already exists at ", dest,
+        stop("corteza already exists at ", dest,
              ". Use force = TRUE to overwrite.")
     }
 
@@ -57,7 +57,7 @@ install_cli <- function(path = "~/bin", force = FALSE) {
         Sys.chmod(dest, mode = "0755")
     }
 
-    message("Installed llamar to: ", dest)
+    message("Installed corteza to: ", dest)
 
     # Check if in PATH
     path_dirs <- strsplit(Sys.getenv("PATH"), .Platform$path.sep)[[1]]
@@ -70,11 +70,11 @@ install_cli <- function(path = "~/bin", force = FALSE) {
     invisible(dest)
 }
 
-#' Uninstall llamar CLI
+#' Uninstall corteza CLI
 #'
-#' Remove the `llamar` command-line tool.
+#' Remove the `corteza` command-line tool.
 #'
-#' @param path Directory where llamar is installed. Defaults to `~/bin`.
+#' @param path Directory where corteza is installed. Defaults to `~/bin`.
 #'
 #' @return TRUE if removed, FALSE if not found (invisibly).
 #' @export
@@ -85,14 +85,14 @@ install_cli <- function(path = "~/bin", force = FALSE) {
 #' }
 uninstall_cli <- function(path = "~/bin") {
     path <- path.expand(path)
-    dest <- file.path(path, "llamar")
+    dest <- file.path(path, "corteza")
 
     if (file.exists(dest)) {
         file.remove(dest)
         message("Removed: ", dest)
         invisible(TRUE)
     } else {
-        message("llamar not found at: ", dest)
+        message("corteza not found at: ", dest)
         invisible(FALSE)
     }
 }

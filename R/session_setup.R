@@ -10,12 +10,12 @@
 #' Performs pre-turn setup common to all channels:
 #'
 #' \enumerate{
-#'   \item Loads project + global llamaR config from \code{cwd}.
+#'   \item Loads project + global corteza config from \code{cwd}.
 #'   \item Resolves provider, model, and verifies the required API
 #'     environment variable is set.
 #'   \item Registers built-in skills and loads user/project skills and
-#'     skill docs from \code{~/.llamar/skills} and
-#'     \code{<cwd>/.llamar/skills}.
+#'     skill docs from \code{~/.corteza/skills} and
+#'     \code{<cwd>/.corteza/skills}.
 #'   \item Loads skill packages declared in the config.
 #'   \item Optionally builds the system prompt via \code{load_context(cwd)}.
 #'   \item Returns a \code{new_session()} built from the above.
@@ -76,12 +76,12 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
 
     # Skill registration + user overrides
     ensure_skills()
-    load_skills(path.expand("~/.llamar/skills"))
-    load_skills(file.path(cwd, ".llamar", "skills"))
-    load_skill_docs(path.expand("~/.llamar/skills"))
-    load_skill_docs(file.path(cwd, ".llamar", "skills"))
+    load_skills(path.expand("~/.corteza/skills"))
+    load_skills(file.path(cwd, ".corteza", "skills"))
+    load_skill_docs(path.expand("~/.corteza/skills"))
+    load_skill_docs(file.path(cwd, ".corteza", "skills"))
     load_skill_packages(config)
-    options(llamar.tools = tools)
+    options(corteza.tools = tools)
 
     if (is.null(system) && isTRUE(load_project_context)) {
         system <- load_context(cwd)

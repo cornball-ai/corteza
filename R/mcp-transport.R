@@ -8,7 +8,7 @@
 #' @return NULL (runs until client disconnects)
 #' @noRd
 run_stdio <- function() {
-    log_msg("llamar MCP server starting (stdio)...")
+    log_msg("corteza MCP server starting (stdio)...")
 
     send_fn <- function(json) {
         cat(json, "\n", sep = "", file = stdout())
@@ -29,13 +29,13 @@ run_stdio <- function() {
 
 #' Run MCP server with socket transport
 #'
-#' Used by the llamar CLI and other R clients that connect via TCP socket.
+#' Used by the corteza CLI and other R clients that connect via TCP socket.
 #'
 #' @param port Port number to listen on
 #' @return NULL (runs until interrupted)
 #' @noRd
 run_socket <- function(port) {
-    log_msg(sprintf("llamar MCP server starting (socket port %d)...", port))
+    log_msg(sprintf("corteza MCP server starting (socket port %d)...", port))
 
     # Create server socket
     server <- serverSocket(port)

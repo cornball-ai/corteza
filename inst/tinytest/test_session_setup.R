@@ -1,6 +1,6 @@
 library(tinytest)
 
-expect_true(is.function(llamaR::session_setup))
+expect_true(is.function(corteza::session_setup))
 
 # Require an API key for the selected provider.
 local({
@@ -11,7 +11,7 @@ local({
     }, add = TRUE)
 
     expect_error(
-        llamaR::session_setup(
+        corteza::session_setup(
             channel = "console",
             cwd = tempdir(),
             provider = "anthropic",
@@ -30,7 +30,7 @@ local({
         if (!is.na(orig)) Sys.setenv(ANTHROPIC_API_KEY = orig)
     }, add = TRUE)
 
-    s <- llamaR::session_setup(
+    s <- corteza::session_setup(
         channel = "console",
         cwd = tempdir(),
         provider = "anthropic",
@@ -46,7 +46,7 @@ local({
 
 # Skills are registered after setup.
 local({
-    s <- llamaR::session_setup(
+    s <- corteza::session_setup(
         channel = "matrix",
         cwd = tempdir(),
         provider = "anthropic",
@@ -55,6 +55,6 @@ local({
         load_project_context = FALSE,
         validate_api_key = FALSE
     )
-    tools <- llamaR:::skills_as_api_tools(s$tools_filter)
+    tools <- corteza:::skills_as_api_tools(s$tools_filter)
     expect_true(length(tools) > 0L)
 })

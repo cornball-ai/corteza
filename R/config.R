@@ -1,10 +1,10 @@
-# Configuration management for llamaR
+# Configuration management for corteza
 # Handles global and project-level config
 
 #' Get workspace directory path
 #' @noRd
 get_workspace_dir <- function() {
-    path.expand("~/.llamar/workspace")
+    path.expand("~/.corteza/workspace")
 }
 
 #' Load configuration from JSON file
@@ -31,20 +31,20 @@ load_config_file <- function(path) {
 
 #' Load merged configuration (global + project)
 #'
-#' Merges global config (~/.llamar/config.json) with project config
-#' (.llamar/config.json). Project config takes precedence.
+#' Merges global config (~/.corteza/config.json) with project config
+#' (.corteza/config.json). Project config takes precedence.
 #'
 #' @param cwd Working directory for project config
 #' @return List with merged configuration
 #' @noRd
 load_config <- function(cwd = getwd()) {
     # Global config
-    global_path <- path.expand("~/.llamar/config.json")
+    global_path <- path.expand("~/.corteza/config.json")
     global <- load_config_file(global_path)
 
     # Project config
 
-    project_path <- file.path(cwd, ".llamar", "config.json")
+    project_path <- file.path(cwd, ".corteza", "config.json")
     project <- load_config_file(project_path)
 
     # Merge (project overrides global)

@@ -49,12 +49,12 @@ A session environment from \code{\link{new_session}}, with
 \description{
 Performs pre-turn setup common to all channels:
 \enumerate{
-\item Loads project + global llamaR config from \code{cwd}.
+\item Loads project + global corteza config from \code{cwd}.
 \item Resolves provider, model, and verifies the required API
 environment variable is set.
 \item Registers built-in skills and loads user/project skills and
-skill docs from \code{~/.llamar/skills} and
-\code{<cwd>/.llamar/skills}.
+skill docs from \code{~/.corteza/skills} and
+\code{<cwd>/.corteza/skills}.
 \item Loads skill packages declared in the config.
 \item Optionally builds the system prompt via \code{load_context(cwd)}.
 \item Returns a \code{new_session()} built from the above.

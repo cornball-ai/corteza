@@ -1,7 +1,7 @@
 # Test tool definitions and implementations
 
 # Test get_tools returns expected structure
-tools <- llamaR:::get_tools()
+tools <- corteza:::get_tools()
 expect_true(is.list(tools))
 expect_true(length(tools) > 0)
 
@@ -36,18 +36,18 @@ expect_false("read_csv" %in% tool_names)
 expect_false("chat" %in% tool_names)
 
 # Test ok/err helpers
-ok_result <- llamaR:::ok("test")
+ok_result <- corteza:::ok("test")
 expect_true(is.list(ok_result))
 expect_true("content" %in% names(ok_result))
 expect_equal(ok_result$content[[1]]$text, "test")
 
-err_result <- llamaR:::err("error")
+err_result <- corteza:::err("error")
 expect_true(is.list(err_result))
 expect_true(err_result$isError)
 expect_equal(err_result$content[[1]]$text, "error")
 
 # Test dynamic tool categories
-cats <- llamaR:::get_tool_categories()
+cats <- corteza:::get_tool_categories()
 expect_true("file" %in% names(cats))
 expect_true("read_file" %in% cats$file)
 expect_true("code" %in% names(cats))

@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 #
-# llamar-signal - Signal bot using llamaR
+# corteza-signal - Signal bot using corteza
 #
-# Usage: llamar-signal [options]
+# Usage: corteza-signal [options]
 #   --account    Signal phone number (required, e.g., +15551234567)
 #   --host       signal-cli daemon host (default: 127.0.0.1)
 #   --port       signal-cli daemon port (default: 8080)
@@ -21,7 +21,7 @@ suppressPackageStartupMessages({
     library(jsonlite)
     library(curl)
     library(llm.api)
-    library(llamaR)
+    library(corteza)
 })
 
 # ============================================================================
@@ -68,9 +68,9 @@ parse_args <- function () {
             i <- i + 2
         } else if (arg == "--help" || arg == "-h") {
             cat("
-llamar-signal - Signal bot using llamaR
+corteza-signal - Signal bot using corteza
 
-Usage: llamar-signal --account +15551234567 [options]
+Usage: corteza-signal --account +15551234567 [options]
 
 Options:
   --account    Signal phone number (required)
@@ -84,14 +84,14 @@ Options:
 Prerequisites:
   1. Install signal-cli (requires Java)
   2. Link your Signal account:
-     signal-cli link -n \"llamar\"
+     signal-cli link -n \"corteza\"
   3. Start the daemon:
      signal-cli -a +15551234567 daemon --http 127.0.0.1:8080
   4. Run this bot:
-     llamar-signal --account +15551234567
+     corteza-signal --account +15551234567
 
 Config (matches openclaw channels.signal.*):
-  ~/.llamar/config.json:
+  ~/.corteza/config.json:
   {
     \"channels\": {
       \"signal\": {
@@ -113,7 +113,7 @@ Config (matches openclaw channels.signal.*):
 
     if (is.null(opts$account)) {
         cat("Error: --account is required\n")
-        cat("Usage: llamar-signal --account +15551234567\n")
+        cat("Usage: corteza-signal --account +15551234567\n")
         quit(save = "no", status = 1)
     }
 
@@ -156,8 +156,8 @@ start_mcp_server <- function (port) {
 
     # Start server
     cwd <- getwd()
-    cmd <- sprintf('llamaR::serve(port = %d, cwd = "%s")', port, cwd)
-    log_file <- file.path(tempdir(), "llamar-signal-mcp.log")
+    cmd <- sprintf('corteza::serve(port = %d, cwd = "%s")', port, cwd)
+    log_file <- file.path(tempdir(), "corteza-signal-mcp.log")
 
     system2("Rscript", c("-e", shQuote(cmd)), wait = FALSE,
         stdout = log_file, stderr = log_file)
@@ -183,13 +183,13 @@ start_mcp_server <- function (port) {
 # ============================================================================
 
 run_signal_bot <- function (opts) {
-    log_msg("Starting llamar Signal bot...")
+    log_msg("Starting corteza Signal bot...")
     log_msg("Account: ", opts$account)
     daemon_url <- if (!is.null(opts$httpUrl)) opts$httpUrl else sprintf("%s:%d", opts$httpHost, opts$httpPort)
     log_msg("Daemon: ", daemon_url)
 
     # Create Signal transport (config matches openclaw channels.signal.*)
-    transport <- llamaR:::transport_signal(list(
+    transport <- corteza:::transport_signal(list(
         httpHost = opts$httpHost,
         httpPort = opts$httpPort,
         httpUrl = opts$httpUrl,
@@ -216,7 +216,7 @@ run_signal_bot <- function (opts) {
 
     # Connect to MCP
     mcp_conn <- tryCatch(
-        mcp_connect(port = opts$mcp_port, name = "llamar-signal"),
+        mcp_connect(port = opts$mcp_port, name = "corteza-signal"),
         error = function (e) {
             cat(sprintf("%sError connecting to MCP: %s%s\n", color$magenta, e$message, color$reset))
             NULL
@@ -228,7 +228,7 @@ run_signal_bot <- function (opts) {
 
     # Get tools and load context
     tools <- mcp_tools_for_api(mcp_conn)
-    system_prompt <- llamaR:::load_context(getwd())
+    system_prompt <- corteza:::load_context(getwd())
 
     # Tool handler
     tool_handler <- function (name, args) {
@@ -301,7 +301,7 @@ run_signal_bot <- function (opts) {
             histories[[sender_key]] <- result$history
 
             # Send response
-            response_msg <- llamaR:::message_normalize(
+            response_msg <- corteza:::message_normalize(
                 text = result$content,
                 sender = "assistant",
                 channel = "signal",

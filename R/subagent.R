@@ -162,7 +162,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     if (!is.null(parent_session)) {
         parent_key <- parent_session$sessionKey
     } else {
-        parent_key <- "llamar:main"
+        parent_key <- "corteza:main"
     }
     session_key <- subagent_session_key(parent_key)
     id <- sub("^agent:main:subagent:", "", session_key)
@@ -192,7 +192,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     } else {
         cwd <- getwd()
     }
-    cmd <- sprintf('llamaR::serve(port = %d, cwd = "%s", agent_id = "subagent-%s"%s)',
+    cmd <- sprintf('corteza::serve(port = %d, cwd = "%s", agent_id = "subagent-%s"%s)',
                    port, cwd, id, tools_arg)
 
     # Spawn server process

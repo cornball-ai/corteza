@@ -4,7 +4,7 @@
 #
 # Precedence (most specific wins):
 #   1. Hard safety rules (cannot be overridden by user config)
-#   2. User policy function, if options(llamaR.policy = ...) is set
+#   2. User policy function, if options(corteza.policy = ...) is set
 #   3. Default tensor lookup on (data_class, op, channel)
 #   4. Fallback: cloud + ask
 #
@@ -37,11 +37,11 @@
 }
 
 get_personal_paths <- function() {
-    getOption("llamaR.personal_paths", .default_personal_paths())
+    getOption("corteza.personal_paths", .default_personal_paths())
 }
 
 get_code_paths <- function() {
-    getOption("llamaR.code_paths", .default_code_paths())
+    getOption("corteza.code_paths", .default_code_paths())
 }
 
 # ---- Path / URL resolution ----
@@ -229,7 +229,7 @@ policy <- function(call) {
         return(safety)
     }
 
-    user_fn <- getOption("llamaR.policy")
+    user_fn <- getOption("corteza.policy")
     if (is.function(user_fn)) {
         user <- tryCatch(user_fn(call), error = function(e) NULL)
         if (is.list(user) && !is.null(user$model) && !is.null(user$approval)) {

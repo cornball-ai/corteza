@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 #
-# llamar - An open-source interactive CLI agent in R
+# corteza - An open-source interactive CLI agent in R
 #
-# Usage: llamar [options]
+# Usage: corteza [options]
 #   --provider   anthropic|openai|moonshot|ollama (default: anthropic)
 #   --model      model name (default: provider-specific)
 #   --port       MCP server port (default: 7850)
@@ -17,7 +17,7 @@ if (file.exists(renviron)) readRenviron(renviron)
 suppressPackageStartupMessages({
   library(jsonlite)
   library(llm.api)
-  library(llamaR)
+  library(corteza)
 })
 
 # ============================================================================
@@ -28,7 +28,7 @@ parse_args <- function() {
   args <- commandArgs(trailingOnly = TRUE)
 
   # Load config for defaults
-  config <- llamaR:::load_config(getwd())
+  config <- corteza:::load_config(getwd())
 
   opts <- list(
     provider = config$provider %||% "anthropic",
@@ -74,9 +74,9 @@ parse_args <- function() {
       i <- i + 1
     } else if (arg == "--help" || arg == "-h") {
       cat("
-llamar - An open-source interactive CLI agent
+corteza - An open-source interactive CLI agent
 
-Usage: llamar [options]
+Usage: corteza [options]
 
 Options:
   --provider      LLM provider: anthropic, openai, moonshot, ollama (default: anthropic)
@@ -91,7 +91,7 @@ Options:
   --help, -h      Show this help
 
 Commands (in chat):
-  /quit, /exit   Exit llamar
+  /quit, /exit   Exit corteza
   /status        Show current runtime/session status
   /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
@@ -111,12 +111,12 @@ Commands (in chat):
 Project context is loaded from saber::briefing() and saber::agent_context().
 Additional files can be loaded via the `context_files` config key.
 
-Legacy llamaR memory injection is disabled by default.
+Legacy corteza memory injection is disabled by default.
 Use config to opt back into MEMORY.md or daily memory logs.
 
 Config files:
-  ~/.llamar/config.json        Global defaults
-  .llamar/config.json          Project overrides
+  ~/.corteza/config.json        Global defaults
+  .corteza/config.json          Project overrides
 
 ")
       quit(save = "no", status = 0)
@@ -144,15 +144,15 @@ start_server <- function(port, tools = NULL) {
     return(TRUE)  # Already running
   }
 
-  # Start server using llamaR::serve()
+  # Start server using corteza::serve()
   cwd <- getwd()
   tools_arg <- if (!is.null(tools)) {
     sprintf(', tools = c(%s)', paste0('"', tools, '"', collapse = ", "))
   } else ""
-  cmd <- sprintf('llamaR::serve(port = %d, cwd = "%s"%s)', port, cwd, tools_arg)
+  cmd <- sprintf('corteza::serve(port = %d, cwd = "%s"%s)', port, cwd, tools_arg)
 
   # Log server output for debugging
-  log_file <- file.path(tempdir(), "llamar-server.log")
+  log_file <- file.path(tempdir(), "corteza-server.log")
 
   if (.Platform$OS.type == "windows") {
     system2("Rscript", c("-e", shQuote(cmd)), wait = FALSE, stdout = log_file, stderr = log_file)
@@ -202,7 +202,7 @@ color <- list(
 )
 
 print_banner <- function(session_id = NULL) {
-  cat(sprintf("\n%s llamar%s", color$cyan, color$reset))
+  cat(sprintf("\n%s corteza%s", color$cyan, color$reset))
   if (!is.null(session_id)) {
     cat(sprintf(" %s[%s]%s", color$dim, session_id, color$reset))
   }
@@ -450,7 +450,7 @@ requires_approval <- function(tool_name, dangerous_tools) {
 
 # Load approvals from project-local file
 load_approvals <- function(cwd) {
-  path <- file.path(cwd, ".llamar", "approvals.json")
+  path <- file.path(cwd, ".corteza", "approvals.json")
   if (file.exists(path)) {
     tryCatch(
       jsonlite::fromJSON(path, simplifyVector = FALSE),
@@ -466,7 +466,7 @@ save_approval <- function(cwd, tool_name) {
   approvals <- load_approvals(cwd)
   approvals[[tool_name]] <- TRUE
 
-  path <- file.path(cwd, ".llamar", "approvals.json")
+  path <- file.path(cwd, ".corteza", "approvals.json")
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
   jsonlite::write_json(approvals, path, auto_unbox = TRUE, pretty = TRUE)
 }
@@ -616,9 +616,9 @@ format_status_summary <- function(session, provider, display_model, conn, opts,
                                   context_files, skill_docs) {
   memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
                      isTRUE(config$memory_flush_enabled)) {
-    "legacy llamaR memory enabled"
+    "legacy corteza memory enabled"
   } else {
-    "legacy llamaR memory disabled"
+    "legacy corteza memory disabled"
   }
 
   paste(
@@ -664,7 +664,7 @@ format_config_summary <- function(config, provider, display_model, opts) {
       sprintf("approval mode: %s", config$approval_mode %||% "ask"),
       sprintf("dangerous tools: %s",
               paste(config$dangerous_tools %||%
-                    llamaR:::default_dangerous_tools(),
+                    corteza:::default_dangerous_tools(),
                     collapse = ", "))
     ),
     collapse = "\n"
@@ -674,11 +674,11 @@ format_config_summary <- function(config, provider, display_model, opts) {
 format_doctor_report <- function(cwd, session, provider, display_model, conn,
                                  config, context_files, skill_docs) {
   provider_check <- provider_status(provider, model = if (!is.null(session$model)) session$model else NULL)
-  approvals_path <- file.path(cwd, ".llamar", "approvals.json")
+  approvals_path <- file.path(cwd, ".corteza", "approvals.json")
 
   paste(
     c(
-      "llamar doctor",
+      "corteza doctor",
       sprintf("cwd: %s", cwd),
       sprintf("session: %s", session$sessionKey),
       sprintf("provider: %s (%s)",
@@ -740,18 +740,18 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text) {
 
 run_agent <- function(opts) {
   cwd <- getwd()
-  config <- llamaR:::load_config(cwd)
+  config <- corteza:::load_config(cwd)
 
   # Handle --list (exit early)
   if (isTRUE(opts$list)) {
-    sessions <- llamaR:::session_list()
-    cat(llamaR:::format_session_list(sessions), "\n")
+    sessions <- corteza:::session_list()
+    cat(corteza:::format_session_list(sessions), "\n")
     return(invisible(NULL))
   }
 
   # Handle --resume: find latest session key
   if (isTRUE(opts$resume) && is.null(opts$session)) {
-    latest <- llamaR:::session_latest()
+    latest <- corteza:::session_latest()
     if (!is.null(latest)) {
       opts$session <- latest$sessionKey
       cat(sprintf("%sResuming latest session: %s%s\n", color$dim, latest$sessionKey, color$reset))
@@ -766,11 +766,11 @@ run_agent <- function(opts) {
 
   if (!is.null(opts$session)) {
     # Try to resume session by key, create if not found
-    session <- llamaR:::session_load(opts$session)
+    session <- corteza:::session_load(opts$session)
     if (is.null(session)) {
       # Create new session with specified key
       cat(sprintf("%sCreating session: %s%s\n", color$dim, opts$session, color$reset))
-      session <- llamaR:::session_new(opts$provider, opts$model, cwd, session_key = opts$session)
+      session <- corteza:::session_new(opts$provider, opts$model, cwd, session_key = opts$session)
     } else {
       # Resuming existing session
       cat(sprintf("%sResuming session: %s%s\n", color$dim, opts$session, color$reset))
@@ -779,7 +779,7 @@ run_agent <- function(opts) {
       opts$provider <- session$provider %||% opts$provider
       # Restore workspace
       if (ws_enabled) {
-        loaded <- llamaR:::ws_load(session$sessionId)
+        loaded <- corteza:::ws_load(session$sessionId)
         if (loaded) {
           cat(sprintf("%sWorkspace restored.%s\n", color$dim, color$reset))
         }
@@ -787,10 +787,10 @@ run_agent <- function(opts) {
     }
   } else {
     # No session key specified - create new session
-    session <- llamaR:::session_new(opts$provider, opts$model, cwd)
+    session <- corteza:::session_new(opts$provider, opts$model, cwd)
     # Scan globalenv for existing objects
     if (ws_enabled && isTRUE(config$workspace$scan_globalenv %||% TRUE)) {
-      registered <- llamaR:::ws_scan_globalenv(
+      registered <- corteza:::ws_scan_globalenv(
         max_bytes = config$workspace$scan_max_bytes %||% 50e6)
       if (length(registered) > 0) {
         cat(sprintf("%sWorkspace: registered %d objects%s\n",
@@ -802,19 +802,19 @@ run_agent <- function(opts) {
   print_banner(session$sessionKey)
 
   # Start/connect to MCP server
-  server_log <- file.path(tempdir(), "llamar-server.log")
+  server_log <- file.path(tempdir(), "corteza-server.log")
   cat(sprintf("%sStarting MCP server on port %d...%s\n", color$dim, opts$port, color$reset))
   cat(sprintf("%sServer log: %s%s\n", color$dim, server_log, color$reset))
 
   if (!start_server(opts$port, opts$tools)) {
     cat(sprintf("%sError: Could not start MCP server%s\n", color$bright_magenta, color$reset))
-    cat("Make sure llamaR package is installed.\n")
+    cat("Make sure corteza package is installed.\n")
     return(invisible(NULL))
   }
 
   # Connect
   conn <- tryCatch(
-    mcp_connect(port = opts$port, name = "llamar"),
+    mcp_connect(port = opts$port, name = "corteza"),
     error = function(e) {
       cat(sprintf("%sError connecting to server: %s%s\n", color$bright_magenta, e$message, color$reset))
       NULL
@@ -827,13 +827,13 @@ run_agent <- function(opts) {
               color$dim, length(conn$tools), color$reset))
 
   # Load skill docs (SKILL.md files)
-  llamaR:::load_skill_docs(path.expand("~/.llamar/skills"))
-  llamaR:::load_skill_docs(file.path(cwd, ".llamar", "skills"))
-  skill_docs <- llamaR:::list_skill_docs()
+  corteza:::load_skill_docs(path.expand("~/.corteza/skills"))
+  corteza:::load_skill_docs(file.path(cwd, ".corteza", "skills"))
+  skill_docs <- corteza:::list_skill_docs()
 
   # Load context files
-  context_files <- llamaR:::list_context_files(cwd)
-  system_prompt <- llamaR:::load_context(cwd)
+  context_files <- corteza:::list_context_files(cwd)
+  system_prompt <- corteza:::load_context(cwd)
 
   if (length(context_files) > 0 || length(skill_docs) > 0) {
     cat(sprintf("%sLoaded context:%s\n", color$dim, color$reset))
@@ -852,7 +852,7 @@ run_agent <- function(opts) {
 
   # Get approval settings from config
   approval_mode <- config$approval_mode %||% "ask"
-  dangerous_tools <- config$dangerous_tools %||% llamaR:::default_dangerous_tools()
+  dangerous_tools <- config$dangerous_tools %||% corteza:::default_dangerous_tools()
 
   # Track turn number for trace
   turn_number <- 0L
@@ -863,9 +863,9 @@ run_agent <- function(opts) {
     if (isTRUE(opts$dry_run)) {
       cat(sprintf("%s[DRY RUN] %s%s\n", color$yellow, name, color$reset))
       # Call skill directly with dry_run=TRUE (bypass MCP server)
-      skill <- llamaR:::get_skill(name)
+      skill <- corteza:::get_skill(name)
       if (!is.null(skill)) {
-        preview <- llamaR:::format_dry_run_preview(skill, args)
+        preview <- corteza:::format_dry_run_preview(skill, args)
         cat(sprintf("%s%s%s\n", color$dim, preview, color$reset))
         return(preview)
       }
@@ -910,7 +910,7 @@ run_agent <- function(opts) {
       if (grepl("closed connection|SIGPIPE", e$message)) {
         cat(sprintf("%sreconnecting...%s ", color$dim, color$reset))
         conn <<- tryCatch(
-          mcp_connect(port = opts$port, name = "llamar"),
+          mcp_connect(port = opts$port, name = "corteza"),
           error = function(e2) NULL
         )
         if (!is.null(conn)) {
@@ -942,7 +942,7 @@ run_agent <- function(opts) {
 
     # Record trace (CLI-side, in addition to MCP server side)
     tryCatch({
-      llamaR:::trace_add(
+      corteza:::trace_add(
         session_id = session$sessionId,
         tool = name,
         args = args,
@@ -1025,7 +1025,7 @@ run_agent <- function(opts) {
         session$messages <- list()
         session$tokens <- 0L
         session_tokens <- 0L
-        llamaR:::session_save(session)
+        corteza:::session_save(session)
         cat(sprintf("%sConversation cleared (transcript preserved).%s\n", color$dim, color$reset))
         next
       } else if (cmd == "/compact") {
@@ -1035,7 +1035,7 @@ run_agent <- function(opts) {
           compact_result <- do_compact(session, provider, display_model, system_prompt)
           if (!is.null(compact_result)) {
             # Write compaction marker to transcript
-            llamaR:::transcript_compact(session, compact_result$summary)
+            corteza:::transcript_compact(session, compact_result$summary)
 
             # Update in-memory session
             session$messages <- list(
@@ -1044,16 +1044,16 @@ run_agent <- function(opts) {
             session_tokens <- compact_result$tokens
             session$tokens <- session_tokens
             session$compactions <- (session$compactions %||% 0L) + 1L
-            llamaR:::session_save(session)
+            corteza:::session_save(session)
           }
         }
         next
       } else if (cmd == "/sessions") {
-        sessions <- llamaR:::session_list()
-        cat(llamaR:::format_session_list(sessions), "\n")
+        sessions <- corteza:::session_list()
+        cat(corteza:::format_session_list(sessions), "\n")
         next
       } else if (cmd == "/status") {
-        config <- llamaR:::load_config(cwd)
+        config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
                     format_status_summary(session, provider, display_model, conn,
@@ -1063,7 +1063,7 @@ run_agent <- function(opts) {
                     color$reset))
         next
       } else if (cmd == "/doctor") {
-        config <- llamaR:::load_config(cwd)
+        config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
                     format_doctor_report(cwd, session, provider, display_model,
@@ -1072,18 +1072,18 @@ run_agent <- function(opts) {
                     color$reset))
         next
       } else if (cmd == "/config") {
-        config <- llamaR:::load_config(cwd)
+        config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
                     format_config_summary(config, provider, display_model, opts),
                     color$reset))
         next
       } else if (cmd == "/permissions") {
-        config <- llamaR:::load_config(cwd)
-        approvals_path <- file.path(cwd, ".llamar", "approvals.json")
+        config <- corteza:::load_config(cwd)
+        approvals_path <- file.path(cwd, ".corteza", "approvals.json")
         cat(sprintf("\n%s%s%s\n",
                     color$bold,
-                    llamaR:::format_permissions(config),
+                    corteza:::format_permissions(config),
                     color$reset))
         cat(sprintf("%sProject approvals:%s %s\n\n",
                     color$dim, color$reset,
@@ -1132,7 +1132,7 @@ run_agent <- function(opts) {
         display_model <- model
         context_limit <- get_context_limit(display_model)
         session$model <- model
-        llamaR:::session_save(session)
+        corteza:::session_save(session)
         cat(sprintf("%sModel set to: %s%s\n", color$dim, model, color$reset))
         next
       } else if (cmd == "/provider" && nchar(cmd_rest) > 0) {
@@ -1146,7 +1146,7 @@ run_agent <- function(opts) {
         )
         context_limit <- get_context_limit(display_model)
         session$provider <- provider
-        llamaR:::session_save(session)
+        corteza:::session_save(session)
         cat(sprintf("%sProvider set to: %s%s\n", color$dim, provider, color$reset))
         next
       } else if (cmd == "/context") {
@@ -1182,9 +1182,9 @@ run_agent <- function(opts) {
 
         # Use the memory module for storage (handles tags, categorization)
         tryCatch({
-          llamaR:::memory_store(fact_text, scope = scope, cwd = cwd)
-          clean_fact <- llamaR:::strip_tags(fact_text)
-          tags <- llamaR:::parse_tags(fact_text)
+          corteza:::memory_store(fact_text, scope = scope, cwd = cwd)
+          clean_fact <- corteza:::strip_tags(fact_text)
+          tags <- corteza:::parse_tags(fact_text)
           tag_str <- if (length(tags) > 0) sprintf(" [%s]", paste0("#", tags, collapse = " ")) else ""
           scope_str <- if (scope == "global") " (global)" else ""
           cat(sprintf("%sRemembered%s: %s%s%s\n", color$green, scope_str, clean_fact, tag_str, color$reset))
@@ -1193,7 +1193,7 @@ run_agent <- function(opts) {
         })
 
         # Reload context to pick up new memory
-        system_prompt <- llamaR:::load_context(cwd)
+        system_prompt <- corteza:::load_context(cwd)
         next
       } else if (cmd == "/recall") {
         # /recall <query> - Search memory
@@ -1207,7 +1207,7 @@ run_agent <- function(opts) {
         query <- paste(cmd_parts[-1], collapse = " ")
 
         if (query == "--tags") {
-          tags <- llamaR:::memory_list_tags(scope = "both", cwd = cwd)
+          tags <- corteza:::memory_list_tags(scope = "both", cwd = cwd)
           if (length(tags) == 0) {
             cat(sprintf("%sNo tags found.%s\n", color$dim, color$reset))
           } else {
@@ -1218,13 +1218,13 @@ run_agent <- function(opts) {
         }
 
         # Search memory
-        results <- llamaR:::memory_search(query, scope = "both", cwd = cwd)
+        results <- corteza:::memory_search(query, scope = "both", cwd = cwd)
         if (length(results) == 0) {
           cat(sprintf("%sNo memories matching '%s'%s\n", color$dim, query, color$reset))
         } else {
           cat(sprintf("\n%sFound %d memor%s:%s\n", color$bold, length(results),
                       if (length(results) == 1) "y" else "ies", color$reset))
-          formatted <- llamaR:::format_memory_results(results)
+          formatted <- corteza:::format_memory_results(results)
           cat(formatted, "\n")
         }
         next
@@ -1275,7 +1275,7 @@ run_agent <- function(opts) {
           if (!startsWith(trimws(content), "NO_REPLY")) {
             cat(sprintf("%sMemories flushed.%s\n", color$green, color$reset))
             # Reload context to pick up new memory files
-            system_prompt <- llamaR:::load_context(cwd)
+            system_prompt <- corteza:::load_context(cwd)
           } else {
             cat(sprintf("%sNothing to flush.%s\n", color$dim, color$reset))
           }
@@ -1339,11 +1339,11 @@ run_agent <- function(opts) {
       } else if (cmd == "/trace") {
         # Show tool execution trace
         n <- if (!is.null(cmd_arg)) as.integer(cmd_arg) else 20L
-        trace <- llamaR:::trace_load(session$sessionId, n = n)
+        trace <- corteza:::trace_load(session$sessionId, n = n)
         if (length(trace) == 0) {
           cat(sprintf("%sNo tool calls recorded for this session.%s\n", color$dim, color$reset))
         } else {
-          cat(llamaR:::format_trace(trace, show_args = TRUE), "\n")
+          cat(corteza:::format_trace(trace, show_args = TRUE), "\n")
         }
         next
       } else if (cmd == "/skill" || cmd == "/skills") {
@@ -1352,8 +1352,8 @@ run_agent <- function(opts) {
 
         if (subcmd == "list") {
           tryCatch({
-            skills <- llamaR::skill_list_installed()
-            cat(llamaR:::format_skill_list(skills), "\n")
+            skills <- corteza::skill_list_installed()
+            cat(corteza:::format_skill_list(skills), "\n")
           }, error = function(e) {
             cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
           })
@@ -1361,18 +1361,18 @@ run_agent <- function(opts) {
           source <- cmd_parts[3]
           force <- "--force" %in% cmd_parts
           tryCatch({
-            name <- llamaR::skill_install(source, force = force)
+            name <- corteza::skill_install(source, force = force)
             cat(sprintf("%sInstalled skill: %s%s\n", color$green, name, color$reset))
             # Reload skills
-            llamaR:::load_skill_docs(path.expand("~/.llamar/skills"))
-            llamaR:::load_skills(path.expand("~/.llamar/skills"))
+            corteza:::load_skill_docs(path.expand("~/.corteza/skills"))
+            corteza:::load_skills(path.expand("~/.corteza/skills"))
           }, error = function(e) {
             cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
           })
         } else if (subcmd == "remove" && length(cmd_parts) >= 3) {
           name <- cmd_parts[3]
           tryCatch({
-            llamaR::skill_remove(name)
+            corteza::skill_remove(name)
             cat(sprintf("%sRemoved skill: %s%s\n", color$dim, name, color$reset))
           }, error = function(e) {
             cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
@@ -1380,7 +1380,7 @@ run_agent <- function(opts) {
         } else if (subcmd == "test" && length(cmd_parts) >= 3) {
           path <- cmd_parts[3]
           tryCatch({
-            result <- llamaR::skill_test(path)
+            result <- corteza::skill_test(path)
             if (result$failed == 0) {
               cat(sprintf("%s%d test(s) passed%s\n", color$green, result$passed, color$reset))
             } else {
@@ -1418,7 +1418,7 @@ run_agent <- function(opts) {
         }
 
         tryCatch({
-          id <- llamaR::subagent_spawn(
+          id <- corteza::subagent_spawn(
             task = task_text,
             model = subagent_model,
             parent_session = session
@@ -1431,8 +1431,8 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/agents") {
         # List active subagents
-        agents <- llamaR::subagent_list()
-        cat(llamaR:::format_subagent_list(agents), "\n")
+        agents <- corteza::subagent_list()
+        cat(corteza:::format_subagent_list(agents), "\n")
         next
       } else if (cmd == "/ask" && length(cmd_parts) >= 3) {
         # Query a subagent: /ask <id> <prompt>
@@ -1441,7 +1441,7 @@ run_agent <- function(opts) {
 
         cat(sprintf("%sQuerying subagent %s...%s\n", color$dim, subagent_id, color$reset))
         tryCatch({
-          result <- llamaR::subagent_query(subagent_id, subagent_prompt)
+          result <- corteza::subagent_query(subagent_id, subagent_prompt)
           cat(sprintf("%s%s%s\n", color$cyan, result, color$reset))
         }, error = function(e) {
           cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
@@ -1451,7 +1451,7 @@ run_agent <- function(opts) {
         # Kill a subagent
         subagent_id <- cmd_parts[2]
         tryCatch({
-          success <- llamaR::subagent_kill(subagent_id)
+          success <- corteza::subagent_kill(subagent_id)
           if (success) {
             cat(sprintf("%sSubagent %s terminated%s\n", color$dim, subagent_id, color$reset))
           } else {
@@ -1464,7 +1464,7 @@ run_agent <- function(opts) {
       } else if (cmd == "/help") {
         cat("
 Commands:
-  /quit, /exit   Exit llamar
+  /quit, /exit   Exit corteza
   /status        Show runtime and session status
   /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
@@ -1506,7 +1506,7 @@ Tool output:
   /outputs       List recent tool outputs
   /help          Show this help
 
-Legacy llamaR memory injection is off by default.
+Legacy corteza memory injection is off by default.
 Use config if you want MEMORY.md or memory logs back in prompt context.
 
 ")
@@ -1531,9 +1531,9 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
     })
 
     # Add user message to session (in-memory) and transcript (disk)
-    session <- llamaR:::session_add_message(session, "user", prompt)
-    llamaR:::transcript_append(session, "user", prompt)
-    llamaR:::session_save(session)
+    session <- corteza:::session_add_message(session, "user", prompt)
+    corteza:::transcript_append(session, "user", prompt)
+    corteza:::session_save(session)
 
     # Send to LLM with tools
     # Check API key (not needed for Ollama)
@@ -1552,17 +1552,17 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
       }
     }
 
-    # Build a per-turn llamaR session so policy gating + observers layer
+    # Build a per-turn corteza session so policy gating + observers layer
     # on top of the existing CLI handler. The CLI still runs its own
     # approval UX inside tool_handler, so we pass an always-approve
     # approval_cb — policy "deny" verdicts still short-circuit (e.g.
     # for ~/.ssh), but "ask" verdicts fall through to the CLI's own
     # ask_approval flow.
-    turn_session <- llamaR::new_session(
+    turn_session <- corteza::new_session(
       channel = "cli",
       provider = provider,
       model_map = list(cloud = model,
-                       local = llamaR::default_local_model()),
+                       local = corteza::default_local_model()),
       system = system_prompt,
       history = api_history,
       approval_cb = function(call, decision) TRUE,
@@ -1583,7 +1583,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
     }
 
     result <- tryCatch({
-      r <- llamaR::turn(
+      r <- corteza::turn(
         prompt = prompt,
         session = turn_session,
         tool_executor = cli_executor,
@@ -1615,8 +1615,8 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
         pct <- (session_tokens / context_limit) * 100
         if (pct >= opts$context_compact_pct && length(session$messages) > 2) {
           # Add current response before compacting so it's included in summary
-          session <- llamaR:::session_add_message(session, "assistant", result$content)
-          llamaR:::transcript_append(session, "assistant", result$content)
+          session <- corteza:::session_add_message(session, "assistant", result$content)
+          corteza:::transcript_append(session, "assistant", result$content)
 
           # Pre-compaction memory flush
           flush_enabled <- config$memory_flush_enabled %||% TRUE
@@ -1661,7 +1661,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
               content <- flush_result$content
               if (!startsWith(trimws(content), "NO_REPLY")) {
                 cat(sprintf("%sMemories flushed.%s\n", color$green, color$reset))
-                system_prompt <- llamaR:::load_context(cwd)
+                system_prompt <- corteza:::load_context(cwd)
               }
             }
 
@@ -1671,7 +1671,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
           compact_result <- do_compact(session, provider, display_model, system_prompt)
           if (!is.null(compact_result)) {
             # Write compaction marker to transcript (full history preserved)
-            llamaR:::transcript_compact(session, compact_result$summary)
+            corteza:::transcript_compact(session, compact_result$summary)
 
             # Update in-memory session to use summary for next API call
             session$messages <- list(
@@ -1680,28 +1680,28 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
             session_tokens <- compact_result$tokens
             session$tokens <- session_tokens
             session$compactions <- (session$compactions %||% 0L) + 1L
-            llamaR:::session_save(session)
+            corteza:::session_save(session)
           } else {
             # Compaction failed, just save metadata
-            llamaR:::session_save(session)
+            corteza:::session_save(session)
           }
         } else {
           # No compaction needed - add assistant response
-          session <- llamaR:::session_add_message(session, "assistant", result$content)
-          llamaR:::transcript_append(session, "assistant", result$content)
-          llamaR:::session_save(session)
+          session <- corteza:::session_add_message(session, "assistant", result$content)
+          corteza:::transcript_append(session, "assistant", result$content)
+          corteza:::session_save(session)
         }
       } else {
         # No usage info - add assistant response
-        session <- llamaR:::session_add_message(session, "assistant", result$content)
-        llamaR:::transcript_append(session, "assistant", result$content)
-        llamaR:::session_save(session)
+        session <- corteza:::session_add_message(session, "assistant", result$content)
+        corteza:::transcript_append(session, "assistant", result$content)
+        corteza:::session_save(session)
       }
     }
   }
 
   # Final save
-  llamaR:::session_save(session)
+  corteza:::session_save(session)
 
   # Cleanup
   cat(sprintf("\n%sGoodbye.%s\n", color$dim, color$reset))

@@ -1,5 +1,5 @@
 # Voice Chat Shiny App
-# Push-to-talk voice interface for llamaR
+# Push-to-talk voice interface for corteza
 
 library(shiny)
 
@@ -90,7 +90,7 @@ ui <- fluidPage(
   ),
 
   div(class = "container-fluid",
-    h1("llamaR Voice"),
+    h1("corteza Voice"),
 
     div(id = "status", "Click and hold to speak"),
 
@@ -201,7 +201,7 @@ server <- function(input, output, session) {
   messages <- reactiveVal(list())
 
   # Load config
-  config <- llamaR:::load_config()
+  config <- corteza:::load_config()
 
   observeEvent(input$audio_data, {
     req(input$audio_data)

@@ -1,7 +1,7 @@
 #' Start MCP Server
 #'
-#' Start the llamaR MCP server. This exposes R tools to MCP clients like
-#' Claude Desktop, VS Code, or the llamar CLI.
+#' Start the corteza MCP server. This exposes R tools to MCP clients like
+#' Claude Desktop, VS Code, or the corteza CLI.
 #'
 #' @param port Port number for socket transport. If NULL, uses stdio transport.
 #' @param cwd Working directory for the server. Defaults to current directory.
@@ -15,7 +15,7 @@
 #' - **stdio** (default): For Claude Desktop and other MCP clients.
 #'   Communication happens via stdin/stdout.
 #'
-#' - **socket**: For the llamar CLI and R clients. Listens on a TCP port.
+#' - **socket**: For the corteza CLI and R clients. Listens on a TCP port.
 #'
 #' ## Tools Provided
 #'
@@ -37,7 +37,7 @@
 #' # For Claude Desktop (stdio)
 #' serve()
 #'
-#' # For llamar CLI (socket) with all tools
+#' # For corteza CLI (socket) with all tools
 #' serve(port = 7850)
 #'
 #' # Minimal tools for small context models
@@ -56,19 +56,19 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL) {
     ensure_skills()
 
     # Load user R skills (.R files)
-    load_skills(path.expand("~/.llamar/skills"))
-    load_skills(file.path(getwd(), ".llamar", "skills"))
+    load_skills(path.expand("~/.corteza/skills"))
+    load_skills(file.path(getwd(), ".corteza", "skills"))
 
     # Load skill docs (SKILL.md files) for context injection
-    load_skill_docs(path.expand("~/.llamar/skills"))
-    load_skill_docs(file.path(getwd(), ".llamar", "skills"))
+    load_skill_docs(path.expand("~/.corteza/skills"))
+    load_skill_docs(file.path(getwd(), ".corteza", "skills"))
 
     # Load skill packages from config
     config <- load_config(getwd())
     load_skill_packages(config)
 
     # Set tool filter option
-    options(llamar.tools = tools)
+    options(corteza.tools = tools)
 
     # Run appropriate transport
     if (!is.null(port)) {

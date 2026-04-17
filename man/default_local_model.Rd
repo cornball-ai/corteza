@@ -9,7 +9,7 @@ default_local_model()
 Character scalar model name, or NULL.
 }
 \description{
-Walks \code{getOption("llamaR.local_models")} (default
+Walks \code{getOption("corteza.local_models")} (default
 \code{c("gpt-oss:120b", "gpt-oss:20b")}) and returns the first one that
 is currently installed in the local Ollama server. Returns NULL if
 Ollama is unreachable or none of the candidates are installed.

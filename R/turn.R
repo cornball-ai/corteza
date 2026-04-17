@@ -24,7 +24,7 @@
 
 #' Detect the preferred local Ollama model
 #'
-#' Walks \code{getOption("llamaR.local_models")} (default
+#' Walks \code{getOption("corteza.local_models")} (default
 #' \code{c("gpt-oss:120b", "gpt-oss:20b")}) and returns the first one that
 #' is currently installed in the local Ollama server. Returns NULL if
 #' Ollama is unreachable or none of the candidates are installed.
@@ -37,7 +37,7 @@ default_local_model <- function() {
         return(.local_model_cache$value)
     }
     candidates <- getOption(
-                            "llamaR.local_models",
+                            "corteza.local_models",
                             c("gpt-oss:120b", "gpt-oss:20b")
     )
     available <- tryCatch(
@@ -87,7 +87,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
-                               "llamaR.model_map",
+                               "corteza.model_map",
                                list(cloud = NULL, local = default_local_model())
         )
     }
@@ -201,7 +201,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(decision$approval, "deny")) {
             return(outcome_text(
                                 "deny",
-                                sprintf("[llamaR policy denied: %s]", decision$reason),
+                                sprintf("[corteza policy denied: %s]", decision$reason),
                                 FALSE
                 ))
         }
@@ -232,7 +232,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # decision is advisory at the turn level; we just pick the session's
 # cloud (or local) default. A future PR can switch mid-turn.
 .resolve_model <- function(session) {
-    session$model_map$cloud %||% getOption("llamaR.model", NULL)
+    session$model_map$cloud %||% getOption("corteza.model", NULL)
 }
 
 # ---- Public entry point ----

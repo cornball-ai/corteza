@@ -15,13 +15,13 @@ handle_request <- function(req) {
                "initialize" = list(
                                    protocolVersion = "2024-11-05",
                                    capabilities = list(tools = list()),
-                                   serverInfo = list(name = "llamar-mcp",
-                    version = as.character(packageVersion("llamaR")))
+                                   serverInfo = list(name = "corteza-mcp",
+                    version = as.character(packageVersion("corteza")))
             ),
 
                "notifications/initialized" = NULL, # No response for notifications
 
-               "tools/list" = list(tools = get_tools(getOption("llamar.tools"))),
+               "tools/list" = list(tools = get_tools(getOption("corteza.tools"))),
 
                "tools/call" = call_tool(params$name, params$arguments),
 

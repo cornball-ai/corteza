@@ -1,7 +1,7 @@
-# Utility functions for llamaR
+# Utility functions for corteza
 # Internal helpers used across the package
 
-#' llamaR: AI Agent Runtime in R
+#' corteza: AI Agent Runtime in R
 #'
 #' @importFrom utils capture.output head installed.packages object.size packageVersion str tail
 #' @importFrom stats setNames

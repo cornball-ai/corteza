@@ -8,7 +8,7 @@ skill_install(source, target_dir = NULL, force = FALSE)
 \arguments{
 \item{source}{Path to skill directory or URL}
 
-\item{target_dir}{Installation directory (default: ~/.llamar/skills)}
+\item{target_dir}{Installation directory (default: ~/.corteza/skills)}
 
 \item{force}{Overwrite if exists}
 }

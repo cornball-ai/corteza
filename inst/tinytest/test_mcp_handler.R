@@ -7,14 +7,14 @@ req <- list(
     method = "initialize",
     params = list()
 )
-resp <- llamaR:::handle_request(req)
+resp <- corteza:::handle_request(req)
 
 expect_equal(resp$jsonrpc, "2.0")
 expect_equal(resp$id, 1)
 expect_true("result" %in% names(resp))
 expect_true("protocolVersion" %in% names(resp$result))
 expect_true("serverInfo" %in% names(resp$result))
-expect_equal(resp$result$serverInfo$name, "llamar-mcp")
+expect_equal(resp$result$serverInfo$name, "corteza-mcp")
 
 # Test handle_request for tools/list
 req <- list(
@@ -23,7 +23,7 @@ req <- list(
     method = "tools/list",
     params = list()
 )
-resp <- llamaR:::handle_request(req)
+resp <- corteza:::handle_request(req)
 
 expect_equal(resp$id, 2)
 expect_true("tools" %in% names(resp$result))
@@ -39,7 +39,7 @@ req <- list(
         arguments = list(code = "2 + 2")
     )
 )
-resp <- llamaR:::handle_request(req)
+resp <- corteza:::handle_request(req)
 
 expect_equal(resp$id, 3)
 expect_true("content" %in% names(resp$result))
@@ -52,7 +52,7 @@ req <- list(
     method = "unknown/method",
     params = list()
 )
-resp <- llamaR:::handle_request(req)
+resp <- corteza:::handle_request(req)
 
 expect_true("error" %in% names(resp))
 expect_equal(resp$error$code, - 32601)
@@ -63,6 +63,6 @@ req <- list(
     method = "notifications/initialized",
     params = list()
 )
-resp <- llamaR:::handle_request(req)
+resp <- corteza:::handle_request(req)
 expect_null(resp)
 
