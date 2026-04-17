@@ -147,13 +147,153 @@ matrix_default_system <- function(cfg) {
     sprintf("You are %s, a helpful assistant for %s.", cfg$user_id, cfg$user)
 }
 
-# Build the approval callback for the Matrix channel. Until the thumbs-up
-# reaction protocol lands (PR F), the only options are auto-approve or
-# auto-decline. Policy handles the hard cases (personal paths already
-# deny outright on matrix); this callback only fires for "ask" verdicts.
+# Build the approval callback for the Matrix channel. Fires only for
+# "ask" verdicts from policy (personal+anything-on-matrix is already
+# "deny" in the default tensor). Two modes:
+#   auto_approve_asks = TRUE  -> always approve (trusted tailnet use)
+#   auto_approve_asks = FALSE -> post an approval prompt to the room,
+#                                wait for a thumbs-up / thumbs-down
+#                                reaction from a user other than the
+#                                bot itself, return TRUE / FALSE.
+# Timeout defaults to 60 seconds; configurable via
+# cfg$approval_timeout_sec or options("llamaR.matrix_approval_timeout").
 matrix_approval_cb <- function(cfg) {
     auto <- isTRUE(cfg$auto_approve_asks)
-    function(call, decision) auto
+    function(call, decision) {
+        if (auto) {
+            return(TRUE)
+        }
+        matrix_reaction_approval(cfg, call, decision)
+    }
+}
+
+# Blocking reaction-based approval. Returns TRUE / FALSE. Never errors
+# for run-time issues (network blip, user declines, timeout) — those
+# all fall through to FALSE so the LLM sees a clean "declined" string.
+matrix_reaction_approval <- function(cfg, call, decision, timeout_sec = NULL) {
+    if (is.null(timeout_sec)) {
+        timeout_sec <- cfg$approval_timeout_sec %||%
+        getOption("llamaR.matrix_approval_timeout", 60L)
+    }
+    timeout_sec <- as.integer(timeout_sec)
+
+    mx_sess <- matrix_mx_session(cfg)
+    msg <- matrix_approval_prompt(call, decision, timeout_sec)
+
+    eid <- tryCatch(
+                    mx.api::mx_send(mx_sess, cfg$room_id, msg),
+                    error = function(e) NULL
+    )
+    if (is.null(eid)) {
+        return(FALSE)
+    }
+
+    # Add our own 👍 and 👎 reactions so the user can tap either one
+    # instead of typing the emoji. (mx_react errors are best-effort.)
+    tryCatch(mx.api::mx_react(mx_sess, cfg$room_id, eid, "\U0001F44D"),
+             error = function(e) NULL)
+    tryCatch(mx.api::mx_react(mx_sess, cfg$room_id, eid, "\U0001F44E"),
+             error = function(e) NULL)
+
+    baseline <- tryCatch(
+                         mx.api::mx_sync(mx_sess, timeout = 0L),
+                         error = function(e) NULL
+    )
+    if (is.null(baseline)) {
+        return(FALSE)
+    }
+    since <- baseline$next_batch
+
+    deadline <- Sys.time() + timeout_sec
+    while (Sys.time() < deadline) {
+        remaining_ms <- max(
+                            as.integer((as.numeric(deadline) - as.numeric(Sys.time())) * 1000),
+                            1L
+        )
+        sync <- tryCatch(
+                         mx.api::mx_sync(mx_sess, since = since,
+                timeout = min(remaining_ms, 30000L)),
+                         error = function(e) NULL
+        )
+        if (is.null(sync)) {
+            return(FALSE)
+        }
+        since <- sync$next_batch
+
+        verdict <- matrix_extract_reaction_verdict(
+            sync, cfg$room_id, cfg$user_id, eid
+        )
+        if (!is.null(verdict)) {
+            return(verdict)
+        }
+    }
+    FALSE
+}
+
+# Render a short readable approval prompt.
+matrix_approval_prompt <- function(call, decision, timeout_sec) {
+    args <- call$args %||% list()
+    args_str <- if (length(args)) {
+        paste(
+              mapply(function(k, v) {
+            s <- as.character(v)[1L] %||% ""
+            if (nchar(s) > 60L) s <- paste0(substr(s, 1L, 57L), "...")
+            sprintf("%s=%s", k, s)
+        }, names(args), args, USE.NAMES = FALSE),
+              collapse = ", "
+        )
+    } else {
+        ""
+    }
+    sprintf(
+            "Approval needed: %s(%s)\nReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
+            call$tool, args_str, decision$reason %||% "ask", timeout_sec
+    )
+}
+
+# Scan a sync response's timeline for a reaction on event_id from a
+# user other than the bot. Returns TRUE (👍), FALSE (👎), or NULL (no
+# verdict yet).
+matrix_extract_reaction_verdict <- function(sync_resp, room_id, self_id,
+    target_event_id) {
+    room <- sync_resp$rooms$join[[room_id]]
+    if (is.null(room)) {
+        return(NULL)
+    }
+    events <- room$timeline$events
+    if (!length(events)) {
+        return(NULL)
+    }
+
+    approve_keys <- c("\U0001F44D", "\U00002705", "y", "yes", "ok")
+    deny_keys <- c("\U0001F44E", "\U0000274C", "n", "no", "nope")
+
+    for (ev in events) {
+        if (!isTRUE(ev$type == "m.reaction")) {
+            next
+        }
+        if (isTRUE(ev$sender == self_id)) {
+            next
+        }
+        rel <- ev$content$`m.relates_to`
+        if (!is.list(rel)) {
+            next
+        }
+        if (!identical(rel$event_id, target_event_id)) {
+            next
+        }
+        key <- rel$key
+        if (!is.character(key) || !length(key)) {
+            next
+        }
+        if (key %in% approve_keys) {
+            return(TRUE)
+        }
+        if (key %in% deny_keys) {
+            return(FALSE)
+        }
+    }
+    NULL
 }
 
 # Build a fresh llamaR session from a Matrix config. Does not fetch any
