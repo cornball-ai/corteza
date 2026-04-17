@@ -6,12 +6,13 @@ Authors@R: c(
            email = "troy@cornball.ai",
            comment = c(ORCID = "0009-0005-4248-604X")),
     person("cornball.ai", role = "cph"))
-Description: An AI agent runtime that gives LLMs (Anthropic, OpenAI,
-    Moonshot, Ollama) direct access to a live R session with managed
-    workspace state. Tools execute as R function calls with provenance
-    tracking, and a deterministic retrieval system keeps relevant objects
-    in context across turns. Three entry points: a shell CLI (corteza),
-    a console REPL (chat()), and an MCP server (serve()) for external
+Description: An agent runtime that gives Large Language Models (LLMs)
+    from 'Anthropic', 'OpenAI', 'Moonshot', and 'Ollama' direct access to
+    a live R session with managed workspace state. Tools execute as R
+    function calls with provenance tracking, and a deterministic retrieval
+    system keeps relevant objects in context across turns. Three entry
+    points: a shell CLI ('corteza'), a console REPL ('chat()'), and a
+    Model Context Protocol ('MCP') server ('serve()') for external
     clients.
 License: MIT + file LICENSE
 URL: https://github.com/cornball-ai/corteza

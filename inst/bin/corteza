@@ -115,8 +115,8 @@ Legacy corteza memory injection is disabled by default.
 Use config to opt back into MEMORY.md or daily memory logs.
 
 Config files:
-  ~/.corteza/config.json        Global defaults
-  .corteza/config.json          Project overrides
+  tools::R_user_dir('corteza', 'config')/config.json   Global defaults
+  .corteza/config.json                                 Project overrides
 
 ")
       quit(save = "no", status = 0)
@@ -827,7 +827,7 @@ run_agent <- function(opts) {
               color$dim, length(conn$tools), color$reset))
 
   # Load skill docs (SKILL.md files)
-  corteza:::load_skill_docs(path.expand("~/.corteza/skills"))
+  corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
   corteza:::load_skill_docs(file.path(cwd, ".corteza", "skills"))
   skill_docs <- corteza:::list_skill_docs()
 
@@ -1364,8 +1364,8 @@ run_agent <- function(opts) {
             name <- corteza::skill_install(source, force = force)
             cat(sprintf("%sInstalled skill: %s%s\n", color$green, name, color$reset))
             # Reload skills
-            corteza:::load_skill_docs(path.expand("~/.corteza/skills"))
-            corteza:::load_skills(path.expand("~/.corteza/skills"))
+            corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
+            corteza:::load_skills(corteza:::corteza_data_path("skills"))
           }, error = function(e) {
             cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
           })

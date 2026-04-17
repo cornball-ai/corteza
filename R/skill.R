@@ -743,13 +743,14 @@ validate_skill_package <- function(path) {
 #' Install a skill from a path or URL
 #'
 #' @param source Path to skill directory or URL
-#' @param target_dir Installation directory (default: ~/.corteza/skills)
+#' @param target_dir Installation directory. Default is
+#'   \code{tools::R_user_dir("corteza", "data")/skills}.
 #' @param force Overwrite if exists
 #' @return Installed skill name
 #' @export
 skill_install <- function(source, target_dir = NULL, force = FALSE) {
     if (is.null(target_dir)) {
-        target_dir <- file.path(get_workspace_dir(), "..", "skills")
+        target_dir <- corteza_data_path("skills")
     }
     target_dir <- path.expand(target_dir)
     dir.create(target_dir, recursive = TRUE, showWarnings = FALSE)

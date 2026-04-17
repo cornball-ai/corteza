@@ -2,8 +2,9 @@
 # Full compatibility with openclaw session format
 #
 # Storage format (matches openclaw / pi-coding-agent):
-#   ~/.corteza/agents/main/sessions/sessions.json  - Session metadata store
-#   ~/.corteza/agents/main/sessions/{id}.jsonl     - Transcript per session
+#   <data_dir>/agents/main/sessions/sessions.json  - Session metadata store
+#   <data_dir>/agents/main/sessions/{id}.jsonl     - Transcript per session
+# where <data_dir> is tools::R_user_dir("corteza", "data").
 #
 # JSONL transcript format:
 #   Line 1: {"type":"session","version":2,"id":"...","timestamp":"...","cwd":"..."}
@@ -18,7 +19,7 @@ DEFAULT_AGENT_ID <- "main"
 #' @return Path to sessions directory
 #' @noRd
 sessions_dir <- function(agent_id = DEFAULT_AGENT_ID) {
-    file.path(path.expand("~/.corteza"), "agents", agent_id, "sessions")
+    corteza_data_path("agents", agent_id, "sessions")
 }
 
 #' Get path to sessions store (metadata for all sessions)

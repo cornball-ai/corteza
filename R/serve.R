@@ -56,11 +56,11 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL) {
     ensure_skills()
 
     # Load user R skills (.R files)
-    load_skills(path.expand("~/.corteza/skills"))
+    load_skills(corteza_data_path("skills"))
     load_skills(file.path(getwd(), ".corteza", "skills"))
 
     # Load skill docs (SKILL.md files) for context injection
-    load_skill_docs(path.expand("~/.corteza/skills"))
+    load_skill_docs(corteza_data_path("skills"))
     load_skill_docs(file.path(getwd(), ".corteza", "skills"))
 
     # Load skill packages from config

@@ -405,6 +405,18 @@ tool_run_r_script <- function(args) {
 }
 
 tool_bash <- function(args) {
+    tool_shell_impl(args, "bash")
+}
+
+tool_cmd <- function(args) {
+    tool_shell_impl(args, "cmd")
+}
+
+# Unified shell handler. shell_name is "bash" (Unix) or "cmd" (Windows)
+# and determines the invocation convention. Keeps bash/cmd tools at the
+# LLM level as two differently-named skills so the model can use the
+# syntax native to the host OS.
+tool_shell_impl <- function(args, shell_name) {
     cmd <- args$command
     timeout <- args$timeout %||% 30
     background <- isTRUE(args$background)
@@ -414,19 +426,34 @@ tool_bash <- function(args) {
         return(err(command_check$message))
     }
 
+    exe_args <- switch(
+                       shell_name,
+                       bash = c("-lc", cmd),
+                       cmd = c("/c", cmd),
+                       stop(sprintf("Unknown shell %s", shell_name), call. = FALSE)
+    )
+
     if (background) {
-        proc <- processx::process$new("bash", c("-lc", cmd),
-                                      stdout = "|", stderr = "|",
-                                      cleanup_tree = TRUE)
+        proc <- processx::process$new(
+                                      shell_name, exe_args,
+                                      stdout = "|", stderr = "|", cleanup_tree = TRUE
+        )
         id <- bg_register(cmd, proc)
-        return(ok(sprintf("Started background process [%s] (pid %d)\nCheck with: bg_status tool",
-                          id, proc$get_pid())))
+        return(ok(sprintf(
+                          "Started background process [%s] (pid %d)\nCheck with: bg_status tool",
+                          id, proc$get_pid()
+                )))
     }
 
+    # Windows cmd.exe does not need shQuote and doesn't understand -lc.
+    exe_args_fg <- switch(
+                          shell_name,
+                          bash = c("-lc", shQuote(cmd)),
+                          cmd = c("/c", cmd)
+    )
+
     result <- tryCatch({
-        # system2() does not preserve spaces inside the -c command string
-        # unless we quote it ourselves on Unix.
-        out <- system2("bash", c("-lc", shQuote(cmd)), stdout = TRUE,
+        out <- system2(shell_name, exe_args_fg, stdout = TRUE,
                        stderr = TRUE, timeout = timeout)
         paste(out, collapse = "\n")
     }, error = function(e) {
@@ -874,20 +901,40 @@ register_builtin_skills <- function() {
                               handler = function(args, ctx) tool_run_r_script(args)
         ))
 
-    register_skill(skill_spec(
-                              name = "bash",
-                              description = "Run a shell command. Use background=true for long-running servers or processes.",
-                              params = list(
-                command = list(type = "string",
-                               description = "Shell command to execute",
-                               required = TRUE),
-                timeout = list(type = "integer",
-                               description = "Timeout in seconds (default: 30)"),
-                background = list(type = "boolean",
-                                  description = "Run in background and return immediately (default: false)")
-            ),
-                              handler = function(args, ctx) tool_bash(args)
-        ))
+    # Shell tool: bash on Unix, cmd on Windows. Same params, same
+    # background semantics; the LLM sees the native shell name so it
+    # writes syntax appropriate to the host OS.
+    if (.Platform$OS.type == "windows") {
+        register_skill(skill_spec(
+                                  name = "cmd",
+                                  description = "Run a Windows cmd.exe command. Use background=true for long-running processes.",
+                                  params = list(
+                    command = list(type = "string",
+                                   description = "cmd.exe command to execute",
+                                   required = TRUE),
+                    timeout = list(type = "integer",
+                                   description = "Timeout in seconds (default: 30)"),
+                    background = list(type = "boolean",
+                                      description = "Run in background and return immediately (default: false)")
+                ),
+                                  handler = function(args, ctx) tool_cmd(args)
+            ))
+    } else {
+        register_skill(skill_spec(
+                                  name = "bash",
+                                  description = "Run a bash shell command. Use background=true for long-running servers or processes.",
+                                  params = list(
+                    command = list(type = "string",
+                                   description = "Shell command to execute",
+                                   required = TRUE),
+                    timeout = list(type = "integer",
+                                   description = "Timeout in seconds (default: 30)"),
+                    background = list(type = "boolean",
+                                      description = "Run in background and return immediately (default: false)")
+                ),
+                                  handler = function(args, ctx) tool_bash(args)
+            ))
+    }
 
     # Background process management
     register_skill(skill_spec(

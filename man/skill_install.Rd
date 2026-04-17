@@ -8,7 +8,8 @@ skill_install(source, target_dir = NULL, force = FALSE)
 \arguments{
 \item{source}{Path to skill directory or URL}
 
-\item{target_dir}{Installation directory (default: ~/.corteza/skills)}
+\item{target_dir}{Installation directory. Default is
+\code{tools::R_user_dir("corteza", "data")/skills}.}
 
 \item{force}{Overwrite if exists}
 }

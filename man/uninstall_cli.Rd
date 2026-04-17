@@ -3,16 +3,18 @@
 \alias{uninstall_cli}
 \title{Uninstall corteza CLI}
 \usage{
-uninstall_cli(path = "~/bin")
+uninstall_cli(path = NULL)
 }
 \arguments{
-\item{path}{Directory where corteza is installed. Defaults to `~/bin`.}
+\item{path}{Directory where corteza is installed. Default matches
+\code{install_cli()}: \code{~/bin} on Unix,
+\code{tools::R_user_dir("corteza", "data")/bin} on Windows.}
 }
 \value{
-TRUE if removed, FALSE if not found (invisibly).
+TRUE if removed, FALSE if not found, invisibly.
 }
 \description{
-Remove the `corteza` command-line tool.
+Remove the \code{corteza} command-line tool.
 }
 \examples{
 \dontrun{
