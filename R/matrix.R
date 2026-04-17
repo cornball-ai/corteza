@@ -186,29 +186,89 @@ matrix_extract_invites <- function(sync_resp) {
     names(invited)
 }
 
-matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL) {
+matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
+                                  cwd = NULL, description = NULL,
+                                  room_name = NULL) {
     base <- sprintf("You are %s, a helpful assistant for %s.",
                     cfg$user_id, cfg$user)
-    if (is.null(room_id) || is.null(mx_sess)) {
-        return(base)
-    }
+    parts <- base
 
-    name <- tryCatch(mx.api::mx_room_name(mx_sess, room_id),
-                     error = function(e) NULL)
-    topic <- tryCatch(mx.api::mx_room_topic(mx_sess, room_id),
-                      error = function(e) NULL)
-    if (is.null(name) && is.null(topic)) {
-        return(base)
+    if (!is.null(cwd) && nzchar(cwd)) {
+        parts <- c(parts,
+                   sprintf("Working directory: %s", cwd),
+                   "Use this as your scope unless the user asks for something else.")
     }
-
-    parts <- c(base, "\nYou are talking in this room:")
-    if (!is.null(name)) {
-        parts <- c(parts, sprintf("  Name: %s", name))
+    if (!is.null(room_name) && nzchar(room_name)) {
+        parts <- c(parts, sprintf("Room: %s", room_name))
     }
-    if (!is.null(topic)) {
-        parts <- c(parts, sprintf("  Topic: %s", topic))
+    if (!is.null(description) && nzchar(description)) {
+        parts <- c(parts, sprintf("Topic: %s", description))
     }
     paste(parts, collapse = "\n")
+}
+
+# Agent name for path-building. "@cornelius:cornball.ai" -> "Cornelius".
+matrix_agent_name <- function(cfg) {
+    local <- sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
+    if (!nzchar(local)) {
+        return("agent")
+    }
+    paste0(toupper(substr(local, 1L, 1L)), substr(local, 2L, nchar(local)))
+}
+
+# Default agent workspace: ~/<Name>. Created on first use.
+matrix_default_cwd <- function(cfg) {
+    dir <- path.expand(file.path("~", matrix_agent_name(cfg)))
+    dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+    dir
+}
+
+# Parse a topic string into its cwd + description parts. The
+# convention is "<path> | <description>" where <path> starts with
+# "~/", "/", or "./". A leading segment that does not look like a
+# path is treated as pure description (cwd = NULL).
+matrix_parse_topic <- function(topic) {
+    if (is.null(topic)) {
+        return(list(cwd = NULL, description = NULL))
+    }
+    topic <- trimws(topic)
+    if (!nzchar(topic)) {
+        return(list(cwd = NULL, description = NULL))
+    }
+
+    parts <- strsplit(topic, "\\s*\\|\\s*", perl = TRUE)[[1]]
+    if (length(parts) >= 2L && grepl("^(~/|/|\\./)", parts[1L])) {
+        list(cwd = parts[1L], description = paste(parts[-1L], collapse = " | "))
+    } else {
+        list(cwd = NULL, description = topic)
+    }
+}
+
+# Effective cwd for a room: topic-supplied path if present and valid,
+# otherwise the agent's default workspace. Never returns a non-
+# existent directory.
+matrix_room_cwd <- function(cfg, room_id, mx_sess = NULL) {
+    default_dir <- matrix_default_cwd(cfg)
+    if (is.null(room_id) || is.null(mx_sess)) {
+        return(default_dir)
+    }
+
+    topic <- tryCatch(mx.api::mx_room_topic(mx_sess, room_id),
+                      error = function(e) NULL)
+    parsed <- matrix_parse_topic(topic)
+    if (is.null(parsed$cwd)) {
+        return(default_dir)
+    }
+
+    candidate <- path.expand(parsed$cwd)
+    if (!dir.exists(candidate)) {
+        message(sprintf(
+                        "matrix: topic cwd %s does not exist; falling back to %s",
+                        candidate, default_dir
+            ))
+        return(default_dir)
+    }
+    candidate
 }
 
 # Build the approval callback for the Matrix channel. Fires only for
@@ -372,11 +432,6 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     if (is.null(room_id)) {
         room_id <- cfg$room_id
     }
-    if (is.null(system)) {
-        mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
-        system <- matrix_default_system(cfg, room_id = room_id,
-                                        mx_sess = mx_sess)
-    }
     if (is.null(model)) {
         model <- cfg$model
     }
@@ -386,15 +441,38 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     if (is.null(tools_filter)) {
         tools_filter <- cfg$tools_filter
     }
-    # JSON round-tripping can turn a NULL tools_filter into list(). Treat
-    # anything empty as NULL so the session gets all registered tools.
     if (length(tools_filter) == 0L) {
         tools_filter <- NULL
     }
 
+    mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
+    room_cwd <- matrix_room_cwd(cfg, room_id, mx_sess)
+
+    if (is.null(system)) {
+        room_name <- if (!is.null(mx_sess) && !is.null(room_id)) {
+            tryCatch(mx.api::mx_room_name(mx_sess, room_id),
+                     error = function(e) NULL)
+        } else {
+            NULL
+        }
+        topic_raw <- if (!is.null(mx_sess) && !is.null(room_id)) {
+            tryCatch(mx.api::mx_room_topic(mx_sess, room_id),
+                     error = function(e) NULL)
+        } else {
+            NULL
+        }
+        parsed <- matrix_parse_topic(topic_raw)
+        system <- matrix_default_system(
+                                        cfg,
+                                        cwd = room_cwd,
+                                        description = parsed$description,
+                                        room_name = room_name
+        )
+    }
+
     s <- session_setup(
                        channel = "matrix",
-                       cwd = getwd(),
+                       cwd = room_cwd,
                        provider = provider %||% "anthropic",
                        model = model,
                        tools = tools_filter,
@@ -405,6 +483,7 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
                        verbose = FALSE
     )
     s$room_id <- room_id
+    s$cwd <- room_cwd
     s
 }
 
@@ -553,11 +632,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             next
         }
 
-        reply <- tryCatch(
-                          turn(m$body, session)$reply,
-                          error = function(e) sprintf("(agent error: %s)",
-                conditionMessage(e))
-        )
+        reply <- matrix_run_turn_in_cwd(m$body, session)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
@@ -565,6 +640,25 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         replied <- replied + 1L
     }
     invisible(replied)
+}
+
+# Run one turn with R's process-wide getwd() pointed at the session's
+# configured workspace. Always restores the original cwd, even if
+# turn() errors. Matrix tool calls (bash, run_r) use getwd() for
+# relative paths, so this is what actually makes the room's cwd take
+# effect.
+matrix_run_turn_in_cwd <- function(prompt, session) {
+    target <- session$cwd
+    orig_wd <- getwd()
+    if (!is.null(target) && nzchar(target) && dir.exists(target)) {
+        tryCatch(setwd(target), error = function(e) NULL)
+    }
+    on.exit(tryCatch(setwd(orig_wd), error = function(e) NULL), add = TRUE)
+
+    tryCatch(
+             turn(prompt, session)$reply,
+             error = function(e) sprintf("(agent error: %s)", conditionMessage(e))
+    )
 }
 
 #' Run the Matrix adapter as a long-poll loop
