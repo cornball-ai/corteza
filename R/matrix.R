@@ -156,8 +156,29 @@ matrix_extract_invites <- function(sync_resp) {
     names(invited)
 }
 
-matrix_default_system <- function(cfg) {
-    sprintf("You are %s, a helpful assistant for %s.", cfg$user_id, cfg$user)
+matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL) {
+    base <- sprintf("You are %s, a helpful assistant for %s.",
+                    cfg$user_id, cfg$user)
+    if (is.null(room_id) || is.null(mx_sess)) {
+        return(base)
+    }
+
+    name <- tryCatch(mx.api::mx_room_name(mx_sess, room_id),
+                     error = function(e) NULL)
+    topic <- tryCatch(mx.api::mx_room_topic(mx_sess, room_id),
+                      error = function(e) NULL)
+    if (is.null(name) && is.null(topic)) {
+        return(base)
+    }
+
+    parts <- c(base, "\nYou are talking in this room:")
+    if (!is.null(name)) {
+        parts <- c(parts, sprintf("  Name: %s", name))
+    }
+    if (!is.null(topic)) {
+        parts <- c(parts, sprintf("  Topic: %s", topic))
+    }
+    paste(parts, collapse = "\n")
 }
 
 # Build the approval callback for the Matrix channel. Fires only for
@@ -318,8 +339,13 @@ matrix_extract_reaction_verdict <- function(sync_resp, room_id, self_id,
 matrix_new_session <- function(cfg, system = NULL, model = NULL,
                                provider = NULL, tools_filter = NULL,
                                room_id = NULL) {
+    if (is.null(room_id)) {
+        room_id <- cfg$room_id
+    }
     if (is.null(system)) {
-        system <- matrix_default_system(cfg)
+        mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
+        system <- matrix_default_system(cfg, room_id = room_id,
+                                        mx_sess = mx_sess)
     }
     if (is.null(model)) {
         model <- cfg$model
@@ -329,9 +355,6 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     }
     if (is.null(tools_filter)) {
         tools_filter <- cfg$tools_filter
-    }
-    if (is.null(room_id)) {
-        room_id <- cfg$room_id
     }
     # JSON round-tripping can turn a NULL tools_filter into list(). Treat
     # anything empty as NULL so the session gets all registered tools.
@@ -464,6 +487,13 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     }
 
     for (m in msgs) {
+        # Post a read receipt before running the agent so the user sees
+        # "seen by <bot>" update immediately, not after the reply is
+        # composed. Best-effort — failures don't block the turn.
+        tryCatch(
+                 mx.api::mx_read_receipt(mx_sess, m$room_id, m$event_id),
+                 error = function(e) NULL
+        )
         session <- matrix_get_or_create_session(
             sessions, m$room_id, cfg,
             system = system, model = model,
@@ -501,6 +531,27 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
                        provider = NULL, tools_filter = NULL) {
     matrix_require_mx()
     sessions <- matrix_new_session_registry()
+
+    # Catch up on pending invites that predate the saved sync token.
+    # Conduit (and some other Matrix servers) only surfaces invites
+    # that arrived after the `since` token, so if the bot was offline
+    # when an invite was issued, the long-poll loop will never see it.
+    # A full (no-since) sync on startup grabs current invite state.
+    cfg <- tryCatch(matrix_load_config(), error = function(e) NULL)
+    if (!is.null(cfg)) {
+        mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
+        if (!is.null(mx_sess)) {
+            initial <- tryCatch(
+                                mx.api::mx_sync(mx_sess, timeout = 0L),
+                                error = function(e) NULL
+            )
+            invites <- matrix_extract_invites(initial)
+            if (length(invites)) {
+                matrix_accept_invites(mx_sess, invites)
+            }
+        }
+    }
+
     message("matrix_run: starting long-poll loop")
     repeat {
         matrix_poll(
