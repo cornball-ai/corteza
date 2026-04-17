@@ -16,6 +16,46 @@
 #   max_turns      integer, max LLM turns per call
 #   verbose        logical
 
+# ---- Local model detection ----
+
+# Cache the detected local model for the process lifetime so new_session
+# doesn't hit the Ollama API on every call.
+.local_model_cache <- new.env(parent = emptyenv())
+
+#' Detect the preferred local Ollama model
+#'
+#' Walks \code{getOption("llamaR.local_models")} (default
+#' \code{c("gpt-oss:120b", "gpt-oss:20b")}) and returns the first one that
+#' is currently installed in the local Ollama server. Returns NULL if
+#' Ollama is unreachable or none of the candidates are installed.
+#' Cached per R process.
+#'
+#' @return Character scalar model name, or NULL.
+#' @export
+default_local_model <- function() {
+    if (isTRUE(.local_model_cache$initialized)) {
+        return(.local_model_cache$value)
+    }
+    candidates <- getOption(
+                            "llamaR.local_models",
+                            c("gpt-oss:120b", "gpt-oss:20b")
+    )
+    available <- tryCatch(
+                          llm.api::list_ollama_models()$name,
+                          error = function(e) character()
+    )
+    pick <- NULL
+    for (m in candidates) {
+        if (m %in% available) {
+            pick <- m
+            break
+        }
+    }
+    .local_model_cache$value <- pick
+    .local_model_cache$initialized <- TRUE
+    pick
+}
+
 # ---- Session construction ----
 
 #' Create a new turn session
@@ -48,7 +88,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     if (is.null(model_map)) {
         model_map <- getOption(
                                "llamaR.model_map",
-                               list(cloud = NULL, local = NULL)
+                               list(cloud = NULL, local = default_local_model())
         )
     }
     if (is.null(approval_cb)) {
