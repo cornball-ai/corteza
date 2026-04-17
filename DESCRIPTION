@@ -14,8 +14,8 @@ Description: An AI agent runtime that gives LLMs (Anthropic, OpenAI,
     a console REPL (chat()), and an MCP server (serve()) for external
     clients.
 License: MIT + file LICENSE
-URL: https://github.com/cornball-ai/llamaR
-BugReports: https://github.com/cornball-ai/llamaR/issues
+URL: https://github.com/cornball-ai/corteza
+BugReports: https://github.com/cornball-ai/corteza/issues
 Depends:
     R (>= 4.4.0)
 Imports:
