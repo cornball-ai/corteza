@@ -4,7 +4,7 @@
 \title{One iteration of sync-and-reply}
 \usage{
 matrix_poll(system = NULL, model = NULL, provider = NULL, tools_filter = NULL,
-            timeout = 0L, session = NULL)
+            timeout = 0L, sessions = NULL)
 }
 \arguments{
 \item{system}{Character or NULL. System prompt override.}
@@ -18,17 +18,21 @@ matrix_poll(system = NULL, model = NULL, provider = NULL, tools_filter = NULL,
 \item{timeout}{Integer. Long-poll timeout in milliseconds. 0 returns
 immediately.}
 
-\item{session}{Session environment from \code{matrix_new_session}, or
-NULL to build a fresh session each call.}
+\item{sessions}{Environment from \code{matrix_new_session_registry()}
+keyed by room_id, or NULL to build fresh sessions each call.}
 }
 \value{
 An integer count of messages replied to, invisibly.
 }
 \description{
-Fetches new messages from the configured room and runs \code{\link{turn}}
-against each. On first run there is no saved sync token, so this call
-establishes a baseline and returns without processing any history.
-Pass \code{session = NULL} (the default) for a stateless one-shot that
-cron can invoke. Pass a session created by \code{matrix_new_session} to
-accumulate conversation history across polls within one process.
+Fetches new messages across all joined rooms and runs \code{\link{turn}}
+against each. Auto-joins any pending invites the bot has received.
+Replies are sent back to the originating room. On first run there is
+no saved sync token, so this call establishes a baseline and returns
+without processing history.
+Pass \code{sessions = NULL} (the default) for a stateless one-shot —
+each incoming message builds a fresh session. Pass a registry created
+by \code{matrix_new_session_registry()} so a long-running
+\code{matrix_run} keeps a separate history per room (conversations
+in different rooms don't cross-contaminate).
 }
