@@ -180,177 +180,71 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         stop("chat() requires an interactive R session", call. = FALSE)
     }
 
-    # Shared pre-session setup: config, provider, API key, skills,
-    # system prompt. Returns a new_session() env we'll use to drive
-    # the REPL below.
     cwd <- getwd()
+
+    # Resume / create the on-disk session record so we can persist the
+    # transcript and workspace between R sessions.
+    session_arg <- session
+    disk_session <- resolve_disk_session(session_arg, provider, model, cwd)
+    history <- disk_session$history %||% list()
+    resumed_count <- length(history)
+
+    # Shared pre-session setup: config, provider, API key, skills,
+    # system prompt.
     turn_session <- session_setup(
                                   channel = "console",
                                   cwd = cwd,
                                   provider = provider,
                                   model = model,
                                   tools = tools,
+                                  history = history,
                                   load_project_context = TRUE,
-                                  validate_api_key = TRUE
+                                  validate_api_key = TRUE,
+                                  approval_cb = chat_approval_cb
     )
     config <- turn_session$config
     provider <- turn_session$provider
     model <- turn_session$model_map$cloud
 
-    # Ollama-specific: check the model actually exists before the loop.
     validate_model(provider, model)
 
-    system_prompt <- turn_session$system
-    api_tools <- skills_as_api_tools(tools)
-    tools_json <- tryCatch(
-                           jsonlite::toJSON(api_tools, auto_unbox = TRUE),
-                           error = function(e) ""
-    )
+    # Attach on-disk session metadata so observers can trace.
+    turn_session$sessionId <- disk_session$sessionId
+    turn_session$disk_session <- disk_session$session
 
-    # Display model
-    display_model <- model %||% switch(provider,
-                                       anthropic = "claude-sonnet-4-20250514",
-                                       openai = "gpt-4o",
-                                       moonshot = "kimi-k2",
-                                       ollama = "llama3.2",
-                                       "(default)"
-    )
-
-    # Workspace config
+    # Workspace setup (session-scoped, resumed from disk when appropriate)
     ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
+    chat_workspace_init(disk_session, ws_enabled, config)
 
-    # Session resume/create + workspace init
-    session_arg <- session
-    if (is.character(session_arg)) {
-        # Resume by session key
-        resumed <- session_load(session_arg)
-        if (!is.null(resumed)) {
-            ws_load(resumed$sessionId)
-            session <- resumed
-            history <- lapply(resumed$messages, function(m) {
-                text <- if (is.list(m$content) && length(m$content) > 0 &&
-                              !is.null(m$content[[1]]$text)) {
-                    m$content[[1]]$text
-                } else {
-                    as.character(m$content)
-                }
-                list(role = m$role, content = text)
-            })
-            cat(sprintf("Resumed session (%d messages)\n",
-                        length(resumed$messages)))
-        } else {
-            ws_clear()
-            session <- session_new(provider, model, cwd,
-                                   session_key = session_arg)
-            history <- list()
-        }
-    } else if (isTRUE(session_arg)) {
-        # Resume latest session
-        latest <- session_latest()
-        if (!is.null(latest)) {
-            ws_load(latest$sessionId)
-            session <- latest
-            history <- lapply(latest$messages, function(m) {
-                text <- if (is.list(m$content) && length(m$content) > 0 &&
-                              !is.null(m$content[[1]]$text)) {
-                    m$content[[1]]$text
-                } else {
-                    as.character(m$content)
-                }
-                list(role = m$role, content = text)
-            })
-            cat(sprintf("Resumed latest session (%d messages)\n",
-                        length(latest$messages)))
-        } else {
-            ws_clear()
-            session <- session_new(provider, model, cwd)
-            history <- list()
-        }
-    } else {
-        # New session
-        ws_clear()
-        session <- session_new(provider, model, cwd)
-        history <- list()
+    # Register observers: progress printer + trace row per tool call.
+    add_observer(turn_session, observer_progress())
+    add_observer(turn_session, chat_trace_observer(turn_session))
 
-        # Scan globalenv for existing objects
-        if (ws_enabled && isTRUE(config$workspace$scan_globalenv %||% TRUE)) {
-            scan_limit <- config$workspace$scan_max_bytes %||% 50e6
-            registered <- ws_scan_globalenv(max_bytes = scan_limit)
-            if (length(registered) > 0) {
-                cat(sprintf("Workspace: registered %d objects from R session\n",
-                            length(registered)))
-            }
-        }
-    }
-
-    # Initialize context engine and heartbeat
-    ce_init(cwd, config)
-    hb_init(config)
-
-    # If resuming, rebuild conversation index from history
-    if (length(history) > 0) {
+    # Optional experimental layers — off by default; opt in via options.
+    if (isTRUE(getOption("llamaR.experimental_ce", FALSE))) {
+        ce_init(cwd, config)
         for (i in seq_along(history)) {
             ce_index_turn(i, history[[i]]$role, history[[i]]$content %||% "")
         }
+        on.exit(ce_shutdown(), add = TRUE)
+    }
+    if (isTRUE(getOption("llamaR.experimental_heartbeat", FALSE))) {
+        hb_init(config)
     }
 
-    # Tool handler - direct function calls, no MCP
-    turn_number <- length(history)
-    tool_handler <- function(name, args) {
-        turn_number <<- turn_number + 1L
-        ws_set_turn(turn_number)
-        name <- unsanitize_tool_name(name)
-        hint <- tool_hint(name, args)
-        cat(sprintf("  [%s]%s ", name, hint))
-        start <- Sys.time()
-        result <- call_tool(name, args %||% list())
-        text <- result$content[[1]]$text %||% ""
-        success <- !isTRUE(result$isError)
-        elapsed <- as.numeric(
-                              difftime(Sys.time(), start, units = "secs")) * 1000
-        if (nchar(text) > 0) {
-            lines <- length(strsplit(text, "\n")[[1]])
-        } else {
-            lines <- 0L
-        }
-        cat(sprintf("(%d lines)\n", lines))
-        tryCatch(
-                 trace_add(session$sessionId, name, args, text,
-                           success = success, elapsed_ms = round(elapsed),
-                           turn = turn_number),
-                 error = function(e) NULL
-        )
-
-        # Record for heartbeat detection
-        hb_record_tool(name, args, text, success)
-        if (success) {
-            hb_clear_suppression("failure_streak")
-        }
-
-        # Update file index if a file was written
-        if (name %in% c("base::writeLines", "write_file")) {
-            written_path <- args$con %||% args$path %||% args$file
-            if (!is.null(written_path)) {
-                ce_update_files(written_path)
-            }
-        }
-
-        text
-    }
-
-    # Suppress structured JSON logs (they're for MCP server, not interactive use)
     set_log_enabled(FALSE)
-    on.exit({
-        set_log_enabled(TRUE)
-        ce_shutdown()
-    })
+    on.exit(set_log_enabled(TRUE), add = TRUE)
 
-    # REPL
-    n_tools <- length(api_tools)
-    file_stats <- ce_file_stats()
+    n_tools <- length(skills_as_api_tools(tools))
+    display_model <- model %||% "(provider default)"
     cat(sprintf(
-                "llamaR chat | %s @ %s | %d tools | %d files indexed | /quit to exit\n\n",
-                display_model, provider, n_tools, file_stats[["files"]]
+                "llamaR chat | %s @ %s | %d tools | /quit to exit%s\n\n",
+                display_model, provider, n_tools,
+            if (resumed_count > 0L) {
+                sprintf(" | resumed (%d msgs)", resumed_count)
+            } else {
+                ""
+            }
         ))
 
     while (TRUE) {
@@ -361,88 +255,134 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         if (trimws(prompt) %in% c("/quit", "/exit", "/q")) {
             if (ws_enabled) {
                 ws_prune()
-                tryCatch(ws_save(session$sessionId), error = function(e) NULL)
+                tryCatch(ws_save(disk_session$sessionId),
+                         error = function(e) NULL)
             }
             cat("Bye.\n")
             break
         }
-
-        # /r <code> - eval R code directly (auto-prints like the R REPL)
         if (startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
             tryCatch({
-                result <- withVisible(eval(parse(text = code),
-                        envir = .GlobalEnv))
-                if (result$visible) print(result$value)
+                r <- withVisible(eval(parse(text = code), envir = .GlobalEnv))
+                if (r$visible) print(r$value)
             }, error = function(e) message("Error: ", e$message))
             next
         }
 
-        transcript_append(session, "user", prompt)
-
-        # Index user turn
-        turn_number <- turn_number + 1L
-        ws_set_turn(turn_number)
-        ce_index_turn(turn_number, "user", prompt)
-
-        # Compute context payload (uses context engine)
-        payload <- ce_rerank(prompt, system_prompt, tools_json)
-
-        # Heartbeat: check for behavioral reminders
-        token_pct <- (payload$tokens_used / 100000) * 100
-        reminder <- hb_check(token_pct = token_pct,
-                             project_rules = config$heartbeat_rules)
-        if (!is.null(reminder)) {
-            history <- c(history, list(list(role = "user", content = reminder)))
-        }
+        transcript_append(disk_session$session, "user", prompt)
 
         result <- tryCatch(
-                           llm.api::agent(
-                prompt = prompt,
-                tools = api_tools,
-                tool_handler = tool_handler,
-                system = payload$system,
-                model = model,
-                provider = provider,
-                history = history,
-                verbose = FALSE
-            ),
+                           turn(prompt, turn_session),
                            error = function(e) {
             message("Error: ", e$message)
             NULL
         }
         )
-
         if (is.null(result)) {
             next
         }
 
-        # Guard against NULL/empty content (e.g. max_turns reached)
-        content <- result$content %||% ""
-        if (nchar(content) == 0) {
+        reply <- result$reply %||% ""
+        if (nchar(reply) == 0) {
             cat("[No response text]\n\n")
         } else {
-            cat(content, "\n\n")
+            cat(reply, "\n\n")
         }
-        transcript_append(session, "assistant", content)
-        history <- result$history
-
-        # Record turn for heartbeat
-        hb_record_turn()
-
-        # Index assistant turn + extract metadata
-        tool_calls <- ce_extract_tool_calls(result)
-        files_touched <- ce_extract_files_touched(result)
-        ce_index_turn(turn_number, "assistant", content,
-                      tool_calls = tool_calls,
-                      files_touched = files_touched)
-
-        # Update symbols if files changed
-        if (length(files_touched) > 0) {
-            ce_update_symbols(.context_engine$cwd %||% cwd)
-        }
+        transcript_append(disk_session$session, "assistant", reply)
     }
 
-    invisible(session)
+    invisible(disk_session$session)
+}
+
+# --- Chat-specific helpers ---
+
+# Default console approval callback: prompt the user via readline.
+chat_approval_cb <- function(call, decision) {
+    cat(sprintf("\n[approval] %s on %s (%s)\n",
+                decision$approval, call$tool, decision$reason))
+    ans <- readline(">>> approve? [y/N] ")
+    tolower(trimws(ans)) %in% c("y", "yes")
+}
+
+# Resolve the on-disk session, returning list(session, sessionId, history).
+resolve_disk_session <- function(session_arg, provider, model, cwd) {
+    if (is.character(session_arg)) {
+        resumed <- session_load(session_arg)
+        if (!is.null(resumed)) {
+            return(list(
+                        session = resumed,
+                        sessionId = resumed$sessionId,
+                        history = disk_messages_to_history(resumed$messages),
+                        resumed = TRUE
+                ))
+        }
+        fresh <- session_new(provider, model, cwd, session_key = session_arg)
+        return(list(session = fresh, sessionId = fresh$sessionId,
+                    history = list(), resumed = FALSE))
+    }
+    if (isTRUE(session_arg)) {
+        latest <- session_latest()
+        if (!is.null(latest)) {
+            return(list(
+                        session = latest,
+                        sessionId = latest$sessionId,
+                        history = disk_messages_to_history(latest$messages),
+                        resumed = TRUE
+                ))
+        }
+    }
+    fresh <- session_new(provider, model, cwd)
+    list(session = fresh, sessionId = fresh$sessionId,
+         history = list(), resumed = FALSE)
+}
+
+# Flatten on-disk message blocks into simple {role, content} pairs.
+disk_messages_to_history <- function(messages) {
+    lapply(messages %||% list(), function(m) {
+        text <- if (is.list(m$content) && length(m$content) > 0L &&
+            !is.null(m$content[[1]]$text)) {
+            m$content[[1]]$text
+        } else {
+            as.character(m$content)
+        }
+        list(role = m$role, content = text)
+    })
+}
+
+# Load or clear the workspace to match the (possibly resumed) disk session.
+chat_workspace_init <- function(disk_session, ws_enabled, config) {
+    if (isTRUE(disk_session$resumed)) {
+        ws_load(disk_session$sessionId)
+    } else {
+        ws_clear()
+        if (ws_enabled && isTRUE(config$workspace$scan_globalenv %||% TRUE)) {
+            scan_limit <- config$workspace$scan_max_bytes %||% 50e6
+            registered <- ws_scan_globalenv(max_bytes = scan_limit)
+            if (length(registered) > 0L) {
+                cat(sprintf("Workspace: registered %d objects from R session\n",
+                            length(registered)))
+            }
+        }
+    }
+}
+
+# Build a trace observer that records each tool call against the on-disk
+# session. Swallows errors so trace failures don't break tool dispatch.
+chat_trace_observer <- function(session) {
+    function(event) {
+        tryCatch(
+                 trace_add(
+                           session$sessionId,
+                           event$call$tool,
+                           event$call$args,
+                           event$result,
+                           success = event$success,
+                           elapsed_ms = round(event$elapsed_ms),
+                           turn = event$turn_number
+            ),
+                 error = function(e) NULL
+        )
+    }
 }
 

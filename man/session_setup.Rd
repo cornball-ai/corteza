@@ -5,7 +5,7 @@
 \usage{
 session_setup(channel = c("cli", "console", "matrix"), cwd = getwd(),
               provider = NULL, model = NULL, tools = NULL, system = NULL,
-              approval_cb = NULL, load_project_context = TRUE,
+              approval_cb = NULL, history = NULL, load_project_context = TRUE,
               validate_api_key = TRUE, verbose = FALSE, max_turns = 10L)
 }
 \arguments{
