@@ -154,9 +154,31 @@ ce_index_files <- function(cwd,
     ext_pattern <- sprintf("\\.(%s)$", paste(extensions, collapse = "|"))
     all_files <- list.files(cwd, recursive = TRUE, full.names = TRUE)
 
+    # Strip the cwd prefix with a fixed-string comparison instead of a
+    # regex. On Windows, normalizePath() returns a path with backslashes
+    # (e.g. D:\Rtmp\...); feeding that into sub() interprets the
+    # backslash sequences as regex escapes, which blows up on sequences
+    # like '\2' (treated as an invalid back-reference). startsWith() +
+    # substring() has the same semantics and is OS-agnostic.
+    sep <- .Platform$file.sep
+    if (endsWith(cwd_norm, sep)) {
+        prefix <- cwd_norm
+    } else {
+        prefix <- paste0(cwd_norm, sep)
+    }
     for (f in all_files) {
-        rel <- sub(paste0("^", cwd_norm, "/?"), "",
-                   normalizePath(f, mustWork = FALSE))
+        norm <- normalizePath(f, mustWork = FALSE)
+        rel <- if (startsWith(norm, prefix)) {
+            substring(norm, nchar(prefix) + 1L)
+        } else if (identical(norm, cwd_norm)) {
+            ""
+        } else {
+            norm
+        }
+        # The skip check below uses forward slashes. On Windows `rel`
+        # still has backslashes after normalizePath; normalize to / so
+        # the same regex works on every platform.
+        rel <- gsub("\\\\", "/", rel, fixed = FALSE)
 
         # Skip .git, node_modules, renv
         if (grepl("^(\\.git|node_modules|renv)/", rel)) {
