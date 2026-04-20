@@ -35,7 +35,8 @@ local({
 })
 
 # matrix_new_session wires config into a turn session.
-local({
+# Skipped in R CMD check: needs MOONSHOT_API_KEY via new_session().
+if (at_home()) local({
   cfg <- list(
     server = "https://example",
     user = "bot",
@@ -102,7 +103,8 @@ local({
 })
 
 # The session registry hands out the same session for the same room.
-local({
+# Skipped in R CMD check: creates sessions that need MOONSHOT_API_KEY.
+if (at_home()) local({
   cfg <- list(server = "https://example", user = "bot",
               user_id = "@bot:ex", room_id = "!dm:ex",
               model = "kimi-k2.5", provider = "moonshot",
