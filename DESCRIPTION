@@ -27,5 +27,8 @@ Imports:
     processx,
     saber
 Suggests:
+    hacer,
     tinytest
+Remotes:
+    cornball-ai/hacer
 Encoding: UTF-8
