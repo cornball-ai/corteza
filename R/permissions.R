@@ -78,10 +78,14 @@ normalize_path_for_check <- function(path) {
     # Expand ~ first
     path <- path.expand(path)
 
-    # Try to normalize (resolve symlinks, etc.)
-    # normalizePath fails if path doesn't exist, so handle that
+    # Force forward slashes so prefix checks (startsWith) work identically
+    # on Windows and POSIX. Without winslash="/" normalizePath returns
+    # backslashes on Windows, but is_path_under appends a forward slash
+    # to the base, so the comparison silently fails on Windows.
+    # mustWork = FALSE so denied_paths entries that don't exist on the
+    # current machine (e.g. ~/.ssh on a fresh VM) still compare cleanly.
     tryCatch({
-        normalizePath(path, mustWork = FALSE)
+        normalizePath(path, winslash = "/", mustWork = FALSE)
     }, error = function(e) {
         path
     })

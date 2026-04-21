@@ -170,7 +170,25 @@ corteza is a standalone agent runtime. `chat()` runs inside your R session. The 
 |--------|--------------------------------|
 |Linux   |Fully supported                 |
 |macOS   |Expected to work                |
-|Windows |Partial (stdin handling pending) |
+|Windows |Supported (see Windows setup below) |
+
+### Windows setup
+
+Install, in order:
+
+1. **R 4.4 or 4.5** from CRAN. The installer adds R to PATH by default; verify with `where R`.
+2. **Rtools** matching your R version ([Rtools45](https://cran.r-project.org/bin/windows/Rtools/rtools45/) for R 4.5.x, [Rtools44](https://cran.r-project.org/bin/windows/Rtools/rtools44/) for R 4.4.x). Rtools gives you a real bash, GCC, and the build toolchain for Rcpp or any compiled code.
+3. **git** — the easiest path is to let corteza install it into Rtools:
+
+   ```r
+   corteza::install_windows_deps()   # runs pacman -Sy git inside Rtools
+   ```
+
+   Alternatively, install [Git for Windows](https://git-scm.com/downloads/win) system-wide.
+
+corteza resolves bash to an absolute path (Rtools first, then Git for Windows) so `C:\Windows\System32\bash.exe` (the WSL launcher stub) never intercepts shell commands. Minimal installs without any bash still get a working `cmd` shell tool.
+
+User environment variables live in `C:\Users\<user>\.Renviron`. Use that for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.
 
 -----
 

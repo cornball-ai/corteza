@@ -9,8 +9,12 @@ expect_true(grepl("2", result$content[[1]]$text))
 result <- corteza:::tool_run_r(list(code = "stop('test error')"))
 expect_true(grepl("Error", result$content[[1]]$text))
 
-# Test bash
-result <- corteza:::tool_bash(list(command = "echo hello"))
+# Test shell tool (bash when available, cmd on minimal-install Windows)
+if (.Platform$OS.type == "windows" && !file.exists(corteza:::.find_bash_exe())) {
+    result <- corteza:::tool_cmd(list(command = "echo hello"))
+} else {
+    result <- corteza:::tool_bash(list(command = "echo hello"))
+}
 expect_false(isTRUE(result$isError))
 expect_true(grepl("hello", result$content[[1]]$text))
 
