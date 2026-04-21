@@ -13,3 +13,4 @@
 ^claude_desktop_config\.json$
 ^docs$
 ^cran-comments\.md$
+^tasks$
