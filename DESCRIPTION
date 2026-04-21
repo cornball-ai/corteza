@@ -20,6 +20,7 @@ BugReports: https://github.com/cornball-ai/corteza/issues
 Depends:
     R (>= 4.4.0)
 Imports:
+    callr,
     codetools,
     curl,
     jsonlite,
