@@ -247,6 +247,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
             }
         ))
 
+    # /r evals are buffered here and prepended to the next real user
+    # message, so the LLM sees what the user evaluated locally.
+    pending_r_context <- character(0)
+
     while (TRUE) {
         prompt <- readline("> ")
         if (nchar(trimws(prompt)) == 0) {
@@ -263,13 +267,49 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
         }
         if (startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
-            tryCatch({
-                r <- withVisible(eval(parse(text = code), envir = .GlobalEnv))
-                if (r$visible) print(r$value)
-            }, error = function(e) message("Error: ", e$message))
+            r_env <- new.env(parent = emptyenv())
+            result_lines <- tryCatch(
+                capture.output({
+                    r_env$r <- withVisible(eval(parse(text = code),
+                                                envir = .GlobalEnv))
+                    if (r_env$r$visible) print(r_env$r$value)
+                }),
+                error = function(e) {
+                    r_env$r <- NULL
+                    paste("Error:", e$message)
+                }
+            )
+            result_text <- paste(result_lines, collapse = "\n")
+            # Show the output immediately so the user can react.
+            if (nchar(result_text) > 0) cat(result_text, "\n", sep = "")
+            # Stage for the next send so the LLM has the same context —
+            # but a printed data frame or big vector can easily be tens
+            # of thousands of tokens, so cap the staged text and fall
+            # back to str() for the oversize case.
+            staged <- if (nchar(result_text) > 4000L && !is.null(r_env$r)) {
+                str_lines <- tryCatch(
+                    capture.output(utils::str(r_env$r$value)),
+                    error = function(e) paste("Error:", e$message)
+                )
+                sprintf(
+                    "(%d chars of output truncated; showing str())\n%s",
+                    nchar(result_text),
+                    paste(str_lines, collapse = "\n")
+                )
+            } else {
+                result_text
+            }
+            pending_r_context <- c(
+                pending_r_context,
+                sprintf("[/r] %s\n%s", code, staged)
+            )
             next
         }
 
+        if (length(pending_r_context) > 0) {
+            prompt <- paste(c(pending_r_context, prompt), collapse = "\n\n")
+            pending_r_context <- character(0)
+        }
         transcript_append(disk_session$session, "user", prompt)
 
         result <- tryCatch(
