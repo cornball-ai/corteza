@@ -412,10 +412,31 @@ tool_cmd <- function(args) {
     tool_shell_impl(args, "cmd")
 }
 
-# Unified shell handler. shell_name is "bash" (Unix) or "cmd" (Windows)
-# and determines the invocation convention. Keeps bash/cmd tools at the
-# LLM level as two differently-named skills so the model can use the
-# syntax native to the host OS.
+# Resolve bash to an explicit path on Windows. Without this, PATH order
+# often picks up C:\Windows\System32\bash.exe (the WSL launcher stub),
+# which fails for users without a provisioned WSL distro. Prefer Rtools
+# first (the likely install for anyone building R packages), then Git
+# for Windows, then plain "bash" as a last-resort PATH lookup.
+.find_bash_exe <- function() {
+    if (.Platform$OS.type != "windows") return("bash")
+    rtools_home <- Sys.getenv("RTOOLS45_HOME",
+                              Sys.getenv("RTOOLS44_HOME", ""))
+    candidates <- c(
+                    if (nzchar(rtools_home)) file.path(rtools_home, "usr", "bin", "bash.exe"),
+                    "C:/rtools45/usr/bin/bash.exe",
+                    "C:/rtools44/usr/bin/bash.exe",
+                    "C:/Program Files/Git/bin/bash.exe",
+                    "C:/Program Files (x86)/Git/bin/bash.exe"
+    )
+    for (p in candidates) {
+        if (file.exists(p)) return(p)
+    }
+    "bash"
+}
+
+# Unified shell handler. shell_name is "bash" (Unix/Windows with Rtools)
+# or "cmd" (Windows fallback). Windows bash is resolved to an absolute
+# path to avoid picking up the WSL launcher stub in System32.
 tool_shell_impl <- function(args, shell_name) {
     cmd <- args$command
     timeout <- args$timeout %||% 30
@@ -426,16 +447,22 @@ tool_shell_impl <- function(args, shell_name) {
         return(err(command_check$message))
     }
 
+    shell_exe <- switch(
+                        shell_name,
+                        bash = .find_bash_exe(),
+                        cmd = "cmd",
+                        stop(sprintf("Unknown shell %s", shell_name), call. = FALSE)
+    )
+
     exe_args <- switch(
                        shell_name,
                        bash = c("-lc", cmd),
-                       cmd = c("/c", cmd),
-                       stop(sprintf("Unknown shell %s", shell_name), call. = FALSE)
+                       cmd = c("/c", cmd)
     )
 
     if (background) {
         proc <- processx::process$new(
-                                      shell_name, exe_args,
+                                      shell_exe, exe_args,
                                       stdout = "|", stderr = "|", cleanup_tree = TRUE
         )
         id <- bg_register(cmd, proc)
@@ -453,7 +480,7 @@ tool_shell_impl <- function(args, shell_name) {
     )
 
     result <- tryCatch({
-        out <- system2(shell_name, exe_args_fg, stdout = TRUE,
+        out <- system2(shell_exe, exe_args_fg, stdout = TRUE,
                        stderr = TRUE, timeout = timeout)
         paste(out, collapse = "\n")
     }, error = function(e) {
@@ -901,25 +928,13 @@ register_builtin_skills <- function() {
                               handler = function(args, ctx) tool_run_r_script(args)
         ))
 
-    # Shell tool: bash on Unix, cmd on Windows. Same params, same
-    # background semantics; the LLM sees the native shell name so it
-    # writes syntax appropriate to the host OS.
-    if (.Platform$OS.type == "windows") {
-        register_skill(skill_spec(
-                                  name = "cmd",
-                                  description = "Run a Windows cmd.exe command. Use background=true for long-running processes.",
-                                  params = list(
-                    command = list(type = "string",
-                                   description = "cmd.exe command to execute",
-                                   required = TRUE),
-                    timeout = list(type = "integer",
-                                   description = "Timeout in seconds (default: 30)"),
-                    background = list(type = "boolean",
-                                      description = "Run in background and return immediately (default: false)")
-                ),
-                                  handler = function(args, ctx) tool_cmd(args)
-            ))
-    } else {
+    # Shell tool: prefer bash everywhere for cross-OS consistency. On
+    # Windows we register bash only if we can find a real bash (Rtools
+    # or Git for Windows); otherwise fall back to cmd so minimal-install
+    # Windows users still have a working shell tool.
+    use_bash <- .Platform$OS.type != "windows" ||
+        file.exists(.find_bash_exe())
+    if (use_bash) {
         register_skill(skill_spec(
                                   name = "bash",
                                   description = "Run a bash shell command. Use background=true for long-running servers or processes.",
@@ -933,6 +948,21 @@ register_builtin_skills <- function() {
                                       description = "Run in background and return immediately (default: false)")
                 ),
                                   handler = function(args, ctx) tool_bash(args)
+            ))
+    } else {
+        register_skill(skill_spec(
+                                  name = "cmd",
+                                  description = "Run a Windows cmd.exe command. Use background=true for long-running processes.",
+                                  params = list(
+                    command = list(type = "string",
+                                   description = "cmd.exe command to execute",
+                                   required = TRUE),
+                    timeout = list(type = "integer",
+                                   description = "Timeout in seconds (default: 30)"),
+                    background = list(type = "boolean",
+                                      description = "Run in background and return immediately (default: false)")
+                ),
+                                  handler = function(args, ctx) tool_cmd(args)
             ))
     }
 

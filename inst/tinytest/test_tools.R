@@ -15,7 +15,9 @@ for (tool in tools) {
 # Test built-in tools still exist
 tool_names <- sapply(tools, `[[`, "name")
 expect_true("run_r" %in% tool_names)
-expect_true("bash" %in% tool_names)
+# Shell tool is "bash" when a real bash is available (always on POSIX,
+# Rtools/Git Bash on Windows) and "cmd" on minimal-install Windows.
+expect_true(any(c("bash", "cmd") %in% tool_names))
 expect_true("r_help" %in% tool_names)
 expect_true("grep_files" %in% tool_names)
 expect_true("read_file" %in% tool_names)

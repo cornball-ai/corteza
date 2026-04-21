@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime for R
-Version: 0.5.1
+Version: 0.5.2
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -28,4 +28,9 @@ Imports:
     saber
 Suggests:
     tinytest
+SystemRequirements: On Windows, Rtools45 (R 4.5.x) or Rtools44 (R 4.4.x)
+    is recommended so the 'bash' shell tool is available; minimal
+    installs fall back to a 'cmd' tool. 'git' is required for the
+    git_status, git_diff, and git_log tools (install Git for Windows,
+    or 'pacman -Sy git' from an Rtools shell).
 Encoding: UTF-8

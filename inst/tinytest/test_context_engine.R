@@ -103,9 +103,10 @@ tmp_file <- file.path(tmp_proj, "R", "new_file.R")
 writeLines(c("# new file", "baz <- 1"), tmp_file)
 corteza:::ce_update_files(tmp_file)
 
-# Find the relative path in index
-rel <- sub(paste0("^", normalizePath(tmp_proj, mustWork = FALSE), "/?"),
-           "", normalizePath(tmp_file, mustWork = FALSE))
+# Find the relative path in index. winslash="/" keeps the paths free of
+# backslashes so the regex sub doesn't need Windows-specific escaping.
+rel <- sub(paste0("^", normalizePath(tmp_proj, winslash = "/", mustWork = FALSE), "/?"),
+           "", normalizePath(tmp_file, winslash = "/", mustWork = FALSE))
 lines <- corteza:::ce_file(rel)
 expect_equal(length(lines), 2)
 

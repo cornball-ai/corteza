@@ -148,26 +148,18 @@ ce_index_files <- function(cwd,
         ".Rbuildignore"),
                            max_file_size = 100000L) {
     index <- list()
-    cwd_norm <- normalizePath(cwd, mustWork = FALSE)
+    # winslash="/" everywhere keeps index keys free of backslashes, so
+    # regex prefix stripping and cross-platform glob/regex matching work
+    # identically on Windows and POSIX.
+    cwd_norm <- normalizePath(cwd, winslash = "/", mustWork = FALSE)
 
     # Recursive list of all files, then filter by extension
     ext_pattern <- sprintf("\\.(%s)$", paste(extensions, collapse = "|"))
     all_files <- list.files(cwd, recursive = TRUE, full.names = TRUE)
 
-    # Strip the cwd prefix with a fixed-string comparison instead of a
-    # regex. On Windows, normalizePath() returns a path with backslashes
-    # (e.g. D:\Rtmp\...); feeding that into sub() interprets the
-    # backslash sequences as regex escapes, which blows up on sequences
-    # like '\2' (treated as an invalid back-reference). startsWith() +
-    # substring() has the same semantics and is OS-agnostic.
-    sep <- .Platform$file.sep
-    if (endsWith(cwd_norm, sep)) {
-        prefix <- cwd_norm
-    } else {
-        prefix <- paste0(cwd_norm, sep)
-    }
+    prefix <- if (endsWith(cwd_norm, "/")) cwd_norm else paste0(cwd_norm, "/")
     for (f in all_files) {
-        norm <- normalizePath(f, mustWork = FALSE)
+        norm <- normalizePath(f, winslash = "/", mustWork = FALSE)
         rel <- if (startsWith(norm, prefix)) {
             substring(norm, nchar(prefix) + 1L)
         } else if (identical(norm, cwd_norm)) {
@@ -175,10 +167,6 @@ ce_index_files <- function(cwd,
         } else {
             norm
         }
-        # The skip check below uses forward slashes. On Windows `rel`
-        # still has backslashes after normalizePath; normalize to / so
-        # the same regex works on every platform.
-        rel <- gsub("\\\\", "/", rel, fixed = FALSE)
 
         # Skip .git, node_modules, renv
         if (grepl("^(\\.git|node_modules|renv)/", rel)) {
@@ -220,11 +208,11 @@ ce_update_files <- function(paths) {
     updated <- 0L
 
     for (p in paths) {
-        if (startsWith(p, "/")) {
-            abs_path <- p
-        } else {
-            abs_path <- file.path(cwd, p)
-        }
+        # An absolute path starts with "/" on POSIX or a drive letter
+        # followed by colon on Windows (e.g. "C:/..." or "C:\...").
+        is_abs <- startsWith(p, "/") ||
+            grepl("^[A-Za-z]:[/\\\\]", p)
+        abs_path <- if (is_abs) p else file.path(cwd, p)
         if (!file.exists(abs_path)) {
             # File deleted: remove from index
             # Can't normalizePath a deleted file, but we can normalize its
@@ -232,10 +220,15 @@ ce_update_files <- function(paths) {
             # handles macOS where /var -> /private/var: the stored key used
             # fully-normalized paths, so the deletion key must match.
             parent <- dirname(abs_path)
-            norm_parent <- normalizePath(parent, mustWork = FALSE)
-            norm_abs <- file.path(norm_parent, basename(abs_path))
-            norm_cwd <- normalizePath(cwd, mustWork = FALSE)
-            rel <- sub(paste0("^", norm_cwd, "/?"), "", norm_abs)
+            norm_parent <- normalizePath(parent, winslash = "/", mustWork = FALSE)
+            norm_abs <- paste(norm_parent, basename(abs_path), sep = "/")
+            norm_cwd <- normalizePath(cwd, winslash = "/", mustWork = FALSE)
+            prefix <- if (endsWith(norm_cwd, "/")) norm_cwd else paste0(norm_cwd, "/")
+            rel <- if (startsWith(norm_abs, prefix)) {
+                substring(norm_abs, nchar(prefix) + 1L)
+            } else {
+                norm_abs
+            }
             if (nchar(rel) > 0) {
                 .context_engine$file_index[[rel]] <- NULL
             }
@@ -245,8 +238,14 @@ ce_update_files <- function(paths) {
         lines <- tryCatch(readLines(abs_path, warn = FALSE),
                           error = function(e) NULL)
         if (!is.null(lines)) {
-            rel <- sub(paste0("^", normalizePath(cwd, mustWork = FALSE),
-                              "/?"), "", normalizePath(abs_path, mustWork = FALSE))
+            norm_cwd <- normalizePath(cwd, winslash = "/", mustWork = FALSE)
+            norm_abs <- normalizePath(abs_path, winslash = "/", mustWork = FALSE)
+            prefix <- if (endsWith(norm_cwd, "/")) norm_cwd else paste0(norm_cwd, "/")
+            rel <- if (startsWith(norm_abs, prefix)) {
+                substring(norm_abs, nchar(prefix) + 1L)
+            } else {
+                norm_abs
+            }
             .context_engine$file_index[[rel]] <- lines
             updated <- updated + 1L
         }
