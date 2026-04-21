@@ -133,7 +133,13 @@ load_config <- function(cwd = getwd()) {
                     "file.remove", "dir.create",
                     "Sys.glob"
                 )),
-                                      list(package = "utils", functions = c("read.csv", "head", "tail"))
+                                      list(package = "utils", functions = c("read.csv", "head", "tail")),
+                                      list(package = "hacer", functions = c(
+                    "run_monday", "next_day", "fix_parents",
+                    "sync_from_daily", "parse_todo", "paths_for",
+                    "check_setup", "instantiate_todo",
+                    "use_repo", "todo_config"
+                ))
         )
     }
 
