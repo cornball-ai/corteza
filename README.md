@@ -4,7 +4,7 @@
 
 **An AI agent runtime for R.** Self-hosted, model-agnostic, tinyverse.
 
-In Spanish, *corteza* (pronounced ["Ya Mar"](https://www.youtube.com/watch?v=p-2EZXOoFt8)) means "to call."
+*Corteza* is Spanish for the brain's cortex: the outer layer where processing happens.
 
 -----
 
@@ -21,7 +21,7 @@ corteza
 That's it. You're talking to an AI agent that can read files, run shell commands, query git, search the web, and execute R code in a persistent session.
 
 ```
-corteza | claude-sonnet-4-20250514 @ anthropic | 24 tools
+corteza | claude-sonnet-4-6 @ anthropic
 
 > What R packages are loaded?
   [run_r] Running: loadedNamespaces()
@@ -46,7 +46,7 @@ In the agent world, tools, skills, and the servers that expose them are three se
 
 ### 1. CLI agent (`corteza`)
 
-The primary interface. A terminal agent with session management, voice mode, and context compaction. Uses the MCP server internally for tool execution.
+The primary interface. A terminal agent with session management, voice mode, and context compaction. Spawns a fresh R subprocess running `corteza::serve()` so the agent's R state (loaded packages, `globalenv` objects, working directory) stays separate from whatever you have loaded interactively.
 
 ```bash
 corteza                    # Start agent
@@ -57,7 +57,7 @@ corteza --provider moonshot --model kimi-k2
 
 ### 2. MCP server (`serve()`)
 
-Exposes a persistent R session to external MCP clients (Claude Code, Claude Desktop, VS Code). This is how other tools get stateful R access: objects persist across tool calls, packages stay loaded, and runtime inspection tools like `mirar` work on real session state.
+Exposes a persistent R session to external MCP clients (Claude Code, Claude Desktop, VS Code). This is how other tools get stateful R access: objects persist across tool calls, packages stay loaded, and `saber` introspection tools see real session state.
 
 ```json
 {
@@ -82,7 +82,7 @@ chat(provider = "ollama",        # Local
      model = "llama3.2")
 ```
 
-This is the most interesting mode architecturally (the agent lives in the same process as the data), but current LLMs are trained on bash-style CLIs, so they perform better through the terminal interface. The `/r <code>` command lets you eval R directly without an LLM roundtrip.
+This is the most interesting mode architecturally (the agent lives in the same process as the data), but current LLMs are trained on bash-style CLIs, so they perform better through the terminal interface. The `/r <code>` command evaluates R locally, shows you the output, and stages that result into the context for your next message (a fast way to load data or inspect state before asking the model about it, without burning an LLM roundtrip).
 
 -----
 
@@ -113,8 +113,8 @@ This is the most interesting mode architecturally (the agent lives in the same p
 # corteza (not yet on CRAN)
 remotes::install_github("cornball-ai/corteza")
 
-# LLM provider abstraction (not yet on CRAN)
-remotes::install_github("cornball-ai/llm.api")
+# Dependencies are on CRAN
+install.packages(c("llm.api", "saber"))
 ```
 
 ### API Keys
@@ -143,11 +143,12 @@ Anthropic's [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/ove
 
 corteza fills that gap. Not by wrapping Anthropic's SDK, but by building an R-native agent runtime from scratch. Model-agnostic (Anthropic, OpenAI, Moonshot, Ollama), small enough to read in an afternoon.
 
-|Role           |Posit (tidyverse)                      |cornyverse|
-|---------------|---------------------------------------|----------|
-|LLM API client |[ellmer](https://ellmer.tidyverse.org/)|llm.api   |
-|Context tools  |[btw](https://posit-dev.github.io/btw/)|saber     |
-|MCP bridge     |mcptools                               |corteza    |
+|Role             |Posit (tidyverse)                      |cornyverse|
+|-----------------|---------------------------------------|----------|
+|LLM API client   |[ellmer](https://ellmer.tidyverse.org/)|llm.api   |
+|Context tools    |[btw](https://posit-dev.github.io/btw/)|saber     |
+|Matrix API client|n/a                                    |mx.api    |
+|Agent runtime    |mcptools                               |corteza   |
 
 mcptools integrates R into the broader MCP ecosystem (Claude Desktop, VS Code, Positron). It's polished, on CRAN, and backed by Posit.
 
@@ -157,7 +158,7 @@ corteza is a standalone agent runtime. `chat()` runs inside your R session. The 
 
 ## Design Philosophy
 
-- **Small enough to understand**: one package, one import (jsonlite), readable source
+- **Small enough to understand**: a handful of imports (curl, jsonlite, processx, codetools, llm.api, saber), readable source
 - **Model-agnostic**: Anthropic, OpenAI, Moonshot, Ollama
 - **R-native**: packages are skills, `install.packages()` is the marketplace
 - **Hackable**: add tools by writing R functions
