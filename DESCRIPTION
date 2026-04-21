@@ -32,5 +32,5 @@ SystemRequirements: On Windows, Rtools45 (R 4.5.x) or Rtools44 (R 4.4.x)
     is recommended so the 'bash' shell tool is available; minimal
     installs fall back to a 'cmd' tool. 'git' is required for the
     git_status, git_diff, and git_log tools (install Git for Windows,
-    or run corteza::install_windows_deps() to install it into Rtools).
+    or 'pacman -Sy git' from an Rtools shell).
 Encoding: UTF-8
