@@ -1,12 +1,11 @@
 # Skill System for corteza
-# Defines the standard interface for tools/skills
+# Defines the standard interface for tools/skills. Registry itself lives
+# in R/registry.R — this file owns skill_spec, skill_run, file-based
+# skill loading (SKILL.md + .R files), and dry-run previews.
 #
 # Two types of skills:
 # 1. SKILL.md files - markdown docs injected into context (shell-based)
-# 2. R handlers - built-in MCP tools (R-native)
-
-# Skill registry for R handlers (package-level environment)
-.skill_registry <- new.env(parent = emptyenv())
+# 2. R handlers - built-in tools (R-native, registered via skill_spec)
 
 # Skill docs registry for SKILL.md files
 .skill_docs <- new.env(parent = emptyenv())
@@ -319,47 +318,8 @@ get_dry_run_hint <- function(tool_name, args) {
     )
 }
 
-#' Register a skill in the global registry
-#'
-#' @param skill Skill spec from skill_spec()
-#' @return Invisible skill name
-#' @noRd
-register_skill <- function(skill) {
-    if (is.null(skill$name)) {
-        stop("Skill must have a name")
-    }
-    .skill_registry[[skill$name]] <- skill
-    invisible(skill$name)
-}
-#' Get a skill from the registry
-#'
-#' @param name Skill name
-#' @return Skill spec or NULL if not found
-#' @noRd
-get_skill <- function(name) {
-    if (exists(name, envir = .skill_registry, inherits = FALSE)) {
-        .skill_registry[[name]]
-    } else {
-        NULL
-    }
-}
-
-#' List all registered skills
-#'
-#' @return Character vector of skill names
-#' @noRd
-list_skills <- function() {
-    ls(.skill_registry)
-}
-
-#' Clear all skills from registry
-#'
-#' @return Invisible NULL
-#' @noRd
-clear_skills <- function() {
-    rm(list = ls(.skill_registry), envir = .skill_registry)
-    invisible(NULL)
-}
+# register_skill / get_skill / list_skills / clear_skills /
+# .skill_registry live in R/registry.R.
 
 #' Load skills from a directory
 #'

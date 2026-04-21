@@ -129,10 +129,18 @@ Config files:
 }
 
 # ============================================================================
-# Server management
+# CLI worker transport
+#
+# The CLI drives a private R subprocess for tool execution. Today that
+# subprocess runs corteza::serve() and the CLI talks to it over MCP.
+# Phase 2 of the CLI/worker split swaps the transport to
+# callr::r_session with R-native dispatch; these wrappers are the seam.
+#
+# serve() itself remains a public MCP surface for external clients
+# (Claude Desktop, VS Code); nothing in that path changes.
 # ============================================================================
 
-start_server <- function(port, tools = NULL) {
+cli_worker_start <- function(port, tools = NULL) {
   # Check if already running
   conn <- tryCatch(
     socketConnection("localhost", port, open = "r+b", blocking = TRUE, timeout = 1),
@@ -175,6 +183,25 @@ start_server <- function(port, tools = NULL) {
   }
 
   FALSE
+}
+
+# Wrappers around the llm.api MCP primitives. These are the seam where
+# Phase 2 swaps the transport to callr::r_session; every CLI callsite
+# goes through them. Today they are pass-throughs.
+cli_worker_connect <- function(port) {
+    mcp_connect(port = port, name = "corteza")
+}
+
+cli_worker_call <- function(worker, name, args) {
+    mcp_call(worker, name, args)
+}
+
+cli_worker_tools_for_api <- function(worker) {
+    mcp_tools_for_api(worker)
+}
+
+cli_worker_close <- function(worker) {
+    mcp_close(worker)
 }
 
 # ============================================================================
@@ -801,30 +828,32 @@ run_agent <- function(opts) {
 
   print_banner(session$sessionKey)
 
-  # Start/connect to MCP server
+  # Start/connect to the CLI worker. (Today: a corteza::serve() R
+  # subprocess reached over MCP. Phase 2: a callr::r_session with
+  # R-native dispatch.)
   server_log <- file.path(tempdir(), "corteza-server.log")
-  cat(sprintf("%sStarting MCP server on port %d...%s\n", color$dim, opts$port, color$reset))
-  cat(sprintf("%sServer log: %s%s\n", color$dim, server_log, color$reset))
+  cat(sprintf("%sStarting worker on port %d...%s\n", color$dim, opts$port, color$reset))
+  cat(sprintf("%sWorker log: %s%s\n", color$dim, server_log, color$reset))
 
-  if (!start_server(opts$port, opts$tools)) {
-    cat(sprintf("%sError: Could not start MCP server%s\n", color$bright_magenta, color$reset))
+  if (!cli_worker_start(opts$port, opts$tools)) {
+    cat(sprintf("%sError: Could not start worker%s\n", color$bright_magenta, color$reset))
     cat("Make sure corteza package is installed.\n")
     return(invisible(NULL))
   }
 
   # Connect
-  conn <- tryCatch(
-    mcp_connect(port = opts$port, name = "corteza"),
+  worker <- tryCatch(
+    cli_worker_connect(opts$port),
     error = function(e) {
-      cat(sprintf("%sError connecting to server: %s%s\n", color$bright_magenta, e$message, color$reset))
+      cat(sprintf("%sError connecting to worker: %s%s\n", color$bright_magenta, e$message, color$reset))
       NULL
     }
   )
 
-  if (is.null(conn)) return(invisible(NULL))
+  if (is.null(worker)) return(invisible(NULL))
 
   cat(sprintf("%sConnected. %d tools available.%s\n\n",
-              color$dim, length(conn$tools), color$reset))
+              color$dim, length(worker$tools), color$reset))
 
   # Load skill docs (SKILL.md files)
   corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
@@ -848,7 +877,7 @@ run_agent <- function(opts) {
   }
 
   # Get tools for LLM
-  tools <- mcp_tools_for_api(conn)
+  tools <- cli_worker_tools_for_api(worker)
 
   # Get approval settings from config
   approval_mode <- config$approval_mode %||% "ask"
@@ -904,19 +933,19 @@ run_agent <- function(opts) {
     failed <- FALSE
 
     result <- tryCatch({
-      mcp_call(conn, name, args)
+      cli_worker_call(worker, name, args)
     }, error = function(e) {
       # Try to reconnect on connection errors
       if (grepl("closed connection|SIGPIPE", e$message)) {
         cat(sprintf("%sreconnecting...%s ", color$dim, color$reset))
-        conn <<- tryCatch(
-          mcp_connect(port = opts$port, name = "corteza"),
+        worker <<- tryCatch(
+          cli_worker_connect(opts$port),
           error = function(e2) NULL
         )
-        if (!is.null(conn)) {
+        if (!is.null(worker)) {
           # Retry the call
           return(tryCatch(
-            mcp_call(conn, name, args),
+            cli_worker_call(worker, name, args),
             error = function(e2) {
               failed <<- TRUE
               cat(sprintf("%sfailed: %s%s\n", color$bright_magenta, e2$message, color$reset))
@@ -1014,7 +1043,7 @@ run_agent <- function(opts) {
         break
       } else if (cmd == "/tools") {
         cat(sprintf("\n%sAvailable tools:%s\n", color$bold, color$reset))
-        for (tool in conn$tools) {
+        for (tool in worker$tools) {
           cat(sprintf("  %s%s%s - %s\n", color$cyan, tool$name, color$reset,
                       tool$description %||% ""))
         }
@@ -1056,7 +1085,7 @@ run_agent <- function(opts) {
         config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
-                    format_status_summary(session, provider, display_model, conn,
+                    format_status_summary(session, provider, display_model, worker,
                                           opts, config, session_tokens,
                                           context_limit, context_files,
                                           skill_docs),
@@ -1067,7 +1096,7 @@ run_agent <- function(opts) {
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
                     format_doctor_report(cwd, session, provider, display_model,
-                                         conn, config, context_files,
+                                         worker, config, context_files,
                                          skill_docs),
                     color$reset))
         next
@@ -1705,7 +1734,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
 
   # Cleanup
   cat(sprintf("\n%sGoodbye.%s\n", color$dim, color$reset))
-  suppressWarnings(mcp_close(conn))
+  suppressWarnings(cli_worker_close(worker))
 }
 
 # ============================================================================
