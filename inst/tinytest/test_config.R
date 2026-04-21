@@ -1,10 +1,17 @@
 # Test configuration loading
 
-# Setup: use a fresh temp directory
+# Setup: use a fresh temp directory. Isolate from the user's real global
+# config by pointing R_USER_CONFIG_DIR at a clean empty dir; otherwise a
+# user with ~/.config/R/corteza/config.json leaks into these tests.
 tmpdir <- tempdir()
 testdir <- file.path(tmpdir, paste0("cfg_test_", Sys.getpid()))
 if (dir.exists(testdir)) unlink(testdir, recursive = TRUE)
 dir.create(testdir, recursive = TRUE)
+
+isolated_global <- file.path(tmpdir, paste0("cfg_test_global_", Sys.getpid()))
+if (dir.exists(isolated_global)) unlink(isolated_global, recursive = TRUE)
+dir.create(isolated_global, recursive = TRUE)
+Sys.setenv(R_USER_CONFIG_DIR = isolated_global)
 
 # Test load_config with no config file - context_files defaults to empty
 # (saber owns standard context loading)
