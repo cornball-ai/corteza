@@ -151,7 +151,7 @@ cli_worker_start <- function(port, tools = NULL) {
 }
 
 cli_worker_connect <- function(port, cwd = getwd(), tools_filter = NULL) {
-    corteza::cli_worker_spawn(cwd = cwd, tools_filter = tools_filter)
+    corteza::cli_worker_spawn(cwd = cwd)
 }
 
 # Normalize an error crossing the callr boundary into the MCP-shaped
@@ -194,14 +194,12 @@ cli_worker_call <- function(worker, name, args) {
     result
 }
 
-cli_worker_tools_for_api <- function(worker) {
-    lapply(worker$tools, function(tool) {
-        list(
-            name = tool$name,
-            description = tool$description %||% "",
-            input_schema = tool$inputSchema
-        )
-    })
+cli_worker_tools_for_api <- function(worker, filter = NULL) {
+    # Schemas are built in the CLI process from its own tool registry —
+    # the callr worker doesn't participate in schema generation. The
+    # worker arg is accepted for call-site compatibility and ignored.
+    corteza::ensure_skills()
+    corteza::schema_from_registry(filter)
 }
 
 cli_worker_close <- function(worker) {
@@ -645,7 +643,7 @@ collect_git_diff <- function(ref = NULL) {
   )
 }
 
-format_status_summary <- function(session, provider, display_model, conn, opts,
+format_status_summary <- function(session, provider, display_model, tools, opts,
                                   config, session_tokens, context_limit,
                                   context_files, skill_docs) {
   memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
@@ -660,7 +658,7 @@ format_status_summary <- function(session, provider, display_model, conn, opts,
       sprintf("Session: %s", session$sessionKey),
       sprintf("Model: %s @ %s", display_model, provider),
       sprintf("Tools: %d | Dry-run: %s",
-              length(conn$tools),
+              length(tools),
               if (isTRUE(opts$dry_run)) "on" else "off"),
       sprintf("Context: %d project file(s) | %d skill doc(s) | %s",
               length(context_files), length(skill_docs), memory_mode),
@@ -705,7 +703,7 @@ format_config_summary <- function(config, provider, display_model, opts) {
   )
 }
 
-format_doctor_report <- function(cwd, session, provider, display_model, conn,
+format_doctor_report <- function(cwd, session, provider, display_model, tools,
                                  config, context_files, skill_docs) {
   provider_check <- provider_status(provider, model = if (!is.null(session$model)) session$model else NULL)
   approvals_path <- file.path(cwd, ".corteza", "approvals.json")
@@ -719,7 +717,7 @@ format_doctor_report <- function(cwd, session, provider, display_model, conn,
               provider,
               if (isTRUE(provider_check$ok)) provider_check$message else paste("check failed:", provider_check$message)),
       sprintf("model: %s", display_model),
-      sprintf("mcp: connected (%d tools)", length(conn$tools)),
+      sprintf("worker: connected (%d tools)", length(tools)),
       sprintf("git: %s", if (in_git_repo()) "repository detected" else "not a git repository"),
       sprintf("context files: %d", length(context_files)),
       sprintf("skill docs: %d", length(skill_docs)),
@@ -855,8 +853,13 @@ run_agent <- function(opts) {
 
   if (is.null(worker)) return(invisible(NULL))
 
+  # Register built-in skills in the CLI process and build the LLM
+  # tools payload locally — no worker round-trip.
+  corteza::ensure_skills()
+  tools <- cli_worker_tools_for_api(worker, filter = opts$tools)
+
   cat(sprintf("%sConnected. %d tools available.%s\n\n",
-              color$dim, length(worker$tools), color$reset))
+              color$dim, length(tools), color$reset))
 
   # Load skill docs (SKILL.md files)
   corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
@@ -879,8 +882,7 @@ run_agent <- function(opts) {
     cat("\n")
   }
 
-  # Get tools for LLM
-  tools <- cli_worker_tools_for_api(worker)
+  # `tools` already built above, right after the worker connected.
 
   # Get approval settings from config
   approval_mode <- config$approval_mode %||% "ask"
@@ -1046,7 +1048,7 @@ run_agent <- function(opts) {
         break
       } else if (cmd == "/tools") {
         cat(sprintf("\n%sAvailable tools:%s\n", color$bold, color$reset))
-        for (tool in worker$tools) {
+        for (tool in tools) {
           cat(sprintf("  %s%s%s - %s\n", color$cyan, tool$name, color$reset,
                       tool$description %||% ""))
         }
@@ -1088,7 +1090,7 @@ run_agent <- function(opts) {
         config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
-                    format_status_summary(session, provider, display_model, worker,
+                    format_status_summary(session, provider, display_model, tools,
                                           opts, config, session_tokens,
                                           context_limit, context_files,
                                           skill_docs),
@@ -1099,7 +1101,7 @@ run_agent <- function(opts) {
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
                     format_doctor_report(cwd, session, provider, display_model,
-                                         worker, config, context_files,
+                                         tools, config, context_files,
                                          skill_docs),
                     color$reset))
         next

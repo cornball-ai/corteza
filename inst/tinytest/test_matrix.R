@@ -30,8 +30,11 @@ local({
   loaded <- corteza:::matrix_load_config()
   expect_equal(loaded$user_id, "@bot:example")
   expect_equal(loaded$room_id, "!abc:example")
-  expect_equal(file.mode(corteza:::matrix_config_path()),
-               as.octmode("0600"))
+  # POSIX file modes don't apply on Windows; skip there.
+  if (.Platform$OS.type != "windows") {
+    expect_equal(file.mode(corteza:::matrix_config_path()),
+                 as.octmode("0600"))
+  }
 })
 
 # matrix_new_session wires config into a turn session.

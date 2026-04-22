@@ -94,12 +94,16 @@ get_tools <- function(filter = NULL) {
     Filter(function(t) t$name %in% tool_names, all_tools)
 }
 
-#' Ensure skills are registered
+#' Ensure skills are registered.
 #'
-#' Registers built-in skills if not already registered.
+#' Registers built-in skills if not already registered. Exported with
+#' `@keywords internal` so the CLI (which runs in its own R process,
+#' separate from the callr worker) can register skills in its own
+#' namespace before calling `schema_from_registry()`.
 #'
-#' @return Invisible character vector of skill names
-#' @noRd
+#' @return Invisible character vector of skill names.
+#' @keywords internal
+#' @export
 ensure_skills <- function() {
     if (length(list_skills()) == 0) {
         register_builtin_skills()

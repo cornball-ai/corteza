@@ -79,8 +79,19 @@ git_repo_available <- function(path = ".") {
 
 # File tools ----
 
-tool_list_files <- function(args) {
-    checked <- tool_check_path(args$path %||% ".", operation = "read")
+#' List files in a directory.
+#'
+#' @param path (character) Directory to inspect.
+#' @param pattern (character) Regex pattern to filter file names.
+#' @param recursive (logical) Recurse into subdirectories.
+#' @param all_files (logical) Include hidden files.
+#' @param limit (integer) Maximum number of entries to return.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_list_files <- function(path = ".", pattern = NULL, recursive = FALSE,
+                            all_files = FALSE, limit = 200L) {
+    checked <- tool_check_path(path %||% ".", operation = "read")
     if (!checked$ok) {
         return(err(checked$message))
     }
@@ -90,10 +101,9 @@ tool_list_files <- function(args) {
         return(err(paste("Directory not found:", path)))
     }
 
-    pattern <- args$pattern
-    recursive <- isTRUE(args$recursive)
-    all_files <- isTRUE(args$all_files)
-    limit <- as.integer(args$limit %||% 200L)
+    recursive <- isTRUE(recursive)
+    all_files <- isTRUE(all_files)
+    limit <- as.integer(limit %||% 200L)
     if (is.na(limit) || limit < 1) {
         limit <- 200L
     }
@@ -143,8 +153,17 @@ tool_list_files <- function(args) {
     ok(paste(c(header, "", display), collapse = "\n"))
 }
 
-tool_read_file <- function(args) {
-    checked <- tool_check_path(args$path, operation = "read")
+#' Read file contents, optionally with line numbers.
+#'
+#' @param path (character) Path to the file.
+#' @param from (integer) Starting line number (1-based).
+#' @param lines (integer) Number of lines to read.
+#' @param line_numbers (logical) Prefix each line with its line number.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_read_file <- function(path, from = 1L, lines = NULL, line_numbers = TRUE) {
+    checked <- tool_check_path(path, operation = "read")
     if (!checked$ok) {
         return(err(checked$message))
     }
@@ -157,27 +176,23 @@ tool_read_file <- function(args) {
         return(err(paste("Path is a directory, not a file:", path)))
     }
 
-    lines <- tryCatch(readLines(path, warn = FALSE),
-                      error = function(e) structure(e$message, class = "tool_read_error"))
-    if (inherits(lines, "tool_read_error")) {
-        return(err(paste("Read error:", unclass(lines))))
+    lines_read <- tryCatch(readLines(path, warn = FALSE),
+                           error = function(e) structure(e$message, class = "tool_read_error"))
+    if (inherits(lines_read, "tool_read_error")) {
+        return(err(paste("Read error:", unclass(lines_read))))
     }
 
-    total <- length(lines)
-    if (total == 0) {
+    total <- length(lines_read)
+    if (total == 0L) {
         return(ok(paste(c(sprintf("File: %s", path), "(empty file)"),
                         collapse = "\n")))
     }
 
-    from <- as.integer(args$from %||% 1L)
-    if (is.na(from) || from < 1L) {
-        from <- 1L
-    }
+    from <- as.integer(from %||% 1L)
+    if (is.na(from) || from < 1L) from <- 1L
 
-    count <- args$lines
-    if (!is.null(count)) {
-        count <- as.integer(count)
-    }
+    count <- lines
+    if (!is.null(count)) count <- as.integer(count)
 
     if (from > total) {
         return(ok(sprintf("File: %s\nLines: %d-%d of %d\n(no content in requested range)",
@@ -190,8 +205,8 @@ tool_read_file <- function(args) {
         min(total, from + max(count, 1L) - 1L)
     }
 
-    selected <- lines[from:end]
-    body <- if (isFALSE(args$line_numbers)) {
+    selected <- lines_read[from:end]
+    body <- if (isFALSE(line_numbers)) {
         paste(selected, collapse = "\n")
     } else {
         format_numbered_lines(selected, start = from)
@@ -208,8 +223,19 @@ tool_read_file <- function(args) {
         ))
 }
 
-tool_write_file <- function(args) {
-    checked <- tool_check_path(args$path, operation = "write")
+#' Write text to a file.
+#'
+#' Creates parent directories by default.
+#'
+#' @param path (character) Path to the file.
+#' @param content (character) Text to write.
+#' @param append (logical) Append instead of overwrite.
+#' @param create_dirs (logical) Create parent directories if needed.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_write_file <- function(path, content, append = FALSE, create_dirs = TRUE) {
+    checked <- tool_check_path(path, operation = "write")
     if (!checked$ok) {
         return(err(checked$message))
     }
@@ -220,7 +246,7 @@ tool_write_file <- function(args) {
         return(err(parent$message))
     }
 
-    create_dirs <- !isFALSE(args$create_dirs)
+    create_dirs <- !isFALSE(create_dirs)
     if (!dir.exists(dirname(path))) {
         if (!create_dirs) {
             return(err(paste("Parent directory does not exist:", dirname(path))))
@@ -228,8 +254,8 @@ tool_write_file <- function(args) {
         dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     }
 
-    content <- args$content %||% ""
-    append <- isTRUE(args$append)
+    content <- content %||% ""
+    append <- isTRUE(append)
 
     write_error <- tryCatch({
         tool_write_text(path, content, append = append)
@@ -245,8 +271,19 @@ tool_write_file <- function(args) {
                path))
 }
 
-tool_replace_in_file <- function(args) {
-    checked <- tool_check_path(args$path, operation = "write")
+#' Replace exact text in a file without rewriting the whole file manually.
+#'
+#' @param path (character) Path to the file.
+#' @param old_text (character) Exact text to replace.
+#' @param new_text (character) Replacement text.
+#' @param all (logical) Replace all matches instead of exactly one.
+#' @param expected_count (integer) Fail unless this many matches are found.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_replace_in_file <- function(path, old_text, new_text, all = FALSE,
+                                 expected_count = NULL) {
+    checked <- tool_check_path(path, operation = "write")
     if (!checked$ok) {
         return(err(checked$message))
     }
@@ -259,9 +296,9 @@ tool_replace_in_file <- function(args) {
         return(err(paste("Path is a directory, not a file:", path)))
     }
 
-    old_text <- args$old_text %||% ""
-    new_text <- args$new_text %||% ""
-    replace_all <- isTRUE(args$all)
+    old_text <- old_text %||% ""
+    new_text <- new_text %||% ""
+    replace_all <- isTRUE(all)
 
     if (nchar(old_text) == 0) {
         return(err("old_text must not be empty"))
@@ -279,7 +316,6 @@ tool_replace_in_file <- function(args) {
     }
 
     match_count <- length(matches)
-    expected_count <- args$expected_count
     if (!is.null(expected_count)) {
         expected_count <- as.integer(expected_count)
         if (!is.na(expected_count) && expected_count != match_count) {
@@ -315,15 +351,22 @@ tool_replace_in_file <- function(args) {
 
 # Search ----
 
-tool_grep_files <- function(args) {
-    pattern <- args$pattern
-    checked <- tool_check_path(args$path %||% ".", operation = "read")
+#' Search file contents with regex pattern.
+#'
+#' @param pattern (character) Regex pattern to search.
+#' @param path (character) Directory to search.
+#' @param file_pattern (character) File glob pattern.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
+    checked <- tool_check_path(path %||% ".", operation = "read")
     if (!checked$ok) {
         return(err(checked$message))
     }
 
     path <- checked$path
-    file_pattern <- args$file_pattern %||% "*.R"
+    file_pattern <- file_pattern %||% "*.R"
 
     files <- Sys.glob(file.path(path, file_pattern))
     if (length(files) == 0) {
@@ -353,9 +396,15 @@ tool_grep_files <- function(args) {
 
 # Code execution ----
 
-tool_run_r <- function(args) {
-    code <- args$code
-
+#' Execute R code in the session's global environment.
+#'
+#' New bindings are auto-captured into the workspace cache.
+#'
+#' @param code (character) R code to execute.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_run_r <- function(code) {
     # Snapshot globalenv before eval for workspace auto-capture
     before <- ls(globalenv())
 
@@ -368,7 +417,7 @@ tool_run_r <- function(args) {
 
     # Auto-capture new bindings into workspace
     new_names <- setdiff(ls(globalenv()), before)
-    origin <- list(tool = "run_r", args = args)
+    origin <- list(tool = "run_r", args = list(code = code))
     for (nm in new_names) {
         val <- get(nm, envir = globalenv())
         if (object.size(val) < 10e6) {
@@ -385,9 +434,18 @@ tool_run_r <- function(args) {
     ok(result)
 }
 
-tool_run_r_script <- function(args) {
-    code <- args$code
-    timeout <- args$timeout %||% 30L
+#' Execute R code in a clean subprocess via littler.
+#'
+#' Use for scripts that modify packages, run tests, or need isolation
+#' from the server.
+#'
+#' @param code (character) R code to execute.
+#' @param timeout (integer) Timeout in seconds.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_run_r_script <- function(code, timeout = 30L) {
+    timeout <- timeout %||% 30L
 
     # Write code to temp file (avoids shell escaping issues)
     tmp <- tempfile(fileext = ".R")
@@ -404,12 +462,38 @@ tool_run_r_script <- function(args) {
     ok(result)
 }
 
-tool_bash <- function(args) {
-    tool_shell_impl(args, "bash")
+#' Run a bash shell command.
+#'
+#' Use background=true for long-running servers or processes.
+#'
+#' @param command (character) Shell command to execute.
+#' @param timeout (integer) Timeout in seconds.
+#' @param background (logical) Run in background and return immediately.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_bash <- function(command, timeout = 30L, background = FALSE) {
+    tool_shell_impl(
+        list(command = command, timeout = timeout, background = background),
+        "bash"
+    )
 }
 
-tool_cmd <- function(args) {
-    tool_shell_impl(args, "cmd")
+#' Run a Windows cmd.exe command.
+#'
+#' Use background=true for long-running processes.
+#'
+#' @param command (character) cmd.exe command to execute.
+#' @param timeout (integer) Timeout in seconds.
+#' @param background (logical) Run in background and return immediately.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_cmd <- function(command, timeout = 30L, background = FALSE) {
+    tool_shell_impl(
+        list(command = command, timeout = timeout, background = background),
+        "cmd"
+    )
 }
 
 # Resolve bash to an explicit path on Windows. Without this, PATH order
@@ -504,7 +588,12 @@ bg_register <- function(cmd, proc) {
     id
 }
 
-tool_bg_status <- function(args) {
+#' Check status and output of background processes.
+#'
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_bg_status <- function() {
     ids <- ls(.bg_processes)
     if (length(ids) == 0) {
         return(ok("No background processes."))
@@ -543,8 +632,13 @@ tool_bg_status <- function(args) {
     ok(paste(lines, collapse = "\n\n"))
 }
 
-tool_bg_kill <- function(args) {
-    id <- args$id
+#' Kill a background process by id.
+#'
+#' @param id (character) Process id (e.g. bg_1).
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_bg_kill <- function(id) {
     if (!exists(id, envir = .bg_processes, inherits = FALSE)) {
         return(err(sprintf("No background process with id '%s'", id)))
     }
@@ -560,9 +654,15 @@ tool_bg_kill <- function(args) {
 
 # R-specific ----
 
-tool_r_help <- function(args) {
-    topic <- args$topic
-    pkg <- args$package
+#' Get R package documentation via saber (exports, function help).
+#'
+#' @param topic (character) Package or function name.
+#' @param package (character) Package to search in (optional).
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_r_help <- function(topic, package = NULL) {
+    pkg <- package
 
     # Accept pkg::fn notation in the topic as a convenience
     if (is.null(pkg) && grepl("::", topic, fixed = TRUE)) {
@@ -599,9 +699,15 @@ tool_r_help <- function(args) {
     })
 }
 
-tool_installed_packages <- function(args) {
-    pattern <- args$pattern
-    limit <- as.integer(args$limit %||% 100L)
+#' List installed R packages, optionally filtered by name.
+#'
+#' @param pattern (character) Case-insensitive package-name filter.
+#' @param limit (integer) Maximum number of packages to return.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_installed_packages <- function(pattern = NULL, limit = 100L) {
+    limit <- as.integer(limit %||% 100L)
     if (is.na(limit) || limit < 1L) {
         limit <- 100L
     }
@@ -633,9 +739,15 @@ tool_installed_packages <- function(args) {
 
 # Web ----
 
-tool_web_search <- function(args) {
-    query <- args$query
-    max_results <- args$max_results %||% 5L
+#' Search the web using Tavily API.
+#'
+#' @param query (character) Search query.
+#' @param max_results (integer) Max results to return.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_web_search <- function(query, max_results = 5L) {
+    max_results <- max_results %||% 5L
 
     api_key <- Sys.getenv("TAVILY_API_KEY")
     if (nchar(api_key) == 0) {
@@ -693,9 +805,15 @@ tool_web_search <- function(args) {
     })
 }
 
-tool_fetch_url <- function(args) {
-    url <- args$url
-    max_chars <- as.integer(args$max_chars %||% 8000L)
+#' Fetch the contents of a URL and return the response body.
+#'
+#' @param url (character) URL to fetch.
+#' @param max_chars (integer) Maximum number of characters to return.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_fetch_url <- function(url, max_chars = 8000L) {
+    max_chars <- as.integer(max_chars %||% 8000L)
     if (is.na(max_chars) || max_chars < 1L) {
         max_chars <- 8000L
     }
@@ -728,8 +846,14 @@ tool_fetch_url <- function(args) {
 
 # Git ----
 
-tool_git_status <- function(args) {
-    repo_path <- args$path %||% "."
+#' Show git working tree status.
+#'
+#' @param path (character) Repository path.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_git_status <- function(path = ".") {
+    repo_path <- path %||% "."
     if (!git_repo_available(repo_path)) {
         return(err("Not inside a git repository"))
     }
@@ -742,16 +866,27 @@ tool_git_status <- function(args) {
     ok(result$text)
 }
 
-tool_git_diff <- function(args) {
-    repo_path <- args$path %||% "."
+#' Show git diff for the current repository.
+#'
+#' @param ref (character) Diff against this ref.
+#' @param path (character) Repository path or file path filter when combined with file_path.
+#' @param file_path (character) Optional file path filter within the repository.
+#' @param staged (logical) Diff staged changes instead of the worktree.
+#' @param context_lines (integer) Number of context lines around changes.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
+                          staged = FALSE, context_lines = 3L) {
+    repo_path <- path %||% "."
     if (!git_repo_available(repo_path)) {
         return(err("Not inside a git repository"))
     }
 
-    ref <- trimws(args$ref %||% "HEAD")
-    file_path <- trimws(args$file_path %||% "")
-    staged <- isTRUE(args$staged)
-    context_lines <- as.integer(args$context_lines %||% 3L)
+    ref <- trimws(ref %||% "HEAD")
+    file_path <- trimws(file_path %||% "")
+    staged <- isTRUE(staged)
+    context_lines <- as.integer(context_lines %||% 3L)
     if (is.na(context_lines) || context_lines < 0L) {
         context_lines <- 3L
     }
@@ -779,17 +914,25 @@ tool_git_diff <- function(args) {
     ok(result$text)
 }
 
-tool_git_log <- function(args) {
-    repo_path <- args$path %||% "."
+#' Show recent git commits.
+#'
+#' @param n (integer) Number of commits to return.
+#' @param ref (character) Optional ref to log from.
+#' @param path (character) Repository path.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_git_log <- function(n = 10L, ref = "HEAD", path = ".") {
+    repo_path <- path %||% "."
     if (!git_repo_available(repo_path)) {
         return(err("Not inside a git repository"))
     }
 
-    n <- as.integer(args$n %||% 10L)
+    n <- as.integer(n %||% 10L)
     if (is.na(n) || n < 1L) {
         n <- 10L
     }
-    ref <- trimws(args$ref %||% "HEAD")
+    ref <- trimws(ref %||% "HEAD")
 
     cmd <- c("log", "--oneline", "--decorate", sprintf("-n%d", n))
     if (nchar(ref) > 0) {
@@ -804,6 +947,78 @@ tool_git_log <- function(args) {
     ok(result$text)
 }
 
+# Subagent tools ----
+
+#' Spawn a specialized subagent for a task.
+#'
+#' Use for parallel work or tasks requiring focused attention. Note that
+#' parent_session is not wired through the skill handler and defaults to
+#' NULL; the legacy registration forwarded ctx$session here.
+#'
+#' @param task (character) Task description for the subagent.
+#' @param model (character) Optional model override.
+#' @param tools (character vector) Optional tool filter (list of tool names).
+#' @param parent_session (list) Parent session object (typically NULL when
+#'   invoked as a skill).
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
+                                parent_session = NULL) {
+    tryCatch({
+        id <- subagent_spawn(
+                             task = task,
+                             model = model,
+                             tools = tools,
+                             parent_session = parent_session
+        )
+        ok(sprintf("Spawned subagent %s for: %s", id, task))
+    }, error = function(e) {
+        err(paste("Spawn failed:", e$message))
+    })
+}
+
+#' Send a prompt to a running subagent and get the response.
+#'
+#' @param id (character) Subagent ID.
+#' @param prompt (character) Prompt to send.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_query_subagent <- function(id, prompt) {
+    tryCatch({
+        result <- subagent_query(id, prompt)
+        ok(result)
+    }, error = function(e) {
+        err(paste("Query failed:", e$message))
+    })
+}
+
+#' List all active subagents.
+#'
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_list_subagents <- function() {
+    agents <- subagent_list()
+    ok(format_subagent_list(agents))
+}
+
+#' Terminate a running subagent.
+#'
+#' @param id (character) Subagent ID to terminate.
+#' @return An MCP tool-result list.
+#' @keywords internal
+#' @export
+tool_kill_subagent <- function(id) {
+    success <- subagent_kill(id)
+    if (success) {
+        ok(sprintf("Subagent %s terminated", id))
+    } else {
+        err(sprintf("Subagent not found: %s", id))
+    }
+}
+
 # Skill Registration ----
 
 #' Register all built-in skills
@@ -815,118 +1030,17 @@ tool_git_log <- function(args) {
 #' @noRd
 register_builtin_skills <- function() {
     # File tools
-    register_skill(skill_spec(
-                              name = "read_file",
-                              description = "Read a text file with optional line ranges and line numbers.",
-                              params = list(
-                path = list(type = "string",
-                            description = "Path to the file",
-                            required = TRUE),
-                from = list(type = "integer",
-                            description = "Start line number (1-based)"),
-                lines = list(type = "integer",
-                             description = "Number of lines to return"),
-                line_numbers = list(type = "boolean",
-                                    description = "Include line numbers in the output (default: true)")
-            ),
-                              handler = function(args, ctx) tool_read_file(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "write_file",
-                              description = "Write text to a file. Creates parent directories by default.",
-                              params = list(
-                path = list(type = "string",
-                            description = "Path to the file",
-                            required = TRUE),
-                content = list(type = "string",
-                               description = "Text to write",
-                               required = TRUE),
-                append = list(type = "boolean",
-                              description = "Append instead of overwrite"),
-                create_dirs = list(type = "boolean",
-                                   description = "Create parent directories if needed (default: true)")
-            ),
-                              handler = function(args, ctx) tool_write_file(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "replace_in_file",
-                              description = "Replace exact text in a file without rewriting the whole file manually.",
-                              params = list(
-                path = list(type = "string",
-                            description = "Path to the file",
-                            required = TRUE),
-                old_text = list(type = "string",
-                                description = "Exact text to replace",
-                                required = TRUE),
-                new_text = list(type = "string",
-                                description = "Replacement text",
-                                required = TRUE),
-                all = list(type = "boolean",
-                           description = "Replace all matches instead of exactly one"),
-                expected_count = list(type = "integer",
-                                      description = "Fail unless this many matches are found")
-            ),
-                              handler = function(args, ctx) tool_replace_in_file(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "list_files",
-                              description = "List files in a directory.",
-                              params = list(
-                path = list(type = "string",
-                            description = "Directory to inspect"),
-                pattern = list(type = "string",
-                               description = "Regex pattern to filter file names"),
-                recursive = list(type = "boolean",
-                                 description = "Recurse into subdirectories"),
-                all_files = list(type = "boolean",
-                                 description = "Include hidden files"),
-                limit = list(type = "integer",
-                             description = "Maximum number of entries to return")
-            ),
-                              handler = function(args, ctx) tool_list_files(args)
-        ))
+    register_skill_from_fn("read_file", tool_read_file)
+    register_skill_from_fn("write_file", tool_write_file)
+    register_skill_from_fn("replace_in_file", tool_replace_in_file)
+    register_skill_from_fn("list_files", tool_list_files)
 
     # Search
-    register_skill(skill_spec(
-                              name = "grep_files",
-                              description = "Search file contents with regex pattern",
-                              params = list(
-                pattern = list(type = "string",
-                               description = "Regex pattern to search",
-                               required = TRUE),
-                path = list(type = "string",
-                            description = "Directory to search (default: .)"),
-                file_pattern = list(type = "string",
-                                    description = "File glob pattern (default: *.R)")
-            ),
-                              handler = function(args, ctx) tool_grep_files(args)
-        ))
+    register_skill_from_fn("grep_files", tool_grep_files)
 
     # Code execution
-    register_skill(skill_spec(
-                              name = "run_r",
-                              description = "Execute R code and return result",
-                              params = list(
-                code = list(type = "string",
-                            description = "R code to execute", required = TRUE)
-            ),
-                              handler = function(args, ctx) tool_run_r(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "run_r_script",
-                              description = "Execute R code in a clean subprocess via littler. Use for scripts that modify packages, run tests, or need isolation from the server.",
-                              params = list(
-                code = list(type = "string",
-                            description = "R code to execute", required = TRUE),
-                timeout = list(type = "integer",
-                               description = "Timeout in seconds (default: 30)")
-            ),
-                              handler = function(args, ctx) tool_run_r_script(args)
-        ))
+    register_skill_from_fn("run_r", tool_run_r)
+    register_skill_from_fn("run_r_script", tool_run_r_script)
 
     # Shell tool: prefer bash everywhere for cross-OS consistency. On
     # Windows we register bash only if we can find a real bash (Rtools
@@ -935,226 +1049,33 @@ register_builtin_skills <- function() {
     use_bash <- .Platform$OS.type != "windows" ||
         file.exists(.find_bash_exe())
     if (use_bash) {
-        register_skill(skill_spec(
-                                  name = "bash",
-                                  description = "Run a bash shell command. Use background=true for long-running servers or processes.",
-                                  params = list(
-                    command = list(type = "string",
-                                   description = "Shell command to execute",
-                                   required = TRUE),
-                    timeout = list(type = "integer",
-                                   description = "Timeout in seconds (default: 30)"),
-                    background = list(type = "boolean",
-                                      description = "Run in background and return immediately (default: false)")
-                ),
-                                  handler = function(args, ctx) tool_bash(args)
-            ))
+        register_skill_from_fn("bash", tool_bash)
     } else {
-        register_skill(skill_spec(
-                                  name = "cmd",
-                                  description = "Run a Windows cmd.exe command. Use background=true for long-running processes.",
-                                  params = list(
-                    command = list(type = "string",
-                                   description = "cmd.exe command to execute",
-                                   required = TRUE),
-                    timeout = list(type = "integer",
-                                   description = "Timeout in seconds (default: 30)"),
-                    background = list(type = "boolean",
-                                      description = "Run in background and return immediately (default: false)")
-                ),
-                                  handler = function(args, ctx) tool_cmd(args)
-            ))
+        register_skill_from_fn("cmd", tool_cmd)
     }
 
     # Background process management
-    register_skill(skill_spec(
-                              name = "bg_status",
-                              description = "Check status and output of background processes",
-                              params = list(),
-                              handler = function(args, ctx) tool_bg_status(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "bg_kill",
-                              description = "Kill a background process by id",
-                              params = list(
-                id = list(type = "string",
-                          description = "Process id (e.g. bg_1)",
-                          required = TRUE)
-            ),
-                              handler = function(args, ctx) tool_bg_kill(args)
-        ))
+    register_skill_from_fn("bg_status", tool_bg_status)
+    register_skill_from_fn("bg_kill", tool_bg_kill)
 
     # R-specific
-    register_skill(skill_spec(
-                              name = "r_help",
-                              description = "Get R package documentation via saber (exports, function help)",
-                              params = list(
-                topic = list(type = "string",
-                             description = "Package or function name",
-                             required = TRUE),
-                package = list(type = "string",
-                               description = "Package to search in (optional)")
-            ),
-                              handler = function(args, ctx) tool_r_help(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "installed_packages",
-                              description = "List installed R packages, optionally filtered by name.",
-                              params = list(
-                pattern = list(type = "string",
-                               description = "Case-insensitive package-name filter"),
-                limit = list(type = "integer",
-                             description = "Maximum number of packages to return")
-            ),
-                              handler = function(args, ctx) tool_installed_packages(args)
-        ))
+    register_skill_from_fn("r_help", tool_r_help)
+    register_skill_from_fn("installed_packages", tool_installed_packages)
 
     # Web
-    register_skill(skill_spec(
-                              name = "web_search",
-                              description = "Search the web using Tavily API",
-                              params = list(
-                query = list(type = "string", description = "Search query",
-                             required = TRUE),
-                max_results = list(type = "integer",
-                                   description = "Max results to return (default: 5)")
-            ),
-                              handler = function(args, ctx) tool_web_search(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "fetch_url",
-                              description = "Fetch the contents of a URL and return the response body.",
-                              params = list(
-                url = list(type = "string",
-                           description = "URL to fetch",
-                           required = TRUE),
-                max_chars = list(type = "integer",
-                                 description = "Maximum number of characters to return")
-            ),
-                              handler = function(args, ctx) tool_fetch_url(args)
-        ))
+    register_skill_from_fn("web_search", tool_web_search)
+    register_skill_from_fn("fetch_url", tool_fetch_url)
 
     # Git
-    register_skill(skill_spec(
-                              name = "git_status",
-                              description = "Show git working tree status.",
-                              params = list(
-                path = list(type = "string",
-                            description = "Repository path (default: current directory)")
-            ),
-                              handler = function(args, ctx) tool_git_status(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "git_diff",
-                              description = "Show git diff for the current repository.",
-                              params = list(
-                ref = list(type = "string",
-                           description = "Diff against this ref (default: HEAD)"),
-                path = list(type = "string",
-                            description = "Repository path or file path filter when combined with file_path"),
-                file_path = list(type = "string",
-                                 description = "Optional file path filter within the repository"),
-                staged = list(type = "boolean",
-                              description = "Diff staged changes instead of the worktree"),
-                context_lines = list(type = "integer",
-                                     description = "Number of context lines around changes")
-            ),
-                              handler = function(args, ctx) tool_git_diff(args)
-        ))
-
-    register_skill(skill_spec(
-                              name = "git_log",
-                              description = "Show recent git commits.",
-                              params = list(
-                n = list(type = "integer",
-                         description = "Number of commits to return"),
-                ref = list(type = "string",
-                           description = "Optional ref to log from (default: HEAD)"),
-                path = list(type = "string",
-                            description = "Repository path (default: current directory)")
-            ),
-                              handler = function(args, ctx) tool_git_log(args)
-        ))
+    register_skill_from_fn("git_status", tool_git_status)
+    register_skill_from_fn("git_diff", tool_git_diff)
+    register_skill_from_fn("git_log", tool_git_log)
 
     # Subagent tools
-    register_skill(skill_spec(
-                              name = "spawn_subagent",
-                              description = "Spawn a specialized subagent for a task. Use for parallel work or tasks requiring focused attention.",
-                              params = list(
-                task = list(type = "string",
-                            description = "Task description for the subagent",
-                            required = TRUE),
-                model = list(type = "string",
-                             description = "Optional model override"),
-                tools = list(type = "array",
-                             items = list(type = "string"),
-                             description = "Optional tool filter (list of tool names)")
-            ),
-                              handler = function(args, ctx) {
-        tryCatch({
-            id <- subagent_spawn(
-                                 task = args$task,
-                                 model = args$model,
-                                 tools = args$tools,
-                                 parent_session = ctx$session
-            )
-            ok(sprintf("Spawned subagent %s for: %s", id, args$task))
-        }, error = function(e) {
-            err(paste("Spawn failed:", e$message))
-        })
-    }
-        ))
-
-    register_skill(skill_spec(
-                              name = "query_subagent",
-                              description = "Send a prompt to a running subagent and get the response.",
-                              params = list(
-                id = list(type = "string", description = "Subagent ID",
-                          required = TRUE),
-                prompt = list(type = "string", description = "Prompt to send",
-                              required = TRUE)
-            ),
-                              handler = function(args, ctx) {
-        tryCatch({
-            result <- subagent_query(args$id, args$prompt)
-            ok(result)
-        }, error = function(e) {
-            err(paste("Query failed:", e$message))
-        })
-    }
-        ))
-
-    register_skill(skill_spec(
-                              name = "list_subagents",
-                              description = "List all active subagents.",
-                              params = list(),
-                              handler = function(args, ctx) {
-        agents <- subagent_list()
-        ok(format_subagent_list(agents))
-    }
-        ))
-
-    register_skill(skill_spec(
-                              name = "kill_subagent",
-                              description = "Terminate a running subagent.",
-                              params = list(
-                id = list(type = "string",
-                          description = "Subagent ID to terminate",
-                          required = TRUE)
-            ),
-                              handler = function(args, ctx) {
-        success <- subagent_kill(args$id)
-        if (success) {
-            ok(sprintf("Subagent %s terminated", args$id))
-        } else {
-            err(sprintf("Subagent not found: %s", args$id))
-        }
-    }
-        ))
+    register_skill_from_fn("spawn_subagent", tool_spawn_subagent)
+    register_skill_from_fn("query_subagent", tool_query_subagent)
+    register_skill_from_fn("list_subagents", tool_list_subagents)
+    register_skill_from_fn("kill_subagent", tool_kill_subagent)
 
     invisible(list_skills())
 }
