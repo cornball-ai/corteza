@@ -173,7 +173,8 @@ Confirm repo layout before Phase 1:
 **Changes:**
 - Worker-side `cz_log(event, ...)` writes one JSON line to stderr per event from the dispatch wrapper.
 - CLI-side drains `session$read_error_lines()`, parses as JSON, dispatches to a CLI logger.
-- `--trace` flag / `options(corteza.trace = TRUE)` pretty-prints events inline.
+- `--trace` flag / `options(corteza.trace = TRUE)` pretty-prints events inline via `printify::print_step()` (new CRAN pkg, zero Imports, ANSI color + built-in timing).
+- **Also in this phase**: thread `ctx` (cwd, current session) through the worker so `tool_spawn_subagent` can read `ctx$session` again for parent-session detection. Lost in Phase 3 when `register_skill_from_fn` started auto-generating ctx-less handlers. Cleanest fix: if the target fn declares a `ctx` formal, the generated handler passes it; otherwise the handler drops it as today.
 
 **Acceptance:**
 - `--trace` shows tool-started / tool-finished with timing. Without, nothing visible changes.
