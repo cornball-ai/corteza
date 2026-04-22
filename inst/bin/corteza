@@ -1019,7 +1019,7 @@ run_agent <- function(opts) {
   display_model <- model %||% switch(provider,
     anthropic = "claude-sonnet-4-20250514",
     openai = "gpt-4o",
-    moonshot = "kimi-k2",
+    moonshot = "kimi-k2.6",
     ollama = "llama3.2"
   )
 
@@ -1192,7 +1192,7 @@ run_agent <- function(opts) {
         display_model <- model %||% switch(provider,
           anthropic = "claude-sonnet-4-20250514",
           openai = "gpt-4o",
-          moonshot = "kimi-k2",
+          moonshot = "kimi-k2.6",
           ollama = "llama3.2",
           "(default)"
         )
