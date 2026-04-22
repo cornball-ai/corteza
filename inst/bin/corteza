@@ -132,6 +132,34 @@ Config files:
   opts
 }
 
+# Read a single line of user input. On Unix we shell out to bash's
+# `read -e` so arrow keys and history work in Rscript contexts where
+# R's own readline() is gimped. On Windows the bash hack breaks under
+# PowerShell / cmd (quote mangling, no TTY through system2), so we
+# fall back to readLines(stdin). Line editing on Windows is handled
+# by the terminal itself.
+.cli_stdin_con <- NULL
+cli_read_line <- function(prompt_str = "> ") {
+  if (.Platform$OS.type == "windows") {
+    cat(prompt_str)
+    if (is.null(.cli_stdin_con)) {
+      .cli_stdin_con <<- file("stdin", open = "r")
+    }
+    line <- tryCatch(readLines(.cli_stdin_con, n = 1L, warn = FALSE),
+                     error = function(e) character())
+    if (length(line) == 0L) return(character())
+    return(line[1])
+  }
+  # Unix path: bash's `read -e` for history + line editing.
+  out <- suppressWarnings(system(
+    sprintf('bash -c \'read -e -p "%s" line && echo "$line"\'',
+            gsub("'", "'\\''", prompt_str, fixed = TRUE)),
+    intern = TRUE
+  ))
+  if (!is.character(out) || length(out) == 0L) return(character())
+  out[1]
+}
+
 # ============================================================================
 # CLI worker transport
 #
@@ -228,25 +256,51 @@ cli_worker_close <- function(worker) {
 # Display helpers
 # ============================================================================
 
-color <- list(
-  reset = "\033[0m",
-  bold = "\033[1m",
-  dim = "\033[2m",
-  red = "\033[31m",
-  green = "\033[32m",
-  yellow = "\033[33m",
-  blue = "\033[34m",
-  magenta = "\033[35m",
-  cyan = "\033[36m",
-  white = "\033[37m",
-  # Bright variants
-  bright_red = "\033[91m",
-  bright_green = "\033[92m",
-  bright_yellow = "\033[93m",
-  bright_blue = "\033[94m",
-  bright_magenta = "\033[95m",
-  bright_cyan = "\033[96m"
-)
+# Detect whether the terminal interprets ANSI escape sequences. Modern
+# Linux/macOS terminals and Windows Terminal / ConEmu / VS Code's
+# integrated terminal do; the classic powershell.exe and cmd.exe
+# consoles do not unless VT mode is explicitly enabled. Emitting
+# escapes into a non-VT console leaves "[32m" garbage on screen, so
+# we default OFF for classic Windows consoles and let NO_COLOR /
+# FORCE_COLOR override either way.
+.ansi_supported <- function() {
+  if (nzchar(Sys.getenv("NO_COLOR"))) return(FALSE)
+  if (nzchar(Sys.getenv("FORCE_COLOR"))) return(TRUE)
+  if (.Platform$OS.type != "windows") return(TRUE)
+  # Windows Terminal, ConEmu, VS Code, and anything that advertises a
+  # real terminal type all set one of these.
+  any(nzchar(Sys.getenv(c("WT_SESSION", "ConEmuANSI", "TERM_PROGRAM"))))
+}
+
+.ansi <- .ansi_supported()
+
+color <- if (.ansi) {
+  list(
+    reset = "\033[0m",
+    bold = "\033[1m",
+    dim = "\033[2m",
+    red = "\033[31m",
+    green = "\033[32m",
+    yellow = "\033[33m",
+    blue = "\033[34m",
+    magenta = "\033[35m",
+    cyan = "\033[36m",
+    white = "\033[37m",
+    bright_red = "\033[91m",
+    bright_green = "\033[92m",
+    bright_yellow = "\033[93m",
+    bright_blue = "\033[94m",
+    bright_magenta = "\033[95m",
+    bright_cyan = "\033[96m"
+  )
+} else {
+  # No-op escapes for terminals that don't interpret VT sequences.
+  stats::setNames(as.list(rep("", 16L)),
+                  c("reset", "bold", "dim",
+                    "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+                    "bright_red", "bright_green", "bright_yellow",
+                    "bright_blue", "bright_magenta", "bright_cyan"))
+}
 
 print_banner <- function(session_id = NULL) {
   cat(sprintf("\n%s corteza%s", color$cyan, color$reset))
@@ -532,11 +586,8 @@ ask_approval <- function(name, args) {
   # Show numbered options
   cat(sprintf("%s1) allow once  2) allow always  3) deny%s\n", color$dim, color$reset))
 
-  # Use bash read -e for readline support
-  response <- system(
-    sprintf('bash -c \'read -e -p "%sChoice [1]: %s" r && echo "$r"\'', color$yellow, color$reset),
-    intern = TRUE
-  )
+  response <- cli_read_line(sprintf("%sChoice [1]: %s",
+                                    color$yellow, color$reset))
   if (length(response) == 0) response <- ""
   response <- trimws(response)
 
@@ -1041,12 +1092,9 @@ run_agent <- function(opts) {
 
   # REPL
   while (TRUE) {
-    prompt <- system(
-      sprintf('bash -c \'read -e -p "%s> %s" line && echo "$line"\'', color$green, color$reset),
-      intern = TRUE
-    )
+    prompt <- cli_read_line(sprintf("%s> %s", color$green, color$reset))
 
-    # Handle EOF (Ctrl+D)
+    # Handle EOF (Ctrl+D on Unix, Ctrl+Z+Enter on Windows)
     if (length(prompt) == 0) {
       cat("\n")
       break
