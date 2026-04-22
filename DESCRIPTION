@@ -25,6 +25,7 @@ Imports:
     curl,
     jsonlite,
     llm.api,
+    printify,
     processx,
     saber
 Suggests:

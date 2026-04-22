@@ -982,26 +982,24 @@ tool_git_log <- function(n = 10L, ref = "HEAD", path = ".") {
 
 #' Spawn a specialized subagent for a task.
 #'
-#' Use for parallel work or tasks requiring focused attention. Note that
-#' parent_session is not wired through the skill handler and defaults to
-#' NULL; the legacy registration forwarded ctx$session here.
+#' Use for parallel work or tasks requiring focused attention. Parent
+#' session is read from `ctx$session`, which the skill handler injects
+#' from the invoking context; not from LLM-provided args.
 #'
 #' @param task (character) Task description for the subagent.
 #' @param model (character) Optional model override.
 #' @param tools (character vector) Optional tool filter (list of tool names).
-#' @param parent_session (list) Parent session object (typically NULL when
-#'   invoked as a skill).
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
 tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
-                                parent_session = NULL) {
+                                ctx = list()) {
     tryCatch({
         id <- subagent_spawn(
                              task = task,
                              model = model,
                              tools = tools,
-                             parent_session = parent_session
+                             parent_session = ctx$session
         )
         ok(sprintf("Spawned subagent %s for: %s", id, task))
     }, error = function(e) {

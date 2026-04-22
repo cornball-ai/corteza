@@ -88,6 +88,71 @@ worker_init <- function(cwd = getwd()) {
     invisible(TRUE)
 }
 
+#' Drain structured events the worker wrote to stderr while a tool
+#' ran. When `trace` is TRUE each event is pretty-printed via
+#' [printify::print_step()] / [printify::print_message()]; otherwise
+#' the events are still read (to keep the stderr buffer from growing)
+#' but not displayed.
+#'
+#' @param session A `callr::r_session`.
+#' @param trace Pretty-print events if TRUE.
+#' @return Invisible NULL.
+#' @importFrom printify print_step print_message
+#' @keywords internal
+#' @export
+cli_worker_drain_events <- function(session, trace = FALSE) {
+    lines <- tryCatch(session$read_error_lines(),
+                      error = function(e) character())
+    if (length(lines) == 0L) return(invisible(NULL))
+    if (!isTRUE(trace)) return(invisible(NULL))
+    pretty <- requireNamespace("printify", quietly = TRUE) &&
+        isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE))
+    for (line in lines) {
+        event <- tryCatch(
+            jsonlite::fromJSON(line, simplifyVector = TRUE),
+            error = function(e) NULL
+        )
+        if (is.null(event) || is.null(event$event)) next
+        .cli_render_event(event, pretty = pretty)
+    }
+    invisible(NULL)
+}
+
+.cli_render_event <- function(event, pretty = FALSE) {
+    tool <- event$tool %||% ""
+    elapsed <- event$elapsed_ms
+    detail <- if (!is.null(elapsed)) {
+        sprintf("%s (%dms)", tool, elapsed)
+    } else {
+        tool
+    }
+    if (identical(event$event, "tool_call")) {
+        label <- sprintf("tool_call: %s", tool)
+        if (pretty) printify::print_step(label)
+        else .plain_trace(label, color = 90L)
+    } else if (identical(event$event, "tool_result")) {
+        ok <- isTRUE(event$success)
+        label <- if (ok) sprintf("tool_result: %s", detail)
+                 else sprintf("tool_error: %s", detail)
+        if (pretty) {
+            if (ok) printify::print_step(label)
+            else printify::print_message(label)
+        } else {
+            .plain_trace(label, color = if (ok) 32L else 31L)
+        }
+    } else if (!is.null(event$level) &&
+               event$level %in% c("warn", "error")) {
+        msg <- event$message %||% event$event
+        label <- sprintf("%s: %s", event$level, msg)
+        if (pretty) printify::print_message(label)
+        else .plain_trace(label, color = 33L)
+    }
+}
+
+.plain_trace <- function(text, color = 90L) {
+    cat(sprintf("\033[%dm  %s\033[0m\n", color, text), file = stderr())
+}
+
 #' Spawn and initialize a CLI worker session.
 #'
 #' Starts a fresh `callr::r_session`, loads corteza inside it, and runs

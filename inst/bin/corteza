@@ -42,7 +42,8 @@ parse_args <- function() {
     session = NULL,  # Session key (resume if exists, create if not)
     resume = FALSE,  # Resume latest session
     list = FALSE,
-    dry_run = config$dry_run %||% FALSE  # Dry-run mode
+    dry_run = config$dry_run %||% FALSE,  # Dry-run mode
+    trace = isTRUE(config$trace) || isTRUE(getOption("corteza.trace", FALSE))
   )
 
   i <- 1
@@ -71,6 +72,9 @@ parse_args <- function() {
       i <- i + 2
     } else if (arg == "--dry-run") {
       opts$dry_run <- TRUE
+      i <- i + 1
+    } else if (arg == "--trace") {
+      opts$trace <- TRUE
       i <- i + 1
     } else if (arg == "--help" || arg == "-h") {
       cat("
@@ -184,6 +188,14 @@ cli_worker_call <- function(worker, name, args) {
         ),
         error = .cli_worker_error_result
     )
+    # Drain any structured events the worker emitted to stderr while
+    # the tool ran. When --trace is on they are pretty-printed;
+    # otherwise we read and discard so the stderr buffer doesn't
+    # accumulate.
+    corteza::cli_worker_drain_events(
+        worker$session,
+        trace = isTRUE(getOption("corteza.trace", FALSE))
+    )
     # Match the $text convenience mcp_call used to provide.
     if (!is.null(result$content) && is.null(result$text)) {
         texts <- vapply(result$content, function(c) {
@@ -193,6 +205,9 @@ cli_worker_call <- function(worker, name, args) {
     }
     result
 }
+
+# (Event drain and pretty-print moved to corteza::cli_worker_drain_events
+# so printify is imported from R/ code, not only from this shell script.)
 
 cli_worker_tools_for_api <- function(worker, filter = NULL) {
     # Schemas are built in the CLI process from its own tool registry —
@@ -832,6 +847,9 @@ run_agent <- function(opts) {
   }
 
   print_banner(session$sessionKey)
+
+  # Propagate --trace to the option cli_worker_call reads.
+  if (isTRUE(opts$trace)) options(corteza.trace = TRUE)
 
   # Start the CLI worker (callr::r_session) and initialize corteza
   # inside it.

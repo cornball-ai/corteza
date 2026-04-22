@@ -61,9 +61,10 @@ for (tool_name in skill_names) {
                 info = sprintf("%s: description exceeds 200 chars (%d)",
                                fn_name, nchar(schema$description)))
 
-    # Formals vs properties: every formal (except `...`) should be in
-    # properties; every property must correspond to a formal.
-    fml_names <- setdiff(names(formals(fn)), "...")
+    # Formals vs properties: every formal (except `...` and the
+    # server-side `ctx` sentinel) should be in properties; every
+    # property must correspond to a formal.
+    fml_names <- setdiff(names(formals(fn)), c("...", "ctx"))
     prop_names <- names(schema$input_schema$properties)
     missing_from_schema <- setdiff(fml_names, prop_names)
     extra_in_schema <- setdiff(prop_names, fml_names)
