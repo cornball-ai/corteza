@@ -1094,14 +1094,33 @@ register_builtin_skills <- function() {
     register_skill_from_fn("r_help", tool_r_help)
     register_skill_from_fn("installed_packages", tool_installed_packages)
 
-    # Web
-    register_skill_from_fn("web_search", tool_web_search)
+    # Web. web_search needs a Tavily API key; hide it from the LLM
+    # payload when the key isn't set so the model doesn't try calling
+    # a tool that can't work.
+    .have_tavily <- function() nzchar(Sys.getenv("TAVILY_API_KEY"))
+    register_skill_from_fn("web_search", tool_web_search,
+                           available = .have_tavily)
     register_skill_from_fn("fetch_url", tool_fetch_url)
 
-    # Git
-    register_skill_from_fn("git_status", tool_git_status)
-    register_skill_from_fn("git_diff", tool_git_diff)
-    register_skill_from_fn("git_log", tool_git_log)
+    # Git tools only make sense inside a working tree. Check both the
+    # cheap `.git` directory case and the more general `git rev-parse`
+    # form so worktrees and submodules still count.
+    .in_git_repo <- function() {
+        if (dir.exists(".git")) return(TRUE)
+        status <- tryCatch(
+            suppressWarnings(system2("git",
+                                     c("rev-parse", "--is-inside-work-tree"),
+                                     stdout = TRUE, stderr = FALSE)),
+            error = function(e) character()
+        )
+        isTRUE(identical(trimws(status[1]), "true"))
+    }
+    register_skill_from_fn("git_status", tool_git_status,
+                           available = .in_git_repo)
+    register_skill_from_fn("git_diff", tool_git_diff,
+                           available = .in_git_repo)
+    register_skill_from_fn("git_log", tool_git_log,
+                           available = .in_git_repo)
 
     # Subagent tools
     register_skill_from_fn("spawn_subagent", tool_spawn_subagent)
