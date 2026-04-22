@@ -1,5 +1,22 @@
 # Derivation: function + roxygen docs -> JSON Schema for the LLM API.
 #
+# MIGRATION NOTE: this file's core derivation (schema_from_fn and its
+# .rd_* / .parse_type_hint / .r_type_to_json helpers) belongs in saber,
+# alongside pkg_help() and pkg_exports(). It lives here temporarily
+# because moving it would require a fresh saber CRAN submission, and
+# saber cleared CRAN on 2026-04-10. The CRAN policy is "no resubmission
+# within 30 days without manual review," so the migration target is
+# 2026-05-10 or later.
+# When migrating:
+#   1. Move schema_from_fn() + .rd_* / .parse_type_hint / .r_type_to_json
+#      + .infer_from_default into saber as saber::pkg_schema() /
+#      saber::pkg_schemas().
+#   2. Leave schema_from_registry() and register_skill_from_fn() here
+#      (they're corteza-specific; they call into saber for the heavy
+#      lifting).
+#   3. Drop the copied helpers from this file.
+#   4. Add saber (>= version_with_pkg_schema) to corteza's Imports.
+#
 # The bridge between an R package function and an LLM tool definition.
 # Given a function name, schema_from_fn() pulls the function's formals
 # (names, defaults, required-ness) and its Rd metadata (title,
@@ -201,6 +218,14 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
     }
 
     description <- if (is.null(rd)) "" else .rd_description(rd, max_desc_chars)
+
+    # Empty properties must serialize as {} in JSON, not [].
+    # setNames(list(), character(0)) is how jsonlite::toJSON knows to
+    # emit `{}` — Anthropic's API rejects `[]` as
+    # "not a valid dictionary".
+    if (length(properties) == 0L) {
+        properties <- setNames(list(), character(0))
+    }
 
     list(
         name = fn_name,

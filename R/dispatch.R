@@ -105,8 +105,13 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
                       error = function(e) character())
     if (length(lines) == 0L) return(invisible(NULL))
     if (!isTRUE(trace)) return(invisible(NULL))
+    # Pretty-print only when printify is installed, stdout is a TTY,
+    # and the user hasn't asked for no-color via the `NO_COLOR` env
+    # var (https://no-color.org). Keeps ANSI escapes out of log files
+    # and pipes.
     pretty <- requireNamespace("printify", quietly = TRUE) &&
-        isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE))
+        isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE)) &&
+        !nzchar(Sys.getenv("NO_COLOR"))
     for (line in lines) {
         event <- tryCatch(
             jsonlite::fromJSON(line, simplifyVector = TRUE),

@@ -231,8 +231,18 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # Resolve the LLM model for the turn. Policy's per-call model routing
 # decision is advisory at the turn level; we just pick the session's
 # cloud (or local) default. A future PR can switch mid-turn.
+#
+# When the session's cloud model is unset AND no corteza.model option
+# is set, we fill in a provider-specific default that's newer than
+# llm.api's built-in defaults. (llm.api 0.1.1's moonshot default is
+# 'kimi-k2', which Moonshot has renamed to 'kimi-k2.6'.) The override
+# only fires when the caller hasn't picked a model themselves.
 .resolve_model <- function(session) {
-    session$model_map$cloud %||% getOption("corteza.model", NULL)
+    explicit <- session$model_map$cloud %||% getOption("corteza.model", NULL)
+    if (!is.null(explicit) && nzchar(explicit)) return(explicit)
+    switch(session$provider %||% "anthropic",
+           moonshot = "kimi-k2.6",
+           NULL)
 }
 
 # ---- Public entry point ----
