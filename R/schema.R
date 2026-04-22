@@ -202,6 +202,14 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
 
     description <- if (is.null(rd)) "" else .rd_description(rd, max_desc_chars)
 
+    # Empty properties must serialize as {} in JSON, not [].
+    # setNames(list(), character(0)) is how jsonlite::toJSON knows to
+    # emit `{}` — Anthropic's API rejects `[]` as
+    # "not a valid dictionary".
+    if (length(properties) == 0L) {
+        properties <- setNames(list(), character(0))
+    }
+
     list(
         name = fn_name,
         description = description,
