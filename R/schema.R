@@ -215,10 +215,15 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
 #'
 #' @param tool_name Name the LLM sees.
 #' @param fn The R function to introspect and execute.
+#' @param available Optional zero-argument predicate. When it returns
+#'   `FALSE`, [schema_from_registry()] omits the tool from the LLM
+#'   payload. Used for context-aware pruning (e.g. git tools gated on
+#'   a real git repo, web tools on an API key being set). The tool
+#'   stays registered and callable regardless.
 #' @return Invisible tool name.
 #' @keywords internal
 #' @export
-register_skill_from_fn <- function(tool_name, fn) {
+register_skill_from_fn <- function(tool_name, fn, available = NULL) {
     fn_name <- deparse(substitute(fn))
     derived <- schema_from_fn(fn_name)
     skill <- list(
@@ -232,7 +237,8 @@ register_skill_from_fn <- function(tool_name, fn) {
         handler = function(args, ctx) {
             valid <- intersect(names(args), names(formals(fn)))
             do.call(fn, args[valid])
-        }
+        },
+        available = available
     )
     .skill_registry[[tool_name]] <- skill
     invisible(tool_name)
@@ -273,6 +279,13 @@ register_skill_from_fn <- function(tool_name, fn) {
 #' @export
 schema_from_registry <- function(filter = NULL) {
     mcp_tools <- get_tools(filter)
+    # Drop tools whose `available()` predicate returns FALSE. Predicates
+    # get a TRUE default on errors so a bad check doesn't hide a tool.
+    mcp_tools <- Filter(function(t) {
+        entry <- get_skill(t$name)
+        if (is.null(entry$available)) return(TRUE)
+        isTRUE(tryCatch(entry$available(), error = function(e) TRUE))
+    }, mcp_tools)
     lapply(mcp_tools, function(t) {
         list(
             name = sanitize_tool_name(t$name),
