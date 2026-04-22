@@ -131,77 +131,84 @@ Config files:
 # ============================================================================
 # CLI worker transport
 #
-# The CLI drives a private R subprocess for tool execution. Today that
-# subprocess runs corteza::serve() and the CLI talks to it over MCP.
-# Phase 2 of the CLI/worker split swaps the transport to
-# callr::r_session with R-native dispatch; these wrappers are the seam.
+# The CLI drives a private R subprocess for tool execution via
+# callr::r_session. Tool dispatch goes directly through
+# corteza:::worker_dispatch() in the session; no JSON-RPC, no MCP.
 #
-# serve() itself remains a public MCP surface for external clients
+# serve() remains a spec-compliant MCP server for external clients
 # (Claude Desktop, VS Code); nothing in that path changes.
+#
+# The `port` argument on cli_worker_start / cli_worker_connect is
+# vestigial from the MCP era and kept only so the CLI's outer control
+# flow doesn't need rewriting in this phase. It's ignored.
 # ============================================================================
 
 cli_worker_start <- function(port, tools = NULL) {
-  # Check if already running
-  conn <- tryCatch(
-    socketConnection("localhost", port, open = "r+b", blocking = TRUE, timeout = 1),
-    error = function(e) NULL
-  )
-
-  if (!is.null(conn)) {
-    close(conn)
-    return(TRUE)  # Already running
-  }
-
-  # Start server using corteza::serve()
-  cwd <- getwd()
-  tools_arg <- if (!is.null(tools)) {
-    sprintf(', tools = c(%s)', paste0('"', tools, '"', collapse = ", "))
-  } else ""
-  cmd <- sprintf('corteza::serve(port = %d, cwd = "%s"%s)', port, cwd, tools_arg)
-
-  # Log server output for debugging
-  log_file <- file.path(tempdir(), "corteza-server.log")
-
-  if (.Platform$OS.type == "windows") {
-    system2("Rscript", c("-e", shQuote(cmd)), wait = FALSE, stdout = log_file, stderr = log_file)
-  } else {
-    system2("Rscript", c("-e", shQuote(cmd)), wait = FALSE,
-            stdout = log_file, stderr = log_file)
-  }
-
-  # Wait for startup
-  for (i in 1:20) {
-    Sys.sleep(0.25)
-    conn <- tryCatch(
-      socketConnection("localhost", port, open = "r+b", blocking = TRUE, timeout = 1),
-      error = function(e) NULL
-    )
-    if (!is.null(conn)) {
-      close(conn)
-      return(TRUE)
-    }
-  }
-
-  FALSE
+  # callr::r_session starts on-demand inside cli_worker_connect; there
+  # is no separate long-lived server to probe or spawn here. Kept so
+  # the CLI control flow reads the same as before the transport swap.
+  TRUE
 }
 
-# Wrappers around the llm.api MCP primitives. These are the seam where
-# Phase 2 swaps the transport to callr::r_session; every CLI callsite
-# goes through them. Today they are pass-throughs.
-cli_worker_connect <- function(port) {
-    mcp_connect(port = port, name = "corteza")
+cli_worker_connect <- function(port, cwd = getwd(), tools_filter = NULL) {
+    corteza::cli_worker_spawn(cwd = cwd, tools_filter = tools_filter)
+}
+
+# Normalize an error crossing the callr boundary into the MCP-shaped
+# result the rest of the CLI expects. callr wraps caller conditions as
+# callr::callr_error with the original condition attached at $parent.
+.cli_worker_error_result <- function(e) {
+    cause <- e$parent %||% e
+    if (inherits(cause, "corteza_tool_error")) {
+        list(
+            isError = TRUE,
+            content = list(list(type = "text",
+                                text = sprintf("Error in %s: %s",
+                                               cause$tool,
+                                               conditionMessage(cause))))
+        )
+    } else {
+        list(
+            isError = TRUE,
+            content = list(list(type = "text",
+                                text = paste("Error:", conditionMessage(cause))))
+        )
+    }
 }
 
 cli_worker_call <- function(worker, name, args) {
-    mcp_call(worker, name, args)
+    result <- tryCatch(
+        worker$session$run(
+            function(name, args) corteza::worker_dispatch(name, args),
+            list(name = name, args = args)
+        ),
+        error = .cli_worker_error_result
+    )
+    # Match the $text convenience mcp_call used to provide.
+    if (!is.null(result$content) && is.null(result$text)) {
+        texts <- vapply(result$content, function(c) {
+            if (identical(c$type, "text")) c$text else ""
+        }, character(1))
+        result$text <- paste(texts, collapse = "\n")
+    }
+    result
 }
 
 cli_worker_tools_for_api <- function(worker) {
-    mcp_tools_for_api(worker)
+    lapply(worker$tools, function(tool) {
+        list(
+            name = tool$name,
+            description = tool$description %||% "",
+            input_schema = tool$inputSchema
+        )
+    })
 }
 
 cli_worker_close <- function(worker) {
-    mcp_close(worker)
+    if (!is.null(worker$session)) {
+        try(worker$session$close(), silent = TRUE)
+    }
+    invisible(NULL)
 }
 
 # ============================================================================
@@ -828,12 +835,9 @@ run_agent <- function(opts) {
 
   print_banner(session$sessionKey)
 
-  # Start/connect to the CLI worker. (Today: a corteza::serve() R
-  # subprocess reached over MCP. Phase 2: a callr::r_session with
-  # R-native dispatch.)
-  server_log <- file.path(tempdir(), "corteza-server.log")
-  cat(sprintf("%sStarting worker on port %d...%s\n", color$dim, opts$port, color$reset))
-  cat(sprintf("%sWorker log: %s%s\n", color$dim, server_log, color$reset))
+  # Start the CLI worker (callr::r_session) and initialize corteza
+  # inside it.
+  cat(sprintf("%sStarting worker...%s\n", color$dim, color$reset))
 
   if (!cli_worker_start(opts$port, opts$tools)) {
     cat(sprintf("%sError: Could not start worker%s\n", color$bright_magenta, color$reset))
@@ -841,9 +845,8 @@ run_agent <- function(opts) {
     return(invisible(NULL))
   }
 
-  # Connect
   worker <- tryCatch(
-    cli_worker_connect(opts$port),
+    cli_worker_connect(opts$port, cwd = cwd, tools_filter = opts$tools),
     error = function(e) {
       cat(sprintf("%sError connecting to worker: %s%s\n", color$bright_magenta, e$message, color$reset))
       NULL

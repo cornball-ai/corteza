@@ -29,6 +29,10 @@ Replace the CLI's use of `serve()`/MCP as its internal transport with a private 
 8. Base R only. No pipes, no tidyverse. Match existing corteza conventions.
 9. R version gate: whatever `callr::r_session` requires. Confirm against current `Depends: R (>= 4.4.0)` is sufficient.
 
+## Follow-up after all 8 phases ship
+
+- Subagents (R/subagent.R) currently spawn child agents that talk MCP via `mcp_connect`/`mcp_call`. Same argument applies: we own both ends, MCP buys us nothing internally. Move them to `callr::r_session` in a later refactor, separate from the CLI phases.
+
 ## Non-goals for this refactor
 
 - Changing `serve()`'s MCP protocol behavior.
