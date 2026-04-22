@@ -167,7 +167,9 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
     required <- character()
 
     for (nm in names(fml)) {
-        if (nm == "...") next
+        # `...` is never exposed to the LLM; `ctx` is the server-side
+        # sentinel that register_skill_from_fn injects at call time.
+        if (nm == "..." || nm == "ctx") next
         # An empty formal (required arg) is the empty symbol. Binding
         # it to a local triggers R's missing-argument handling, so we
         # keep it inside the list and only evaluate when optional.
@@ -235,8 +237,13 @@ register_skill_from_fn <- function(tool_name, fn, available = NULL) {
             required = derived$input_schema$required
         ),
         handler = function(args, ctx) {
-            valid <- intersect(names(args), names(formals(fn)))
-            do.call(fn, args[valid])
+            fn_formals <- names(formals(fn))
+            call_args <- args[intersect(names(args), fn_formals)]
+            # Server-side context (cwd, session, ...) is injected, not
+            # derived from LLM-provided args. Functions that want it
+            # declare `ctx` in their signature.
+            if ("ctx" %in% fn_formals) call_args$ctx <- ctx
+            do.call(fn, call_args)
         },
         available = available
     )

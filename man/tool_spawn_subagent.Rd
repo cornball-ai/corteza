@@ -3,7 +3,7 @@
 \alias{tool_spawn_subagent}
 \title{Spawn a specialized subagent for a task.}
 \usage{
-tool_spawn_subagent(task, model = NULL, tools = NULL, parent_session = NULL)
+tool_spawn_subagent(task, model = NULL, tools = NULL, ctx = list())
 }
 \arguments{
 \item{task}{(character) Task description for the subagent.}
@@ -11,16 +11,13 @@ tool_spawn_subagent(task, model = NULL, tools = NULL, parent_session = NULL)
 \item{model}{(character) Optional model override.}
 
 \item{tools}{(character vector) Optional tool filter (list of tool names).}
-
-\item{parent_session}{(list) Parent session object (typically NULL when
-invoked as a skill).}
 }
 \value{
 An MCP tool-result list.
 }
 \description{
-Use for parallel work or tasks requiring focused attention. Note that
-parent_session is not wired through the skill handler and defaults to
-NULL; the legacy registration forwarded ctx$session here.
+Use for parallel work or tasks requiring focused attention. Parent
+session is read from `ctx$session`, which the skill handler injects
+from the invoking context; not from LLM-provided args.
 }
 \keyword{internal}
