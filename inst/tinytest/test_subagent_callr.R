@@ -21,11 +21,14 @@ expect_equal(length(active), 1L)
 expect_equal(active[[1]]$id, id)
 expect_equal(active[[1]]$task, "test task")
 
-# Query: evaluates the prompt as R code in the child (current
-# subagent_query stub; full agent-loop semantics TODO).
-res <- corteza::subagent_query(id, "1 + 1")
-expect_true(is.character(res))
-expect_true(grepl("2", res))
+# Query: runs through turn() inside the child, which needs a live
+# LLM API key. Skip this check if no provider key is available —
+# the spawn+registry+kill round-trip is what matters here.
+if (nzchar(Sys.getenv("ANTHROPIC_API_KEY"))) {
+    res <- corteza::subagent_query(id, "Reply with exactly the word 'pong'.")
+    expect_true(is.character(res))
+    expect_true(nzchar(res))
+}
 
 # Kill cleans up registry + closes the session.
 expect_true(corteza::subagent_kill(id))

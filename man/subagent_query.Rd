@@ -8,17 +8,17 @@ subagent_query(id, prompt, timeout = 60L)
 \arguments{
 \item{id}{Subagent ID.}
 
-\item{prompt}{Prompt / code to send.}
+\item{prompt}{Prompt to send.}
 
-\item{timeout}{Timeout in seconds.}
+\item{timeout}{Timeout in seconds (currently advisory; callr-level
+hard timeouts are future work).}
 }
 \value{
-Response text.
+Reply text (character).
 }
 \description{
-Sends a prompt to a running subagent. The current implementation
-routes the prompt through `worker_dispatch("run_r", ...)` — i.e. the
-subagent evaluates the prompt as R code. True agent-loop query
-(prompt goes through `turn()` inside the child, LLM replies,
-optional tool calls) is a TODO.
+Sends a prompt to a running subagent. Inside the child it runs
+through [turn()] with the child's persistent turn session: the LLM
+replies, any tool calls it makes resolve against the child's
+in-process skill registry, and history accumulates across queries.
 }

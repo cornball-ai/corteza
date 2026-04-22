@@ -4,17 +4,69 @@
 # inside it. Same "we own both ends" reasoning as the CLI/worker
 # split: there's no external client to target, so there's nothing to
 # gain from running an MCP server inside the child. We keep a session
-# handle in .subagent_registry, invoke tools on it via session$run(),
+# handle in .subagent_registry, drive the agent loop via session$run(),
 # and close it on kill.
 #
-# subagent_query() is currently a thin stub; full agent-loop semantics
-# (a running `turn()` inside the child processing prompts) would need
-# more plumbing than the transport swap. Left as a TODO; the transport
-# change is the part that removes MCP duplication from corteza.
+# Each child owns a persistent turn-session. subagent_query forwards
+# a prompt through that session; history accumulates across queries,
+# tool calls resolve against the child's in-process skill registry.
 
 #' Subagent registry (package-level environment).
 #' @noRd
 .subagent_registry <- new.env(parent = emptyenv())
+
+#' Child-side state holder. Populated by [subagent_turn_init()] inside
+#' each spawned child; read by [subagent_turn_prompt()]. The parent's
+#' instance of this env is unused — child processes have their own
+#' corteza namespace.
+#' @noRd
+.subagent_state <- new.env(parent = emptyenv())
+
+#' Initialize the child-side turn session.
+#'
+#' Called once per child just after [worker_init()]. Creates a
+#' `new_session()` configured with the subagent's provider/model/tools
+#' and stores it where [subagent_turn_prompt()] can find it. Subagents
+#' deny all tool approvals by default so a subagent can't run bash
+#' without the parent opting in.
+#'
+#' @param provider LLM provider name (see [new_session()]).
+#' @param model Optional model override.
+#' @param tools_filter Optional character vector of tool names to
+#'   expose. NULL uses the subagent config defaults.
+#' @param system Optional system prompt string.
+#' @param max_turns Max tool-use turns per query.
+#' @return Invisible TRUE.
+#' @keywords internal
+#' @export
+subagent_turn_init <- function(provider = "anthropic", model = NULL,
+                               tools_filter = NULL, system = NULL,
+                               max_turns = 10L) {
+    session <- new_session(
+        channel = "console",
+        provider = provider,
+        tools_filter = tools_filter,
+        system = system,
+        max_turns = as.integer(max_turns)
+    )
+    if (!is.null(model)) session$model_map$cloud <- model
+    .subagent_state$session <- session
+    invisible(TRUE)
+}
+
+#' Forward a prompt to the child-side turn session.
+#'
+#' @param prompt User prompt (character).
+#' @return Reply text (character).
+#' @keywords internal
+#' @export
+subagent_turn_prompt <- function(prompt) {
+    if (is.null(.subagent_state$session)) {
+        stop("Subagent turn session not initialized", call. = FALSE)
+    }
+    result <- turn(prompt, .subagent_state$session)
+    as.character(result$reply %||% "")
+}
 
 SUBAGENT_DEFAULTS <- list(
     max_concurrent = 3L,
@@ -112,13 +164,39 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
                  call. = FALSE)
         }
     )
+    # Compose the child's system prompt: focus on the task, forbid
+    # conversational drift and (if nested is disabled) recursive
+    # spawning. Parent context is appended verbatim when present.
+    system_prompt <- paste0(
+        "You are a specialized subagent spawned for a specific task.\n",
+        "- Stay focused on the assigned task\n",
+        "- Do not initiate new conversations\n",
+        "- Be concise in responses\n",
+        "- Report completion clearly\n",
+        if (!isTRUE(subcfg$allow_nested))
+            "- You cannot spawn additional subagents\n" else "",
+        "\n## Task\n", task
+    )
+    effective_tools <- if (is.null(tools)) subcfg$default_tools else tools
+    spawn_model <- model
+    spawn_provider <- "anthropic"  # child inherits parent config via env; override later if needed
+
     tryCatch(
         session$run(
-            function(cwd) {
+            function(cwd, provider, model, tools_filter, system, max_turns) {
                 library(corteza)
                 corteza::worker_init(cwd = cwd)
+                corteza::subagent_turn_init(
+                    provider = provider,
+                    model = model,
+                    tools_filter = tools_filter,
+                    system = system,
+                    max_turns = max_turns
+                )
             },
-            list(cwd = cwd)
+            list(cwd = cwd, provider = spawn_provider, model = spawn_model,
+                 tools_filter = effective_tools, system = system_prompt,
+                 max_turns = 10L)
         ),
         error = function(e) {
             try(session$close(), silent = TRUE)
@@ -145,16 +223,16 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
 
 #' Query a subagent.
 #'
-#' Sends a prompt to a running subagent. The current implementation
-#' routes the prompt through `worker_dispatch("run_r", ...)` — i.e. the
-#' subagent evaluates the prompt as R code. True agent-loop query
-#' (prompt goes through `turn()` inside the child, LLM replies,
-#' optional tool calls) is a TODO.
+#' Sends a prompt to a running subagent. Inside the child it runs
+#' through [turn()] with the child's persistent turn session: the LLM
+#' replies, any tool calls it makes resolve against the child's
+#' in-process skill registry, and history accumulates across queries.
 #'
 #' @param id Subagent ID.
-#' @param prompt Prompt / code to send.
-#' @param timeout Timeout in seconds.
-#' @return Response text.
+#' @param prompt Prompt to send.
+#' @param timeout Timeout in seconds (currently advisory; callr-level
+#'   hard timeouts are future work).
+#' @return Reply text (character).
 #' @export
 subagent_query <- function(id, prompt, timeout = 60L) {
     info <- .subagent_registry[[id]]
@@ -166,21 +244,17 @@ subagent_query <- function(id, prompt, timeout = 60L) {
         stop("Subagent expired: ", id, call. = FALSE)
     }
 
-    result <- tryCatch(
+    reply <- tryCatch(
         info$session$run(
-            function(code) corteza::worker_dispatch("run_r",
-                                                    list(code = code)),
-            list(code = prompt)
+            function(p) corteza::subagent_turn_prompt(p),
+            list(p = prompt)
         ),
         error = function(e) {
             stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
         }
     )
     log_event("subagent_query", subagent_id = id, prompt_length = nchar(prompt))
-    text_parts <- vapply(result$content %||% list(), function(c) {
-        if (identical(c$type, "text")) c$text else ""
-    }, character(1L))
-    paste(text_parts, collapse = "\n")
+    as.character(reply)
 }
 
 #' Kill a subagent.
