@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime for R
-Version: 0.5.2
+Version: 0.6.0
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
