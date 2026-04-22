@@ -12,6 +12,10 @@ tool_run_r(code)
 An MCP tool-result list.
 }
 \description{
-New bindings are auto-captured into the workspace cache.
+New bindings are auto-captured into the workspace cache. Large
+result values (data frames, matrices, long vectors, objects over
+~10 KB) are stashed via `with_handle()` and returned as a `str()`
+summary plus a short `.h_NNN` handle the LLM can reference in a
+later `run_r` call or inspect with `read_handle`.
 }
 \keyword{internal}

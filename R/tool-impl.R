@@ -398,7 +398,11 @@ tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
 
 #' Execute R code in the session's global environment.
 #'
-#' New bindings are auto-captured into the workspace cache.
+#' New bindings are auto-captured into the workspace cache. Large
+#' result values (data frames, matrices, long vectors, objects over
+#' ~10 KB) are stashed via `with_handle()` and returned as a `str()`
+#' summary plus a short `.h_NNN` handle the LLM can reference in a
+#' later `run_r` call or inspect with `read_handle`.
 #'
 #' @param code (character) R code to execute.
 #' @return An MCP tool-result list.
@@ -408,20 +412,47 @@ tool_run_r <- function(code) {
     # Snapshot globalenv before eval for workspace auto-capture
     before <- ls(globalenv())
 
-    result <- tryCatch({
-        out <- capture.output(eval(parse(text = code), envir = globalenv()))
-        paste(out, collapse = "\n")
+    # Active handles are visible in `code` as regular R names.
+    eval_env <- handle_eval_env(parent = globalenv())
+
+    # Evaluate in a two-step dance: get the withVisible() result first
+    # (so we have the value, not just its printed representation), then
+    # separately capture what the print of that value would look like.
+    # Using <<- inside nested capture.output/tryCatch frames is fragile.
+    outcome <- tryCatch({
+        r <- withVisible(eval(parse(text = code), envir = eval_env))
+        printed <- if (isTRUE(r$visible)) {
+            utils::capture.output(print(r$value))
+        } else {
+            character(0)
+        }
+        list(ok = TRUE, value = r$value, visible = r$visible,
+             printed = paste(printed, collapse = "\n"))
     }, error = function(e) {
-        paste("Error:", e$message)
+        list(ok = FALSE, message = paste("Error:", e$message))
     })
 
-    # Auto-capture new bindings into workspace
+    if (!isTRUE(outcome$ok)) {
+        return(ok(outcome$message))
+    }
+
+    # Large visible results get stashed as handles so the LLM sees a
+    # summary instead of the full print.
+    text <- if (isTRUE(outcome$visible) && .is_large_result(outcome$value)) {
+        stashed <- with_handle(outcome$value)
+        sprintf("%s\n\n[stored as %s]", stashed$summary, stashed$handle)
+    } else {
+        outcome$printed
+    }
+
+    # Auto-capture new globalenv bindings into the workspace. Variables
+    # assigned inside eval_env don't leak to globalenv, so this only
+    # fires when the user explicitly uses `<<-` or `assign()`.
     new_names <- setdiff(ls(globalenv()), before)
     origin <- list(tool = "run_r", args = list(code = code))
     for (nm in new_names) {
         val <- get(nm, envir = globalenv())
         if (object.size(val) < 10e6) {
-            # Detect dependencies via codetools (best-effort)
             deps <- tryCatch({
                 fn <- eval(parse(text = paste0("function() {", code, "}")))
                 referenced <- codetools::findGlobals(fn)
@@ -431,7 +462,7 @@ tool_run_r <- function(code) {
         }
     }
 
-    ok(result)
+    ok(text)
 }
 
 #' Execute R code in a clean subprocess via littler.
@@ -1040,6 +1071,7 @@ register_builtin_skills <- function() {
 
     # Code execution
     register_skill_from_fn("run_r", tool_run_r)
+    register_skill_from_fn("read_handle", tool_read_handle)
     register_skill_from_fn("run_r_script", tool_run_r_script)
 
     # Shell tool: prefer bash everywhere for cross-OS consistency. On
