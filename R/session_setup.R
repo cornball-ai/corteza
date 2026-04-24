@@ -46,6 +46,9 @@
 #'   API key env var is unset or empty.
 #' @param verbose Logical. Passed through to \code{new_session}.
 #' @param max_turns Integer. Passed through to \code{new_session}.
+#'   Defaults to 50, a safety net for interactive channels where a
+#'   multi-step request (read + edit + verify several files) can easily
+#'   exceed the \code{new_session()} default of 10.
 #'
 #' @return A session environment from \code{\link{new_session}}, with
 #'   an extra \code{cwd} field set.
@@ -55,7 +58,7 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
                           tools = NULL, system = NULL, approval_cb = NULL,
                           history = NULL, load_project_context = TRUE,
                           validate_api_key = TRUE, verbose = FALSE,
-                          max_turns = 10L) {
+                          max_turns = 50L) {
     channel <- match.arg(channel)
     cwd <- path.expand(cwd)
     config <- load_config(cwd)

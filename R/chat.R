@@ -155,6 +155,10 @@ tool_hint <- function(name, args) {
 #' @param session Session resume control. NULL (default) starts fresh,
 #'   TRUE resumes the latest session, or a character session key to
 #'   resume a specific session.
+#' @param max_turns Integer or NULL. Maximum LLM turns per user prompt
+#'   before the loop stops with \code{[Max turns reached]}. NULL (default)
+#'   reads \code{getOption("corteza.max_turns")}, then falls back to the
+#'   \code{\link{session_setup}} default (50).
 #'
 #' @return The session object (invisibly).
 #' @export
@@ -170,7 +174,8 @@ tool_hint <- function(name, args) {
 #' # Minimal tools for focused work
 #' chat(tools = "core")
 #' }
-chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
+chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
+                 max_turns = NULL) {
     if (!requireNamespace("llm.api", quietly = TRUE)) {
         stop("llm.api package required for chat(). ",
              "Install with: install.packages('llm.api')",
@@ -179,6 +184,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
     if (!interactive()) {
         stop("chat() requires an interactive R session", call. = FALSE)
     }
+
+    max_turns <- as.integer(
+        max_turns %||% getOption("corteza.max_turns") %||% 50L
+    )
 
     cwd <- getwd()
 
@@ -200,7 +209,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL) {
                                   history = history,
                                   load_project_context = TRUE,
                                   validate_api_key = TRUE,
-                                  approval_cb = chat_approval_cb
+                                  approval_cb = chat_approval_cb,
+                                  max_turns = max_turns
     )
     config <- turn_session$config
     provider <- turn_session$provider

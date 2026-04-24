@@ -3,7 +3,8 @@
 \alias{chat}
 \title{Start Interactive Chat}
 \usage{
-chat(provider = NULL, model = NULL, tools = NULL, session = NULL)
+chat(provider = NULL, model = NULL, tools = NULL, session = NULL,
+     max_turns = NULL)
 }
 \arguments{
 \item{provider}{LLM provider: "anthropic", "openai", "moonshot", or
@@ -19,6 +20,11 @@ Use "core" for file+code+git, "all" for everything (default).}
 \item{session}{Session resume control. NULL (default) starts fresh,
 TRUE resumes the latest session, or a character session key to
 resume a specific session.}
+
+\item{max_turns}{Integer or NULL. Maximum LLM turns per user prompt
+before the loop stops with \code{[Max turns reached]}. NULL (default)
+reads \code{getOption("corteza.max_turns")}, then falls back to the
+\code{\link{session_setup}} default (50).}
 }
 \value{
 The session object (invisibly).
