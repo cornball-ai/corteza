@@ -3,6 +3,29 @@ library(tinytest)
 expect_true(is.function(corteza::add_observer))
 expect_true(is.function(corteza::observer_progress))
 
+# observer_progress prints a tool-specific hint next to the tool name.
+local({
+    obs <- corteza::observer_progress()
+    out <- capture.output(obs(list(
+        call = list(tool = "read_file", args = list(path = "/x/y.R")),
+        outcome = "ran", result = "a\nb\n", success = TRUE
+    )))
+    expect_true(any(grepl("[read_file] /x/y.R", out, fixed = TRUE)))
+    expect_true(any(grepl("(2 lines)", out, fixed = TRUE)))
+
+    out2 <- capture.output(obs(list(
+        call = list(tool = "grep_files", args = list(pattern = "foo")),
+        outcome = "ran", result = "", success = TRUE
+    )))
+    expect_true(any(grepl("/foo/", out2, fixed = TRUE)))
+
+    out3 <- capture.output(obs(list(
+        call = list(tool = "list_files", args = list(path = ".")),
+        outcome = "deny", result = "[denied]", success = FALSE
+    )))
+    expect_true(any(grepl("[list_files] . denied", out3, fixed = TRUE)))
+})
+
 # Observer receives event for allow+success.
 local({
     seen <- list()

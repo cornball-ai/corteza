@@ -297,15 +297,19 @@ add_observer <- function(session, observer) {
 #' Built-in progress observer that prints to stdout
 #'
 #' Prints one line per tool call suitable for an interactive REPL:
-#' \code{"  [tool] hint (N lines)\n"}.
+#' \code{"  [tool] hint (N lines)\n"}. The hint is a short summary of
+#' the call (file path, code snippet, search pattern) computed by
+#' \code{tool_hint()}.
 #'
 #' @return A function to pass to \code{\link{add_observer}}.
 #' @export
 observer_progress <- function() {
     function(event) {
+        hint <- tool_hint(event$call$tool, event$call$args)
         if (!identical(event$outcome, "ran")) {
-            cat(sprintf("  [%s] %s\n",
+            cat(sprintf("  [%s]%s %s\n",
                         event$call$tool,
+                        hint,
                         sub("^\\[", "", sub("\\]$", "", event$result))))
             return(invisible())
         }
@@ -320,7 +324,8 @@ observer_progress <- function() {
         } else {
             status <- " (error)"
         }
-        cat(sprintf("  [%s] (%d lines)%s\n", event$call$tool, lines, status))
+        cat(sprintf("  [%s]%s (%d lines)%s\n",
+                    event$call$tool, hint, lines, status))
     }
 }
 

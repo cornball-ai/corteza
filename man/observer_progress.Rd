@@ -10,5 +10,7 @@ A function to pass to \code{\link{add_observer}}.
 }
 \description{
 Prints one line per tool call suitable for an interactive REPL:
-\code{"  [tool] hint (N lines)\n"}.
+\code{"  [tool] hint (N lines)\n"}. The hint is a short summary of
+the call (file path, code snippet, search pattern) computed by
+\code{tool_hint()}.
 }
