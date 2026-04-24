@@ -34,7 +34,7 @@ corteza | claude-sonnet-4-6 @ anthropic
 
 ## Why R?
 
-In the agent world, tools, skills, and the servers that expose them are three separate things you have to design, host, and wire together yourself. R packages bundle all three: the capability, the documentation that teaches you how to use it, and the mechanism that makes it available to your session. Versioned, tested, and delivered in a single `install.packages()` call. CRAN has been doing integrated tool distribution for 20 years. The agent ecosystem is just now figuring out that's hard.
+In the agent world, tools, skills, and the servers that expose them are three separate things you have to design, host, and wire together yourself. R packages bundle all three: the capability, the documentation that teaches you how to use it, and the mechanism that makes it available to your session. Versioned, tested, and delivered in a single `install.packages()` call. CRAN has been doing integrated tool distribution for 29 years. The agent ecosystem is just now figuring out that's hard.
 
 - **`install.packages()`** works the same on Windows, Mac, and Linux. No brew, no nvm, no Docker, no venv.
 - **Packages are tools, skills, and servers in one artifact.** The 20,000+ packages on CRAN are agent capabilities waiting to be wired up.
@@ -46,7 +46,7 @@ In the agent world, tools, skills, and the servers that expose them are three se
 
 ### 1. CLI agent (`corteza`)
 
-The primary interface. A terminal agent with session management, voice mode, and context compaction. Spawns a fresh R subprocess running `corteza::serve()` so the agent's R state (loaded packages, `globalenv` objects, working directory) stays separate from whatever you have loaded interactively.
+The primary interface. A terminal agent with session management and context compaction. 
 
 ```bash
 corteza                    # Start agent
