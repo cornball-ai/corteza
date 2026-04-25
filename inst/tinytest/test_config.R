@@ -48,5 +48,27 @@ writeLines('not valid json', file.path(testdir, ".corteza", "config.json"))
 config <- corteza:::load_config(testdir)
 expect_equal(config$context_files, character(0))
 
+# skill_packages: object form parses as list-of-lists, not data.frame.
+# Without simplifyDataFrame=FALSE, an array of {package, functions}
+# objects collapses into a 1-row data.frame and load_skill_packages
+# chokes with "$ operator is invalid for atomic vectors".
+writeLines(
+    '{"skill_packages":[{"package":"fortunes","functions":["fortune"]}]}',
+    file.path(testdir, ".corteza", "config.json")
+)
+config <- corteza:::load_config(testdir)
+expect_true(is.list(config$skill_packages))
+expect_equal(length(config$skill_packages), 1L)
+expect_equal(config$skill_packages[[1]]$package, "fortunes")
+expect_equal(config$skill_packages[[1]]$functions, "fortune")
+
+# String form still works.
+writeLines(
+    '{"skill_packages":["fortunes"]}',
+    file.path(testdir, ".corteza", "config.json")
+)
+config <- corteza:::load_config(testdir)
+expect_equal(config$skill_packages, "fortunes")
+
 # Cleanup
 unlink(testdir, recursive = TRUE)
