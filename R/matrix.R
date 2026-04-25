@@ -832,12 +832,14 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
 }
 
 # Resolve the directory where out-of-band signal files live. Honors
-# CORTEZA_STATE_DIR for tests / unusual setups, else the standard
-# user state path. Created lazily when first written to.
+# CORTEZA_STATE_DIR for tests / unusual setups, else a `state/`
+# subdirectory of the user data path. (tools::R_user_dir only
+# accepts "data" / "config" / "cache", so we can't use "state"
+# directly.) Created lazily when first written to.
 matrix_signal_dir <- function() {
     env <- Sys.getenv("CORTEZA_STATE_DIR", "")
     if (nzchar(env)) return(env)
-    tools::R_user_dir("corteza", "state")
+    file.path(tools::R_user_dir("corteza", "data"), "state")
 }
 
 #' Ask the running matrix bot to archive sessions to pensar
