@@ -840,6 +840,27 @@ matrix_signal_dir <- function() {
     tools::R_user_dir("corteza", "state")
 }
 
+#' Ask the running matrix bot to archive sessions to pensar
+#'
+#' Drops an \code{archive.signal} file in the corteza state directory.
+#' The next iteration of the long-poll loop in \code{\link{matrix_run}}
+#' picks it up, runs \code{\link{matrix_archive_all}}, and removes the
+#' file. Safe to call from any process or scheduler — systemd, Task
+#' Scheduler, launchd, cron, or a separate R session — without needing
+#' to know the bot's PID or share its memory.
+#'
+#' @return The signal file path, invisibly.
+#' @export
+matrix_request_flush <- function() {
+    dir <- matrix_signal_dir()
+    if (!dir.exists(dir)) {
+        dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    }
+    sig <- file.path(dir, "archive.signal")
+    file.create(sig, showWarnings = FALSE)
+    invisible(sig)
+}
+
 # Flush sessions to pensar when the signal file exists. Removes the
 # file on success so each touch fires exactly one flush. Errors are
 # logged, never raised — the long-poll loop must keep running.

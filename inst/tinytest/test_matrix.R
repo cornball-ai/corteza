@@ -289,6 +289,18 @@ if (!requireNamespace("pensar", quietly = TRUE)) {
     expect_null(s$ingested_through)
 }
 
+# matrix_request_flush: writes archive.signal in CORTEZA_STATE_DIR.
+local({
+    dir <- tempfile("state-")
+    op <- Sys.setenv(CORTEZA_STATE_DIR = dir)
+    on.exit(Sys.unsetenv("CORTEZA_STATE_DIR"), add = TRUE)
+    on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+    sig <- corteza::matrix_request_flush()
+    expect_true(file.exists(sig))
+    expect_equal(basename(sig), "archive.signal")
+    expect_equal(dirname(sig), dir)
+})
+
 # matrix_handle_flush_signal: no signal -> no-op.
 local({
     sig <- tempfile("nosig-")
