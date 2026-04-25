@@ -790,6 +790,7 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
                        provider = NULL, tools_filter = NULL) {
     matrix_require_mx()
     sessions <- matrix_new_session_registry()
+    mx_sess <- NULL
 
     # Catch up on pending invites that predate the saved sync token.
     # Conduit (and some other Matrix servers) only surfaces invites
@@ -811,13 +812,72 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
         }
     }
 
+    signal_dir <- matrix_signal_dir()
+    flush_signal <- file.path(signal_dir, "archive.signal")
+
     message("matrix_run: starting long-poll loop")
+    message("matrix_run: flush signal at ", flush_signal)
     repeat {
         matrix_poll(
                     system = system, model = model,
                     provider = provider, tools_filter = tools_filter,
                     timeout = timeout, sessions = sessions
         )
+        # Out-of-band archive trigger: another process (e.g. a cornelius
+        # systemd timer) drops `archive.signal` to ask the bot to flush
+        # all in-memory room sessions to the pensar vault. The bot owns
+        # the registry; the schedule lives outside the package.
+        matrix_handle_flush_signal(flush_signal, sessions, mx_sess)
     }
+}
+
+# Resolve the directory where out-of-band signal files live. Honors
+# CORTEZA_STATE_DIR for tests / unusual setups, else the standard
+# user state path. Created lazily when first written to.
+matrix_signal_dir <- function() {
+    env <- Sys.getenv("CORTEZA_STATE_DIR", "")
+    if (nzchar(env)) return(env)
+    tools::R_user_dir("corteza", "state")
+}
+
+#' Ask the running matrix bot to archive sessions to pensar
+#'
+#' Drops an \code{archive.signal} file in the corteza state directory.
+#' The next iteration of the long-poll loop in \code{\link{matrix_run}}
+#' picks it up, runs \code{\link{matrix_archive_all}}, and removes the
+#' file. Safe to call from any process or scheduler — systemd, Task
+#' Scheduler, launchd, cron, or a separate R session — without needing
+#' to know the bot's PID or share its memory.
+#'
+#' @return The signal file path, invisibly.
+#' @export
+matrix_request_flush <- function() {
+    dir <- matrix_signal_dir()
+    if (!dir.exists(dir)) {
+        dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    }
+    sig <- file.path(dir, "archive.signal")
+    file.create(sig, showWarnings = FALSE)
+    invisible(sig)
+}
+
+# Flush sessions to pensar when the signal file exists. Removes the
+# file on success so each touch fires exactly one flush. Errors are
+# logged, never raised — the long-poll loop must keep running.
+matrix_handle_flush_signal <- function(flush_signal, sessions,
+                                       mx_sess = NULL) {
+    if (!file.exists(flush_signal)) return(invisible(0L))
+    n <- tryCatch(
+        matrix_archive_all(sessions, mx_sess),
+        error = function(e) {
+            message("matrix_run: flush failed: ", conditionMessage(e))
+            -1L
+        }
+    )
+    tryCatch(file.remove(flush_signal), error = function(e) NULL)
+    if (isTRUE(n >= 0L)) {
+        message(sprintf("matrix_run: archived %d room(s) to vault", n))
+    }
+    invisible(n)
 }
 
