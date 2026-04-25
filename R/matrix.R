@@ -147,6 +147,15 @@ matrix_extract_messages <- function(sync_resp, self_id) {
     out
 }
 
+# Is this a /clear (or /reset, /new) command? In group rooms the body
+# will include the @-mention prefix — accept the command at the end of
+# the message after any leading mention text, or on its own.
+matrix_is_clear_command <- function(body) {
+    if (is.null(body) || !nzchar(body)) return(FALSE)
+    trimmed <- trimws(body)
+    grepl("(^|\\s)/(clear|reset|new)\\s*$", trimmed)
+}
+
 # Does this message mention the bot? Checks the explicit m.mentions
 # field (emitted by Element and most modern clients) first, then falls
 # back to substring matching on the body for @localpart and full MXID.
@@ -629,6 +638,16 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # Prevents bot-loops between two AIs and stops noise in
         # multi-human rooms.
         if (!matrix_should_respond(m, session, cfg$user_id)) {
+            next
+        }
+
+        if (matrix_is_clear_command(m$body)) {
+            if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
+                rm(list = m$room_id, envir = sessions)
+            }
+            mx.api::mx_send(mx_sess, m$room_id,
+                            "Cleared. Starting a fresh session.")
+            replied <- replied + 1L
             next
         }
 

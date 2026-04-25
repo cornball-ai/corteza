@@ -248,7 +248,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     n_tools <- length(skills_as_api_tools(tools))
     display_model <- model %||% "(provider default)"
     cat(sprintf(
-                "corteza chat | %s @ %s | %d tools | /quit to exit%s\n\n",
+                "corteza chat | %s @ %s | %d tools | /clear, /quit%s\n\n",
                 display_model, provider, n_tools,
             if (resumed_count > 0L) {
                 sprintf(" | resumed (%d msgs)", resumed_count)
@@ -274,6 +274,25 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             cat("Bye.\n")
             break
+        }
+        if (trimws(prompt) %in% c("/clear", "/reset", "/new")) {
+            # Archive the current session's workspace so it stays
+            # resumable, then spin up a fresh on-disk + in-memory
+            # session. The old transcript is left on disk.
+            if (ws_enabled) {
+                tryCatch(ws_save(disk_session$sessionId),
+                         error = function(e) NULL)
+            }
+            fresh <- session_new(provider, model, cwd)
+            disk_session <- list(session = fresh,
+                                 sessionId = fresh$sessionId,
+                                 resumed = FALSE)
+            turn_session$history <- list()
+            turn_session$sessionId <- fresh$sessionId
+            turn_session$disk_session <- fresh
+            pending_r_context <- character(0)
+            cat(sprintf("Cleared. New session: %s\n\n", fresh$sessionId))
+            next
         }
         if (startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
