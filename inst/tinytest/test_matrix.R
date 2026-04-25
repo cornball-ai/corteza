@@ -226,6 +226,92 @@ if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # package check.
 }
 
+# matrix_session_to_markdown: format only the unseen tail.
+local({
+    s <- new.env(parent = emptyenv())
+    s$history <- list(
+        list(role = "user",      content = "hello"),
+        list(role = "assistant", content = "hi back"),
+        list(role = "user",      content = "and now this")
+    )
+    s$ingested_through <- 1L
+    md <- corteza:::matrix_session_to_markdown(s, "!room:s.c", "Test Room")
+    expect_true(grepl("# Test Room", md, fixed = TRUE))
+    expect_false(grepl("hello", md, fixed = TRUE))      # already ingested
+    expect_true(grepl("hi back", md, fixed = TRUE))
+    expect_true(grepl("and now this", md, fixed = TRUE))
+
+    # Nothing new -> NULL.
+    s$ingested_through <- 3L
+    expect_null(corteza:::matrix_session_to_markdown(s, "!room:s.c"))
+})
+
+# matrix_archive_session round-trip: ingest, dedupe, ingest tail only.
+# Sessions in real use are environments, so test with environments.
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        on.exit(unlink(v, recursive = TRUE), add = TRUE)
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        on.exit(options(op), add = TRUE)
+
+        s <- new.env(parent = emptyenv())
+        s$history <- list(
+            list(role = "user",      content = "first"),
+            list(role = "assistant", content = "ok")
+        )
+        out1 <- corteza:::matrix_archive_session(s, "!t:s.c")
+        expect_true(file.exists(out1))
+        expect_equal(s$ingested_through, 2L)
+
+        # No new turns -> no-op.
+        out2 <- corteza:::matrix_archive_session(s, "!t:s.c")
+        expect_null(out2)
+        expect_equal(s$ingested_through, 2L)
+
+        # New turn -> only that turn lands in the file.
+        s$history[[3]] <- list(role = "user", content = "third")
+        out3 <- corteza:::matrix_archive_session(s, "!t:s.c")
+        body <- paste(readLines(out3), collapse = "\n")
+        expect_false(grepl("first", body, fixed = TRUE))
+        expect_true(grepl("third", body, fixed = TRUE))
+        expect_equal(s$ingested_through, 3L)
+    })
+}
+
+# matrix_archive_session: silent no-op when pensar isn't installed.
+if (!requireNamespace("pensar", quietly = TRUE)) {
+    s <- new.env(parent = emptyenv())
+    s$history <- list(list(role = "user", content = "x"))
+    out <- corteza:::matrix_archive_session(s, "!r:s.c")
+    expect_null(out)
+    expect_null(s$ingested_through)
+}
+
+# matrix_archive_all: walks the registry and counts archived rooms.
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        on.exit(unlink(v, recursive = TRUE), add = TRUE)
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        on.exit(options(op), add = TRUE)
+
+        reg <- new.env(parent = emptyenv())
+        s1 <- new.env(parent = emptyenv())
+        s1$history <- list(list(role = "user", content = "a"))
+        assign("!r1:s.c", s1, envir = reg)
+        s2 <- new.env(parent = emptyenv())
+        s2$history <- list(list(role = "user", content = "b"))
+        assign("!r2:s.c", s2, envir = reg)
+
+        expect_equal(corteza:::matrix_archive_all(reg), 2L)
+        # Second flush is a no-op for both rooms.
+        expect_equal(corteza:::matrix_archive_all(reg), 0L)
+    })
+}
+
 # matrix_is_clear_command: recognize /clear, /reset, /new alone or
 # after an @-mention; reject bare prose that happens to contain /clear.
 expect_true(corteza:::matrix_is_clear_command("/clear"))
