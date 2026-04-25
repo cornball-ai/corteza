@@ -10,19 +10,13 @@ title: Package as Skill
 
 An R package that documents its functions properly is already what MCP is trying to wire together: tools (functions), descriptions (`.Rd` files), and an invocation mechanism (`library()`). corteza walks the `.Rd` tree at session start and turns the exports into JSON-Schema tool definitions — same shape the Anthropic / OpenAI / Moonshot APIs expect. No server, no schema by hand, no protocol.
 
-This vignette walks the setup with [fortunes](https://cran.r-project.org/package=fortunes) — pithy quotes from the R-help archives — because it's tinyverse-clean (`Imports: utils`), returns a structured S3 object, and the demo is funnier than configuring a JSON parser.
+This vignette walks the setup with [fortunes](https://cran.r-project.org/package=fortunes), quotes from the R-help archives. It returns a structured S3 object, and the demo is more fun than configuring a JSON parser.
 
 ## Setup
 
 Two steps. Total wiring: one config line.
 
 ### 1. Install the package
-
-```bash
-sudo apt install r-cran-fortunes
-```
-
-Or, on systems without [r2u](https://eddelbuettel.github.io/r2u/):
 
 ```r
 install.packages("fortunes")
@@ -89,10 +83,10 @@ The test: would you call this function from another function and trust the retur
 
 A live MCP server ships every tool's JSON schema into the system prompt at connect time. Twenty tools at ~400 tokens each is 8,000 tokens of startup overhead before the agent has done anything. The CLI / package-as-skill path pays roughly zero startup tax (corteza already has `bash`, `run_r`, `read_file` baked in), and lazy lookup via `saber::pkg_help()` costs ~200 tokens for a tool the agent actually needs.
 
-Same tool surface, different cost curve. corteza's MCP server (`corteza::serve()`) still exists for clients that need it (Claude Desktop, mainly), but it's no longer the only path — the same skill registry feeds both.
+Same tool surface, different cost curve. corteza's MCP server (`corteza::serve()`) still exists for clients that need it (Claude Code, Codex, etc), but it's no longer the only path — the same skill registry feeds both.
 
 ## Where to go next
 
 - The R as CLI Agent Harness post explains the derivation pipeline: <https://cornball.ai/posts/2026-03-06-r-as-cli-agent-harness/>
-- Discover what's in a package the same way the agent does: `r -e 'saber::pkg_exports("fortunes")'` and `r -e 'saber::pkg_help("fortune", "fortunes")'`.
+- Discover what's in a package the same way the agent does: `Rscript --vanilla -e 'saber::pkg_exports("fortunes")'` and `Rscript --vanilla -e 'saber::pkg_help("fortune", "fortunes")'`.
 - For your own functions, drop an `.R` file in `<project>/.corteza/skills/` calling `register_skill_from_fn("name", my_fn)`. Loaded on every session start, no installation required.
