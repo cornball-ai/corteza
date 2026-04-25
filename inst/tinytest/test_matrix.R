@@ -225,3 +225,17 @@ if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # Live round-trip would configure, send, and poll here. Skipped in
   # package check.
 }
+
+# matrix_is_clear_command: recognize /clear, /reset, /new alone or
+# after an @-mention; reject bare prose that happens to contain /clear.
+expect_true(corteza:::matrix_is_clear_command("/clear"))
+expect_true(corteza:::matrix_is_clear_command("  /clear  "))
+expect_true(corteza:::matrix_is_clear_command("/reset"))
+expect_true(corteza:::matrix_is_clear_command("/new"))
+expect_true(corteza:::matrix_is_clear_command("@cornelius /clear"))
+expect_true(corteza:::matrix_is_clear_command("@cornelius:s.c /reset"))
+expect_false(corteza:::matrix_is_clear_command("/clear the room please"))
+expect_false(corteza:::matrix_is_clear_command("don't /clear yet"))
+expect_false(corteza:::matrix_is_clear_command("hello"))
+expect_false(corteza:::matrix_is_clear_command(""))
+expect_false(corteza:::matrix_is_clear_command(NULL))
