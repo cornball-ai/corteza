@@ -289,6 +289,37 @@ if (!requireNamespace("pensar", quietly = TRUE)) {
     expect_null(s$ingested_through)
 }
 
+# matrix_handle_flush_signal: no signal -> no-op.
+local({
+    sig <- tempfile("nosig-")
+    expect_equal(corteza:::matrix_handle_flush_signal(sig, new.env()), 0L)
+})
+
+# matrix_handle_flush_signal: signal present -> flush + remove file.
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        on.exit(unlink(v, recursive = TRUE), add = TRUE)
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        on.exit(options(op), add = TRUE)
+
+        sig <- tempfile("sig-")
+        file.create(sig)
+        on.exit(if (file.exists(sig)) file.remove(sig), add = TRUE)
+
+        reg <- new.env(parent = emptyenv())
+        s <- new.env(parent = emptyenv())
+        s$history <- list(list(role = "user", content = "hi"))
+        assign("!r:s.c", s, envir = reg)
+
+        n <- corteza:::matrix_handle_flush_signal(sig, reg)
+        expect_equal(n, 1L)
+        expect_false(file.exists(sig))    # signal consumed
+        expect_equal(s$ingested_through, 1L)
+    })
+}
+
 # matrix_archive_all: walks the registry and counts archived rooms.
 if (requireNamespace("pensar", quietly = TRUE)) {
     local({
