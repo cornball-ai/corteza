@@ -18,7 +18,16 @@ load_config_file <- function(path) {
     }
 
     tryCatch({
-        cfg <- jsonlite::fromJSON(path, simplifyVector = TRUE)
+        # simplifyDataFrame = FALSE keeps arrays of objects as lists of
+        # named lists rather than collapsing them into a data.frame.
+        # Otherwise [{"package":"x","functions":[...]}] in skill_packages
+        # arrives here as a 1-row data.frame and downstream code that
+        # iterates with `for (spec in specs)` gets columns instead of
+        # rows. simplifyVector still flattens scalar arrays
+        # (["fortunes"] -> c("fortunes")), so the string form keeps
+        # working.
+        cfg <- jsonlite::fromJSON(path, simplifyVector = TRUE,
+                                  simplifyDataFrame = FALSE)
         # Ensure context_files is a character vector
         if (!is.null(cfg$context_files) && is.list(cfg$context_files)) {
             cfg$context_files <- unlist(cfg$context_files)
