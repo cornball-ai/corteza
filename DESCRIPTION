@@ -30,6 +30,7 @@ Imports:
     saber
 Suggests:
     mx.api,
+    pensar,
     tinytest
 SystemRequirements: On Windows, Rtools45 (R 4.5.x) or Rtools44 (R 4.4.x)
     is recommended so the 'bash' shell tool is available; minimal

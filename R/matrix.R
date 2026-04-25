@@ -147,6 +147,91 @@ matrix_extract_messages <- function(sync_resp, self_id) {
     out
 }
 
+# Format new turns since the session's `ingested_through` watermark
+# as a markdown transcript. Returns NULL when nothing new to archive.
+matrix_session_to_markdown <- function(session, room_id, room_name = NULL) {
+    history <- session$history %||% list()
+    start <- (session$ingested_through %||% 0L) + 1L
+    if (start > length(history)) return(NULL)
+    new_msgs <- history[start:length(history)]
+    parts <- vapply(new_msgs, function(m) {
+        role <- m$role %||% "?"
+        text <- if (is.character(m$content)) {
+            paste(m$content, collapse = "\n")
+        } else {
+            as.character(m$content %||% "")
+        }
+        sprintf("## %s\n\n%s", role, text)
+    }, character(1))
+    header <- sprintf("# %s", room_name %||% room_id)
+    paste(c(header, "", parts), collapse = "\n\n")
+}
+
+# Archive new turns from one room's session to the pensar vault and
+# advance the watermark so the same turns aren't re-ingested. Silent
+# no-op when pensar isn't installed or there's nothing new.
+matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
+    if (!requireNamespace("pensar", quietly = TRUE)) return(invisible(NULL))
+    history <- session$history %||% list()
+    last <- session$ingested_through %||% 0L
+    if (length(history) <= last) return(invisible(NULL))
+
+    room_name <- if (!is.null(mx_sess)) {
+        tryCatch(mx.api::mx_room_name(mx_sess, room_id),
+                 error = function(e) NULL)
+    } else {
+        NULL
+    }
+    md <- matrix_session_to_markdown(session, room_id, room_name)
+    if (is.null(md)) return(invisible(NULL))
+    out <- tryCatch(
+        pensar::ingest(content = md, type = "matrix",
+                       source = room_name %||% room_id,
+                       title = room_name %||% room_id),
+        error = function(e) {
+            message("matrix_archive_session: pensar::ingest failed: ",
+                    conditionMessage(e))
+            NULL
+        }
+    )
+    if (!is.null(out)) {
+        session$ingested_through <- length(history)
+    }
+    invisible(out)
+}
+
+#' Flush all in-memory matrix sessions to the pensar vault
+#'
+#' Walks the per-room session registry and archives any turns that
+#' haven't been ingested yet via \code{pensar::ingest(type = "matrix")}.
+#' Each session tracks an \code{ingested_through} watermark so repeated
+#' calls only write new turns. Silent no-op when \code{pensar} is not
+#' installed.
+#'
+#' @param sessions A registry environment built by
+#'   \code{matrix_run}/\code{matrix_poll}. Keys are room IDs, values
+#'   are session lists carrying \code{$history}.
+#' @param mx_sess Optional Matrix session for room-name lookups. When
+#'   NULL, the room ID is used as the source identifier.
+#'
+#' @return Integer count of rooms ingested, invisibly.
+#' @export
+matrix_archive_all <- function(sessions, mx_sess = NULL) {
+    if (!is.environment(sessions)) {
+        stop("sessions must be an environment registry", call. = FALSE)
+    }
+    n <- 0L
+    for (room_id in ls(envir = sessions, all.names = TRUE)) {
+        s <- get(room_id, envir = sessions, inherits = FALSE)
+        before <- s$ingested_through %||% 0L
+        matrix_archive_session(s, room_id, mx_sess)
+        if ((s$ingested_through %||% 0L) > before) {
+            n <- n + 1L
+        }
+    }
+    invisible(n)
+}
+
 # Is this a /clear (or /reset, /new) command? In group rooms the body
 # will include the @-mention prefix — accept the command at the end of
 # the message after any leading mention text, or on its own.
@@ -642,6 +727,12 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (matrix_is_clear_command(m$body)) {
+            # Archive whatever's in the session before nuking it so the
+            # topic isn't lost. Best-effort; failures already log.
+            tryCatch(
+                matrix_archive_session(session, m$room_id, mx_sess),
+                error = function(e) NULL
+            )
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
