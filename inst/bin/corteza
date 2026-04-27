@@ -138,26 +138,8 @@ Config files:
 # PowerShell / cmd (quote mangling, no TTY through system2), so we
 # fall back to readLines(stdin). Line editing on Windows is handled
 # by the terminal itself.
-.cli_stdin_con <- NULL
 cli_read_line <- function(prompt_str = "> ") {
-  if (.Platform$OS.type == "windows") {
-    cat(prompt_str)
-    if (is.null(.cli_stdin_con)) {
-      .cli_stdin_con <<- file("stdin", open = "r")
-    }
-    line <- tryCatch(readLines(.cli_stdin_con, n = 1L, warn = FALSE),
-                     error = function(e) character())
-    if (length(line) == 0L) return(character())
-    return(line[1])
-  }
-  # Unix path: bash's `read -e` for history + line editing.
-  out <- suppressWarnings(system(
-    sprintf('bash -c \'read -e -p "%s" line && echo "$line"\'',
-            gsub("'", "'\\''", prompt_str, fixed = TRUE)),
-    intern = TRUE
-  ))
-  if (!is.character(out) || length(out) == 0L) return(character())
-  out[1]
+  corteza:::read_prompt_input(prompt_str, use_readline = FALSE)
 }
 
 # ============================================================================
@@ -579,12 +561,20 @@ is_approved <- function(cwd, tool_name) {
 }
 
 # Ask user for approval
-ask_approval <- function(name, args) {
-  cat(sprintf("\n%s%s wants to execute:%s\n", color$yellow, name, color$reset))
-  print_tool(name, args)
+ask_approval <- function(name, args, cwd) {
+  call <- list(tool = name, args = as.list(args), channel = "cli")
+  call$paths <- corteza:::resolve_paths(call)
+  call$urls <- corteza:::resolve_urls(call)
+  decision <- tryCatch(corteza::policy(call), error = function(e) NULL)
 
-  # Show numbered options
-  cat(sprintf("%s1) allow once  2) allow always  3) deny%s\n", color$dim, color$reset))
+  lines <- corteza:::cli_approval_lines(
+    call,
+    decision,
+    gate_reason = sprintf("Project config requires approval for %s.", name),
+    cwd = cwd,
+    persistent_label = "Allow always for this project"
+  )
+  cat(paste(lines, collapse = "\n"), "\n")
 
   response <- cli_read_line(sprintf("%sChoice [1]: %s",
                                     color$yellow, color$reset))
@@ -979,7 +969,7 @@ run_agent <- function(opts) {
     approved_by <- "auto"
     if (approval_mode == "ask" && requires_approval(name, dangerous_tools)) {
       if (!is_approved(cwd, name)) {
-        approval <- ask_approval(name, args)
+        approval <- ask_approval(name, args, cwd)
         if (!approval$approved) {
           cat(sprintf("%sDenied.%s\n", color$dim, color$reset))
           return("Tool execution denied by user")
@@ -999,8 +989,20 @@ run_agent <- function(opts) {
       return("Tool execution denied by configuration")
     }
 
-    # Brief indicator for tool execution
-    cat(sprintf("%s%s...%s ", color$dim, name, color$reset))
+    preview <- corteza:::cli_tool_preview(name, args)
+    cat(sprintf("\n%s●%s %s", color$cyan, color$reset,
+                corteza:::cli_tool_label(name)))
+    if (nzchar(preview)) {
+      cat(sprintf("(%s)", preview))
+    }
+    cat("\n")
+    detail_lines <- corteza:::cli_tool_detail_lines(name, args, cwd = cwd, width = 84L)
+    if (length(detail_lines) > 0L) {
+      for (line in detail_lines) {
+        cat(sprintf("  %s%s%s\n", color$dim, line, color$reset))
+      }
+    }
+    cat(sprintf("  %sRunning...%s\n", color$dim, color$reset))
 
     turn_number <<- turn_number + 1L
     start_time <- Sys.time()
@@ -1022,14 +1024,16 @@ run_agent <- function(opts) {
             cli_worker_call(worker, name, args),
             error = function(e2) {
               failed <<- TRUE
-              cat(sprintf("%sfailed: %s%s\n", color$bright_magenta, e2$message, color$reset))
+              cat(sprintf("  %s⎿ failed: %s%s\n",
+                          color$bright_magenta, e2$message, color$reset))
               list(text = paste("Error:", e2$message))
             }
           ))
         }
       }
       failed <<- TRUE
-      cat(sprintf("%sfailed: %s%s\n", color$bright_magenta, e$message, color$reset))
+      cat(sprintf("  %s⎿ failed: %s%s\n",
+                  color$bright_magenta, e$message, color$reset))
       list(text = paste("Error:", e$message))
     })
 
@@ -1038,7 +1042,11 @@ run_agent <- function(opts) {
 
     if (!failed) {
       lines <- length(strsplit(text, "\n")[[1]])
-      cat(sprintf("%s(%d lines)%s\n", color$dim, lines, color$reset))
+      cat(sprintf("  %s⎿%s %d line%s in %dms\n",
+                  color$dim, color$reset,
+                  lines,
+                  if (identical(lines, 1L)) "" else "s",
+                  round(elapsed_ms)))
       # Store in buffer for /last command
       tool_buffer_add(name, args, text)
     }
@@ -1682,6 +1690,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
       }
     }
 
+    cat(sprintf("● Thinking with %s\n", display_model))
     result <- tryCatch({
       r <- corteza::turn(
         prompt = prompt,

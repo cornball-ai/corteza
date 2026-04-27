@@ -219,6 +219,16 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             }
         }
 
+        .fire_observers(session, list(
+            call = call,
+            decision = decision,
+            outcome = "start",
+            result = NULL,
+            success = NA,
+            elapsed_ms = 0,
+            turn_number = session$turn_number
+        ))
+
         raw <- tryCatch(
                         tool_executor(internal_name, as.list(args)),
                         error = function(e) err(paste("Tool error:", conditionMessage(e)))
@@ -305,27 +315,41 @@ add_observer <- function(session, observer) {
 #' @export
 observer_progress <- function() {
     function(event) {
-        hint <- tool_hint(event$call$tool, event$call$args)
-        if (!identical(event$outcome, "ran")) {
-            cat(sprintf("  [%s]%s %s\n",
-                        event$call$tool,
-                        hint,
-                        sub("^\\[", "", sub("\\]$", "", event$result))))
+        if (identical(event$outcome, "start")) {
+            summary <- cli_event_summary(event, width = 84L)
+            cat(sprintf("\u25cf %s\n", summary$title))
+            if (length(summary$detail_lines) > 0L) {
+                for (line in summary$detail_lines) {
+                    cat(sprintf("  %s\n", line))
+                }
+            }
+            cat("  Running...\n")
             return(invisible())
         }
-        result <- event$result %||% ""
-        lines <- if (nchar(result) > 0L) {
-            length(strsplit(result, "\n", fixed = TRUE)[[1L]])
-        } else {
-            0L
+
+        if (identical(event$outcome, "deny") ||
+            identical(event$outcome, "declined")) {
+            summary <- cli_event_summary(event, width = 84L)
+            cat(sprintf("\u25cf %s\n", summary$title))
+            cat(sprintf("  \u23bf %s\n",
+                        sub("^\\[", "", sub("\\]$", "", event$result %||% ""))))
+            return(invisible())
         }
-        if (isTRUE(event$success)) {
-            status <- ""
-        } else {
-            status <- " (error)"
+
+        if (!identical(event$outcome, "ran")) {
+            return(invisible())
         }
-        cat(sprintf("  [%s]%s (%d lines)%s\n",
-                    event$call$tool, hint, lines, status))
+
+        summary <- cli_event_summary(event, width = 84L)
+        detail <- if (length(summary$detail_lines) > 0L) {
+            summary$detail_lines[1]
+        } else {
+            ""
+        }
+        if (!isTRUE(event$success)) {
+            detail <- paste0(detail, " (error)")
+        }
+        cat(sprintf("  \u23bf %s\n", detail))
     }
 }
 
@@ -386,4 +410,3 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
          raw = response
     )
 }
-

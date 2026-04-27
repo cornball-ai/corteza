@@ -3,27 +3,38 @@ library(tinytest)
 expect_true(is.function(corteza::add_observer))
 expect_true(is.function(corteza::observer_progress))
 
-# observer_progress prints a tool-specific hint next to the tool name.
+# observer_progress prints a start block and a completion summary.
 local({
     obs <- corteza::observer_progress()
-    out <- capture.output(obs(list(
-        call = list(tool = "read_file", args = list(path = "/x/y.R")),
-        outcome = "ran", result = "a\nb\n", success = TRUE
-    )))
-    expect_true(any(grepl("[read_file] /x/y.R", out, fixed = TRUE)))
-    expect_true(any(grepl("(2 lines)", out, fixed = TRUE)))
+    out <- capture.output({
+        obs(list(
+            call = list(tool = "read_file", args = list(path = "/x/y.R")),
+            outcome = "start"
+        ))
+        obs(list(
+            call = list(tool = "read_file", args = list(path = "/x/y.R")),
+            outcome = "ran", result = "a\nb\n", success = TRUE,
+            elapsed_ms = 2
+        ))
+    })
+    expect_true(any(grepl("Read File\\(/x/y.R\\)", out)))
+    expect_true(any(grepl("Path: /x/y.R", out, fixed = TRUE)))
+    expect_true(any(grepl("Running...", out, fixed = TRUE)))
+    expect_true(any(grepl("2 lines in 2ms", out, fixed = TRUE)))
 
     out2 <- capture.output(obs(list(
         call = list(tool = "grep_files", args = list(pattern = "foo")),
-        outcome = "ran", result = "", success = TRUE
+        outcome = "start"
     )))
-    expect_true(any(grepl("/foo/", out2, fixed = TRUE)))
+    expect_true(any(grepl("Grep Files\\(/foo/\\)", out2)))
+    expect_true(any(grepl("Pattern: foo", out2, fixed = TRUE)))
 
     out3 <- capture.output(obs(list(
         call = list(tool = "list_files", args = list(path = ".")),
         outcome = "deny", result = "[denied]", success = FALSE
     )))
-    expect_true(any(grepl("[list_files] . denied", out3, fixed = TRUE)))
+    expect_true(any(grepl("List Files\\(\\.\\)", out3)))
+    expect_true(any(grepl("denied", out3, fixed = TRUE)))
 })
 
 # Observer receives event for allow+success.
@@ -50,11 +61,12 @@ local({
     h <- corteza:::.make_tool_handler(s)
     h("list_files", list(path = tmp))
 
-    expect_equal(length(seen), 1L)
-    expect_equal(seen[[1]]$outcome, "ran")
-    expect_true(seen[[1]]$success)
-    expect_equal(seen[[1]]$turn_number, 1L)
-    expect_true(is.numeric(seen[[1]]$elapsed_ms))
+    expect_equal(length(seen), 2L)
+    expect_equal(seen[[1]]$outcome, "start")
+    expect_equal(seen[[2]]$outcome, "ran")
+    expect_true(seen[[2]]$success)
+    expect_equal(seen[[2]]$turn_number, 1L)
+    expect_true(is.numeric(seen[[2]]$elapsed_ms))
 })
 
 # Observer fires on deny.
@@ -119,5 +131,5 @@ local({
 
     h <- corteza:::.make_tool_handler(s)
     h("list_files", list(path = tmp))
-    expect_equal(order, c("a", "b"))
+    expect_equal(order, c("a", "b", "a", "b"))
 })

@@ -109,8 +109,10 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
     # and the user hasn't asked for no-color via the `NO_COLOR` env
     # var (https://no-color.org). Keeps ANSI escapes out of log files
     # and pipes.
+    tty_ok <- isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE)) ||
+        isTRUE(tryCatch(isatty(stderr()), error = function(e) FALSE))
     pretty <- requireNamespace("printify", quietly = TRUE) &&
-        isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE)) &&
+        tty_ok &&
         !nzchar(Sys.getenv("NO_COLOR"))
     for (line in lines) {
         event <- tryCatch(
@@ -124,33 +126,46 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
 }
 
 .cli_render_event <- function(event, pretty = FALSE) {
-    tool <- event$tool %||% ""
-    elapsed <- event$elapsed_ms
-    detail <- if (!is.null(elapsed)) {
-        sprintf("%s (%dms)", tool, elapsed)
-    } else {
-        tool
-    }
-    if (identical(event$event, "tool_call")) {
-        label <- sprintf("tool_call: %s", tool)
-        if (pretty) printify::print_step(label)
-        else .plain_trace(label, color = 90L)
-    } else if (identical(event$event, "tool_result")) {
-        ok <- isTRUE(event$success)
-        label <- if (ok) sprintf("tool_result: %s", detail)
-                 else sprintf("tool_error: %s", detail)
+    summary <- cli_event_summary(event, width = 88L)
+    detail <- paste(summary$detail_lines, collapse = " | ")
+
+    if (identical(summary$kind, "start")) {
         if (pretty) {
-            if (ok) printify::print_step(label)
-            else printify::print_message(label)
+            printify::print_step("minor", summary$title)
+            for (line in summary$detail_lines) {
+                printify::print_message("neutral", paste(" ", line))
+            }
         } else {
-            .plain_trace(label, color = if (ok) 32L else 31L)
+            .plain_trace(summary$title, color = 90L)
+            for (line in summary$detail_lines) {
+                .plain_trace(paste(" ", line), color = 90L)
+            }
         }
-    } else if (!is.null(event$level) &&
-               event$level %in% c("warn", "error")) {
-        msg <- event$message %||% event$event
-        label <- sprintf("%s: %s", event$level, msg)
-        if (pretty) printify::print_message(label)
-        else .plain_trace(label, color = 33L)
+    } else if (identical(summary$kind, "ok")) {
+        label <- paste(summary$title, detail)
+        if (pretty) {
+            printify::print_message("note", label)
+        } else {
+            .plain_trace(label, color = 32L)
+        }
+    } else if (identical(summary$kind, "error")) {
+        label <- paste(summary$title, detail)
+        if (pretty) {
+            printify::print_message("error", label)
+        } else {
+            .plain_trace(label, color = 31L)
+        }
+    } else if (identical(summary$kind, "warn") ||
+               identical(summary$kind, "error")) {
+        label <- paste(summary$title, detail)
+        if (pretty) {
+            printify::print_message(
+                if (identical(summary$kind, "warn")) "warning" else "error",
+                label
+            )
+        } else {
+            .plain_trace(label, color = 33L)
+        }
     }
 }
 

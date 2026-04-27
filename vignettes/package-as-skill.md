@@ -87,6 +87,6 @@ Same tool surface, different cost curve. corteza's MCP server (`corteza::serve()
 
 ## Where to go next
 
-- The R as CLI Agent Harness post explains the derivation pipeline: <https://cornball.ai/posts/2026-03-06-r-as-cli-agent-harness/>
+- The derivation pipeline is summarized in the package vignette and package source; the earlier external blog post is no longer linked because its URL no longer resolves reliably.
 - Discover what's in a package the same way the agent does: `Rscript --vanilla -e 'saber::pkg_exports("fortunes")'` and `Rscript --vanilla -e 'saber::pkg_help("fortune", "fortunes")'`.
 - For your own functions, drop an `.R` file in `<project>/.corteza/skills/` calling `register_skill_from_fn("name", my_fn)`. Loaded on every session start, no installation required.
