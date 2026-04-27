@@ -209,7 +209,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                                   history = history,
                                   load_project_context = TRUE,
                                   validate_api_key = TRUE,
-                                  approval_cb = chat_approval_cb,
+                                  approval_cb = chat_approval_cb(cwd),
                                   max_turns = max_turns
     )
     config <- turn_session$config
@@ -262,7 +262,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     pending_r_context <- character(0)
 
     while (TRUE) {
-        prompt <- readline("> ")
+        prompt <- read_prompt_input("> ")
+        if (length(prompt) == 0L) {
+            cat("\nBye.\n")
+            break
+        }
         if (nchar(trimws(prompt)) == 0) {
             next
         }
@@ -341,6 +345,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         transcript_append(disk_session$session, "user", prompt)
 
+        cat(sprintf("\u25cf Thinking with %s\n",
+                    model %||% "(provider default)"))
         result <- tryCatch(
                            turn(prompt, turn_session),
                            error = function(e) {
@@ -366,12 +372,39 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
 # --- Chat-specific helpers ---
 
-# Default console approval callback: prompt the user via readline.
-chat_approval_cb <- function(call, decision) {
-    cat(sprintf("\n[approval] %s on %s (%s)\n",
-                decision$approval, call$tool, decision$reason))
-    ans <- readline(">>> approve? [y/N] ")
-    tolower(trimws(ans)) %in% c("y", "yes")
+# Default console approval callback: structured prompt with session-local
+# "allow always" support.
+chat_approval_cb <- function(cwd = getwd()) {
+    approved <- new.env(parent = emptyenv())
+
+    function(call, decision) {
+        key <- call$tool %||% ""
+        if (isTRUE(approved[[key]])) {
+            return(TRUE)
+        }
+
+        lines <- cli_approval_lines(
+            call,
+            decision,
+            gate_reason = "Console session approval required.",
+            cwd = cwd,
+            persistent_label = "Allow always for this session"
+        )
+        cat(paste(lines, collapse = "\n"), "\n")
+
+        ans <- read_prompt_input("Choice [1]: ")
+        if (length(ans) == 0L) {
+            ans <- ""
+        }
+        ans <- trimws(ans)
+        if (ans == "") {
+            ans <- "1"
+        }
+        if (ans == "2") {
+            approved[[key]] <- TRUE
+        }
+        ans %in% c("1", "2")
+    }
 }
 
 # Resolve the on-disk session, returning list(session, sessionId, history).
@@ -440,6 +473,11 @@ chat_workspace_init <- function(disk_session, ws_enabled, config) {
 # session. Swallows errors so trace failures don't break tool dispatch.
 chat_trace_observer <- function(session) {
     function(event) {
+        if (!identical(event$outcome, "ran") &&
+            !identical(event$outcome, "deny") &&
+            !identical(event$outcome, "declined")) {
+            return(invisible(NULL))
+        }
         tryCatch(
                  trace_add(
                            session$sessionId,
@@ -454,4 +492,3 @@ chat_trace_observer <- function(session) {
         )
     }
 }
-
