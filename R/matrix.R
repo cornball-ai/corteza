@@ -11,24 +11,39 @@ matrix_require_mx <- function() {
     if (!requireNamespace("mx.api", quietly = TRUE)) {
         stop(
              "Matrix integration requires the 'mx.api' package. ",
-             "Install it with install.packages(\"mx.api\") ",
-             "(or remotes::install_github(\"cornball-ai/mx.api\")).",
+             "Install it from CRAN, or from the cornball-ai GitHub mirror, ",
+             "before calling Matrix functions.",
              call. = FALSE
         )
     }
 }
 
-matrix_config_path <- function() path.expand("~/.corteza/matrix.json")
+# Active write target for matrix config: under R_user_dir per CRAN
+# policy on home-filespace writes.
+matrix_config_path <- function() {
+    file.path(tools::R_user_dir("corteza", "config"), "matrix.json")
+}
+
+# Pre-CRAN releases wrote to ~/.corteza/matrix.json. Read from there if
+# present so existing setups keep working; matrix_save_config() writes
+# to the new location, and matrix_configure_migrate_legacy() can move
+# the file outright.
+matrix_legacy_config_path <- function() path.expand("~/.corteza/matrix.json")
 
 matrix_load_config <- function() {
     path <- matrix_config_path()
-    if (!file.exists(path)) {
+    legacy <- matrix_legacy_config_path()
+    src <- if (file.exists(path)) {
+        path
+    } else if (file.exists(legacy)) {
+        legacy
+    } else {
         stop(
              "Matrix not configured. Call matrix_configure() first.",
              call. = FALSE
         )
     }
-    jsonlite::fromJSON(path, simplifyVector = TRUE)
+    jsonlite::fromJSON(src, simplifyVector = TRUE)
 }
 
 matrix_save_config <- function(cfg) {
@@ -51,10 +66,15 @@ matrix_mx_session <- function(cfg) {
 #' Configure the Matrix channel for this host
 #'
 #' Logs in to a Matrix homeserver as the bot account, joins (or records)
-#' the target room, and writes credentials to ~/.corteza/matrix.json with
-#' file mode 0600. Call once per host. Model, provider, tools_filter,
-#' and auto_approve_asks are defaults the poll loop uses unless
-#' overridden at call time.
+#' the target room, and writes credentials to
+#' \code{tools::R_user_dir("corteza", "config")/matrix.json} with file
+#' mode 0600. Call once per host. Model, provider, tools_filter, and
+#' auto_approve_asks are defaults the poll loop uses unless overridden
+#' at call time.
+#'
+#' Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
+#' that path is still read for backward compatibility, but the next
+#' \code{matrix_configure()} call writes to the new location.
 #'
 #' @param server Character. Homeserver base URL.
 #' @param user Character. Bot localpart or full Matrix ID.
@@ -107,7 +127,7 @@ matrix_configure <- function(server, user, password, room, model = NULL,
 #'
 #' @param text Character. Plain text body.
 #' @param room_id Character. Matrix room id. Defaults to \code{cfg$room_id}
-#'   from \code{~/.corteza/matrix.json}.
+#'   from the saved Matrix config (see \code{\link{matrix_configure}}).
 #' @param msgtype Character. Matrix msgtype, default "m.text".
 #'
 #' @return The event ID of the sent message.
@@ -174,7 +194,17 @@ matrix_session_to_markdown <- function(session, room_id, room_name = NULL) {
 # advance the watermark so the same turns aren't re-ingested. Silent
 # no-op when pensar isn't installed or there's nothing new.
 matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
-    if (!requireNamespace("pensar", quietly = TRUE)) return(invisible(NULL))
+    # pensar is an optional cornball-ai companion package not on CRAN.
+    # Per CRAN policy on unpublished Suggests, it cannot be listed in
+    # DESCRIPTION; the dynamic getExportedValue lookup keeps the
+    # archive feature available to users who installed pensar from
+    # GitHub while staying CRAN-clean.
+    pensar_ingest <- tryCatch(
+        getExportedValue("pensar", "ingest"),
+        error = function(e) NULL
+    )
+    if (is.null(pensar_ingest)) return(invisible(NULL))
+
     history <- session$history %||% list()
     last <- session$ingested_through %||% 0L
     if (length(history) <= last) return(invisible(NULL))
@@ -188,11 +218,11 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     md <- matrix_session_to_markdown(session, room_id, room_name)
     if (is.null(md)) return(invisible(NULL))
     out <- tryCatch(
-        pensar::ingest(content = md, type = "matrix",
-                       source = room_name %||% room_id,
-                       title = room_name %||% room_id),
+        pensar_ingest(content = md, type = "matrix",
+                      source = room_name %||% room_id,
+                      title = room_name %||% room_id),
         error = function(e) {
-            message("matrix_archive_session: pensar::ingest failed: ",
+            message("matrix_archive_session: pensar ingest failed: ",
                     conditionMessage(e))
             NULL
         }
@@ -206,7 +236,7 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
 #' Flush all in-memory matrix sessions to the pensar vault
 #'
 #' Walks the per-room session registry and archives any turns that
-#' haven't been ingested yet via \code{pensar::ingest(type = "matrix")}.
+#' haven't been ingested yet via the pensar archive ingest.
 #' Each session tracks an \code{ingested_through} watermark so repeated
 #' calls only write new turns. Silent no-op when \code{pensar} is not
 #' installed.

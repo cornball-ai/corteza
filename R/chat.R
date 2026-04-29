@@ -3,10 +3,6 @@
 # Detect providers supported by the currently loaded llm.api namespace.
 # @noRd
 llm_api_supported_providers <- function() {
-    if (!requireNamespace("llm.api", quietly = TRUE)) {
-        return(character())
-    }
-
     providers <- tryCatch(
                           eval(formals(llm.api::agent)$provider),
                           error = function(e) character()
@@ -164,23 +160,18 @@ tool_hint <- function(name, args) {
 #' @export
 #'
 #' @examples
-#' \dontrun{
-#' # Start chatting with defaults from config
-#' chat()
+#' if (interactive()) {
+#'     # Start chatting with defaults from config
+#'     chat()
 #'
-#' # Use a specific provider/model
-#' chat(provider = "ollama", model = "llama3.2")
+#'     # Use a specific provider/model
+#'     chat(provider = "ollama", model = "llama3.2")
 #'
-#' # Minimal tools for focused work
-#' chat(tools = "core")
+#'     # Minimal tools for focused work
+#'     chat(tools = "core")
 #' }
 chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                  max_turns = NULL) {
-    if (!requireNamespace("llm.api", quietly = TRUE)) {
-        stop("llm.api package required for chat(). ",
-             "Install with: install.packages('llm.api')",
-             call. = FALSE)
-    }
     if (!interactive()) {
         stop("chat() requires an interactive R session", call. = FALSE)
     }

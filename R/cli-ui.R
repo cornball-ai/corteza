@@ -3,7 +3,7 @@
 
 .read_prompt_via_bash <- function(prompt_str = "> ") {
     cat(prompt_str)
-    flush.console()
+    utils::flush.console()
 
     script <- paste(
         'out="$1"',

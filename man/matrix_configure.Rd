@@ -37,8 +37,12 @@ The saved configuration, invisibly.
 }
 \description{
 Logs in to a Matrix homeserver as the bot account, joins (or records)
-the target room, and writes credentials to ~/.corteza/matrix.json with
-file mode 0600. Call once per host. Model, provider, tools_filter,
-and auto_approve_asks are defaults the poll loop uses unless
-overridden at call time.
+the target room, and writes credentials to
+\code{tools::R_user_dir("corteza", "config")/matrix.json} with file
+mode 0600. Call once per host. Model, provider, tools_filter, and
+auto_approve_asks are defaults the poll loop uses unless overridden
+at call time.
+Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
+that path is still read for backward compatibility, but the next
+\code{matrix_configure()} call writes to the new location.
 }

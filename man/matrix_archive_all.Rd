@@ -18,7 +18,7 @@ Integer count of rooms ingested, invisibly.
 }
 \description{
 Walks the per-room session registry and archives any turns that
-haven't been ingested yet via \code{pensar::ingest(type = "matrix")}.
+haven't been ingested yet via the pensar archive ingest.
 Each session tracks an \code{ingested_through} watermark so repeated
 calls only write new turns. Silent no-op when \code{pensar} is not
 installed.

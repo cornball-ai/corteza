@@ -144,12 +144,9 @@ load_local_agent_context <- function(cwd, config) {
 
 #' Call saber::briefing() for project metadata
 #'
-#' Returns the briefing text or NULL on failure / when saber is unavailable.
+#' Returns the briefing text or NULL on failure.
 #' @noRd
 load_saber_briefing <- function(cwd) {
-    if (!requireNamespace("saber", quietly = TRUE)) {
-        return(NULL)
-    }
     project <- basename(cwd)
     scan_dir <- dirname(cwd)
     tryCatch({
@@ -175,9 +172,6 @@ load_saber_agent_context <- function(cwd, config) {
     # namespace yet. When saber doesn't export it (0.3.0 and earlier),
     # this returns NULL and load_local_agent_context() covers the feature
     # via the inlined copy in R/agent_context.R.
-    if (!requireNamespace("saber", quietly = TRUE)) {
-        return(NULL)
-    }
     saber_fn <- tryCatch(
                          getExportedValue("saber", "agent_context"),
                          error = function(e) NULL

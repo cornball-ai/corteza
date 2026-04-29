@@ -34,14 +34,14 @@ Run a conversational agent inside your R session. Tools execute as direct
 function calls, no MCP server needed.
 }
 \examples{
-\dontrun{
-# Start chatting with defaults from config
-chat()
+if (interactive()) {
+    # Start chatting with defaults from config
+    chat()
 
-# Use a specific provider/model
-chat(provider = "ollama", model = "llama3.2")
+    # Use a specific provider/model
+    chat(provider = "ollama", model = "llama3.2")
 
-# Minimal tools for focused work
-chat(tools = "core")
+    # Minimal tools for focused work
+    chat(tools = "core")
 }
 }

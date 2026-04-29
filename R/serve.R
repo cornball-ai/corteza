@@ -47,8 +47,11 @@
 #' serve(port = 7850, tools = c("file", "git"))
 #' }
 serve <- function(port = NULL, cwd = NULL, tools = NULL) {
-    # Set working directory if specified
+    # Set working directory if specified, restoring on exit so we don't
+    # leave the caller's session pointed somewhere unexpected.
     if (!is.null(cwd) && dir.exists(cwd)) {
+        oldwd <- getwd()
+        on.exit(setwd(oldwd), add = TRUE)
         setwd(cwd)
     }
 

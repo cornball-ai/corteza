@@ -81,6 +81,11 @@ worker_tool_list <- function(filter = NULL, cwd = getwd()) {
 #' @keywords internal
 #' @export
 worker_init <- function(cwd = getwd()) {
+    # Runs in a private callr::r_session subprocess, never in the
+    # user's main R session: the whole point of worker_init is to set
+    # the worker's cwd for the lifetime of the subprocess so every
+    # subsequent worker_dispatch() inherits it. on.exit(setwd(oldwd))
+    # would undo that immediately. Justified in cran-comments.md.
     setwd(cwd)
     ensure_skills()
     load_skills(corteza_data_path("skills"))
@@ -111,9 +116,7 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
     # and pipes.
     tty_ok <- isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE)) ||
         isTRUE(tryCatch(isatty(stderr()), error = function(e) FALSE))
-    pretty <- requireNamespace("printify", quietly = TRUE) &&
-        tty_ok &&
-        !nzchar(Sys.getenv("NO_COLOR"))
+    pretty <- tty_ok && !nzchar(Sys.getenv("NO_COLOR"))
     for (line in lines) {
         event <- tryCatch(
             jsonlite::fromJSON(line, simplifyVector = TRUE),
@@ -170,7 +173,9 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
 }
 
 .plain_trace <- function(text, color = 90L) {
-    cat(sprintf("\033[%dm  %s\033[0m\n", color, text), file = stderr())
+    if (.corteza_verbose()) {
+        cat(sprintf("\033[%dm  %s\033[0m\n", color, text), file = stderr())
+    }
 }
 
 #' Spawn and initialize a CLI worker session.

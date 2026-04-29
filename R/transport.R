@@ -66,9 +66,11 @@ transport_terminal <- function(config = list()) {
         message_normalize(text = line, sender = "user", channel = "terminal")
     },
 
-         # Print response to stdout
+         # Print response to stdout. The terminal channel is interactive
+         # by definition, so default verbose follows interactive(); the
+         # gate lets callers silence it for piped / non-interactive use.
          send = function(msg) {
-        cat(msg$text, "\n")
+        if (.corteza_verbose()) cat(msg$text, "\n")
         invisible(TRUE)
     },
 

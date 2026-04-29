@@ -302,7 +302,13 @@ local({
     sig <- corteza::matrix_request_flush()
     expect_true(file.exists(sig))
     expect_equal(basename(sig), "archive.signal")
-    expect_equal(dirname(sig), dir)
+    # tempfile() returns backslashes on Windows, dirname() returns
+    # forward slashes; normalize both so the comparison is path-equivalent
+    # rather than byte-equivalent.
+    expect_equal(
+        normalizePath(dirname(sig), winslash = "/", mustWork = FALSE),
+        normalizePath(dir, winslash = "/", mustWork = FALSE)
+    )
 })
 
 # matrix_handle_flush_signal: no signal -> no-op.
