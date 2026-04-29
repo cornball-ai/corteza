@@ -81,12 +81,16 @@ local({
     )))
   )))
   out <- corteza:::matrix_extract_messages(sync, "@bot:ex")
-  expect_equal(length(out), 2L)
+  # Self events are kept (tagged is_self) so matrix_poll can append them
+  # to history as assistant turns; the filter happens at dispatch time.
+  expect_equal(length(out), 3L)
   rooms <- vapply(out, function(m) m$room_id, character(1L))
   expect_true(all(c("!dm:ex", "!vault:ex") %in% rooms))
-  # Bot's own echo is filtered out.
   bodies <- vapply(out, function(m) m$body, character(1L))
-  expect_false("bot echo" %in% bodies)
+  expect_true("bot echo" %in% bodies)
+  is_self <- vapply(out, function(m) isTRUE(m$is_self), logical(1L))
+  expect_equal(sum(is_self), 1L)
+  expect_equal(out[is_self][[1L]]$body, "bot echo")
 })
 
 # matrix_extract_invites returns the room IDs pending acceptance.
