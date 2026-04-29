@@ -1,3 +1,10 @@
+# corteza 0.6.1
+
+* Relicensed from MIT to Apache License (>= 2) for explicit patent
+  grant. Aligns with the rest of the cerebro toolchain (saber, pensar,
+  hacer, cerebro). The LICENSE stub file is removed; Apache 2.0
+  R-package convention points to the system-installed template.
+
 # corteza 0.6.0
 
 First CRAN submission.
