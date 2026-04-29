@@ -31,6 +31,10 @@
 #' Cached per R process.
 #'
 #' @return Character scalar model name, or NULL.
+#' @examples
+#' # NULL when Ollama isn't running locally; a model name otherwise.
+#' model <- default_local_model()
+#' is.null(model) || is.character(model)
 #' @export
 default_local_model <- function() {
     if (isTRUE(.local_model_cache$initialized)) {
@@ -78,6 +82,13 @@ default_local_model <- function() {
 #' @param verbose Print tool call progress.
 #'
 #' @return An environment holding the session state.
+#' @examples
+#' # Build a stateless session for the CLI channel without making any
+#' # network calls. The returned environment carries history, the
+#' # active provider/model, and the approval callback.
+#' s <- new_session(channel = "cli", provider = "anthropic")
+#' is.environment(s)
+#' identical(s$provider, "anthropic")
 #' @export
 new_session <- function(channel = c("cli", "console", "matrix"),
                         history = NULL, model_map = NULL,
@@ -315,6 +326,11 @@ add_observer <- function(session, observer) {
 #' @export
 observer_progress <- function() {
     function(event) {
+        # Observer's purpose is to print tool-call traces; gate behind
+        # the corteza.verbose option so non-interactive scripts are
+        # silent by default.
+        if (!.corteza_verbose()) return(invisible())
+
         if (identical(event$outcome, "start")) {
             summary <- cli_event_summary(event, width = 84L)
             cat(sprintf("\u25cf %s\n", summary$title))

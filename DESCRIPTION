@@ -1,19 +1,21 @@
 Package: corteza
-Title: AI Agent Runtime for R
-Version: 0.6.2
+Title: AI Agent Runtime
+Version: 0.6.3
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
            comment = c(ORCID = "0009-0005-4248-604X")),
     person("cornball.ai", role = "cph"))
 Description: An agent runtime that gives Large Language Models (LLMs)
-    from 'Anthropic', 'OpenAI', 'Moonshot', and 'Ollama' direct access to
-    a live R session with managed workspace state. Tools execute as R
-    function calls with provenance tracking, and a deterministic retrieval
-    system keeps relevant objects in context across turns. Three entry
-    points: a shell CLI ('corteza'), a console REPL ('chat()'), and a
-    Model Context Protocol ('MCP') server ('serve()') for external
-    clients.
+    from 'Anthropic' <https://www.anthropic.com/>, 'OpenAI'
+    <https://openai.com/>, 'Moonshot' <https://www.moonshot.ai/>, and
+    'Ollama' <https://ollama.com/> direct access to a live R session with
+    managed workspace state. Tools execute as R function calls with
+    provenance tracking, and a deterministic retrieval system keeps
+    relevant objects in context across turns. Three entry points: a
+    shell command-line interface (CLI), a console read-eval-print-loop
+    via chat(), and a Model Context Protocol (MCP) server via serve()
+    for external clients.
 License: Apache License (>= 2)
 URL: https://github.com/cornball-ai/corteza
 BugReports: https://github.com/cornball-ai/corteza/issues
@@ -31,7 +33,6 @@ Imports:
 Suggests:
     fortunes,
     mx.api,
-    pensar,
     simplermarkdown,
     tinytest
 VignetteBuilder: simplermarkdown

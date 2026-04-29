@@ -37,3 +37,11 @@ Returns an environment with sensible defaults. Adapters set channel-
 specific fields (e.g. \code{approval_cb}, \code{tools_filter}) before
 calling \code{\link{turn}}.
 }
+\examples{
+# Build a stateless session for the CLI channel without making any
+# network calls. The returned environment carries history, the
+# active provider/model, and the approval callback.
+s <- new_session(channel = "cli", provider = "anthropic")
+is.environment(s)
+identical(s$provider, "anthropic")
+}

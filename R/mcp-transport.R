@@ -10,6 +10,9 @@
 run_stdio <- function() {
     log_msg("corteza MCP server starting (stdio)...")
 
+    # MCP protocol traffic over stdio: this cat() is JSON-RPC sent to
+    # the client (Claude Desktop, etc.), not user-facing console output.
+    # Cannot be verbose-gated without breaking the transport.
     send_fn <- function(json) {
         cat(json, "\n", sep = "", file = stdout())
         flush(stdout())
@@ -58,6 +61,9 @@ run_socket <- function(port) {
 
         log_msg("Client connected")
 
+        # MCP protocol traffic over a TCP socket: writeLines() sends
+        # the JSON-RPC payload to the connected client, not to user
+        # console. Cannot be verbose-gated without breaking transport.
         send_fn <- function(json) {
             tryCatch(
                      writeLines(json, client),

@@ -4,7 +4,11 @@ expect_true(is.function(corteza::add_observer))
 expect_true(is.function(corteza::observer_progress))
 
 # observer_progress prints a start block and a completion summary.
+# The observer is verbose-gated; force-enable for the duration of this
+# block since the test asserts on its output.
 local({
+    op <- options(corteza.verbose = TRUE)
+    on.exit(options(op), add = TRUE)
     obs <- corteza::observer_progress()
     out <- capture.output({
         obs(list(

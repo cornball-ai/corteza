@@ -101,7 +101,7 @@ log_event <- function(event, ..., level = "info") {
         sprintf('{"event":"%s","error":"json_serialization_failed"}', event)
     }
     )
-    cat(json, "\n", file = stderr())
+    if (.corteza_verbose()) cat(json, "\n", file = stderr())
 
     invisible(NULL)
 }

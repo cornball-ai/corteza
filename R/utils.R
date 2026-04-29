@@ -26,10 +26,20 @@ err <- function(text) {
     list(isError = TRUE, content = list(list(type = "text", text = text)))
 }
 
-#' Log message to stderr
+#' Is corteza in verbose mode?
+#'
+#' Gates user-facing console writes throughout the package. Default:
+#' TRUE in interactive sessions, FALSE otherwise, so R CMD check and
+#' library() users get silent behavior unless they opt in.
+#' @noRd
+.corteza_verbose <- function() {
+    isTRUE(getOption("corteza.verbose", interactive()))
+}
+
+#' Log message to stderr (verbose-gated)
 #' @param ... Messages to log
 #' @noRd
 log_msg <- function(...) {
-    cat(..., "\n", file = stderr())
+    if (.corteza_verbose()) cat(..., "\n", file = stderr())
 }
 

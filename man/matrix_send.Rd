@@ -9,7 +9,7 @@ matrix_send(text, room_id = NULL, msgtype = "m.text")
 \item{text}{Character. Plain text body.}
 
 \item{room_id}{Character. Matrix room id. Defaults to \code{cfg$room_id}
-from \code{~/.corteza/matrix.json}.}
+from the saved Matrix config (see \code{\link{matrix_configure}}).}
 
 \item{msgtype}{Character. Matrix msgtype, default "m.text".}
 }
