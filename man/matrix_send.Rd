@@ -1,12 +1,15 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{matrix_send}
 \alias{matrix_send}
-\title{Send a message to the configured Matrix room}
+\title{Send a message to a Matrix room}
 \usage{
-matrix_send(text, msgtype = "m.text")
+matrix_send(text, room_id = NULL, msgtype = "m.text")
 }
 \arguments{
 \item{text}{Character. Plain text body.}
+
+\item{room_id}{Character. Matrix room id. Defaults to \code{cfg$room_id}
+from \code{~/.corteza/matrix.json}.}
 
 \item{msgtype}{Character. Matrix msgtype, default "m.text".}
 }
@@ -14,5 +17,5 @@ matrix_send(text, msgtype = "m.text")
 The event ID of the sent message.
 }
 \description{
-Send a message to the configured Matrix room
+Send a message to a Matrix room
 }

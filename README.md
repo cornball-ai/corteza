@@ -4,6 +4,8 @@
 
 **An AI agent runtime for R.** Self-hosted, model-agnostic, tinyverse.
 
+> **Alpha.** Expect bugs and missing functionality. Feel free to open an issue if you're noticing or missing something specific that's not already tracked.
+
 *Corteza* is Spanish for the brain's cortex: the outer layer where processing happens.
 
 -----
@@ -53,6 +55,19 @@ corteza                    # Start agent
 corteza --resume           # Resume last session
 corteza --provider ollama  # Use local models
 corteza --provider moonshot --model kimi-k2
+```
+
+Context indicators are configurable. By default, the CLI starts showing
+live-context warnings at 75% and auto-compacts at 90%. Override these per
+project in `.corteza/config.json`:
+
+```json
+{
+  "context_warn_pct": 75,
+  "context_high_pct": 90,
+  "context_crit_pct": 95,
+  "context_compact_pct": 90
+}
 ```
 
 ### 2. MCP server (`serve()`)
