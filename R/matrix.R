@@ -103,18 +103,21 @@ matrix_configure <- function(server, user, password, room, model = NULL,
     invisible(cfg)
 }
 
-#' Send a message to the configured Matrix room
+#' Send a message to a Matrix room
 #'
 #' @param text Character. Plain text body.
+#' @param room_id Character. Matrix room id. Defaults to \code{cfg$room_id}
+#'   from \code{~/.corteza/matrix.json}.
 #' @param msgtype Character. Matrix msgtype, default "m.text".
 #'
 #' @return The event ID of the sent message.
 #' @export
-matrix_send <- function(text, msgtype = "m.text") {
+matrix_send <- function(text, room_id = NULL, msgtype = "m.text") {
     matrix_require_mx()
     cfg <- matrix_load_config()
     s <- matrix_mx_session(cfg)
-    mx.api::mx_send(s, cfg$room_id, text, msgtype = msgtype)
+    if (is.null(room_id) || !nzchar(room_id)) room_id <- cfg$room_id
+    mx.api::mx_send(s, room_id, text, msgtype = msgtype)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
@@ -131,13 +134,13 @@ matrix_extract_messages <- function(sync_resp, self_id) {
         }
         for (ev in events) {
             if (isTRUE(ev$type == "m.room.message") &&
-                isTRUE(ev$sender != self_id) &&
                 isTRUE(ev$content$msgtype == "m.text") &&
                 !is.null(ev$content$body)) {
                 out[[length(out) + 1L]] <- list(
                     room_id = rid,
                     event_id = ev$event_id,
                     sender = ev$sender,
+                    is_self = isTRUE(ev$sender == self_id),
                     body = ev$content$body,
                     mentions = ev$content$`m.mentions`$user_ids
                 )
@@ -238,7 +241,43 @@ matrix_archive_all <- function(sessions, mx_sess = NULL) {
 matrix_is_clear_command <- function(body) {
     if (is.null(body) || !nzchar(body)) return(FALSE)
     trimmed <- trimws(body)
-    grepl("(^|\\s)/(clear|reset|new)\\s*$", trimmed)
+    # Accept // as well as / so Element's slash-command interception
+    # doesn't swallow the verb (Element's escape is to double the slash).
+    grepl("(^|\\s)/+(clear|reset|new)\\s*$", trimmed)
+}
+
+# Match `/model <name> [provider]` (or `/model` alone to query). Returns
+# NULL if not a model command, else a list(model = ..., provider = ...,
+# query_only = ...).
+matrix_parse_model_command <- function(body) {
+    if (is.null(body) || !nzchar(body)) return(NULL)
+    trimmed <- trimws(body)
+    m <- regmatches(trimmed,
+                    regexec("(?:^|\\s)/+model(?:\\s+(\\S+)(?:\\s+(\\S+))?)?\\s*$",
+                            trimmed, perl = TRUE))[[1]]
+    if (!length(m)) return(NULL)
+    model <- if (length(m) >= 2L && nzchar(m[2])) m[2] else NA_character_
+    provider <- if (length(m) >= 3L && nzchar(m[3])) m[3] else NA_character_
+    list(model = model, provider = provider,
+         query_only = is.na(model))
+}
+
+# Apply a parsed model command to a session. Returns the ack text to
+# post back to the room. For a query (`/model` with no args), reports
+# the current settings. For a setter, mutates session$model and
+# (optionally) session$provider in place so the next turn picks them up.
+matrix_apply_model_command <- function(session, cmd) {
+    if (isTRUE(cmd$query_only)) {
+        return(sprintf("model: %s\nprovider: %s",
+                       session$model %||% "(unset)",
+                       session$provider %||% "(unset)"))
+    }
+    session$model <- cmd$model
+    if (!is.na(cmd$provider)) {
+        session$provider <- cmd$provider
+    }
+    sprintf("Model set: %s (provider: %s). Effective on the next reply.",
+            session$model, session$provider %||% "(unchanged)")
 }
 
 # Does this message mention the bot? Checks the explicit m.mentions
@@ -578,6 +617,11 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # Event ids of own outbound messages already reflected in $history via
+    # turn(). Lets us tell apart "echo of our own reply" (skip) from
+    # "out-of-band send by another process" (append as assistant turn) when
+    # mx_sync echoes self events back. Trimmed in matrix_poll to bound memory.
+    s$seen_event_ids <- character()
     s
 }
 
@@ -707,6 +751,40 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 
     replied <- 0L
     for (m in msgs) {
+        session <- matrix_get_or_create_session(
+            sessions, m$room_id, cfg,
+            system = system, model = model,
+            provider = provider, tools_filter = tools_filter
+        )
+
+        # Self events: either an echo of our own reply (already in
+        # $history via turn() — skip) or an out-of-band send from a
+        # sibling process like cornelius's briefing (append as assistant
+        # turn so the next user message has the right context).
+        if (isTRUE(m$is_self)) {
+            if (!(m$event_id %in% session$seen_event_ids)) {
+                session$history <- c(
+                    session$history %||% list(),
+                    list(list(role = "assistant", content = m$body))
+                )
+                session$seen_event_ids <- matrix_remember_event(
+                    session$seen_event_ids, m$event_id
+                )
+            }
+            next
+        }
+
+        # Already in history (typically from startup backfill that also
+        # caught this event). Skip — replying again would duplicate work.
+        if (m$event_id %in% session$seen_event_ids) {
+            next
+        }
+        # Mark before any side-effect path runs so a future backfill or
+        # re-delivery that catches the same event short-circuits cleanly.
+        session$seen_event_ids <- matrix_remember_event(
+            session$seen_event_ids, m$event_id
+        )
+
         # Read receipt runs even when we don't reply: the bot has still
         # "seen" the message, and clients use receipts for the
         # latest-read marker.
@@ -714,15 +792,26 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                  mx.api::mx_read_receipt(mx_sess, m$room_id, m$event_id),
                  error = function(e) NULL
         )
-        session <- matrix_get_or_create_session(
-            sessions, m$room_id, cfg,
-            system = system, model = model,
-            provider = provider, tools_filter = tools_filter
-        )
         # Group rooms: only respond when @-mentioned. DMs: always.
         # Prevents bot-loops between two AIs and stops noise in
         # multi-human rooms.
         if (!matrix_should_respond(m, session, cfg$user_id)) {
+            next
+        }
+
+        model_cmd <- matrix_parse_model_command(m$body)
+        if (!is.null(model_cmd)) {
+            ack <- matrix_apply_model_command(session, model_cmd)
+            sent_id <- tryCatch(
+                mx.api::mx_send(mx_sess, m$room_id, ack),
+                error = function(e) NULL
+            )
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- matrix_remember_event(
+                    session$seen_event_ids, sent_id
+                )
+            }
+            replied <- replied + 1L
             next
         }
 
@@ -746,10 +835,87 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
-        mx.api::mx_send(mx_sess, m$room_id, reply)
+        sent_id <- tryCatch(
+            mx.api::mx_send(mx_sess, m$room_id, reply),
+            error = function(e) NULL
+        )
+        if (!is.null(sent_id)) {
+            session$seen_event_ids <- matrix_remember_event(
+                session$seen_event_ids, sent_id
+            )
+        }
         replied <- replied + 1L
     }
     invisible(replied)
+}
+
+# Bounded ring of recently-handled event ids. Tracks both own outbound
+# events (sent via mx_send and already in $history) and incoming user
+# events that have been processed. Lets matrix_poll skip duplicates when
+# sync echoes back something the backfill already replayed.
+matrix_remember_event <- function(seen, event_id, cap = 256L) {
+    if (is.null(event_id) || !nzchar(event_id)) return(seen)
+    seen <- c(seen, event_id)
+    if (length(seen) > cap) seen <- tail(seen, cap)
+    seen
+}
+
+# Seed each joined room's session with the recent message tail from the
+# Matrix server. Called once at matrix_run startup so a fresh process
+# inherits prior conversation context. Events are appended in
+# chronological order with role inferred by sender (assistant for the
+# bot itself, user otherwise). Each event_id is added to the session's
+# seen set so a follow-up sync that returns the same events skips them.
+#
+# No tool execution and no LLM calls happen here; we only populate the
+# history shape that turn() consumes on the next live message.
+#
+# @return Integer count of rooms backfilled, invisibly.
+matrix_backfill_sessions <- function(mx_sess, sessions, cfg,
+                                     system = NULL, model = NULL,
+                                     provider = NULL, tools_filter = NULL,
+                                     limit = 30L) {
+    rooms <- tryCatch(mx.api::mx_rooms(mx_sess),
+                      error = function(e) character())
+    n <- 0L
+    for (rid in rooms) {
+        msgs <- tryCatch(
+            mx.api::mx_messages(mx_sess, rid, dir = "b",
+                                limit = as.integer(limit)),
+            error = function(e) NULL
+        )
+        if (is.null(msgs) || !length(msgs$chunk)) next
+        chunk <- rev(msgs$chunk)  # API returns newest-first; flip
+        session <- matrix_get_or_create_session(
+            sessions, rid, cfg,
+            system = system, model = model,
+            provider = provider, tools_filter = tools_filter
+        )
+        added <- 0L
+        for (ev in chunk) {
+            if (!isTRUE(ev$type == "m.room.message")) next
+            if (!isTRUE(ev$content$msgtype == "m.text")) next
+            body <- ev$content$body
+            if (is.null(body) || !nzchar(body)) next
+            role <- if (isTRUE(ev$sender == cfg$user_id)) {
+                "assistant"
+            } else {
+                "user"
+            }
+            session$history <- c(
+                session$history %||% list(),
+                list(list(role = role, content = body))
+            )
+            session$seen_event_ids <- matrix_remember_event(
+                session$seen_event_ids, ev$event_id
+            )
+            added <- added + 1L
+        }
+        if (added > 0L) {
+            n <- n + 1L
+        }
+    }
+    invisible(n)
 }
 
 # Run one turn with R's process-wide getwd() pointed at the session's
@@ -808,6 +974,26 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
             invites <- matrix_extract_invites(initial)
             if (length(invites)) {
                 matrix_accept_invites(mx_sess, invites)
+            }
+            # Backfill: in-memory session history is process-local and dies
+            # on restart, so a fresh process loses every prior reply and
+            # every out-of-band send (briefings, manual matrix_send). Pull
+            # the last ~30 messages per joined room and replay them into
+            # the session registry so context survives crashes / deploys.
+            n_rooms <- tryCatch(
+                matrix_backfill_sessions(mx_sess, sessions, cfg,
+                                         system = system, model = model,
+                                         provider = provider,
+                                         tools_filter = tools_filter),
+                error = function(e) {
+                    message("matrix_run: backfill failed: ",
+                            conditionMessage(e))
+                    0L
+                }
+            )
+            if (n_rooms > 0L) {
+                message(sprintf("matrix_run: backfilled %d room session(s)",
+                                n_rooms))
             }
         }
     }
