@@ -1,3 +1,33 @@
+# corteza 0.6.2
+
+## CLI
+
+* The `Live context` indicator now reflects the actual size of the next
+  prompt (system + tools + message history) rather than cumulative
+  billed API tokens. Old behavior counted up forever — `/clear` and
+  `/compact` had no visible effect on the indicator. Status line label
+  updated from `Usage` to `Live context`.
+* `/context` now prints live usage and the auto-compact threshold
+  alongside the loaded context files.
+* Auto-compact threshold raised from 80% to 90%. Pairs with the
+  estimate above to avoid over-eager compaction now that the metric is
+  more accurate.
+* Provider/model defaults centralized in `resolve_provider_model()`.
+  Legacy `kimi-k2` now resolves to `kimi-k2.6` for moonshot.
+  Moonshot's chat temperature is forced to 1 (their API rejects other
+  values on kimi).
+* Session field renamed: `session$compactions` ->
+  `session$compactionCount`, matching `memoryFlushCompactionCount`.
+  Existing on-disk sessions show 0 compactions until the next compact;
+  display-only.
+
+## CLI prompt input
+
+* `_read_prompt_via_bash` now prints the prompt from R and captures
+  input through a tempfile. Previously relied on `bash -p` plus
+  `system2(stdout = TRUE)`, which was fragile on terminals that mixed
+  the prompt into stdout.
+
 # corteza 0.6.1
 
 * Relicensed from MIT to Apache License (>= 2) for explicit patent

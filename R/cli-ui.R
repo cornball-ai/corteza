@@ -2,32 +2,36 @@
 .prompt_input_state$stdin_con <- NULL
 
 .read_prompt_via_bash <- function(prompt_str = "> ") {
+    cat(prompt_str)
+    flush.console()
+
     script <- paste(
-        'prompt="$1"',
-        'IFS= read -r -e -p "$prompt" line || exit 1',
-        'printf "%s\\n" "$line"',
+        'out="$1"',
+        'IFS= read -r -e line || exit 1',
+        'printf "%s\\n" "$line" > "$out"',
         'while IFS= read -r -t 0.01 next; do',
-        '  printf "%s\\n" "$next"',
+        '  printf "%s\\n" "$next" >> "$out"',
         'done',
         sep = "\n"
     )
 
-    out <- suppressWarnings(
+    path <- tempfile("corteza-prompt-")
+    on.exit(unlink(path), add = TRUE)
+    status <- suppressWarnings(
         system2(
             "bash",
-            c("-c", script, "bash", prompt_str),
-            stdout = TRUE,
-            stderr = FALSE
+            c("-c", shQuote(script), "bash", shQuote(path)),
+            stdout = "",
+            stderr = ""
         )
     )
-    status <- attr(out, "status")
-    if (!is.null(status) && status != 0L && length(out) == 0L) {
+    if (!is.null(status) && status != 0L) {
         return(character())
     }
-    if (!is.character(out)) {
+    if (!file.exists(path)) {
         return(character())
     }
-    out
+    readLines(path, warn = FALSE)
 }
 
 read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {

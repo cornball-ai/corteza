@@ -82,7 +82,7 @@ load_config <- function(cwd = getwd()) {
     }
     # Auto-compaction threshold (percentage)
     if (is.null(config$context_compact_pct)) {
-        config$context_compact_pct <- 80L
+        config$context_compact_pct <- 90L
     }
 
     # SOUL.md and USER.md inclusion (passed to saber::agent_context).
@@ -260,4 +260,3 @@ get_context_files <- function(cwd = getwd()) {
     config <- load_config(cwd)
     config$context_files
 }
-

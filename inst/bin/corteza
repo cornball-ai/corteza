@@ -38,7 +38,7 @@ parse_args <- function() {
     context_warn_pct = config$context_warn_pct %||% 75L,
     context_high_pct = config$context_high_pct %||% 90L,
     context_crit_pct = config$context_crit_pct %||% 95L,
-    context_compact_pct = config$context_compact_pct %||% 80L,  # Auto-compact threshold
+    context_compact_pct = config$context_compact_pct %||% 90L,  # Auto-compact threshold
     session = NULL,  # Session key (resume if exists, create if not)
     resume = FALSE,  # Resume latest session
     list = FALSE,
@@ -106,7 +106,7 @@ Commands (in chat):
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /sessions      List sessions
-  /context       Show loaded context files
+  /context       Show live context usage and loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider
   /remember      Store fact with #tags (auto-categorized)
@@ -402,6 +402,78 @@ format_tokens <- function(n) {
   }
 }
 
+estimate_text_tokens <- function(text) {
+  if (is.null(text) || length(text) == 0L) {
+    return(0L)
+  }
+  text <- paste(as.character(text), collapse = "\n")
+  if (!nzchar(text)) {
+    return(0L)
+  }
+  as.integer(ceiling(nchar(text, type = "chars", allowNA = FALSE) / 4))
+}
+
+message_text <- function(message) {
+  content <- message$content
+  if (is.list(content)) {
+    if (length(content) > 0L && !is.null(content[[1]]$text)) {
+      return(paste(vapply(
+        content,
+        function(block) as.character(block$text %||% ""),
+        character(1)
+      ), collapse = "\n"))
+    }
+    return(paste(utils::capture.output(str(content, max.level = 2L)),
+                 collapse = "\n"))
+  }
+  as.character(content %||% "")
+}
+
+estimate_live_context_tokens <- function(session, system_prompt = NULL,
+                                         tools = NULL) {
+  tool_text <- tryCatch(
+    jsonlite::toJSON(tools %||% list(), auto_unbox = TRUE, null = "null"),
+    error = function(e) ""
+  )
+  messages <- session$messages %||% list()
+  message_texts <- vapply(messages, function(message) {
+    sprintf("%s: %s", message$role %||% "unknown", message_text(message))
+  }, character(1))
+
+  parts <- c(system_prompt %||% "", tool_text, message_texts)
+  tokens <- sum(vapply(parts, estimate_text_tokens, integer(1)))
+
+  # Account for chat framing overhead that the chars/4 estimate misses.
+  tokens + length(messages) * 6L + length(tools %||% list()) * 12L
+}
+
+default_provider_model <- function(provider) {
+  switch(provider,
+    anthropic = "claude-sonnet-4-20250514",
+    openai = "gpt-4o",
+    moonshot = "kimi-k2.6",
+    ollama = "llama3.2",
+    NULL
+  )
+}
+
+resolve_provider_model <- function(provider, model = NULL) {
+  if (!is.null(model) && nzchar(model)) {
+    if (identical(provider, "moonshot") && identical(model, "kimi-k2")) {
+      return("kimi-k2.6")
+    }
+    return(model)
+  }
+  default_provider_model(provider)
+}
+
+preferred_chat_temperature <- function(provider, temperature) {
+  if (identical(provider, "moonshot")) {
+    return(1)
+  }
+  temperature
+}
+
 print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, crit_pct = 95) {
   pct <- (used / limit) * 100
 
@@ -464,9 +536,9 @@ do_compact <- function(session, provider, model, system_prompt) {
     llm.api::chat(
       prompt = summary_prompt,
       provider = provider,
-      model = model,
+      model = resolve_provider_model(provider, model),
       system = "You are a helpful assistant that creates concise conversation summaries.",
-      temperature = 0.3
+      temperature = preferred_chat_temperature(provider, 0.3)
     )
   }, error = function(e) {
     cat(sprintf("%sCompaction failed: %s%s\n", color$bright_magenta, e$message, color$reset))
@@ -720,7 +792,7 @@ format_status_summary <- function(session, provider, display_model, tools, opts,
               length(context_files), length(skill_docs), memory_mode),
       sprintf("Legacy memory tools: %s",
               if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("Usage: %s / %s tokens",
+      sprintf("Live context: %s / %s tokens",
               format_tokens(session_tokens), format_tokens(context_limit)),
       sprintf("Approval mode: %s", config$approval_mode %||% "ask")
     ),
@@ -812,12 +884,12 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text) {
     llm.api::chat(
       prompt = review_prompt,
       provider = provider,
-      model = model,
+      model = resolve_provider_model(provider, model),
       system = paste(
         "You are performing code review on local changes.",
         "Findings must come first and should prioritize correctness over style."
       ),
-      temperature = 0.1
+      temperature = preferred_chat_temperature(provider, 0.1)
     )
   }, error = function(e) e)
 }
@@ -1075,17 +1147,13 @@ run_agent <- function(opts) {
   model <- opts$model
 
   # Display model
-  display_model <- model %||% switch(provider,
-    anthropic = "claude-sonnet-4-20250514",
-    openai = "gpt-4o",
-    moonshot = "kimi-k2.6",
-    ollama = "llama3.2"
-  )
+  display_model <- resolve_provider_model(provider, model)
 
   cat(sprintf("%s%s @ %s%s\n", color$dim, display_model, provider, color$reset))
 
-  # Track token usage for context indicator
-  session_tokens <- session$tokens %||% 0L
+  # Track estimated live context, not cumulative billed API usage.
+  session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
+  session$tokens <- session_tokens
   context_limit <- get_context_limit(display_model)
 
   # Show resumed message count
@@ -1131,8 +1199,8 @@ run_agent <- function(opts) {
       } else if (cmd == "/clear") {
         # Clear in-memory messages (transcript preserved on disk)
         session$messages <- list()
-        session$tokens <- 0L
-        session_tokens <- 0L
+        session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
+        session$tokens <- session_tokens
         corteza:::session_save(session)
         cat(sprintf("%sConversation cleared (transcript preserved).%s\n", color$dim, color$reset))
         next
@@ -1140,7 +1208,7 @@ run_agent <- function(opts) {
         if (length(session$messages) < 2) {
           cat(sprintf("%sNothing to compact.%s\n", color$dim, color$reset))
         } else {
-          compact_result <- do_compact(session, provider, display_model, system_prompt)
+          compact_result <- do_compact(session, provider, model, system_prompt)
           if (!is.null(compact_result)) {
             # Write compaction marker to transcript
             corteza:::transcript_compact(session, compact_result$summary)
@@ -1149,9 +1217,9 @@ run_agent <- function(opts) {
             session$messages <- list(
               list(role = "assistant", content = compact_result$summary, type = "compaction")
             )
-            session_tokens <- compact_result$tokens
+            session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
             session$tokens <- session_tokens
-            session$compactions <- (session$compactions %||% 0L) + 1L
+            session$compactionCount <- (session$compactionCount %||% 0L) + 1L
             corteza:::session_save(session)
           }
         }
@@ -1236,8 +1304,8 @@ run_agent <- function(opts) {
         }
         next
       } else if (cmd == "/model" && nchar(cmd_rest) > 0) {
-        model <- cmd_rest
-        display_model <- model
+        model <- resolve_provider_model(provider, cmd_rest)
+        display_model <- resolve_provider_model(provider, model)
         context_limit <- get_context_limit(display_model)
         session$model <- model
         corteza:::session_save(session)
@@ -1245,19 +1313,19 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/provider" && nchar(cmd_rest) > 0) {
         provider <- cmd_rest
-        display_model <- model %||% switch(provider,
-          anthropic = "claude-sonnet-4-20250514",
-          openai = "gpt-4o",
-          moonshot = "kimi-k2.6",
-          ollama = "llama3.2",
-          "(default)"
-        )
+        display_model <- resolve_provider_model(provider, model) %||% "(default)"
         context_limit <- get_context_limit(display_model)
         session$provider <- provider
         corteza:::session_save(session)
         cat(sprintf("%sProvider set to: %s%s\n", color$dim, provider, color$reset))
         next
       } else if (cmd == "/context") {
+        session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
+        session$tokens <- session_tokens
+        cat(sprintf("%sLive context:%s %s / %s tokens (auto-compact at %d%%)\n",
+                    color$bold, color$reset,
+                    format_tokens(session_tokens), format_tokens(context_limit),
+                    opts$context_compact_pct))
         if (length(context_files) == 0) {
           cat(sprintf("%sNo context files loaded.%s\n", color$dim, color$reset))
           cat("Project context comes from saber::briefing() and saber::agent_context().\n")
@@ -1368,7 +1436,7 @@ run_agent <- function(opts) {
             tools = tools,
             tool_handler = tool_handler,
             system = system_prompt,
-            model = model,
+            model = resolve_provider_model(provider, model),
             provider = provider,
             history = flush_history,
             verbose = FALSE
@@ -1583,7 +1651,7 @@ Commands:
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /sessions      List sessions for this directory
-  /context       Show loaded context files
+  /context       Show live context usage and loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider (anthropic, openai, moonshot, ollama)
   /dryrun        Toggle dry-run mode (preview tools without executing)
@@ -1669,7 +1737,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
     turn_session <- corteza::new_session(
       channel = "cli",
       provider = provider,
-      model_map = list(cloud = model,
+      model_map = list(cloud = resolve_provider_model(provider, model),
                        local = corteza::default_local_model()),
       system = system_prompt,
       history = api_history,
@@ -1713,97 +1781,84 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
     if (!is.null(result)) {
       print_response(result$content)
 
-      # Update token count and show context indicator
-      if (!is.null(result$usage)) {
-        session_tokens <- session_tokens + result$usage$total_tokens
-        session$tokens <- session_tokens
-        print_context_indicator(session_tokens, context_limit,
-                                opts$context_warn_pct, opts$context_high_pct, opts$context_crit_pct)
+      session <- corteza:::session_add_message(session, "assistant", result$content)
+      corteza:::transcript_append(session, "assistant", result$content)
 
-        # Auto-compact if approaching limit
-        pct <- (session_tokens / context_limit) * 100
-        if (pct >= opts$context_compact_pct && length(session$messages) > 2) {
-          # Add current response before compacting so it's included in summary
-          session <- corteza:::session_add_message(session, "assistant", result$content)
-          corteza:::transcript_append(session, "assistant", result$content)
+      session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
+      session$tokens <- session_tokens
+      print_context_indicator(session_tokens, context_limit,
+                              opts$context_warn_pct, opts$context_high_pct,
+                              opts$context_crit_pct)
 
-          # Pre-compaction memory flush
-          flush_enabled <- config$memory_flush_enabled %||% TRUE
-          compaction_count <- session$compactionCount %||% 0L
-          flush_count <- session$memoryFlushCompactionCount %||% 0L
-          if (isTRUE(flush_enabled) && flush_count <= compaction_count) {
-            flush_prompt <- config$memory_flush_prompt %||% paste0(
-                "Pre-compaction memory flush. ",
-                "Store durable memories now using write_file to memory/YYYY-MM-DD.md ",
-                "in the workspace. Include: preferences discovered, decisions made, ",
-                "technical details worth preserving. ",
-                "If nothing to store, reply with exactly: NO_REPLY")
+      # Auto-compact based on estimated live context, not cumulative API usage.
+      pct <- (session_tokens / context_limit) * 100
+      if (pct >= opts$context_compact_pct && length(session$messages) > 2) {
+        # Pre-compaction memory flush
+        flush_enabled <- config$memory_flush_enabled %||% TRUE
+        compaction_count <- session$compactionCount %||% 0L
+        flush_count <- session$memoryFlushCompactionCount %||% 0L
+        if (isTRUE(flush_enabled) && flush_count <= compaction_count) {
+          flush_prompt <- config$memory_flush_prompt %||% paste0(
+              "Pre-compaction memory flush. ",
+              "Store durable memories now using write_file to memory/YYYY-MM-DD.md ",
+              "in the workspace. Include: preferences discovered, decisions made, ",
+              "technical details worth preserving. ",
+              "If nothing to store, reply with exactly: NO_REPLY")
 
-            cat(sprintf("%sFlushing memories before compaction...%s\n", color$cyan, color$reset))
+          cat(sprintf("%sFlushing memories before compaction...%s\n", color$cyan, color$reset))
 
-            flush_history <- lapply(session$messages, function(m) {
-              text <- if (is.list(m$content) && length(m$content) > 0 && !is.null(m$content[[1]]$text)) {
-                m$content[[1]]$text
-              } else {
-                m$content
-              }
-              list(role = m$role, content = text)
-            })
-
-            flush_result <- tryCatch({
-              agent(
-                prompt = flush_prompt,
-                tools = tools,
-                tool_handler = tool_handler,
-                system = system_prompt,
-                model = model,
-                provider = provider,
-                history = flush_history,
-                verbose = FALSE
-              )
-            }, error = function(e) {
-              cat(sprintf("%sFlush failed: %s%s\n", color$bright_magenta, e$message, color$reset))
-              NULL
-            })
-
-            if (!is.null(flush_result)) {
-              content <- flush_result$content
-              if (!startsWith(trimws(content), "NO_REPLY")) {
-                cat(sprintf("%sMemories flushed.%s\n", color$green, color$reset))
-                system_prompt <- corteza:::load_context(cwd)
-              }
+          flush_history <- lapply(session$messages, function(m) {
+            text <- if (is.list(m$content) && length(m$content) > 0 && !is.null(m$content[[1]]$text)) {
+              m$content[[1]]$text
+            } else {
+              m$content
             }
+            list(role = m$role, content = text)
+          })
 
-            session$memoryFlushCompactionCount <- compaction_count + 1L
-          }
-
-          compact_result <- do_compact(session, provider, display_model, system_prompt)
-          if (!is.null(compact_result)) {
-            # Write compaction marker to transcript (full history preserved)
-            corteza:::transcript_compact(session, compact_result$summary)
-
-            # Update in-memory session to use summary for next API call
-            session$messages <- list(
-              list(role = "assistant", content = compact_result$summary, type = "compaction")
+          flush_result <- tryCatch({
+            agent(
+              prompt = flush_prompt,
+              tools = tools,
+              tool_handler = tool_handler,
+              system = system_prompt,
+              model = resolve_provider_model(provider, model),
+              provider = provider,
+              history = flush_history,
+              verbose = FALSE
             )
-            session_tokens <- compact_result$tokens
-            session$tokens <- session_tokens
-            session$compactions <- (session$compactions %||% 0L) + 1L
-            corteza:::session_save(session)
-          } else {
-            # Compaction failed, just save metadata
-            corteza:::session_save(session)
+          }, error = function(e) {
+            cat(sprintf("%sFlush failed: %s%s\n", color$bright_magenta, e$message, color$reset))
+            NULL
+          })
+
+          if (!is.null(flush_result)) {
+            content <- flush_result$content
+            if (!startsWith(trimws(content), "NO_REPLY")) {
+              cat(sprintf("%sMemories flushed.%s\n", color$green, color$reset))
+              system_prompt <- corteza:::load_context(cwd)
+            }
           }
-        } else {
-          # No compaction needed - add assistant response
-          session <- corteza:::session_add_message(session, "assistant", result$content)
-          corteza:::transcript_append(session, "assistant", result$content)
-          corteza:::session_save(session)
+
+          session$memoryFlushCompactionCount <- compaction_count + 1L
         }
+
+        compact_result <- do_compact(session, provider, model, system_prompt)
+        if (!is.null(compact_result)) {
+          # Write compaction marker to transcript (full history preserved)
+          corteza:::transcript_compact(session, compact_result$summary)
+
+          # Update in-memory session to use summary for next API call
+          session$messages <- list(
+            list(role = "assistant", content = compact_result$summary, type = "compaction")
+          )
+          session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
+          session$tokens <- session_tokens
+          session$compactionCount <- (session$compactionCount %||% 0L) + 1L
+        }
+
+        corteza:::session_save(session)
       } else {
-        # No usage info - add assistant response
-        session <- corteza:::session_add_message(session, "assistant", result$content)
-        corteza:::transcript_append(session, "assistant", result$content)
         corteza:::session_save(session)
       }
     }
