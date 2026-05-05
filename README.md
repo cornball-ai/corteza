@@ -1,6 +1,6 @@
 # corteza
 
-<img src="man/figures/corteza.png" alt="corteza logo" width="200" />
+<img src="man/figures/corteza.png" alt="corteza logo" align="right" width="200" />
 
 **An AI agent runtime for R.** Self-hosted, model-agnostic, tinyverse.
 
