@@ -89,6 +89,7 @@ Options:
   --tools         Tool filter: core, file, code, git, r, data, web, chat (default: all)
                   Example: --tools core or --tools file,git,code
   --dry-run       Preview tool calls without executing
+  --trace         Print structured tool-call events to stderr
   --session, -s   Session key (resume if exists, create if not)
   --resume, -r    Resume the most recent session
   --list          List sessions
