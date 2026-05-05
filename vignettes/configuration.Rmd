@@ -21,6 +21,8 @@ corteza reads two JSON files and merges them. Project config overrides global co
 
 **Merge semantics:** project keys replace global keys at the top level; no deep merge.
 
+**Precedence:** CLI flags > project config > global config > built-in defaults.
+
 Example project config:
 
 ```json
@@ -60,7 +62,7 @@ Flags override config values for the current run.
 
 ## JSON config keys
 
-All keys shown with type and default. Defaults mirror `R/config.R` as of version `0.6.3`.
+All keys shown with type and default, current as of corteza 0.6.3. Most defaults live in `R/config.R::load_config()`; a few (memory keys and the CLI port fallback) live in `inst/bin/corteza`.
 
 ### Core
 
@@ -133,7 +135,7 @@ All keys shown with type and default. Defaults mirror `R/config.R` as of version
 | `workspace.capture_results` | boolean | `true` | Promote large results to handles |
 | `workspace.max_result_size` | integer | `50000` | Max result size before handle promotion |
 | `workspace.scan_globalenv` | boolean | `true` | Scan `.GlobalEnv` on startup |
-| `workspace.scan_max_bytes` | integer | `52428800` | Max bytes to scan from `.GlobalEnv` |
+| `workspace.scan_max_bytes` | integer | `52428800` | Max bytes to scan from `.GlobalEnv` (50 MB) |
 | `workspace.max_object_summary_chars` | integer | `2000` | Max summary length per object |
 
 ### Channels
@@ -174,7 +176,7 @@ corteza::matrix_configure(
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `legacy_memory_tools_enabled` | boolean | `false` | Show memory slash commands |
-| `memory_flush_enabled` | boolean | `false` | Auto-flush before compaction |
+| `memory_flush_enabled` | boolean | `true` | Auto-flush before compaction |
 | `context_include_memory_logs` | boolean | `false` | Include daily logs in context |
 
 ## Slash commands
@@ -183,7 +185,7 @@ In-chat commands prefixed with `/`.
 
 | Command | Description |
 |---------|-------------|
-| `/quit`, `/exit` | Exit corteza |
+| `/quit`, `/exit`, `/q` | Exit corteza |
 | `/status` | Runtime and session status |
 | `/doctor` | Check provider, git, MCP, context health |
 | `/tools` | List available tools |
@@ -224,7 +226,7 @@ Skills are `SKILL.md` files loaded at startup. Built-in R skills are always regi
 
 | Scope | Path |
 |-------|------|
-| Global | `~/.corteza/skills/` |
+| Global | `tools::R_user_dir("corteza", "data")/skills/` |
 | Project | `.corteza/skills/` |
 
 Nested (`skill/SKILL.md`) and flat (`skill.md`) layouts both work.
@@ -233,13 +235,20 @@ Nested (`skill/SKILL.md`) and flat (`skill.md`) layouts both work.
 
 ## MCP server
 
-Expose corteza tools to external MCP clients.
+Expose corteza tools to external MCP clients. `serve()` supports two transports:
 
 ```r
-corteza::serve(port = 7850, cwd = getwd())
+# stdio transport (Claude Desktop, Claude Code, other MCP clients)
+corteza::serve()
+
+# socket transport (corteza CLI, R-to-R clients)
+corteza::serve(port = 7850)
+
+# restrict the toolset
+corteza::serve(port = 7850, tools = "core")
 ```
 
-Tools execute in a persistent R session. Objects persist across calls.
+`port = NULL` (the default) selects stdio. `cwd = NULL` (the default) leaves the working directory alone; pass an explicit path to anchor the server elsewhere. Tools execute in a persistent R session, so objects and loaded packages survive across calls.
 
 Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
 
@@ -256,7 +265,7 @@ Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
 
 ## Session tuning
 
-Programmatic session construction.
+`new_session()` is the programmatic entry point for embedding corteza in your own R code: a Shiny app, a batch script, a custom approval flow, or tests. The CLI and Matrix channels build on this same primitive.
 
 ```r
 library(corteza)
@@ -268,26 +277,24 @@ s <- new_session(
   verbose = FALSE
 )
 
-is.environment(s)
+result <- turn("What packages are loaded?", session = s)
 ```
+
+The session is an environment that carries history, the active provider/model, and the approval callback. `turn()` mutates it in place and also returns the updated session, so you can chain calls or persist `s$history` between runs.
 
 ### Session parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `channel` | string | `"cli"` | `"cli"`, `"console"`, `"matrix"` |
+| `history` | list or null | null | Prior messages; resumes mid-conversation |
+| `model_map` | list or null | null | `list(cloud = ..., local = ...)`; falls back to `corteza.model_map` option |
 | `provider` | string | `"anthropic"` | LLM provider |
-| `max_turns` | integer | `10` | Max tool-use turns per call |
-| `verbose` | boolean | `FALSE` | Print tool-call progress |
 | `tools_filter` | string[] or null | null | Restrict available tools |
 | `system` | string or null | null | System prompt override |
-| `approval_cb` | function or null | null | Custom approval callback |
-
-Running a turn:
-
-```r
-result <- turn("What packages are loaded?", session = s)
-```
+| `approval_cb` | function or null | null | Called when policy returns `"ask"`. Default denies. |
+| `max_turns` | integer | `10` | Max tool-use turns per call |
+| `verbose` | boolean | `FALSE` | Print tool-call progress |
 
 ## systemd service
 
@@ -349,7 +356,7 @@ OPENAI_API_KEY=sk-...
 |--------|---------|-------------|
 | `corteza.model` | null | Default model (overrides provider default) |
 | `corteza.local_models` | `c("gpt-oss:120b", "gpt-oss:20b")` | Candidates for `default_local_model()` |
-| `corteza.max_turns` | null | Default `max_turns` for `chat()` |
+| `corteza.max_turns` | null | Default `max_turns` for `chat()` (null falls back to 50) |
 | `corteza.trace` | `FALSE` | Enable structured trace events |
 
 Set in `~/.Rprofile` or per-session via `options()`.
