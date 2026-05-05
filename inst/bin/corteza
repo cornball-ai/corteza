@@ -31,18 +31,18 @@ parse_args <- function() {
   config <- corteza:::load_config(getwd())
 
   opts <- list(
-    provider = config$provider %||% "anthropic",
+    provider = config$provider,
     model = config$model,
-    port = config$port %||% 7850L,
+    port = config$port,
     tools = config$tools,  # NULL = all tools
-    context_warn_pct = config$context_warn_pct %||% 75L,
-    context_high_pct = config$context_high_pct %||% 90L,
-    context_crit_pct = config$context_crit_pct %||% 95L,
-    context_compact_pct = config$context_compact_pct %||% 90L,  # Auto-compact threshold
+    context_warn_pct = config$context_warn_pct,
+    context_high_pct = config$context_high_pct,
+    context_crit_pct = config$context_crit_pct,
+    context_compact_pct = config$context_compact_pct,  # Auto-compact threshold
     session = NULL,  # Session key (resume if exists, create if not)
     resume = FALSE,  # Resume latest session
     list = FALSE,
-    dry_run = config$dry_run %||% FALSE,  # Dry-run mode
+    dry_run = config$dry_run,  # Dry-run mode
     trace = isTRUE(config$trace) || isTRUE(getOption("corteza.trace", FALSE))
   )
 
@@ -795,7 +795,7 @@ format_status_summary <- function(session, provider, display_model, tools, opts,
               if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
       sprintf("Live context: %s / %s tokens",
               format_tokens(session_tokens), format_tokens(context_limit)),
-      sprintf("Approval mode: %s", config$approval_mode %||% "ask")
+      sprintf("Approval mode: %s", config$approval_mode)
     ),
     collapse = "\n"
   )
@@ -822,11 +822,9 @@ format_config_summary <- function(config, provider, display_model, opts) {
               if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
       sprintf("legacy memory tools: %s",
               if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("approval mode: %s", config$approval_mode %||% "ask"),
+      sprintf("approval mode: %s", config$approval_mode),
       sprintf("dangerous tools: %s",
-              paste(config$dangerous_tools %||%
-                    corteza:::default_dangerous_tools(),
-                    collapse = ", "))
+              paste(config$dangerous_tools, collapse = ", "))
     ),
     collapse = "\n"
   )
@@ -856,7 +854,7 @@ format_doctor_report <- function(cwd, session, provider, display_model, tools,
               if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
       sprintf("legacy memory tools: %s",
               if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("approval mode: %s", config$approval_mode %||% "ask"),
+      sprintf("approval mode: %s", config$approval_mode),
       sprintf("project approvals: %s",
               if (file.exists(approvals_path)) approvals_path else "none")
     ),
@@ -923,7 +921,7 @@ run_agent <- function(opts) {
 
   # Load or create session
   session <- NULL
-  ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
+  ws_enabled <- isTRUE(config$workspace$enabled)
 
   if (!is.null(opts$session)) {
     # Try to resume session by key, create if not found
@@ -950,9 +948,9 @@ run_agent <- function(opts) {
     # No session key specified - create new session
     session <- corteza:::session_new(opts$provider, opts$model, cwd)
     # Scan globalenv for existing objects
-    if (ws_enabled && isTRUE(config$workspace$scan_globalenv %||% TRUE)) {
+    if (ws_enabled && isTRUE(config$workspace$scan_globalenv)) {
       registered <- corteza:::ws_scan_globalenv(
-        max_bytes = config$workspace$scan_max_bytes %||% 50e6)
+        max_bytes = config$workspace$scan_max_bytes)
       if (length(registered) > 0) {
         cat(sprintf("%sWorkspace: registered %d objects%s\n",
                     color$dim, length(registered), color$reset))
@@ -1017,8 +1015,8 @@ run_agent <- function(opts) {
   # `tools` already built above, right after the worker connected.
 
   # Get approval settings from config
-  approval_mode <- config$approval_mode %||% "ask"
-  dangerous_tools <- config$dangerous_tools %||% corteza:::default_dangerous_tools()
+  approval_mode <- config$approval_mode
+  dangerous_tools <- config$dangerous_tools
 
   # Track turn number for trace
   turn_number <- 0L
@@ -1407,12 +1405,7 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/flush") {
         # Manual memory flush: ask LLM to write durable memories
-        flush_prompt <- config$memory_flush_prompt %||% paste0(
-            "Pre-compaction memory flush. ",
-            "Store durable memories now using write_file to memory/YYYY-MM-DD.md ",
-            "in the workspace. Include: preferences discovered, decisions made, ",
-            "technical details worth preserving. ",
-            "If nothing to store, reply with exactly: NO_REPLY")
+        flush_prompt <- config$memory_flush_prompt
 
         if (length(session$messages) < 2) {
           cat(sprintf("%sNothing to flush (no conversation yet).%s\n", color$dim, color$reset))
@@ -1795,16 +1788,11 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
       pct <- (session_tokens / context_limit) * 100
       if (pct >= opts$context_compact_pct && length(session$messages) > 2) {
         # Pre-compaction memory flush
-        flush_enabled <- config$memory_flush_enabled %||% TRUE
+        flush_enabled <- config$memory_flush_enabled
         compaction_count <- session$compactionCount %||% 0L
         flush_count <- session$memoryFlushCompactionCount %||% 0L
         if (isTRUE(flush_enabled) && flush_count <= compaction_count) {
-          flush_prompt <- config$memory_flush_prompt %||% paste0(
-              "Pre-compaction memory flush. ",
-              "Store durable memories now using write_file to memory/YYYY-MM-DD.md ",
-              "in the workspace. Include: preferences discovered, decisions made, ",
-              "technical details worth preserving. ",
-              "If nothing to store, reply with exactly: NO_REPLY")
+          flush_prompt <- config$memory_flush_prompt
 
           cat(sprintf("%sFlushing memories before compaction...%s\n", color$cyan, color$reset))
 
