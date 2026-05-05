@@ -19,9 +19,11 @@ config <- corteza:::load_config(testdir)
 expect_equal(config$provider, "anthropic")
 expect_equal(config$context_files, character(0))
 expect_false(isTRUE(config$context_include_memory_logs))
-expect_false(isTRUE(config$memory_flush_enabled))
+expect_true(isTRUE(config$memory_flush_enabled))
 expect_false(isTRUE(config$legacy_memory_tools_enabled))
 expect_true("write_file" %in% config$dangerous_tools)
+expect_equal(config$port, 7850L)
+expect_true(grepl("Pre-compaction memory flush", config$memory_flush_prompt))
 
 # Test project config is loaded
 dir.create(file.path(testdir, ".corteza"), showWarnings = FALSE)

@@ -69,6 +69,9 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$provider)) {
         config$provider <- "anthropic"
     }
+    if (is.null(config$port)) {
+        config$port <- 7850L
+    }
     # Context warning thresholds (percentage)
     # Hidden until warn_pct, then yellow -> orange -> red
     if (is.null(config$context_warn_pct)) {
@@ -99,14 +102,7 @@ load_config <- function(cwd = getwd()) {
         config$approval_mode <- "ask" # "ask", "allow", "deny"
     }
     if (is.null(config$dangerous_tools)) {
-        config$dangerous_tools <- c(
-                                    "bash",
-                                    "run_r",
-                                    "run_r_script",
-                                    "write_file",
-                                    "replace_in_file",
-                                    "base::writeLines"
-        )
+        config$dangerous_tools <- default_dangerous_tools()
     }
     # Per-tool permissions (overrides dangerous_tools)
     # config$permissions = list(bash = "deny", read_file = "allow")
@@ -118,14 +114,7 @@ load_config <- function(cwd = getwd()) {
     # config$allowed_paths - if set, only these paths are accessible
     # config$denied_paths - these paths are always blocked
     if (is.null(config$denied_paths)) {
-        config$denied_paths <- c(
-                                 "~/.ssh",
-                                 "~/.gnupg",
-                                 "~/.aws",
-                                 "~/.config/gcloud",
-                                 "~/.kube",
-                                 "~/.docker"
-        )
+        config$denied_paths <- default_denied_paths()
     }
     # Note: allowed_paths is NULL by default (no restriction)
 
@@ -154,6 +143,28 @@ load_config <- function(cwd = getwd()) {
     # Dry-run mode (validate tools without executing)
     if (is.null(config$dry_run)) {
         config$dry_run <- FALSE
+    }
+
+    # Legacy memory tools (slash commands /remember /recall /flush)
+    if (is.null(config$legacy_memory_tools_enabled)) {
+        config$legacy_memory_tools_enabled <- FALSE
+    }
+    # Auto-flush memories before context compaction
+    if (is.null(config$memory_flush_enabled)) {
+        config$memory_flush_enabled <- TRUE
+    }
+    # Prompt sent to the model during the pre-compaction memory flush.
+    if (is.null(config$memory_flush_prompt)) {
+        config$memory_flush_prompt <- paste0(
+            "Pre-compaction memory flush. ",
+            "Store durable memories now using write_file to memory/YYYY-MM-DD.md ",
+            "in the workspace. Include: preferences discovered, decisions made, ",
+            "technical details worth preserving. ",
+            "If nothing to store, reply with exactly: NO_REPLY")
+    }
+    # Include daily memory logs in context
+    if (is.null(config$context_include_memory_logs)) {
+        config$context_include_memory_logs <- FALSE
     }
 
     # Rate limits per provider
