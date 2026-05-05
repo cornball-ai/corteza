@@ -6,6 +6,8 @@
 title: Configuration
 ---
 
+<img src="../man/figures/corteza.png" alt="corteza logo" align="right" width="160" />
+
 # Configuration
 
 How to configure corteza for your workflow.
