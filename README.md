@@ -8,6 +8,8 @@
 
 *Corteza* is Spanish for the brain's cortex: the outer layer where processing happens.
 
+*Previously named **llamaR**. The name was taken on CRAN just before submission by another [package](https://cran.r-project.org/web/packages/llamaR/).
+
 -----
 
 ## Quick Start
