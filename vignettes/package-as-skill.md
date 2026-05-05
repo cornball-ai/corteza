@@ -6,6 +6,8 @@
 title: Package as Skill
 ---
 
+<img src="../man/figures/corteza.png" alt="corteza logo" align="right" width="160" />
+
 # Package as Skill
 
 An R package that documents its functions properly is already what MCP is trying to wire together: tools (functions), descriptions (`.Rd` files), and an invocation mechanism (`library()`). corteza walks the `.Rd` tree at session start and turns the exports into JSON-Schema tool definitions — same shape the Anthropic / OpenAI / Moonshot APIs expect. No server, no schema by hand, no protocol.
