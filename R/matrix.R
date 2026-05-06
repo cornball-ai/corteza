@@ -19,8 +19,12 @@ matrix_require_mx <- function() {
 }
 
 # Active write target for matrix config: under R_user_dir per CRAN
-# policy on home-filespace writes.
+# policy on home-filespace writes. CORTEZA_MATRIX_CONFIG overrides
+# this so multiple bots (e.g. a personal and a company identity) can
+# coexist on one host with separate systemd units.
 matrix_config_path <- function() {
+    env <- Sys.getenv("CORTEZA_MATRIX_CONFIG", "")
+    if (nzchar(env)) return(path.expand(env))
     file.path(tools::R_user_dir("corteza", "config"), "matrix.json")
 }
 
@@ -33,9 +37,13 @@ matrix_legacy_config_path <- function() path.expand("~/.corteza/matrix.json")
 matrix_load_config <- function() {
     path <- matrix_config_path()
     legacy <- matrix_legacy_config_path()
+    # When CORTEZA_MATRIX_CONFIG is set, treat it as authoritative: a
+    # missing/typo'd path must error rather than silently falling back
+    # to the default identity at the legacy location.
+    explicit <- nzchar(Sys.getenv("CORTEZA_MATRIX_CONFIG", ""))
     src <- if (file.exists(path)) {
         path
-    } else if (file.exists(legacy)) {
+    } else if (!explicit && file.exists(legacy)) {
         legacy
     } else {
         stop(
