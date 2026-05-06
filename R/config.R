@@ -227,38 +227,6 @@ load_config <- function(cwd = getwd()) {
     }
     config$workspace <- ws
 
-    # Channels config (matches openclaw structure)
-    if (is.null(config$channels)) {
-        config$channels <- list()
-    }
-
-    # Signal channel config (channels.signal.*)
-    if (is.null(config$channels$signal)) {
-        config$channels$signal <- list()
-    }
-    sig <- config$channels$signal
-    if (is.null(sig$enabled)) {
-        sig$enabled <- FALSE
-    }
-    if (is.null(sig$httpHost)) {
-        sig$httpHost <- "127.0.0.1"
-    }
-    if (is.null(sig$httpPort)) {
-        sig$httpPort <- 8080L
-    }
-    # sig$httpUrl - optional, overrides httpHost/httpPort
-    # sig$account - required, no default
-    # sig$allowFrom - optional allowlist (E.164 numbers)
-    # sig$cliPath - optional path to signal-cli
-    # Chunking config (matches openclaw)
-    if (is.null(sig$textChunkLimit)) {
-        sig$textChunkLimit <- 4000L
-    }
-    if (is.null(sig$chunkMode)) {
-        sig$chunkMode <- "length" # "length" or "newline"
-    }
-    config$channels$signal <- sig
-
     config
 }
 
