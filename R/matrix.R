@@ -364,6 +364,18 @@ matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
                     cfg$user_id, cfg$user)
     parts <- base
 
+    # Optional persona file declared by the matrix config. Path layout
+    # is left to the caller (e.g. cerebro keeps personas alongside its
+    # other prompts inside the instance dir); corteza just reads what
+    # the config points at. Silent no-op when unset or missing.
+    spf <- cfg$system_prompt_file
+    if (!is.null(spf) && nzchar(spf)) {
+        spf <- path.expand(spf)
+        if (file.exists(spf)) {
+            parts <- c(parts, readLines(spf, warn = FALSE))
+        }
+    }
+
     if (!is.null(cwd) && nzchar(cwd)) {
         parts <- c(parts,
                    sprintf("Working directory: %s", cwd),
