@@ -9,6 +9,17 @@ expect_true(grepl("2", result$content[[1]]$text))
 result <- corteza:::tool_run_r(code = "stop('test error')")
 expect_true(grepl("Error", result$content[[1]]$text))
 
+# Test run_r_script: fresh-subprocess execution via callr::rscript().
+# Smoke test was missing entirely before; the prior implementation called
+# system2("r", c("-f", tmp)) which failed everywhere ("-f" is not a valid
+# littler flag) but the bug stayed undetected because no test invoked it.
+result <- corteza:::tool_run_r_script(code = "cat(1+1)")
+expect_false(isTRUE(result$isError))
+expect_true(grepl("2", result$content[[1]]$text))
+
+result <- corteza:::tool_run_r_script(code = "stop('test error')")
+expect_true(grepl("Error", result$content[[1]]$text))
+
 # Test shell tool (bash when available, cmd on minimal-install Windows)
 if (.Platform$OS.type == "windows" && !file.exists(corteza:::.find_bash_exe())) {
     result <- corteza:::tool_cmd(command = "echo hello")
