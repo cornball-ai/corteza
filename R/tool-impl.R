@@ -484,9 +484,17 @@ tool_run_r_script <- function(code, timeout = 30L) {
     writeLines(code, tmp)
 
     result <- tryCatch({
-        out <- system2("r", c("-f", tmp), stdout = TRUE, stderr = TRUE,
-                       timeout = timeout)
-        paste(out, collapse = "\n")
+        # callr::rscript runs Rscript portably (Linux, macOS, Windows).
+        # stderr = "2>&1" merges stderr into stdout so the LLM sees both
+        # streams as a single text blob, matching the prior behavior.
+        res <- callr::rscript(tmp, show = FALSE, fail_on_status = FALSE,
+                              timeout = timeout,
+                              stdout = "|", stderr = "2>&1")
+        if (isTRUE(res$timeout)) {
+            paste0("Error: timed out after ", timeout, "s")
+        } else {
+            res$stdout
+        }
     }, error = function(e) {
         paste("Error:", e$message)
     })
