@@ -142,22 +142,6 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 
 ### Channels
 
-#### Signal
-
-Signal channel requires `mx.api` (Suggests) and `signal-cli`.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `channels.signal.enabled` | boolean | `false` | Enable Signal bot |
-| `channels.signal.httpHost` | string | `"127.0.0.1"` | signal-cli HTTP host |
-| `channels.signal.httpPort` | integer | `8080` | signal-cli HTTP port |
-| `channels.signal.httpUrl` | string or null | null | Optional URL (overrides host/port) |
-| `channels.signal.account` | string | null | Signal account (E.164) |
-| `channels.signal.allowFrom` | string[] | null | Allowed sender numbers |
-| `channels.signal.cliPath` | string or null | null | Custom path to `signal-cli` |
-| `channels.signal.textChunkLimit` | integer | `4000` | Max characters per outbound chunk |
-| `channels.signal.chunkMode` | string | `"length"` | `"length"` or `"newline"` |
-
 #### Matrix
 
 Matrix channel requires `mx.api` (Suggests). Configured via a separate helper, not the main JSON config.
