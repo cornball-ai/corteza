@@ -10,16 +10,18 @@
 run_stdio <- function() {
     log_msg("corteza MCP server starting (stdio)...")
 
-    # MCP protocol traffic over stdio: this cat() is JSON-RPC sent to
-    # the client (Claude Desktop, etc.), not user-facing console output.
-    # Cannot be verbose-gated without breaking the transport.
+    # Use file("stdin") instead of stdin() because stdin() reads from
+    # the script source when invoked via Rscript -e, not from fd 0.
+    con <- file("stdin", "r", blocking = TRUE)
+    on.exit(close(con))
+
     send_fn <- function(json) {
         cat(json, "\n", sep = "", file = stdout())
         flush(stdout())
     }
 
     while (TRUE) {
-        line <- readLines(stdin(), n = 1, warn = FALSE)
+        line <- readLines(con, n = 1, warn = FALSE)
         if (length(line) == 0) {
             log_msg("Client disconnected")
             break
