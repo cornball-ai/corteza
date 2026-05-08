@@ -3,14 +3,18 @@
 \alias{tool_spawn_subagent}
 \title{Spawn a specialized subagent for a task.}
 \usage{
-tool_spawn_subagent(task, model = NULL, tools = NULL, ctx = list())
+tool_spawn_subagent(task, model = NULL, tools = NULL, preset = NULL,
+                    ctx = list())
 }
 \arguments{
 \item{task}{(character) Task description for the subagent.}
 
 \item{model}{(character) Optional model override.}
 
-\item{tools}{(character vector) Optional tool filter (list of tool names).}
+\item{tools}{(character vector) Optional explicit tool filter.}
+
+\item{preset}{(character) Preset name: "investigate" (default, read-only),
+"work" (read + write + bash), or "minimal" (read_file + grep_files only).}
 }
 \value{
 An MCP tool-result list.

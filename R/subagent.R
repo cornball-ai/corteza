@@ -72,7 +72,15 @@ SUBAGENT_DEFAULTS <- list(
     max_concurrent = 3L,
     timeout_minutes = 30L,
     allow_nested = FALSE,
-    default_tools = c("read_file", "bash", "grep_files")
+    default_tools = c("read_file", "grep_files", "r_help", "web_search", "fetch_url")
+)
+
+SUBAGENT_PRESETS <- list(
+    investigate = c("read_file", "grep_files", "r_help", "web_search", "fetch_url"),
+    work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
+             "bash", "write_file", "replace_in_file", "list_files",
+             "git_status", "git_diff", "git_log", "run_r"),
+    minimal = c("read_file", "grep_files")
 )
 
 #' Get subagent configuration.
@@ -88,6 +96,28 @@ get_subagent_config <- function(config = list()) {
         allow_nested = cfg$allow_nested %||% SUBAGENT_DEFAULTS$allow_nested,
         default_tools = cfg$default_tools %||% SUBAGENT_DEFAULTS$default_tools
     )
+}
+
+#' Resolve a subagent preset to a tool vector.
+#' @param preset Character: "investigate", "work", "minimal", or NULL.
+#' @param tools Optional explicit tool vector (overrides preset).
+#' @return Character vector of tool names.
+#' @noRd
+resolve_subagent_tools <- function(preset = NULL, tools = NULL) {
+    if (!is.null(tools)) {
+        return(tools)
+    }
+    if (is.null(preset)) {
+        return(SUBAGENT_DEFAULTS$default_tools)
+    }
+    preset_tools <- SUBAGENT_PRESETS[[preset]]
+    if (is.null(preset_tools)) {
+        stop(sprintf("Unknown subagent preset: '%s'. Use: %s",
+                     preset,
+                     paste(names(SUBAGENT_PRESETS), collapse = ", ")),
+             call. = FALSE)
+    }
+    preset_tools
 }
 
 #' Generate subagent session key.
@@ -106,9 +136,13 @@ subagent_session_key <- function(parent_key) {
 #' keyed by subagent id.
 #'
 #' @param task Task description (stored for bookkeeping; not yet fed
-#'   into an agent loop — see TODO on subagent_query).
+#'   into an agent loop).
 #' @param model Optional model override (reserved for later use).
-#' @param tools Optional tool filter (character vector).
+#' @param tools Optional explicit tool filter (character vector).
+#'   Overrides `preset` when provided.
+#' @param preset Preset name: `"investigate"` (read/search only, default),
+#'   `"work"` (investigate + bash + write/edit), or `"minimal"`
+#'   (read_file + grep_files only).
 #' @param parent_session Parent session object; read for
 #'   nested-spawning control and session-key derivation.
 #' @param config Config list.
@@ -116,6 +150,7 @@ subagent_session_key <- function(parent_key) {
 #' @importFrom callr r_session
 #' @export
 subagent_spawn <- function(task, model = NULL, tools = NULL,
+                           preset = NULL,
                            parent_session = NULL, config = NULL) {
     if (is.null(config)) {
         config <- load_config(getwd())
@@ -177,7 +212,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
             "- You cannot spawn additional subagents\n" else "",
         "\n## Task\n", task
     )
-    effective_tools <- if (is.null(tools)) subcfg$default_tools else tools
+    effective_tools <- resolve_subagent_tools(preset = preset, tools = tools)
     # Default provider/model from parent session when available, else config/env.
     spawn_provider <- parent_session$provider %||%
         getOption("corteza.provider", "anthropic")
