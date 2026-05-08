@@ -13,8 +13,8 @@ handle_request <- function(req) {
     result <- tryCatch({
         switch(method,
                "initialize" = list(
-                                   protocolVersion = "2024-11-05",
-                                   capabilities = list(tools = list()),
+                                   protocolVersion = params$protocolVersion %||% "2024-11-05",
+                                   capabilities = list(tools = setNames(list(), character(0))),
                                    serverInfo = list(name = "corteza-mcp",
                     version = as.character(packageVersion("corteza")))
             ),

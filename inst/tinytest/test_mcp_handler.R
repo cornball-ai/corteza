@@ -57,6 +57,17 @@ resp <- corteza:::handle_request(req)
 expect_true("error" %in% names(resp))
 expect_equal(resp$error$code, - 32601)
 
+# initialize echoes the client's protocolVersion
+req <- list(jsonrpc = "2.0", id = 5, method = "initialize",
+            params = list(protocolVersion = "2025-11-25"))
+resp <- corteza:::handle_request(req)
+expect_equal(resp$result$protocolVersion, "2025-11-25")
+
+# capabilities.tools must serialize as a JSON object ({}), not an array ([])
+json <- as.character(jsonlite::toJSON(resp, auto_unbox = TRUE, null = "null"))
+expect_true(grepl("\"tools\":\\{\\}", json))
+expect_false(grepl("\"tools\":\\[\\]", json))
+
 # Test notifications return NULL
 req <- list(
     jsonrpc = "2.0",
