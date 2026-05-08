@@ -166,7 +166,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     )
     # Compose the child's system prompt: focus on the task, forbid
     # conversational drift and (if nested is disabled) recursive
-    # spawning. Parent context is appended verbatim when present.
+    # spawning.
     system_prompt <- paste0(
         "You are a specialized subagent spawned for a specific task.\n",
         "- Stay focused on the assigned task\n",
@@ -178,8 +178,12 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
         "\n## Task\n", task
     )
     effective_tools <- if (is.null(tools)) subcfg$default_tools else tools
-    spawn_model <- model
-    spawn_provider <- "anthropic"  # child inherits parent config via env; override later if needed
+    # Default provider/model from parent session when available, else config/env.
+    spawn_provider <- parent_session$provider %||%
+        getOption("corteza.provider", "anthropic")
+    spawn_model <- model %||%
+        parent_session$model_map$cloud %||%
+        getOption("corteza.model", NULL)
 
     tryCatch(
         session$run(
