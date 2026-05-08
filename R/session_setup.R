@@ -65,7 +65,7 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
 
     provider <- provider %||% config$provider %||% "anthropic"
     ensure_llm_api_provider(provider)
-    model <- model %||% config$model
+    model <- model %||% config$model %||% llm.api::provider_default_model(provider)
 
     if (isTRUE(validate_api_key)) {
         key_var <- switch(provider,
