@@ -19,8 +19,12 @@ matrix_require_mx <- function() {
 }
 
 # Active write target for matrix config: under R_user_dir per CRAN
-# policy on home-filespace writes.
+# policy on home-filespace writes. CORTEZA_MATRIX_CONFIG overrides
+# this so multiple bots (e.g. a personal and a company identity) can
+# coexist on one host with separate systemd units.
 matrix_config_path <- function() {
+    env <- Sys.getenv("CORTEZA_MATRIX_CONFIG", "")
+    if (nzchar(env)) return(path.expand(env))
     file.path(tools::R_user_dir("corteza", "config"), "matrix.json")
 }
 
@@ -33,9 +37,13 @@ matrix_legacy_config_path <- function() path.expand("~/.corteza/matrix.json")
 matrix_load_config <- function() {
     path <- matrix_config_path()
     legacy <- matrix_legacy_config_path()
+    # When CORTEZA_MATRIX_CONFIG is set, treat it as authoritative: a
+    # missing/typo'd path must error rather than silently falling back
+    # to the default identity at the legacy location.
+    explicit <- nzchar(Sys.getenv("CORTEZA_MATRIX_CONFIG", ""))
     src <- if (file.exists(path)) {
         path
-    } else if (file.exists(legacy)) {
+    } else if (!explicit && file.exists(legacy)) {
         legacy
     } else {
         stop(
@@ -355,6 +363,18 @@ matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
     base <- sprintf("You are %s, a helpful assistant for %s.",
                     cfg$user_id, cfg$user)
     parts <- base
+
+    # Optional persona file declared by the matrix config. Path layout
+    # is left to the caller (e.g. cerebro keeps personas alongside its
+    # other prompts inside the instance dir); corteza just reads what
+    # the config points at. Silent no-op when unset or missing.
+    spf <- cfg$system_prompt_file
+    if (!is.null(spf) && nzchar(spf)) {
+        spf <- path.expand(spf)
+        if (file.exists(spf)) {
+            parts <- c(parts, readLines(spf, warn = FALSE))
+        }
+    }
 
     if (!is.null(cwd) && nzchar(cwd)) {
         parts <- c(parts,
