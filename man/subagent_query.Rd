@@ -6,7 +6,9 @@
 subagent_query(id, prompt, timeout = 60L)
 }
 \arguments{
-\item{id}{Subagent ID.}
+\item{id}{Subagent identifier. Accepts the canonical UUID, a unique
+UUID prefix, or the per-session sequence number printed by
+`subagent_list()` / `/agents`.}
 
 \item{prompt}{Prompt to send.}
 
