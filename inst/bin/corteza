@@ -1316,10 +1316,29 @@ run_agent <- function(opts) {
       } else if (cmd == "/context") {
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
+        # Component breakdown: same /4 + per-msg/per-tool overhead the
+        # estimator uses, just split so the user can see which slice is
+        # hot.
+        sys_tok <- estimate_text_tokens(system_prompt %||% "")
+        tool_text <- tryCatch(
+          jsonlite::toJSON(tools %||% list(), auto_unbox = TRUE, null = "null"),
+          error = function(e) ""
+        )
+        tools_tok <- estimate_text_tokens(tool_text) +
+          length(tools %||% list()) * 12L
+        msgs <- session$messages %||% list()
+        hist_text <- vapply(msgs, function(m) {
+          sprintf("%s: %s", m$role %||% "unknown", message_text(m))
+        }, character(1))
+        hist_tok <- sum(vapply(hist_text, estimate_text_tokens, integer(1))) +
+          length(msgs) * 6L
         cat(sprintf("%sLive context:%s %s / %s tokens (auto-compact at %d%%)\n",
                     color$bold, color$reset,
                     format_tokens(session_tokens), format_tokens(context_limit),
                     opts$context_compact_pct))
+        cat(sprintf("  system %s + tools %s + history %s\n",
+                    format_tokens(sys_tok), format_tokens(tools_tok),
+                    format_tokens(hist_tok)))
         if (length(context_files) == 0) {
           cat(sprintf("%sNo context files loaded.%s\n", color$dim, color$reset))
           cat("Project context comes from saber::briefing() and saber::agent_context().\n")
