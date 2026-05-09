@@ -110,14 +110,9 @@ Commands (in chat):
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider
-  /remember      Store fact with #tags (auto-categorized)
-  /recall        Search memories by keyword or tag
 
 Project context is loaded from saber::briefing() and saber::agent_context().
 Additional files can be loaded via the `context_files` config key.
-
-Legacy corteza memory injection is disabled by default.
-Use config to opt back into MEMORY.md or daily memory logs.
 
 Config files:
   tools::R_user_dir('corteza', 'config')/config.json   Global defaults
@@ -1678,13 +1673,6 @@ Commands:
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)
 
-Memory:
-  /remember <fact> #tags      Remember with auto-categorization
-  /remember --global <fact>   Remember to global memory
-  /recall <query>             Search memories
-  /recall --tags              List all memory tags
-  /flush                      Flush durable memories to daily log
-
 Subagents:
   /spawn <task>                          Spawn a subagent for task
   /spawn <task> --model <name>           Spawn with specific model
@@ -1704,9 +1692,6 @@ Tool output:
   /last [N]      Show tool output (1=most recent)
   /outputs       List recent tool outputs
   /help          Show this help
-
-Legacy corteza memory injection is off by default.
-Use config if you want MEMORY.md or memory logs back in prompt context.
 
 ")
         next
