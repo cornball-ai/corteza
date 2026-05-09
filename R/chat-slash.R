@@ -77,9 +77,6 @@ chat_help_text <- function() {
         "  /skill remove <name>          Remove a skill",
         "  /skill test <path>            Run skill tests",
         "",
-        "CLI-only (drop to inst/bin/corteza):",
-        "  /status, /doctor, /config, /diff, /review, /last, /outputs",
-        "",
         sep = "\n"
     )
 }
