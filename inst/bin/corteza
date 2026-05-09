@@ -110,14 +110,9 @@ Commands (in chat):
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider
-  /remember      Store fact with #tags (auto-categorized)
-  /recall        Search memories by keyword or tag
 
 Project context is loaded from saber::briefing() and saber::agent_context().
 Additional files can be loaded via the `context_files` config key.
-
-Legacy corteza memory injection is disabled by default.
-Use config to opt back into MEMORY.md or daily memory logs.
 
 Config files:
   tools::R_user_dir('corteza', 'config')/config.json   Global defaults
@@ -1321,10 +1316,29 @@ run_agent <- function(opts) {
       } else if (cmd == "/context") {
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
+        # Component breakdown: same /4 + per-msg/per-tool overhead the
+        # estimator uses, just split so the user can see which slice is
+        # hot.
+        sys_tok <- estimate_text_tokens(system_prompt %||% "")
+        tool_text <- tryCatch(
+          jsonlite::toJSON(tools %||% list(), auto_unbox = TRUE, null = "null"),
+          error = function(e) ""
+        )
+        tools_tok <- estimate_text_tokens(tool_text) +
+          length(tools %||% list()) * 12L
+        msgs <- session$messages %||% list()
+        hist_text <- vapply(msgs, function(m) {
+          sprintf("%s: %s", m$role %||% "unknown", message_text(m))
+        }, character(1))
+        hist_tok <- sum(vapply(hist_text, estimate_text_tokens, integer(1))) +
+          length(msgs) * 6L
         cat(sprintf("%sLive context:%s %s / %s tokens (auto-compact at %d%%)\n",
                     color$bold, color$reset,
                     format_tokens(session_tokens), format_tokens(context_limit),
                     opts$context_compact_pct))
+        cat(sprintf("  system %s + tools %s + history %s\n",
+                    format_tokens(sys_tok), format_tokens(tools_tok),
+                    format_tokens(hist_tok)))
         if (length(context_files) == 0) {
           cat(sprintf("%sNo context files loaded.%s\n", color$dim, color$reset))
           cat("Project context comes from saber::briefing() and saber::agent_context().\n")
@@ -1573,28 +1587,55 @@ run_agent <- function(opts) {
         # Spawn a subagent
         if (length(cmd_parts) < 2) {
           cat("Usage: /spawn <task description>\n")
-          cat("       /spawn <task> --model llama3.2\n")
+          cat("       /spawn <task> --model <name>\n")
+          cat("       /spawn <task> --preset investigate|work|minimal\n")
+          cat("       /spawn <task> --tools read_file,grep_files,...\n")
           next
         }
         task_text <- paste(cmd_parts[-1], collapse = " ")
 
-        # Parse --model if present
-        subagent_model <- NULL
-        if (grepl("--model", task_text)) {
-          parts <- strsplit(task_text, "--model\\s+")[[1]]
-          task_text <- trimws(parts[1])
-          model_parts <- strsplit(trimws(parts[2]), "\\s+")[[1]]
-          subagent_model <- model_parts[1]
+        # Pull `--flag <value>` pairs out of task_text in any order.
+        extract_flag <- function(text, flag) {
+          pat <- paste0("\\s*", flag, "\\s+(\\S+)")
+          loc <- regexpr(pat, text)
+          if (loc == -1L) return(list(text = text, value = NULL))
+          matched <- regmatches(text, loc)
+          value <- sub(paste0("^\\s*", flag, "\\s+"), "", matched)
+          list(text = trimws(sub(pat, "", text)), value = value)
         }
+
+        parsed <- extract_flag(task_text, "--model")
+        task_text <- parsed$text
+        subagent_model <- parsed$value
+
+        parsed <- extract_flag(task_text, "--preset")
+        task_text <- parsed$text
+        subagent_preset <- parsed$value
+
+        parsed <- extract_flag(task_text, "--tools")
+        task_text <- parsed$text
+        subagent_tools <- if (!is.null(parsed$value)) {
+          strsplit(parsed$value, ",")[[1]]
+        } else NULL
 
         tryCatch({
           id <- corteza::subagent_spawn(
             task = task_text,
             model = subagent_model,
+            tools = subagent_tools,
+            preset = subagent_preset,
             parent_session = session
           )
-          cat(sprintf("%sSpawned subagent: %s%s\n", color$green, id, color$reset))
-          cat(sprintf("%sUse /ask %s <prompt> to query%s\n", color$dim, id, color$reset))
+          # Resolve seq from the registry so the success hint matches
+          # /agents output. Falls back to the 8-char prefix if the seq
+          # isn't recorded for some reason.
+          info <- corteza:::.subagent_registry[[id]]
+          seq_val <- info$seq
+          handle <- if (!is.null(seq_val)) as.character(seq_val) else substr(id, 1L, 8L)
+          cat(sprintf("%sSpawned subagent [%s] (id %s)%s\n",
+                      color$green, handle, id, color$reset))
+          cat(sprintf("%sUse /ask %s <prompt> to query%s\n",
+                      color$dim, handle, color$reset))
         }, error = function(e) {
           cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
         })
@@ -1651,19 +1692,14 @@ Commands:
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)
 
-Memory:
-  /remember <fact> #tags      Remember with auto-categorization
-  /remember --global <fact>   Remember to global memory
-  /recall <query>             Search memories
-  /recall --tags              List all memory tags
-  /flush                      Flush durable memories to daily log
-
 Subagents:
-  /spawn <task>               Spawn a subagent for task
-  /spawn <task> --model x     Spawn with specific model
-  /agents                     List active subagents
-  /ask <id> <prompt>          Query a subagent
-  /kill <id>                  Terminate a subagent
+  /spawn <task>                          Spawn a subagent for task
+  /spawn <task> --model <name>           Spawn with specific model
+  /spawn <task> --preset <name>          investigate (default), work, minimal
+  /spawn <task> --tools <a,b,c>          Explicit tool filter (overrides preset)
+  /agents                                List active subagents
+  /ask <id> <prompt>                     Query a subagent
+  /kill <id>                             Terminate a subagent
 
 Skills:
   /skill list                 List installed skills
@@ -1675,9 +1711,6 @@ Tool output:
   /last [N]      Show tool output (1=most recent)
   /outputs       List recent tool outputs
   /help          Show this help
-
-Legacy corteza memory injection is off by default.
-Use config if you want MEMORY.md or memory logs back in prompt context.
 
 ")
         next

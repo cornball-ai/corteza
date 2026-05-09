@@ -15,6 +15,76 @@
 #' @noRd
 .subagent_registry <- new.env(parent = emptyenv())
 
+#' Per-process monotonic counter for short subagent ids.
+#'
+#' Subagents are short-lived and never outlive the parent process, so a
+#' per-process counter that never reuses values gives the user a one-
+#' or two-character handle (`/ask 1`) without the cognitive overhead of
+#' a UUID prefix. Killing #2 leaves a gap; we never recycle.
+#' @noRd
+.subagent_counter <- new.env(parent = emptyenv())
+.subagent_counter$n <- 0L
+
+#' Pull the next short-id sequence number.
+#' @noRd
+next_subagent_seq <- function() {
+    .subagent_counter$n <- .subagent_counter$n + 1L
+    .subagent_counter$n
+}
+
+#' Resolve a user-supplied identifier to a canonical subagent id.
+#'
+#' Accepts three forms:
+#' 1. Sequence number (e.g. `"1"` or `1`): matches the `seq` field in
+#'    the registry. Always tried first when the input is all digits.
+#' 2. Exact UUID: matches as-is.
+#' 3. UUID prefix: matches if exactly one registered id starts with the
+#'    input. Two or more matches raise an "ambiguous" error.
+#'
+#' Returns the canonical id string, or NULL when nothing matches.
+#' @param input Character or integer identifier.
+#' @return Canonical id (character) or NULL.
+#' @noRd
+resolve_subagent_id <- function(input) {
+    if (length(input) != 1L) {
+        return(NULL)
+    }
+    s <- as.character(input)
+    if (!nzchar(s)) {
+        return(NULL)
+    }
+    ids <- ls(.subagent_registry)
+    if (length(ids) == 0L) {
+        return(NULL)
+    }
+    # All-digits: try seq match first. Fall through to id matching if
+    # nothing matches (covers the rare case of a UUID that happens to
+    # start with digits).
+    if (grepl("^[0-9]+$", s)) {
+        target <- as.integer(s)
+        for (id in ids) {
+            if (identical(.subagent_registry[[id]]$seq, target)) {
+                return(id)
+            }
+        }
+    }
+    # Exact id match.
+    if (s %in% ids) {
+        return(s)
+    }
+    # UUID prefix.
+    matches <- ids[startsWith(ids, s)]
+    if (length(matches) == 1L) {
+        return(matches[1])
+    }
+    if (length(matches) > 1L) {
+        stop(sprintf("Ambiguous subagent id '%s' matches: %s",
+                     s, paste(matches, collapse = ", ")),
+             call. = FALSE)
+    }
+    NULL
+}
+
 #' Child-side state holder. Populated by [subagent_turn_init()] inside
 #' each spawned child; read by [subagent_turn_prompt()]. The parent's
 #' instance of this env is unused — child processes have their own
@@ -72,7 +142,15 @@ SUBAGENT_DEFAULTS <- list(
     max_concurrent = 3L,
     timeout_minutes = 30L,
     allow_nested = FALSE,
-    default_tools = c("read_file", "bash", "grep_files")
+    default_tools = c("read_file", "grep_files", "r_help", "web_search", "fetch_url")
+)
+
+SUBAGENT_PRESETS <- list(
+    investigate = c("read_file", "grep_files", "r_help", "web_search", "fetch_url"),
+    work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
+             "bash", "write_file", "replace_in_file", "list_files",
+             "git_status", "git_diff", "git_log", "run_r"),
+    minimal = c("read_file", "grep_files")
 )
 
 #' Get subagent configuration.
@@ -88,6 +166,31 @@ get_subagent_config <- function(config = list()) {
         allow_nested = cfg$allow_nested %||% SUBAGENT_DEFAULTS$allow_nested,
         default_tools = cfg$default_tools %||% SUBAGENT_DEFAULTS$default_tools
     )
+}
+
+#' Resolve a subagent preset to a tool vector.
+#' @param preset Character: "investigate", "work", "minimal", or NULL.
+#' @param tools Optional explicit tool vector (overrides preset).
+#' @param default_tools Fallback when both preset and tools are NULL. Pass
+#'   `subcfg$default_tools` so user config wins over the hard-coded default.
+#' @return Character vector of tool names.
+#' @noRd
+resolve_subagent_tools <- function(preset = NULL, tools = NULL,
+                                   default_tools = SUBAGENT_DEFAULTS$default_tools) {
+    if (!is.null(tools)) {
+        return(tools)
+    }
+    if (is.null(preset)) {
+        return(default_tools)
+    }
+    preset_tools <- SUBAGENT_PRESETS[[preset]]
+    if (is.null(preset_tools)) {
+        stop(sprintf("Unknown subagent preset: '%s'. Use: %s",
+                     preset,
+                     paste(names(SUBAGENT_PRESETS), collapse = ", ")),
+             call. = FALSE)
+    }
+    preset_tools
 }
 
 #' Generate subagent session key.
@@ -106,9 +209,13 @@ subagent_session_key <- function(parent_key) {
 #' keyed by subagent id.
 #'
 #' @param task Task description (stored for bookkeeping; not yet fed
-#'   into an agent loop — see TODO on subagent_query).
+#'   into an agent loop).
 #' @param model Optional model override (reserved for later use).
-#' @param tools Optional tool filter (character vector).
+#' @param tools Optional explicit tool filter (character vector).
+#'   Overrides `preset` when provided.
+#' @param preset Preset name: `"investigate"` (read/search only, default),
+#'   `"work"` (investigate + bash + write/edit), or `"minimal"`
+#'   (read_file + grep_files only).
 #' @param parent_session Parent session object; read for
 #'   nested-spawning control and session-key derivation.
 #' @param config Config list.
@@ -116,6 +223,7 @@ subagent_session_key <- function(parent_key) {
 #' @importFrom callr r_session
 #' @export
 subagent_spawn <- function(task, model = NULL, tools = NULL,
+                           preset = NULL,
                            parent_session = NULL, config = NULL) {
     if (is.null(config)) {
         config <- load_config(getwd())
@@ -177,7 +285,10 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
             "- You cannot spawn additional subagents\n" else "",
         "\n## Task\n", task
     )
-    effective_tools <- if (is.null(tools)) subcfg$default_tools else tools
+    effective_tools <- resolve_subagent_tools(
+        preset = preset, tools = tools,
+        default_tools = subcfg$default_tools
+    )
     # Default provider/model from parent session when available, else config/env.
     spawn_provider <- parent_session$provider %||%
         getOption("corteza.provider", "anthropic")
@@ -211,8 +322,10 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     )
 
     store_update(session_key, list(status = "running"))
+    seq <- next_subagent_seq()
     .subagent_registry[[id]] <- list(
         id = id,
+        seq = seq,
         session_key = session_key,
         session = session,
         task = task,
@@ -221,7 +334,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
         started_at = Sys.time(),
         timeout = Sys.time() + subcfg$timeout_minutes * 60
     )
-    log_event("subagent_spawn", subagent_id = id, task = task)
+    log_event("subagent_spawn", subagent_id = id, seq = seq, task = task)
     id
 }
 
@@ -232,20 +345,23 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
 #' replies, any tool calls it makes resolve against the child's
 #' in-process skill registry, and history accumulates across queries.
 #'
-#' @param id Subagent ID.
+#' @param id Subagent identifier. Accepts the canonical UUID, a unique
+#'   UUID prefix, or the per-session sequence number printed by
+#'   `subagent_list()` / `/agents`.
 #' @param prompt Prompt to send.
 #' @param timeout Timeout in seconds (currently advisory; callr-level
 #'   hard timeouts are future work).
 #' @return Reply text (character).
 #' @export
 subagent_query <- function(id, prompt, timeout = 60L) {
-    info <- .subagent_registry[[id]]
-    if (is.null(info)) {
+    canonical <- resolve_subagent_id(id)
+    if (is.null(canonical)) {
         stop("Subagent not found: ", id, call. = FALSE)
     }
+    info <- .subagent_registry[[canonical]]
     if (Sys.time() > info$timeout) {
-        subagent_kill(id)
-        stop("Subagent expired: ", id, call. = FALSE)
+        subagent_kill(canonical)
+        stop("Subagent expired: ", canonical, call. = FALSE)
     }
 
     reply <- tryCatch(
@@ -257,16 +373,21 @@ subagent_query <- function(id, prompt, timeout = 60L) {
             stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
         }
     )
-    log_event("subagent_query", subagent_id = id, prompt_length = nchar(prompt))
+    log_event("subagent_query", subagent_id = canonical,
+              prompt_length = nchar(prompt))
     as.character(reply)
 }
 
 #' Kill a subagent.
-#' @param id Subagent ID.
+#' @param id Subagent identifier (UUID, prefix, or sequence number).
 #' @return Invisible TRUE if killed, FALSE if not found.
 #' @export
 subagent_kill <- function(id) {
-    info <- .subagent_registry[[id]]
+    canonical <- tryCatch(resolve_subagent_id(id), error = function(e) NULL)
+    if (is.null(canonical)) {
+        return(invisible(FALSE))
+    }
+    info <- .subagent_registry[[canonical]]
     if (is.null(info)) {
         return(invisible(FALSE))
     }
@@ -275,8 +396,8 @@ subagent_kill <- function(id) {
         completedAt = as.numeric(Sys.time()) * 1000
     ))
     tryCatch(info$session$close(), error = function(e) NULL)
-    rm(list = id, envir = .subagent_registry)
-    log_event("subagent_kill", subagent_id = id)
+    rm(list = canonical, envir = .subagent_registry)
+    log_event("subagent_kill", subagent_id = canonical)
     invisible(TRUE)
 }
 
@@ -286,16 +407,20 @@ subagent_kill <- function(id) {
 subagent_list <- function() {
     ids <- ls(.subagent_registry)
     if (length(ids) == 0L) return(list())
-    lapply(ids, function(id) {
+    out <- lapply(ids, function(id) {
         info <- .subagent_registry[[id]]
         list(
             id = info$id,
+            seq = info$seq,
             task = info$task,
             started_at = info$started_at,
             time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
                                                  units = "mins"))
         )
     })
+    # Sort by seq ascending so the user-visible numbering is stable.
+    seqs <- vapply(out, function(a) a$seq %||% 0L, integer(1))
+    out[order(seqs)]
 }
 
 #' Clean up expired subagents.
@@ -315,6 +440,10 @@ subagent_cleanup <- function() {
 }
 
 #' Format subagent list for display.
+#'
+#' Shows the per-session sequence number first (the user-typeable
+#' shortcut) followed by the canonical id and task. `query_subagent` /
+#' `kill_subagent` accept either form.
 #' @param agents List from subagent_list().
 #' @return Character string for display.
 #' @noRd
@@ -327,8 +456,12 @@ format_subagent_list <- function(agents) {
         } else {
             "expired"
         }
-        lines <- c(lines, sprintf("  [%s] %s (%s)",
-                                  a$id, a$task, time_str))
+        seq_str <- if (!is.null(a$seq)) sprintf("%d", a$seq) else "?"
+        id_short <- substr(a$id, 1L, 8L)
+        lines <- c(lines, sprintf("  [%s] %s (%s) %s",
+                                  seq_str, a$task, time_str, id_short))
     }
-    paste(lines, collapse = "\n")
+    paste(c(lines, "",
+            "Use the sequence number, the 8-char prefix, or the full id with /ask and /kill."),
+          collapse = "\n")
 }

@@ -239,7 +239,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     n_tools <- length(skills_as_api_tools(tools))
     display_model <- model %||% "(provider default)"
     cat(sprintf(
-                "corteza chat | %s @ %s | %d tools | /clear, /quit%s\n\n",
+                "corteza chat | %s @ %s | %d tools | /help, /quit%s\n\n",
                 display_model, provider, n_tools,
             if (resumed_count > 0L) {
                 sprintf(" | resumed (%d msgs)", resumed_count)
@@ -261,33 +261,293 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         if (nchar(trimws(prompt)) == 0) {
             next
         }
-        if (trimws(prompt) %in% c("/quit", "/exit", "/q")) {
-            if (ws_enabled) {
-                ws_prune()
-                tryCatch(ws_save(disk_session$sessionId),
-                         error = function(e) NULL)
+        sp <- trimws(prompt)
+        if (startsWith(sp, "/")) {
+            parts <- strsplit(sp, "\\s+")[[1]]
+            cmd <- tolower(parts[1])
+
+            if (cmd %in% c("/quit", "/exit", "/q")) {
+                if (ws_enabled) {
+                    ws_prune()
+                    tryCatch(ws_save(disk_session$sessionId),
+                             error = function(e) NULL)
+                }
+                cat("Bye.\n")
+                break
             }
-            cat("Bye.\n")
-            break
-        }
-        if (trimws(prompt) %in% c("/clear", "/reset", "/new")) {
-            # Archive the current session's workspace so it stays
-            # resumable, then spin up a fresh on-disk + in-memory
-            # session. The old transcript is left on disk.
-            if (ws_enabled) {
-                tryCatch(ws_save(disk_session$sessionId),
-                         error = function(e) NULL)
+            if (cmd %in% c("/clear", "/reset", "/new")) {
+                # Archive the current session's workspace so it stays
+                # resumable, then spin up a fresh on-disk + in-memory
+                # session. The old transcript is left on disk.
+                if (ws_enabled) {
+                    tryCatch(ws_save(disk_session$sessionId),
+                             error = function(e) NULL)
+                }
+                fresh <- session_new(provider, model, cwd)
+                disk_session <- list(session = fresh,
+                                     sessionId = fresh$sessionId,
+                                     resumed = FALSE)
+                turn_session$history <- list()
+                turn_session$sessionId <- fresh$sessionId
+                turn_session$disk_session <- fresh
+                pending_r_context <- character(0)
+                cat(sprintf("Cleared. New session: %s\n\n", fresh$sessionId))
+                next
             }
-            fresh <- session_new(provider, model, cwd)
-            disk_session <- list(session = fresh,
-                                 sessionId = fresh$sessionId,
-                                 resumed = FALSE)
-            turn_session$history <- list()
-            turn_session$sessionId <- fresh$sessionId
-            turn_session$disk_session <- fresh
-            pending_r_context <- character(0)
-            cat(sprintf("Cleared. New session: %s\n\n", fresh$sessionId))
-            next
+            if (cmd == "/help") {
+                cat(chat_help_text())
+                next
+            }
+            if (cmd == "/tools") {
+                cat(chat_format_tools_list(turn_session))
+                next
+            }
+            if (cmd == "/model") {
+                if (length(parts) < 2L) {
+                    cat(sprintf("Current model: %s\nUsage: /model <name>\n",
+                                turn_session$model_map$cloud %||% "(default)"))
+                    next
+                }
+                turn_session$model_map$cloud <- parts[2]
+                model <- parts[2]
+                cat(sprintf("Model set to %s\n", parts[2]))
+                next
+            }
+            if (cmd == "/provider") {
+                if (length(parts) < 2L) {
+                    cat(sprintf("Current provider: %s\nUsage: /provider <name>\n",
+                                turn_session$provider %||% "(default)"))
+                    next
+                }
+                turn_session$provider <- parts[2]
+                provider <- parts[2]
+                cat(sprintf("Provider set to %s\n", parts[2]))
+                next
+            }
+            if (cmd == "/spawn") {
+                if (length(parts) < 2L) {
+                    cat("Usage: /spawn <task>\n")
+                    cat("       /spawn <task> --model <name>\n")
+                    cat("       /spawn <task> --preset investigate|work|minimal\n")
+                    cat("       /spawn <task> --tools read_file,grep_files,...\n")
+                    next
+                }
+                args <- parse_spawn_flags(paste(parts[-1], collapse = " "))
+                tryCatch({
+                    sub_id <- subagent_spawn(
+                        task = args$task, model = args$model,
+                        tools = args$tools, preset = args$preset,
+                        parent_session = turn_session
+                    )
+                    info <- .subagent_registry[[sub_id]]
+                    handle <- if (!is.null(info$seq)) {
+                        as.character(info$seq)
+                    } else {
+                        substr(sub_id, 1L, 8L)
+                    }
+                    cat(sprintf("Spawned subagent [%s] (id %s)\n", handle, sub_id))
+                    cat(sprintf("Use /ask %s <prompt> to query\n", handle))
+                }, error = function(e) {
+                    cat(sprintf("Error: %s\n", e$message))
+                })
+                next
+            }
+            if (cmd == "/agents") {
+                cat(format_subagent_list(subagent_list()), "\n")
+                next
+            }
+            if (cmd == "/ask") {
+                if (length(parts) < 3L) {
+                    cat("Usage: /ask <id-or-seq> <prompt>\n")
+                    next
+                }
+                sub_id <- parts[2]
+                sub_prompt <- paste(parts[3:length(parts)], collapse = " ")
+                cat(sprintf("Querying subagent %s...\n", sub_id))
+                tryCatch({
+                    res <- subagent_query(sub_id, sub_prompt)
+                    cat(res, "\n")
+                }, error = function(e) {
+                    cat(sprintf("Error: %s\n", e$message))
+                })
+                next
+            }
+            if (cmd == "/kill") {
+                if (length(parts) < 2L) {
+                    cat("Usage: /kill <id-or-seq>\n")
+                    next
+                }
+                ok <- tryCatch(subagent_kill(parts[2]),
+                               error = function(e) {
+                                   cat(sprintf("Error: %s\n", e$message))
+                                   FALSE
+                               })
+                if (isTRUE(ok)) {
+                    cat(sprintf("Subagent %s terminated\n", parts[2]))
+                } else if (isFALSE(ok)) {
+                    cat(sprintf("Subagent not found: %s\n", parts[2]))
+                }
+                next
+            }
+            if (cmd == "/sessions") {
+                cat(format_session_list(session_list()), "\n")
+                next
+            }
+            if (cmd == "/trace") {
+                n <- if (length(parts) >= 2L) suppressWarnings(as.integer(parts[2])) else 20L
+                if (is.na(n)) n <- 20L
+                trace <- tryCatch(trace_load(disk_session$session$sessionId, n = n),
+                                  error = function(e) list())
+                if (length(trace) == 0L) {
+                    cat("No tool calls recorded for this session.\n")
+                } else {
+                    cat(format_trace(trace, show_args = TRUE), "\n")
+                }
+                next
+            }
+            if (cmd == "/permissions") {
+                cat(format_permissions(config), "\n")
+                approvals_path <- file.path(cwd, ".corteza", "approvals.json")
+                cat(sprintf("Project approvals: %s\n",
+                            if (file.exists(approvals_path)) approvals_path else "none"))
+                next
+            }
+            if (cmd == "/dryrun") {
+                turn_session$config$dry_run <- !isTRUE(turn_session$config$dry_run)
+                config$dry_run <- turn_session$config$dry_run
+                cat(sprintf("Dry-run mode %s\n",
+                            if (isTRUE(turn_session$config$dry_run))
+                                "enabled (tools preview only)"
+                            else "disabled"))
+                next
+            }
+            if (cmd == "/context") {
+                files <- config$context_files %||% character(0)
+                # System prompt: full briefing, agent_context, skill
+                # docs, package tool docs, live-subagents block. This is
+                # what the LLM actually sees on every turn alongside
+                # the message history.
+                sys_chars <- as.integer(nchar(turn_session$system %||% "",
+                                              type = "chars"))
+                hist_chars <- sum(vapply(turn_session$history %||% list(),
+                                         function(m) {
+                                             cnt <- m$content
+                                             if (is.character(cnt)) {
+                                                 sum(nchar(cnt, type = "chars"))
+                                             } else if (is.list(cnt)) {
+                                                 sum(vapply(cnt, function(b) {
+                                                     nchar(b$text %||% "", type = "chars")
+                                                 }, integer(1)))
+                                             } else 0L
+                                         }, integer(1)))
+                tools_chars <- as.integer(tryCatch(
+                    sum(vapply(skills_as_api_tools(turn_session$tools_filter),
+                               function(t) {
+                                   nchar(jsonlite::toJSON(t, auto_unbox = TRUE),
+                                         type = "chars")
+                               }, integer(1))),
+                    error = function(e) 0L
+                ))
+                # Break down in tokens so the components add up to the
+                # total. Compute each ceiling separately; the off-by-one
+                # rounding is dwarfed by the /4 heuristic itself.
+                sys_tok <- as.integer(ceiling(sys_chars / 4))
+                tools_tok <- as.integer(ceiling(tools_chars / 4))
+                hist_tok <- as.integer(ceiling(hist_chars / 4))
+                total_tokens <- sys_tok + tools_tok + hist_tok
+                cat(sprintf("Live context: ~%d tokens (system %d + tools %d + history %d)\n",
+                            total_tokens, sys_tok, tools_tok, hist_tok))
+                if (length(files) == 0L) {
+                    cat("No additional context files loaded via the ",
+                        "`context_files` config key.\n", sep = "")
+                    cat("Project context still comes from saber::briefing() ",
+                        "and saber::agent_context() as part of the system ",
+                        "prompt above.\n", sep = "")
+                } else {
+                    cat("Loaded context files:\n")
+                    for (f in files) cat("  ", f, "\n")
+                }
+                next
+            }
+            if (cmd == "/compact") {
+                if (length(turn_session$history %||% list()) < 2L) {
+                    cat("Nothing to compact.\n")
+                    next
+                }
+                cat("Compacting...\n")
+                compact_text <- tryCatch({
+                    transcript <- archival_render_transcript(turn_session$history)
+                    sys <- "Compress this conversation into a 1-paragraph summary that preserves the user's goals, decisions made, files touched, and unresolved questions. No bullets."
+                    resp <- llm.api::agent(prompt = transcript, system = sys,
+                                            tools = list(),
+                                            model = turn_session$model_map$cloud,
+                                            provider = turn_session$provider,
+                                            max_turns = 1L, history = list(),
+                                            verbose = FALSE)
+                    as.character(resp$content %||% "")
+                }, error = function(e) {
+                    cat(sprintf("Compaction failed: %s\n", e$message))
+                    NULL
+                })
+                if (!is.null(compact_text) && nzchar(compact_text)) {
+                    turn_session$history <- list(
+                        list(role = "assistant", content = compact_text)
+                    )
+                    transcript_compact(disk_session$session, compact_text)
+                    cat("Compacted.\n")
+                }
+                next
+            }
+            # /remember /recall /flush are dead in the CLI too: their
+            # implementations rely on memory_store / memory_search /
+            # strip_tags / parse_tags helpers that don't exist in the
+            # package. Skipping the chat() port to match reality.
+            if (cmd %in% c("/skill", "/skills")) {
+                subcmd <- if (length(parts) >= 2L) parts[2] else "list"
+                if (subcmd == "list") {
+                    tryCatch({
+                        cat(format_skill_list(skill_list_installed()), "\n")
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else if (subcmd == "install" && length(parts) >= 3L) {
+                    src <- parts[3]
+                    force <- "--force" %in% parts
+                    tryCatch({
+                        nm <- skill_install(src, force = force)
+                        cat(sprintf("Installed skill: %s\n", nm))
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else if (subcmd == "remove" && length(parts) >= 3L) {
+                    nm <- parts[3]
+                    tryCatch({
+                        skill_remove(nm)
+                        cat(sprintf("Removed skill: %s\n", nm))
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else if (subcmd == "test" && length(parts) >= 3L) {
+                    pth <- parts[3]
+                    tryCatch({
+                        result <- skill_test(pth)
+                        if (result$failed == 0L) {
+                            cat(sprintf("%d test(s) passed\n", result$passed))
+                        } else {
+                            cat(sprintf("%d passed, %d failed\n",
+                                        result$passed, result$failed))
+                        }
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else {
+                    cat("Usage:\n")
+                    cat("  /skill list\n")
+                    cat("  /skill install <path|url> [--force]\n")
+                    cat("  /skill remove <name>\n")
+                    cat("  /skill test <path>\n")
+                }
+                next
+            }
+            # /r is handled separately below to keep its existing
+            # multi-line pending_r_context plumbing.
+            if (!startsWith(sp, "/r ")) {
+                cat(sprintf("Unknown command: %s. Type /help for the list.\n",
+                            cmd))
+                next
+            }
         }
         if (startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))

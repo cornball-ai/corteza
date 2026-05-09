@@ -996,17 +996,21 @@ tool_git_log <- function(n = 10L, ref = "HEAD", path = ".") {
 #'
 #' @param task (character) Task description for the subagent.
 #' @param model (character) Optional model override.
-#' @param tools (character vector) Optional tool filter (list of tool names).
+#' @param tools (character vector) Optional explicit tool filter.
+#' @param preset (character) Preset name: "investigate" (default, read-only),
+#'   "work" (read + write + bash), or "minimal" (read_file + grep_files only).
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
 tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
+                                preset = NULL,
                                 ctx = list()) {
     tryCatch({
         id <- subagent_spawn(
                              task = task,
                              model = model,
                              tools = tools,
+                             preset = preset,
                              parent_session = ctx$session
         )
         ok(sprintf("Spawned subagent %s for: %s", id, task))
