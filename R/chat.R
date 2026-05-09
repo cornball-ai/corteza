@@ -239,7 +239,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     n_tools <- length(skills_as_api_tools(tools))
     display_model <- model %||% "(provider default)"
     cat(sprintf(
-                "corteza chat | %s @ %s | %d tools | /clear, /quit%s\n\n",
+                "corteza chat | %s @ %s | %d tools | /help, /quit%s\n\n",
                 display_model, provider, n_tools,
             if (resumed_count > 0L) {
                 sprintf(" | resumed (%d msgs)", resumed_count)
@@ -261,33 +261,141 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         if (nchar(trimws(prompt)) == 0) {
             next
         }
-        if (trimws(prompt) %in% c("/quit", "/exit", "/q")) {
-            if (ws_enabled) {
-                ws_prune()
-                tryCatch(ws_save(disk_session$sessionId),
-                         error = function(e) NULL)
+        sp <- trimws(prompt)
+        if (startsWith(sp, "/")) {
+            parts <- strsplit(sp, "\\s+")[[1]]
+            cmd <- tolower(parts[1])
+
+            if (cmd %in% c("/quit", "/exit", "/q")) {
+                if (ws_enabled) {
+                    ws_prune()
+                    tryCatch(ws_save(disk_session$sessionId),
+                             error = function(e) NULL)
+                }
+                cat("Bye.\n")
+                break
             }
-            cat("Bye.\n")
-            break
-        }
-        if (trimws(prompt) %in% c("/clear", "/reset", "/new")) {
-            # Archive the current session's workspace so it stays
-            # resumable, then spin up a fresh on-disk + in-memory
-            # session. The old transcript is left on disk.
-            if (ws_enabled) {
-                tryCatch(ws_save(disk_session$sessionId),
-                         error = function(e) NULL)
+            if (cmd %in% c("/clear", "/reset", "/new")) {
+                # Archive the current session's workspace so it stays
+                # resumable, then spin up a fresh on-disk + in-memory
+                # session. The old transcript is left on disk.
+                if (ws_enabled) {
+                    tryCatch(ws_save(disk_session$sessionId),
+                             error = function(e) NULL)
+                }
+                fresh <- session_new(provider, model, cwd)
+                disk_session <- list(session = fresh,
+                                     sessionId = fresh$sessionId,
+                                     resumed = FALSE)
+                turn_session$history <- list()
+                turn_session$sessionId <- fresh$sessionId
+                turn_session$disk_session <- fresh
+                pending_r_context <- character(0)
+                cat(sprintf("Cleared. New session: %s\n\n", fresh$sessionId))
+                next
             }
-            fresh <- session_new(provider, model, cwd)
-            disk_session <- list(session = fresh,
-                                 sessionId = fresh$sessionId,
-                                 resumed = FALSE)
-            turn_session$history <- list()
-            turn_session$sessionId <- fresh$sessionId
-            turn_session$disk_session <- fresh
-            pending_r_context <- character(0)
-            cat(sprintf("Cleared. New session: %s\n\n", fresh$sessionId))
-            next
+            if (cmd == "/help") {
+                cat(chat_help_text())
+                next
+            }
+            if (cmd == "/tools") {
+                cat(chat_format_tools_list(turn_session))
+                next
+            }
+            if (cmd == "/model") {
+                if (length(parts) < 2L) {
+                    cat(sprintf("Current model: %s\nUsage: /model <name>\n",
+                                turn_session$model_map$cloud %||% "(default)"))
+                    next
+                }
+                turn_session$model_map$cloud <- parts[2]
+                model <- parts[2]
+                cat(sprintf("Model set to %s\n", parts[2]))
+                next
+            }
+            if (cmd == "/provider") {
+                if (length(parts) < 2L) {
+                    cat(sprintf("Current provider: %s\nUsage: /provider <name>\n",
+                                turn_session$provider %||% "(default)"))
+                    next
+                }
+                turn_session$provider <- parts[2]
+                provider <- parts[2]
+                cat(sprintf("Provider set to %s\n", parts[2]))
+                next
+            }
+            if (cmd == "/spawn") {
+                if (length(parts) < 2L) {
+                    cat("Usage: /spawn <task>\n")
+                    cat("       /spawn <task> --model <name>\n")
+                    cat("       /spawn <task> --preset investigate|work|minimal\n")
+                    cat("       /spawn <task> --tools read_file,grep_files,...\n")
+                    next
+                }
+                args <- parse_spawn_flags(paste(parts[-1], collapse = " "))
+                tryCatch({
+                    sub_id <- subagent_spawn(
+                        task = args$task, model = args$model,
+                        tools = args$tools, preset = args$preset,
+                        parent_session = turn_session
+                    )
+                    info <- .subagent_registry[[sub_id]]
+                    handle <- if (!is.null(info$seq)) {
+                        as.character(info$seq)
+                    } else {
+                        substr(sub_id, 1L, 8L)
+                    }
+                    cat(sprintf("Spawned subagent [%s] (id %s)\n", handle, sub_id))
+                    cat(sprintf("Use /ask %s <prompt> to query\n", handle))
+                }, error = function(e) {
+                    cat(sprintf("Error: %s\n", e$message))
+                })
+                next
+            }
+            if (cmd == "/agents") {
+                cat(format_subagent_list(subagent_list()), "\n")
+                next
+            }
+            if (cmd == "/ask") {
+                if (length(parts) < 3L) {
+                    cat("Usage: /ask <id-or-seq> <prompt>\n")
+                    next
+                }
+                sub_id <- parts[2]
+                sub_prompt <- paste(parts[3:length(parts)], collapse = " ")
+                cat(sprintf("Querying subagent %s...\n", sub_id))
+                tryCatch({
+                    res <- subagent_query(sub_id, sub_prompt)
+                    cat(res, "\n")
+                }, error = function(e) {
+                    cat(sprintf("Error: %s\n", e$message))
+                })
+                next
+            }
+            if (cmd == "/kill") {
+                if (length(parts) < 2L) {
+                    cat("Usage: /kill <id-or-seq>\n")
+                    next
+                }
+                ok <- tryCatch(subagent_kill(parts[2]),
+                               error = function(e) {
+                                   cat(sprintf("Error: %s\n", e$message))
+                                   FALSE
+                               })
+                if (isTRUE(ok)) {
+                    cat(sprintf("Subagent %s terminated\n", parts[2]))
+                } else if (isFALSE(ok)) {
+                    cat(sprintf("Subagent not found: %s\n", parts[2]))
+                }
+                next
+            }
+            # /r is handled separately below to keep its existing
+            # multi-line pending_r_context plumbing.
+            if (!startsWith(sp, "/r ")) {
+                cat(sprintf("Unknown command: %s. Type /help for the list.\n",
+                            cmd))
+                next
+            }
         }
         if (startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
