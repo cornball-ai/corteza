@@ -1573,24 +1573,43 @@ run_agent <- function(opts) {
         # Spawn a subagent
         if (length(cmd_parts) < 2) {
           cat("Usage: /spawn <task description>\n")
-          cat("       /spawn <task> --model llama3.2\n")
+          cat("       /spawn <task> --model <name>\n")
+          cat("       /spawn <task> --preset investigate|work|minimal\n")
+          cat("       /spawn <task> --tools read_file,grep_files,...\n")
           next
         }
         task_text <- paste(cmd_parts[-1], collapse = " ")
 
-        # Parse --model if present
-        subagent_model <- NULL
-        if (grepl("--model", task_text)) {
-          parts <- strsplit(task_text, "--model\\s+")[[1]]
-          task_text <- trimws(parts[1])
-          model_parts <- strsplit(trimws(parts[2]), "\\s+")[[1]]
-          subagent_model <- model_parts[1]
+        # Pull `--flag <value>` pairs out of task_text in any order.
+        extract_flag <- function(text, flag) {
+          pat <- paste0("\\s*", flag, "\\s+(\\S+)")
+          loc <- regexpr(pat, text)
+          if (loc == -1L) return(list(text = text, value = NULL))
+          matched <- regmatches(text, loc)
+          value <- sub(paste0("^\\s*", flag, "\\s+"), "", matched)
+          list(text = trimws(sub(pat, "", text)), value = value)
         }
+
+        parsed <- extract_flag(task_text, "--model")
+        task_text <- parsed$text
+        subagent_model <- parsed$value
+
+        parsed <- extract_flag(task_text, "--preset")
+        task_text <- parsed$text
+        subagent_preset <- parsed$value
+
+        parsed <- extract_flag(task_text, "--tools")
+        task_text <- parsed$text
+        subagent_tools <- if (!is.null(parsed$value)) {
+          strsplit(parsed$value, ",")[[1]]
+        } else NULL
 
         tryCatch({
           id <- corteza::subagent_spawn(
             task = task_text,
             model = subagent_model,
+            tools = subagent_tools,
+            preset = subagent_preset,
             parent_session = session
           )
           cat(sprintf("%sSpawned subagent: %s%s\n", color$green, id, color$reset))
@@ -1659,11 +1678,13 @@ Memory:
   /flush                      Flush durable memories to daily log
 
 Subagents:
-  /spawn <task>               Spawn a subagent for task
-  /spawn <task> --model x     Spawn with specific model
-  /agents                     List active subagents
-  /ask <id> <prompt>          Query a subagent
-  /kill <id>                  Terminate a subagent
+  /spawn <task>                          Spawn a subagent for task
+  /spawn <task> --model <name>           Spawn with specific model
+  /spawn <task> --preset <name>          investigate (default), work, minimal
+  /spawn <task> --tools <a,b,c>          Explicit tool filter (overrides preset)
+  /agents                                List active subagents
+  /ask <id> <prompt>                     Query a subagent
+  /kill <id>                             Terminate a subagent
 
 Skills:
   /skill list                 List installed skills

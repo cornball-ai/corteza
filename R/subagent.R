@@ -101,14 +101,17 @@ get_subagent_config <- function(config = list()) {
 #' Resolve a subagent preset to a tool vector.
 #' @param preset Character: "investigate", "work", "minimal", or NULL.
 #' @param tools Optional explicit tool vector (overrides preset).
+#' @param default_tools Fallback when both preset and tools are NULL. Pass
+#'   `subcfg$default_tools` so user config wins over the hard-coded default.
 #' @return Character vector of tool names.
 #' @noRd
-resolve_subagent_tools <- function(preset = NULL, tools = NULL) {
+resolve_subagent_tools <- function(preset = NULL, tools = NULL,
+                                   default_tools = SUBAGENT_DEFAULTS$default_tools) {
     if (!is.null(tools)) {
         return(tools)
     }
     if (is.null(preset)) {
-        return(SUBAGENT_DEFAULTS$default_tools)
+        return(default_tools)
     }
     preset_tools <- SUBAGENT_PRESETS[[preset]]
     if (is.null(preset_tools)) {
@@ -212,7 +215,10 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
             "- You cannot spawn additional subagents\n" else "",
         "\n## Task\n", task
     )
-    effective_tools <- resolve_subagent_tools(preset = preset, tools = tools)
+    effective_tools <- resolve_subagent_tools(
+        preset = preset, tools = tools,
+        default_tools = subcfg$default_tools
+    )
     # Default provider/model from parent session when available, else config/env.
     spawn_provider <- parent_session$provider %||%
         getOption("corteza.provider", "anthropic")
