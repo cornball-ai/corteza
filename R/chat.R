@@ -338,6 +338,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
         cat(sprintf("\u25cf Thinking with %s\n",
                     model %||% "(provider default)"))
+        pre_turn_len <- length(turn_session$history %||% list())
         result <- tryCatch(
                            turn(prompt, turn_session),
                            error = function(e) {
@@ -356,6 +357,16 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             cat(reply, "\n\n")
         }
         transcript_append(disk_session$session, "assistant", reply)
+
+        # Archival hook: opt-in via config$archival$enabled. Mutates
+        # turn_session$history in place when triggers fire.
+        maybe_archive_turn(
+            turn_session = turn_session, prompt = prompt,
+            pre_turn_len = pre_turn_len, result = result, config = config,
+            parent_session_id = disk_session$session$sessionId,
+            max_turns_hit = isTRUE(grepl("Max turns", reply)),
+            depth = 0L
+        )
     }
 
     invisible(disk_session$session)

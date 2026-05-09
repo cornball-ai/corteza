@@ -199,6 +199,52 @@ load_config <- function(cwd = getwd()) {
     }
     config$subagents <- sub
 
+    # Archival (retroactive-extraction) configuration. Default off so
+    # CRAN users see no behavior change. When enabled, finished turns
+    # collapse into subagents that hold the full transcript; the parent
+    # context keeps {summary, subagent_id} and the live-subagents block
+    # in the system prompt lets the LLM pick query_subagent or
+    # spawn_subagent as a normal tool decision.
+    if (is.null(config$archival)) {
+        config$archival <- list()
+    }
+    arc <- config$archival
+    if (is.null(arc$enabled)) {
+        arc$enabled <- FALSE
+    }
+    if (is.null(arc$trigger)) {
+        arc$trigger <- list()
+    }
+    if (is.null(arc$trigger$on_max_turns)) {
+        arc$trigger$on_max_turns <- TRUE
+    }
+    if (is.null(arc$trigger$token_threshold)) {
+        arc$trigger$token_threshold <- 8000L
+    }
+    if (is.null(arc$trigger$tool_call_threshold)) {
+        arc$trigger$tool_call_threshold <- 10L
+    }
+    if (is.null(arc$trigger$depth_cap)) {
+        arc$trigger$depth_cap <- 3L
+    }
+    if (is.null(arc$summary)) {
+        arc$summary <- list()
+    }
+    if (is.null(arc$summary$style)) {
+        arc$summary$style <- "structured"
+    }
+    # arc$summary$model: NULL means "match parent provider/model".
+    config$archival <- arc
+
+    # Archival requires the subagent runtime. Refuse to load a config
+    # that opts into archival while disabling subagents instead of
+    # silently overriding.
+    if (isTRUE(config$archival$enabled) && !isTRUE(config$subagents$enabled)) {
+        stop("archival.enabled requires subagents.enabled. ",
+             "Set subagents.enabled: true or archival.enabled: false.",
+             call. = FALSE)
+    }
+
     # Workspace config (managed runtime state)
     if (is.null(config$workspace)) {
         config$workspace <- list()

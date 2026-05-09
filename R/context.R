@@ -76,12 +76,48 @@ load_context <- function(cwd = getwd()) {
             ))
     }
 
+    # Live subagents block: surfaced when archival has produced one or
+    # more holder subagents in this process. The LLM sees ids + tasks
+    # and chooses query_subagent vs spawn_subagent as a normal tool
+    # decision (no router).
+    sub_text <- format_live_subagents()
+    if (nzchar(sub_text)) {
+        b <- add_context(b, sub_text)
+    }
+
     # If only the preamble made it in, there's nothing project-specific
     # to ship back.
     if (length(b$parts) <= 1L) {
         return(NULL)
     }
     paste(b$parts, collapse = "\n\n")
+}
+
+#' Render the live-subagents block for the system prompt.
+#'
+#' Empty string when no subagents are registered. The empty case skips
+#' the block entirely so a default-off corteza session sees byte-
+#' identical context to before archival landed.
+#' @noRd
+format_live_subagents <- function() {
+    agents <- tryCatch(subagent_list(), error = function(e) list())
+    if (length(agents) == 0L) {
+        return("")
+    }
+    lines <- vapply(agents, function(a) {
+        sprintf("- id: %s | task: %s", a$id %||% "?", a$task %||% "?")
+    }, character(1))
+    paste(c(
+            "# Live Subagents",
+            "",
+            paste0("These subagents hold archived prior turns of this ",
+                   "conversation. Use the `query_subagent(id, prompt)` tool ",
+                   "to retrieve detail; spawn a new one with ",
+                   "`spawn_subagent(task)` to fan out. Do not query unless ",
+                   "you actually need the detail."),
+            "",
+            lines
+        ), collapse = "\n")
 }
 
 # ---- Context builder (dedupes exact-match blocks) ----

@@ -36,12 +36,16 @@
 #'   expose. NULL uses the subagent config defaults.
 #' @param system Optional system prompt string.
 #' @param max_turns Max tool-use turns per query.
+#' @param depth Archival depth this child sits at (0 means a direct
+#'   child of the CLI parent). Used by recursion in
+#'   [subagent_turn_prompt()] to avoid archiving past the configured
+#'   depth_cap.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
 subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
-                               max_turns = 10L) {
+                               max_turns = 10L, depth = 0L) {
     session <- new_session(
         channel = "console",
         provider = provider,
@@ -51,10 +55,48 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
     )
     if (!is.null(model)) session$model_map$cloud <- model
     .subagent_state$session <- session
+    .subagent_state$depth <- as.integer(depth)
+    .subagent_state$subagent_id <- NULL
+    invisible(TRUE)
+}
+
+#' Set this child's subagent id post-spawn.
+#'
+#' Called from [subagent_spawn()] right after [subagent_turn_init()] so
+#' the child knows its own id when archival inside the child needs to
+#' pass `parent_session_id`.
+#' @param id Subagent id assigned by the parent.
+#' @return Invisible TRUE.
+#' @keywords internal
+#' @export
+subagent_turn_set_id <- function(id) {
+    .subagent_state$subagent_id <- as.character(id)
+    invisible(TRUE)
+}
+
+#' Seed the child's turn-session history with an externally-built slice.
+#'
+#' Used by the archival runtime: the parent spawns a holder subagent,
+#' then ships the just-finished turn's history into the holder via this
+#' function so the holder owns the full transcript while the parent
+#' keeps only `{summary, subagent_id}`.
+#' @param history List of message entries.
+#' @return Invisible TRUE.
+#' @keywords internal
+#' @export
+subagent_seed_history <- function(history) {
+    if (is.null(.subagent_state$session)) {
+        stop("Subagent turn session not initialized", call. = FALSE)
+    }
+    .subagent_state$session$history <- history
     invisible(TRUE)
 }
 
 #' Forward a prompt to the child-side turn session.
+#'
+#' Captures the pre-turn history length so that, if archival is enabled
+#' and this query qualifies, the child can recursively archive its own
+#' turn into a sub-subagent (capped by depth_cap).
 #'
 #' @param prompt User prompt (character).
 #' @return Reply text (character).
@@ -64,7 +106,53 @@ subagent_turn_prompt <- function(prompt) {
     if (is.null(.subagent_state$session)) {
         stop("Subagent turn session not initialized", call. = FALSE)
     }
+    pre_len <- length(.subagent_state$session$history %||% list())
     result <- turn(prompt, .subagent_state$session)
+
+    cfg <- tryCatch(load_config(getwd()), error = function(e) list())
+    arc_cfg <- cfg$archival %||% list()
+    depth <- .subagent_state$depth %||% 0L
+    cap <- arc_cfg$trigger$depth_cap %||% 3L
+    if (isTRUE(arc_cfg$enabled) && depth < cap) {
+        post_len <- length(.subagent_state$session$history %||% list())
+        if (post_len > pre_len) {
+            slice <- .subagent_state$session$history[(pre_len + 1L):post_len]
+            max_turns_hit <- isTRUE(grepl("Max turns",
+                                          as.character(result$reply %||% "")))
+            if (archival_should_trigger(arc_cfg, slice, depth = depth,
+                                        max_turns_hit = max_turns_hit) &&
+                !archival_slice_has_unfinished_tool_use(slice)) {
+                archived <- archival_archive_turn(
+                    turn_session = .subagent_state$session,
+                    prompt = prompt, history_slice = slice,
+                    arc_cfg = arc_cfg, depth = depth,
+                    parent_session_id = .subagent_state$subagent_id,
+                    parent_provider = .subagent_state$session$provider %||%
+                        "anthropic",
+                    parent_model = .subagent_state$session$model_map$cloud,
+                    config = cfg
+                )
+                if (!is.null(archived)) {
+                    keep <- .subagent_state$session$history[seq_len(pre_len)]
+                    user_msg <- slice[[1]]
+                    if (!identical(user_msg$role %||% "", "user")) {
+                        user_msg <- list(role = "user", content = prompt)
+                    }
+                    archived_assistant <- list(
+                        role = "assistant",
+                        content = sprintf(
+                            "[archived turn]\nsubagent_id: %s\n\n%s",
+                            archived$subagent_id, archived$summary
+                        )
+                    )
+                    .subagent_state$session$history <- c(
+                        keep, list(user_msg), list(archived_assistant)
+                    )
+                }
+            }
+        }
+    }
+
     as.character(result$reply %||% "")
 }
 
@@ -226,9 +314,15 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
         parent_session$model_map$cloud %||%
         getOption("corteza.model", NULL)
 
+    # Archival depth: parent depth + 1. Caller stamps
+    # `parent_session$archival_depth` before calling spawn so the child
+    # knows its own depth for recursion gating.
+    child_depth <- as.integer((parent_session$archival_depth %||% 0L) + 1L)
+
     tryCatch(
         session$run(
-            function(cwd, provider, model, tools_filter, system, max_turns) {
+            function(cwd, provider, model, tools_filter, system, max_turns,
+                     depth, id) {
                 library(corteza)
                 corteza::worker_init(cwd = cwd)
                 corteza::subagent_turn_init(
@@ -236,12 +330,14 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
                     model = model,
                     tools_filter = tools_filter,
                     system = system,
-                    max_turns = max_turns
+                    max_turns = max_turns,
+                    depth = depth
                 )
+                corteza::subagent_turn_set_id(id)
             },
             list(cwd = cwd, provider = spawn_provider, model = spawn_model,
                  tools_filter = effective_tools, system = system_prompt,
-                 max_turns = 10L)
+                 max_turns = 10L, depth = child_depth, id = id)
         ),
         error = function(e) {
             try(session$close(), silent = TRUE)
@@ -260,9 +356,10 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
         tools = tools,
         model = model,
         started_at = Sys.time(),
-        timeout = Sys.time() + subcfg$timeout_minutes * 60
+        timeout = Sys.time() + subcfg$timeout_minutes * 60,
+        depth = child_depth
     )
-    log_event("subagent_spawn", subagent_id = id, task = task)
+    log_event("subagent_spawn", subagent_id = id, task = task, depth = child_depth)
     id
 }
 

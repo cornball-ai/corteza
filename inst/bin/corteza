@@ -1774,6 +1774,7 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
     }
 
     cat(sprintf("● Thinking with %s\n", display_model))
+    pre_turn_len <- length(turn_session$history %||% list())
     result <- tryCatch({
       r <- corteza::turn(
         prompt = prompt,
@@ -1798,6 +1799,17 @@ Use config if you want MEMORY.md or memory logs back in prompt context.
 
       session <- corteza:::session_add_message(session, "assistant", result$content)
       corteza:::transcript_append(session, "assistant", result$content)
+
+      # Archival hook: opt-in via config$archival$enabled. Mutates
+      # turn_session$history in place when triggers fire.
+      corteza:::maybe_archive_turn(
+        turn_session = turn_session, prompt = prompt,
+        pre_turn_len = pre_turn_len, result = result, config = config,
+        parent_session_id = session$sessionId,
+        max_turns_hit = isTRUE(grepl("Max turns",
+                                     as.character(result$content %||% ""))),
+        depth = 0L
+      )
 
       session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
       session$tokens <- session_tokens
