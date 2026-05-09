@@ -389,6 +389,134 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 }
                 next
             }
+            if (cmd == "/sessions") {
+                cat(format_session_list(session_list()), "\n")
+                next
+            }
+            if (cmd == "/trace") {
+                n <- if (length(parts) >= 2L) suppressWarnings(as.integer(parts[2])) else 20L
+                if (is.na(n)) n <- 20L
+                trace <- tryCatch(trace_load(disk_session$session$sessionId, n = n),
+                                  error = function(e) list())
+                if (length(trace) == 0L) {
+                    cat("No tool calls recorded for this session.\n")
+                } else {
+                    cat(format_trace(trace, show_args = TRUE), "\n")
+                }
+                next
+            }
+            if (cmd == "/permissions") {
+                cat(format_permissions(config), "\n")
+                approvals_path <- file.path(cwd, ".corteza", "approvals.json")
+                cat(sprintf("Project approvals: %s\n",
+                            if (file.exists(approvals_path)) approvals_path else "none"))
+                next
+            }
+            if (cmd == "/dryrun") {
+                turn_session$config$dry_run <- !isTRUE(turn_session$config$dry_run)
+                config$dry_run <- turn_session$config$dry_run
+                cat(sprintf("Dry-run mode %s\n",
+                            if (isTRUE(turn_session$config$dry_run))
+                                "enabled (tools preview only)"
+                            else "disabled"))
+                next
+            }
+            if (cmd == "/context") {
+                files <- config$context_files %||% character(0)
+                hist_chars <- sum(vapply(turn_session$history %||% list(),
+                                         function(m) {
+                                             cnt <- m$content
+                                             if (is.character(cnt)) {
+                                                 sum(nchar(cnt, type = "chars"))
+                                             } else if (is.list(cnt)) {
+                                                 sum(vapply(cnt, function(b) {
+                                                     nchar(b$text %||% "", type = "chars")
+                                                 }, integer(1)))
+                                             } else 0L
+                                         }, integer(1)))
+                est_tokens <- as.integer(ceiling(hist_chars / 4))
+                cat(sprintf("Live history: ~%d tokens (history-only estimate)\n",
+                            est_tokens))
+                if (length(files) == 0L) {
+                    cat("No context files loaded.\n")
+                } else {
+                    cat("Loaded context files:\n")
+                    for (f in files) cat("  ", f, "\n")
+                }
+                next
+            }
+            if (cmd == "/compact") {
+                if (length(turn_session$history %||% list()) < 2L) {
+                    cat("Nothing to compact.\n")
+                    next
+                }
+                cat("Compacting...\n")
+                compact_text <- tryCatch({
+                    transcript <- archival_render_transcript(turn_session$history)
+                    sys <- "Compress this conversation into a 1-paragraph summary that preserves the user's goals, decisions made, files touched, and unresolved questions. No bullets."
+                    resp <- llm.api::agent(prompt = transcript, system = sys,
+                                            tools = list(),
+                                            model = turn_session$model_map$cloud,
+                                            provider = turn_session$provider,
+                                            max_turns = 1L, history = list(),
+                                            verbose = FALSE)
+                    as.character(resp$content %||% "")
+                }, error = function(e) {
+                    cat(sprintf("Compaction failed: %s\n", e$message))
+                    NULL
+                })
+                if (!is.null(compact_text) && nzchar(compact_text)) {
+                    turn_session$history <- list(
+                        list(role = "assistant", content = compact_text)
+                    )
+                    transcript_compact(disk_session$session, compact_text)
+                    cat("Compacted.\n")
+                }
+                next
+            }
+            # /remember /recall /flush are dead in the CLI too: their
+            # implementations rely on memory_store / memory_search /
+            # strip_tags / parse_tags helpers that don't exist in the
+            # package. Skipping the chat() port to match reality.
+            if (cmd %in% c("/skill", "/skills")) {
+                subcmd <- if (length(parts) >= 2L) parts[2] else "list"
+                if (subcmd == "list") {
+                    tryCatch({
+                        cat(format_skill_list(skill_list_installed()), "\n")
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else if (subcmd == "install" && length(parts) >= 3L) {
+                    src <- parts[3]
+                    force <- "--force" %in% parts
+                    tryCatch({
+                        nm <- skill_install(src, force = force)
+                        cat(sprintf("Installed skill: %s\n", nm))
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else if (subcmd == "remove" && length(parts) >= 3L) {
+                    nm <- parts[3]
+                    tryCatch({
+                        skill_remove(nm)
+                        cat(sprintf("Removed skill: %s\n", nm))
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else if (subcmd == "test" && length(parts) >= 3L) {
+                    pth <- parts[3]
+                    tryCatch({
+                        result <- skill_test(pth)
+                        if (result$failed == 0L) {
+                            cat(sprintf("%d test(s) passed\n", result$passed))
+                        } else {
+                            cat(sprintf("%d passed, %d failed\n",
+                                        result$passed, result$failed))
+                        }
+                    }, error = function(e) cat(sprintf("Error: %s\n", e$message)))
+                } else {
+                    cat("Usage:\n")
+                    cat("  /skill list\n")
+                    cat("  /skill install <path|url> [--force]\n")
+                    cat("  /skill remove <name>\n")
+                    cat("  /skill test <path>\n")
+                }
+                next
+            }
             # /r is handled separately below to keep its existing
             # multi-line pending_r_context plumbing.
             if (!startsWith(sp, "/r ")) {

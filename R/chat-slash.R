@@ -40,8 +40,9 @@ parse_spawn_flags <- function(text) {
 
 #' Slash-command help text for `chat()`.
 #'
-#' chat() doesn't ship the full CLI command set. List what's available
-#' so users don't waste time guessing.
+#' Mirrors the inst/bin/corteza CLI surface. A handful of CLI commands
+#' that depend on terminal-only state (tool_buffer, color formatting,
+#' opts) aren't yet shared; those are flagged as CLI-only.
 #' @noRd
 chat_help_text <- function() {
     paste(
@@ -53,6 +54,12 @@ chat_help_text <- function() {
         "  /tools                        List active tools",
         "  /model <name>                 Switch model",
         "  /provider <name>              Switch provider (anthropic, openai, moonshot, ollama)",
+        "  /context                      Show live context usage and loaded files",
+        "  /sessions                     List sessions for this directory",
+        "  /trace [N]                    Show last N tool executions (default 20)",
+        "  /permissions                  Show tool approval and sandbox settings",
+        "  /dryrun                       Toggle dry-run mode (preview tools)",
+        "  /compact                      Summarize conversation to free context",
         "  /r <expr>                     Eval R expression locally; output staged for next prompt",
         "",
         "Subagents:",
@@ -63,6 +70,15 @@ chat_help_text <- function() {
         "  /agents                       List active subagents",
         "  /ask <id> <prompt>            Query a subagent (id, prefix, or seq number)",
         "  /kill <id>                    Terminate a subagent",
+        "",
+        "Skills:",
+        "  /skill list                   List installed skills",
+        "  /skill install <path|url>     Install a skill (--force to reinstall)",
+        "  /skill remove <name>          Remove a skill",
+        "  /skill test <path>            Run skill tests",
+        "",
+        "CLI-only (drop to inst/bin/corteza):",
+        "  /status, /doctor, /config, /diff, /review, /last, /outputs",
         "",
         sep = "\n"
     )
