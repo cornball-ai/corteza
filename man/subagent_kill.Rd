@@ -6,7 +6,7 @@
 subagent_kill(id)
 }
 \arguments{
-\item{id}{Subagent ID.}
+\item{id}{Subagent identifier (UUID, prefix, or sequence number).}
 }
 \value{
 Invisible TRUE if killed, FALSE if not found.
