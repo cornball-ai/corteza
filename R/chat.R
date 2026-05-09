@@ -423,6 +423,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/context") {
                 files <- config$context_files %||% character(0)
+                # System prompt: full briefing, agent_context, skill
+                # docs, package tool docs, live-subagents block. This is
+                # what the LLM actually sees on every turn alongside
+                # the message history.
+                sys_chars <- as.integer(nchar(turn_session$system %||% "",
+                                              type = "chars"))
                 hist_chars <- sum(vapply(turn_session$history %||% list(),
                                          function(m) {
                                              cnt <- m$content
@@ -434,11 +440,25 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                                                  }, integer(1)))
                                              } else 0L
                                          }, integer(1)))
-                est_tokens <- as.integer(ceiling(hist_chars / 4))
-                cat(sprintf("Live history: ~%d tokens (history-only estimate)\n",
-                            est_tokens))
+                tools_chars <- as.integer(tryCatch(
+                    sum(vapply(skills_as_api_tools(turn_session$tools_filter),
+                               function(t) {
+                                   nchar(jsonlite::toJSON(t, auto_unbox = TRUE),
+                                         type = "chars")
+                               }, integer(1))),
+                    error = function(e) 0L
+                ))
+                total_tokens <- as.integer(ceiling((sys_chars + hist_chars +
+                                                      tools_chars) / 4))
+                cat(sprintf("Live context: ~%d tokens (system %d + tools %d + history %d chars)\n",
+                            total_tokens,
+                            sys_chars, tools_chars, hist_chars))
                 if (length(files) == 0L) {
-                    cat("No context files loaded.\n")
+                    cat("No additional context files loaded via the ",
+                        "`context_files` config key.\n", sep = "")
+                    cat("Project context still comes from saber::briefing() ",
+                        "and saber::agent_context() as part of the system ",
+                        "prompt above.\n", sep = "")
                 } else {
                     cat("Loaded context files:\n")
                     for (f in files) cat("  ", f, "\n")
