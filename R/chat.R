@@ -448,11 +448,15 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                                }, integer(1))),
                     error = function(e) 0L
                 ))
-                total_tokens <- as.integer(ceiling((sys_chars + hist_chars +
-                                                      tools_chars) / 4))
-                cat(sprintf("Live context: ~%d tokens (system %d + tools %d + history %d chars)\n",
-                            total_tokens,
-                            sys_chars, tools_chars, hist_chars))
+                # Break down in tokens so the components add up to the
+                # total. Compute each ceiling separately; the off-by-one
+                # rounding is dwarfed by the /4 heuristic itself.
+                sys_tok <- as.integer(ceiling(sys_chars / 4))
+                tools_tok <- as.integer(ceiling(tools_chars / 4))
+                hist_tok <- as.integer(ceiling(hist_chars / 4))
+                total_tokens <- sys_tok + tools_tok + hist_tok
+                cat(sprintf("Live context: ~%d tokens (system %d + tools %d + history %d)\n",
+                            total_tokens, sys_tok, tools_tok, hist_tok))
                 if (length(files) == 0L) {
                     cat("No additional context files loaded via the ",
                         "`context_files` config key.\n", sep = "")
