@@ -1612,8 +1612,16 @@ run_agent <- function(opts) {
             preset = subagent_preset,
             parent_session = session
           )
-          cat(sprintf("%sSpawned subagent: %s%s\n", color$green, id, color$reset))
-          cat(sprintf("%sUse /ask %s <prompt> to query%s\n", color$dim, id, color$reset))
+          # Resolve seq from the registry so the success hint matches
+          # /agents output. Falls back to the 8-char prefix if the seq
+          # isn't recorded for some reason.
+          info <- corteza:::.subagent_registry[[id]]
+          seq_val <- info$seq
+          handle <- if (!is.null(seq_val)) as.character(seq_val) else substr(id, 1L, 8L)
+          cat(sprintf("%sSpawned subagent [%s] (id %s)%s\n",
+                      color$green, handle, id, color$reset))
+          cat(sprintf("%sUse /ask %s <prompt> to query%s\n",
+                      color$dim, handle, color$reset))
         }, error = function(e) {
           cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
         })
