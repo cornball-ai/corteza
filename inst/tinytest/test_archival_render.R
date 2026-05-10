@@ -78,6 +78,20 @@ tool_msg <- list(role = "tool", tool_call_id = "c1",
 flat_tool <- entry_to_text(tool_msg)
 expect_true(grepl("\\[tool_result: file1", flat_tool))
 
+# Regression: role=="tool" content must render exactly once. The first
+# pass of the OpenAI shape was double-emitting it (raw content +
+# [tool_result:...] wrapper), which doubled large tool outputs in the
+# on-disk JSONL.
+expect_equal(length(strsplit(flat_tool, "\\[tool_result:")[[1]]), 2L)
+expect_false(grepl("file1\\nfile2\\n\\[tool_result:", flat_tool))
+
+# Regression: multi-element character `content` must collapse before
+# the empty-content check. The first pass did `if (nzchar(cnt))` on a
+# length-2 vector which errors the if-condition.
+multi_chr <- list(role = "user", content = c("first", "second"))
+flat_multi <- entry_to_text(multi_chr)
+expect_equal(flat_multi, "first\nsecond")
+
 # Structured validator: valid JSON returns text unchanged.
 valid_json <- '{"outcome":"ok","key_findings":[],"files_touched":[],"tools_used":[],"open_questions":[]}'
 expect_equal(validate(valid_json), valid_json)

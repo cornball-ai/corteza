@@ -213,15 +213,26 @@ archival_entry_plain_text <- function(entry) {
 #' strings.
 #' @noRd
 archival_history_entry_to_text <- function(entry) {
+    role <- entry$role %||% ""
     cnt <- entry$content
     parts <- character(0)
-    if (is.character(cnt)) {
-        if (nzchar(cnt)) parts <- c(parts, paste(cnt, collapse = "\n"))
+
+    # OpenAI-shape role=="tool" message: render once as
+    # `[tool_result: ...]`. Skip the generic character branch below to
+    # avoid duplicating the body.
+    if (identical(role, "tool")) {
+        parts <- c(parts, sprintf("[tool_result: %s]",
+                                  as.character(cnt %||% "")))
+    } else if (is.character(cnt)) {
+        # Collapse first; nzchar(vec) returns a vector and would error
+        # the if-condition for multi-element character content.
+        flat <- paste(cnt, collapse = "\n")
+        if (nzchar(flat)) parts <- c(parts, flat)
     } else if (is.list(cnt)) {
         for (block in cnt) {
             btype <- block$type %||% "text"
             if (identical(btype, "text")) {
-                txt <- block$text %||% ""
+                txt <- paste(block$text %||% "", collapse = "\n")
                 if (nzchar(txt)) parts <- c(parts, txt)
             } else if (identical(btype, "tool_use")) {
                 args_str <- if (!is.null(block$input)) {
@@ -237,13 +248,14 @@ archival_history_entry_to_text <- function(entry) {
             }
         }
     }
+
     # OpenAI-shape assistant entries carry tool calls in a side field.
     if (!is.null(entry$tool_calls)) {
         for (tc in entry$tool_calls) {
             fn <- tc$`function` %||% list()
             args_raw <- fn$arguments %||% ""
             args_str <- if (is.character(args_raw)) {
-                args_raw
+                paste(args_raw, collapse = " ")
             } else {
                 paste(deparse(args_raw), collapse = " ")
             }
@@ -251,10 +263,7 @@ archival_history_entry_to_text <- function(entry) {
                                       fn$name %||% "?", args_str))
         }
     }
-    if (identical(entry$role %||% "", "tool")) {
-        parts <- c(parts, sprintf("[tool_result: %s]",
-                                  as.character(entry$content %||% "")))
-    }
+
     paste(parts, collapse = "\n")
 }
 
