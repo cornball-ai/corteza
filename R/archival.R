@@ -51,29 +51,7 @@ archival_count_tool_calls <- function(history_slice) {
     if (length(history_slice) == 0L) {
         return(0L)
     }
-    total <- 0L
-    for (entry in history_slice) {
-        # Anthropic-style: content is a list of typed blocks with
-        # type in {"tool_use", "tool_result"}.
-        cnt <- entry$content
-        if (is.list(cnt)) {
-            for (block in cnt) {
-                btype <- block$type %||% ""
-                if (btype %in% c("tool_use", "tool_result")) {
-                    total <- total + 1L
-                }
-            }
-        }
-        # OpenAI-style (also moonshot/kimi): assistant carries a
-        # tool_calls field; results come back as role == "tool".
-        if (!is.null(entry$tool_calls)) {
-            total <- total + length(entry$tool_calls)
-        }
-        if (identical(entry$role, "tool")) {
-            total <- total + 1L
-        }
-    }
-    as.integer(total %/% 2L)
+    length(archival_history_tool_calls(history_slice))
 }
 
 #' Cheap token estimate for a history slice.
@@ -122,113 +100,171 @@ archival_slice_has_unfinished_tool_use <- function(history_slice) {
     if (n == 0L) {
         return(FALSE)
     }
+    # Only flag mid-flight when the slice ends with an assistant
+    # message: a tool result message after the call closes the loop
+    # for that round.
     last <- history_slice[[n]]
-    if (!identical(last$role, "assistant")) {
+    if (!identical(last$role %||% "", "assistant")) {
         return(FALSE)
     }
-    cnt <- last$content
-    if (!is.list(cnt)) {
+    records <- archival_history_tool_calls(history_slice)
+    if (length(records) == 0L) {
         return(FALSE)
     }
-    tool_use_ids <- character(0)
-    for (block in cnt) {
-        if (identical(block$type, "tool_use")) {
-            tool_use_ids <- c(tool_use_ids, block$id %||% "")
-        }
-    }
-    if (length(tool_use_ids) == 0L) {
-        return(FALSE)
-    }
-    # Look for matching tool_result blocks anywhere in the slice. If
-    # there's no matching pair for any tool_use, the turn is mid-flight.
-    result_ids <- character(0)
-    for (entry in history_slice) {
-        cnt2 <- entry$content
-        if (is.list(cnt2)) {
-            for (block in cnt2) {
-                if (identical(block$type, "tool_result")) {
-                    result_ids <- c(result_ids,
-                                    block$tool_use_id %||% block$id %||% "")
-                }
-            }
-        }
-    }
-    !all(tool_use_ids %in% result_ids)
+    any(vapply(records, function(r) !isTRUE(r$completed), logical(1)))
 }
 
 # ---- Transcript rendering for the summarizer ----
 
 #' Render a history slice as plain text for the summarization prompt.
 #'
-#' Format: `## role\n<content>\n` repeated. Tool blocks rendered as
-#' `[tool_use: name(input)]` and `[tool_result: <text>]`.
+#' Format: `## role\n<content>\n` repeated. Tool calls render as
+#' `[tool_use: name(args)]` followed by `[tool_result: <text>]`,
+#' regardless of whether the underlying history is Anthropic-style
+#' (typed content blocks) or OpenAI-style (`tool_calls` field plus
+#' `role = "tool"` result messages). Built off the canonical record
+#' walk so summaries on moonshot/kimi/ollama actually include the
+#' tool calls.
 #' @noRd
 archival_render_transcript <- function(history_slice) {
     if (length(history_slice) == 0L) {
         return("")
     }
+    records <- archival_history_tool_calls(history_slice)
+    # Index records by call_message_index for cheap lookup. Each
+    # assistant message can carry multiple tool calls.
+    by_call_idx <- list()
+    for (r in records) {
+        key <- as.character(r$call_message_index)
+        by_call_idx[[key]] <- c(by_call_idx[[key]], list(r))
+    }
+    # Skip OpenAI-shape result messages here; they get rendered inline
+    # alongside the call that produced them.
     parts <- character(0)
-    for (entry in history_slice) {
+    for (i in seq_along(history_slice)) {
+        entry <- history_slice[[i]]
         role <- entry$role %||% "user"
-        cnt <- entry$content
-        body <- if (is.character(cnt)) {
-            paste(cnt, collapse = "\n")
-        } else if (is.list(cnt)) {
-            block_strs <- vapply(cnt, archival_render_block, character(1))
-            paste(block_strs, collapse = "\n")
-        } else {
-            ""
+        if (identical(role, "tool")) {
+            next
+        }
+        text <- archival_entry_plain_text(entry)
+        call_lines <- character(0)
+        calls_here <- by_call_idx[[as.character(i)]]
+        if (length(calls_here) > 0L) {
+            for (r in calls_here) {
+                call_lines <- c(call_lines, archival_record_render(r))
+            }
+        }
+        body <- paste(c(text, call_lines), collapse = "\n")
+        if (!nzchar(body)) {
+            next
         }
         parts <- c(parts, sprintf("## %s\n%s", role, body))
     }
     paste(parts, collapse = "\n\n")
 }
 
-#' Render a single content block for the transcript.
+#' Render a record as `[tool_use: name(args)]\n[tool_result: text]`.
+#'
+#' Also handles the unfinished case (no result yet).
 #' @noRd
-archival_render_block <- function(block) {
-    btype <- block$type %||% "text"
-    if (identical(btype, "text")) {
-        return(block$text %||% "")
+archival_record_render <- function(r) {
+    args_str <- if (!is.null(r$arguments)) {
+        paste(deparse(r$arguments), collapse = " ")
+    } else {
+        ""
     }
-    if (identical(btype, "tool_use")) {
-        name <- block$name %||% "?"
-        input_str <- if (!is.null(block$input)) {
-            paste(deparse(block$input), collapse = " ")
-        } else {
-            ""
-        }
-        return(sprintf("[tool_use: %s(%s)]", name, input_str))
+    call <- sprintf("[tool_use: %s(%s)]", r$name %||% "?", args_str)
+    if (isTRUE(r$completed)) {
+        sprintf("%s\n[tool_result: %s]", call, r$result %||% "")
+    } else {
+        sprintf("%s\n[tool_result: (pending)]", call)
     }
-    if (identical(btype, "tool_result")) {
-        result_txt <- if (is.list(block$content)) {
-            inner <- vapply(block$content, function(b) {
-                b$text %||% ""
-            }, character(1))
-            paste(inner, collapse = " ")
-        } else {
-            as.character(block$content %||% "")
-        }
-        return(sprintf("[tool_result: %s]", result_txt))
-    }
-    sprintf("[%s]", btype)
 }
 
-#' Convert a history entry to plain text for transcript_append.
+#' Plain-text content for a history entry, ignoring tool blocks.
 #'
-#' transcript_append wants a flat string; we preserve role-tagged
-#' formatting so the on-disk JSONL stays readable.
+#' Tool calls render via the record walk; this strips them out so
+#' they're not double-counted.
 #' @noRd
-archival_history_entry_to_text <- function(entry) {
+archival_entry_plain_text <- function(entry) {
     cnt <- entry$content
     if (is.character(cnt)) {
         return(paste(cnt, collapse = "\n"))
     }
     if (is.list(cnt)) {
-        block_strs <- vapply(cnt, archival_render_block, character(1))
-        return(paste(block_strs, collapse = "\n"))
+        parts <- vapply(cnt, function(block) {
+            if (identical(block$type %||% "text", "text")) {
+                return(block$text %||% "")
+            }
+            ""
+        }, character(1))
+        return(paste(parts[nzchar(parts)], collapse = "\n"))
     }
     ""
+}
+
+#' Convert a history entry to plain text for transcript_append.
+#'
+#' transcript_append wants a flat string; we preserve role-tagged
+#' formatting so the on-disk JSONL stays readable. Handles both the
+#' Anthropic content-block shape and the OpenAI tool_calls-field shape
+#' so dumps from moonshot/kimi/ollama sessions are not just empty
+#' strings.
+#' @noRd
+archival_history_entry_to_text <- function(entry) {
+    role <- entry$role %||% ""
+    cnt <- entry$content
+    parts <- character(0)
+
+    # OpenAI-shape role=="tool" message: render once as
+    # `[tool_result: ...]`. Skip the generic character branch below to
+    # avoid duplicating the body.
+    if (identical(role, "tool")) {
+        parts <- c(parts, sprintf("[tool_result: %s]",
+                                  as.character(cnt %||% "")))
+    } else if (is.character(cnt)) {
+        # Collapse first; nzchar(vec) returns a vector and would error
+        # the if-condition for multi-element character content.
+        flat <- paste(cnt, collapse = "\n")
+        if (nzchar(flat)) parts <- c(parts, flat)
+    } else if (is.list(cnt)) {
+        for (block in cnt) {
+            btype <- block$type %||% "text"
+            if (identical(btype, "text")) {
+                txt <- paste(block$text %||% "", collapse = "\n")
+                if (nzchar(txt)) parts <- c(parts, txt)
+            } else if (identical(btype, "tool_use")) {
+                args_str <- if (!is.null(block$input)) {
+                    paste(deparse(block$input), collapse = " ")
+                } else ""
+                parts <- c(parts, sprintf("[tool_use: %s(%s)]",
+                                          block$name %||% "?", args_str))
+            } else if (identical(btype, "tool_result")) {
+                parts <- c(parts, sprintf(
+                    "[tool_result: %s]",
+                    .archival_block_result_text(block)
+                ))
+            }
+        }
+    }
+
+    # OpenAI-shape assistant entries carry tool calls in a side field.
+    if (!is.null(entry$tool_calls)) {
+        for (tc in entry$tool_calls) {
+            fn <- tc$`function` %||% list()
+            args_raw <- fn$arguments %||% ""
+            args_str <- if (is.character(args_raw)) {
+                paste(args_raw, collapse = " ")
+            } else {
+                paste(deparse(args_raw), collapse = " ")
+            }
+            parts <- c(parts, sprintf("[tool_use: %s(%s)]",
+                                      fn$name %||% "?", args_str))
+        }
+    }
+
+    paste(parts, collapse = "\n")
 }
 
 # ---- Summary parsing ----
