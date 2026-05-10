@@ -1,389 +1,161 @@
-# llamaR
+# Working in corteza
 
-A CLI-first AI agent runtime for R. Self-hosted, model-agnostic, tinyverse.
+Corteza is an R-native AI agent runtime: a CLI binary
+(`inst/bin/corteza`, installed as `~/bin/corteza`) plus an in-R
+`corteza::chat()`, both backed by a CRAN-installable package. This
+file is what an agent (LLM or human) needs to know to work in this
+codebase effectively. `AGENTS.md` is a symlink to this file so both
+agent conventions read the same content.
 
-**Goal:** Drop-in replacement for Claude Code - same external interface, different runtime.
+## Tool isolation: `run_r` is stateless
 
-**Reference:** ~/openclaw - TypeScript CLI agent we're interoperable with.
+`run_r` runs every call in a fresh R process via `callr::rscript()`
+(see `R/tool-impl.R`). Variables do **not** persist across calls.
 
-## Design Philosophy
+```r
+# Call 1
+x <- 1
+# Call 2
+x  # Error: object 'x' not found
+```
 
-llamaR is designed as an **alternative runtime** that can replace Claude Code:
-- Same session format (JSONL transcripts + JSON metadata)
-- Same SKILL.md format for portable skills
-- Same config structure with hierarchical overrides
-- Compatible transport interfaces (terminal, Signal, etc.)
+Implications:
 
-The user should be able to switch between runtimes without losing data or relearning commands.
+- Build the full computation in one `run_r` block, or stash
+  intermediate results to disk yourself.
+- Large outputs are captured as handles (e.g. `.h_001`) for the agent
+  to reference later; those are read-only snapshots, not workspace
+  state.
+- Same isolation rationale applies to subagents: each
+  `subagent_spawn()` opens a private `callr::r_session` so child work
+  can't leak into the parent's R session.
 
-## Isomorphism with openclaw
+## Subagent registry is in-memory only
 
-llamaR aims to be interoperable with openclaw on front-end matters:
+`.subagent_registry` is a package-level environment. Spawned subagents
+die with the parent R process. Don't rely on subagents persisting
+across `chat()` exits.
 
-| Component | Approach |
-|-----------|----------|
-| Skills | Same SKILL.md format, same loading |
-| Sessions | JSONL transcripts + JSON metadata (planned) |
-| Memory | Daily markdown logs + MEMORY.md (planned) |
-| Config | JSON with hierarchical overrides |
+When the **archival** runtime is on (`config$archival$enabled = TRUE`)
+finished turns collapse into holder subagents that hold the full
+transcript on disk under `agents/subagent-<id>/sessions/`. The
+parent's in-memory history keeps only a summary plus the holder's id;
+the LLM sees the holder in its system prompt and picks
+`query_subagent` vs `spawn_subagent` via normal tool selection.
+Default off — see `vignette("retroactive-extraction")`.
 
-**Guidelines:**
-1. If it can be a SKILL.md, make it a skill (portable)
-2. If openclaw has a format, match it
-3. R-specific features (stateful `run_r`) stay in llamaR, exposed via MCP
+## Subagent ids
 
-See `docs/isomorphism.md` for full details.
+Subagents have three valid identifiers:
 
-## Quick Start
+- **UUID** (canonical): `c39a6889-4bb0-4425-896c-65a5b59c2b41`
+- **8-char prefix**: `c39a6889` (or any unambiguous prefix)
+- **Sequence number**: `1`, `2`, ... (per-process monotonic counter,
+  surfaced in `subagent_list()` as `seq`)
+
+`subagent_query` and `subagent_kill` accept any of the three.
+
+## Tinyverse toolchain
 
 ```bash
-# Start agent in current directory
-llamar
-
-# Resume last session
-llamar --resume
-
-# List sessions for this directory
-llamar --list
-
-# Use specific provider/model
-llamar --provider ollama --model llama3.2
+# Format -> document -> install -> test
+r -e 'rformat::rformat_dir("R", control_braces = "multi", expand_if = TRUE); tinyrox::document(); tinypkgr::install(); tinytest::test_package("corteza")'
 ```
 
-## Signal Bot
+- Use `tinypkgr::install()` not `R CMD INSTALL`.
+  `tinypkgr::reload()` is the live-dev variant.
+- `tinyrox` is the doc generator (not roxygen2). Same `@param`,
+  `@return`, `@export` syntax; minimal feature set.
+- `tinytest` is the test framework (not testthat). Tests live in
+  `inst/tinytest/`.
+- Use `r` (littler) for internal commands and `Rscript` for
+  user-facing examples that need to run on Windows.
 
-llamaR can run as a Signal bot using signal-cli:
+## Saber for introspection (mandatory before exported-API changes)
 
-```bash
-# 1. Install signal-cli (requires Java)
-# 2. Link your Signal account
-signal-cli link -n "llamar"
-
-# 3. Start the daemon
-signal-cli -a +15551234567 daemon --http 127.0.0.1:8080
-
-# 4. Run the bot
-llamar-signal --account +15551234567
-
-# With allowlist (only respond to specific numbers)
-llamar-signal --account +15551234567 --allow +15557654321,+15559876543
+```r
+saber::pkg_exports("corteza")
+saber::pkg_help("subagent_spawn", "corteza")
+saber::blast_radius("subagent_spawn", project = ".")
 ```
 
-The bot responds to messages with the same tools available in the terminal REPL.
+`blast_radius` is required before renaming, moving, or changing the
+signature of any exported function. Skipping it breaks downstream
+packages silently.
 
-## Architecture
+## Test conventions and gotchas
 
-```
-User (terminal)
-     │
-     ▼
-┌─────────────────┐
-│  llamar CLI     │  ← inst/bin/llamar (Rscript shebang)
-└────────┬────────┘
-         │
-         ├── llm.api (provider abstraction)
-         │      ├── Anthropic
-         │      ├── OpenAI
-         │      └── Ollama
-         │
-         └── llamaR MCP Server (port 7850)
-                ├── File tools (read/write/list/grep)
-                ├── R tools (run_r, r_help, installed_packages)
-                ├── System tools (bash, git_*)
-                ├── Web tools (web_search, fetch_url)
-                └── Chat tools (chat, chat_models via llm.api)
-```
+- `at_home()` gates tests that need network, API keys, or writable
+  state. They run locally; `R CMD check` skips them.
+- **Don't use `on.exit()` at the top level of a tinytest file** — it
+  fires immediately, not at script end. Use explicit cleanup at the
+  bottom of the file instead.
+- `corteza:::env[[key]] <- value` doesn't parse the way you'd expect
+  for a package-private environment. Use
+  `assign(key, value, envir = corteza:::env)`.
+- `llm.api::agent` calls hit the network. Gate any test that calls it
+  with both `at_home()` and `nzchar(Sys.getenv("ANTHROPIC_API_KEY"))`.
 
-## Package Structure
+## CLI vs `chat()` slash-command parity
+
+`inst/bin/corteza` (shell binary) has the full command set:
+`/quit /clear /tools /spawn /agents /ask /kill /help /sessions /trace
+/permissions /context /dryrun /compact /skill /model /provider /diff
+/review /status /doctor /config /last /outputs /r`.
+
+`corteza::chat()` (in-R) covers the subagent, skill, info, and basic
+introspection surface. It does **not** yet support
+`/status /doctor /config /diff /review /last /outputs` — those depend
+on display helpers that still live inside the CLI script. Filed as a
+follow-up.
+
+The CLI's `/remember /recall /flush` are dead branches: they call
+`memory_store` / `memory_search` / `strip_tags` / `parse_tags` which
+don't exist in the package. Don't use them.
+
+## Project context loading
+
+Project context comes from `saber::briefing()` and
+`saber::agent_context()` (recent commits, package summary, AGENTS.md
+or CLAUDE.md, etc.) plus any files explicitly listed in
+`config$context_files`. The `/context` slash command shows live token
+usage broken into system / tools / history.
+
+## Things to avoid
+
+- **No `Co-Authored-By` trailers** in commits.
+- **No version bump in the first PR of a batched release** — version
+  bumps go in the last PR (or a dedicated bump-only PR).
+- **No drive-by cosmetic edits** — don't bundle whitespace or comment
+  reformats into substantive PRs.
+- **Don't hide real dependencies behind `requireNamespace()`**. If a
+  package is needed for core functionality, declare it in `Imports`.
+- **Don't force-push.** Use incremental commits during PR review;
+  squash at merge time via `gh pr merge --squash`.
+
+## Repo layout (orientation)
 
 ```
 R/
-├── config.R        # Config file loading (~/.llamar/config.json, .llamar/config.json)
-├── context.R       # Context file loading (README.md, PLAN.md, fyi.md, etc.)
-├── log.R           # Structured JSON logging
-├── session.R       # Session persistence (~/.llamar/agents/main/sessions/)
-├── skill.R         # Skill system (SKILL.md parsing, registry)
-├── mcp-handler.R   # JSON-RPC request handling
-├── mcp-transport.R # Stdio and socket transports
-├── serve.R         # Main serve() export
-├── tools.R         # Tool definitions (MCP schema)
-├── tool-impl.R     # Tool implementations + built-in skill registration
-├── install-cli.R   # CLI installer (install_cli/uninstall_cli)
-└── utils.R         # Helpers (ok/err/log_msg)
+├── archival.R         # Retroactive-extraction runtime (opt-in)
+├── chat.R             # corteza::chat() in-R loop
+├── chat-slash.R       # Slash-command helpers shared with chat()
+├── config.R           # Config file loading + defaults
+├── context.R          # System prompt assembly (saber + tools + skills)
+├── log.R              # Structured JSON logging
+├── session.R          # Session persistence (transcripts, metadata)
+├── skill.R            # Skill system (SKILL.md parsing, registry)
+├── subagent.R         # callr-based subagents + registry
+├── tool-impl.R        # Tool implementations + built-in skill registration
+├── tools.R            # Tool category groupings
+└── turn.R             # Single agent turn / observer hook
 
 inst/
-├── bin/llamar      # CLI executable (symlinked to ~/bin/llamar)
-└── tinytest/       # Tests (157 total)
+├── bin/corteza        # CLI binary (Rscript shebang)
+└── tinytest/          # Tests (1300+ asserts)
+
+vignettes/
+├── configuration.Rmd
+├── retroactive-extraction.Rmd
+└── skills.Rmd
 ```
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `~/.llamar/agents/main/sessions/` | Session storage (transcripts + metadata) |
-| `.llamar/config.json` | Project config (provider, model, context_files) |
-| `~/.llamar/config.json` | Global config defaults |
-| `~/.llamar/workspace/` | Agent workspace (matches openclaw) |
-| `~/.llamar/workspace/SOUL.md` | Agent personality (who the agent is) |
-| `~/.llamar/workspace/USER.md` | User preferences (who you are) |
-| `~/.llamar/workspace/MEMORY.md` | Global long-term memory |
-| `AGENTS.md` | Project-specific agent instructions |
-
-## Context Files (Auto-loaded)
-
-**Global files** (from `~/.llamar/workspace/`, loaded first):
-- `SOUL.md` - Agent personality, values, style
-- `USER.md` - User preferences, context about you
-- `MEMORY.md` - Long-term memory across projects
-
-**Project files** (configurable via config):
-- `README.md` - Project description
-- `PLAN.md` - Development roadmap
-- `fyi.md` - Package introspection (from fyi package)
-- `AGENTS.md` - Behavior guidelines
-- `MEMORY.md` - Project-specific memory
-
-## Environment Variables
-
-Set in `~/.Renviron`:
-
-| Variable | Required For |
-|----------|--------------|
-| `ANTHROPIC_API_KEY` | Anthropic provider |
-| `OPENAI_API_KEY` | OpenAI provider |
-| `TAVILY_API_KEY` | web_search tool |
-
-## Config Example
-
-```json
-{
-  "provider": "ollama",
-  "model": "llama3.2",
-  "port": 7850,
-  "context_files": ["README.md", "PLAN.md", "fyi.md", "LLAMAR.md"]
-}
-```
-
-## CLI Commands
-
-In-session commands:
-- `/quit`, `/exit`, `/q` - Exit
-- `/tools` - List available tools
-- `/sessions` - List sessions for this directory
-- `/context` - Show loaded context files
-- `/clear` - Clear conversation (keeps session)
-- `/model <name>` - Switch model
-- `/provider <p>` - Switch provider
-
-## MCP Server
-
-Two transport modes:
-
-**Stdio** (for Claude Desktop):
-```r
-llamaR::serve()
-```
-
-**Socket** (for llamar CLI):
-```r
-llamaR::serve(port = 7850)
-```
-
-Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "llamar": {
-      "command": "Rscript",
-      "args": ["-e", "llamaR::serve()"]
-    }
-  }
-}
-```
-
-## Development
-
-```bash
-# Full workflow
-r -e 'rformat::rformat_dir("R"); tinyrox::document(); tinypkgr::install(); tinytest::test_package("llamaR")'
-
-# Regenerate fyi.md
-r -e 'fyi::use_fyi_md("llamaR", docs = TRUE)'
-
-# Run tests only
-r -e 'tinytest::test_package("llamaR")'
-```
-
-## Coding Conventions
-
-### Prefer system2() over system()
-
-Use `system2()` for shell commands - it gives better control over stdout/stderr:
-```r
-# Good
-system2("git", c("status", "--short"), stdout = TRUE)
-
-# Avoid
-system("git status --short", intern = TRUE)
-```
-
-### Shell commands need explicit bash
-
-When using bash-specific features (like `read -e`), explicitly call bash since `/bin/sh` is dash on Ubuntu:
-```r
-system('bash -c "read -e -p \"> \" input && echo $input"', intern = TRUE)
-```
-
-### SQL strings: Use paste0() for readability
-
-For SQL strings, `paste0()` is cleaner than multi-line strings:
-```r
-# Preferred - clear structure, easy to edit
-sql <- paste0(
-    "CREATE TABLE IF NOT EXISTS tasks (",
-    "id INTEGER PRIMARY KEY,",
-    "name TEXT NOT NULL)"
-)
-```
-
-Note: A bug in rformat that duplicated multi-line string content was fixed in rformat v0.2.0+. Multi-line strings now work correctly, but `paste0()` is still preferred for SQL because it's easier to read and modify.
-
-### Empty list() serializes as [] not {}
-
-R's `list()` becomes `[]` in JSON, but APIs (e.g., Anthropic) expect `{}` for empty objects.
-Use `setNames(list(), character(0))` for empty JSON objects:
-```r
-# Wrong - becomes [] in JSON
-properties <- list()
-
-# Right - becomes {} in JSON
-properties <- setNames(list(), character(0))
-```
-
-### Reuse curl handles in loops
-
-Creating a new `curl::new_handle()` per iteration exhausts curl's 128-connection pool.
-Reuse a single handle with `curl::handle_reset()`:
-```r
-h <- curl::new_handle()
-while (TRUE) {
-    curl::handle_reset(h)
-    curl::handle_setopt(h, timeout = 5)
-    curl::curl_fetch_stream(url, callback, handle = h)
-}
-```
-
-## TypeScript to R Porting Notes
-
-Lessons learned from porting openclaw patterns to R:
-
-### Pattern Mapping
-
-| TypeScript | R Equivalent |
-|------------|--------------|
-| `async/await` | Sequential execution (R is synchronous) |
-| `Promise.all()` | `parallel::mclapply()` or sequential loop |
-| `interface Foo {}` | Named list with expected fields |
-| `class Foo` | List + functions, or R6 if needed |
-| `Map<K,V>` | Named list or environment |
-| `null ?? default` | `x %||% default` (null-coalescing) |
-| `?.` optional chaining | `if (!is.null(x)) x$field` |
-| `try/catch` | `tryCatch()` |
-| `JSON.parse/stringify` | `jsonlite::fromJSON/toJSON` |
-
-### Key Differences
-
-1. **No async**: R is single-threaded. Background tasks need `system2(..., wait=FALSE)` or parallel package.
-
-2. **Environments vs objects**: Use `new.env(parent = emptyenv())` for mutable registries:
-   ```r
-   .registry <- new.env(parent = emptyenv())
-   .registry[["key"]] <- value
-   ```
-
-3. **NULL handling**: R's NULL behaves differently than JS null/undefined. Always check with `is.null()`.
-
-4. **List vs vector**: Use `list()` for heterogeneous collections, vectors for homogeneous.
-
-5. **Closures for state**: R closures capture their environment - useful for stateful handlers:
-   ```r
-   make_counter <- function() {
-       count <- 0
-       function() {
-           count <<- count + 1
-           count
-       }
-   }
-   ```
-
-### Common Gotchas
-
-- R has 1-based indexing
-- `if (x)` fails if x is NULL or length-0 - use `if (isTRUE(x))` or `if (length(x) > 0 && x)`
-- `==` doesn't work for NULL comparison - use `is.null()`
-- List subsetting: `list[[1]]` returns element, `list[1]` returns list
-- Named args: R uses `=` not `:` for named arguments
-
-## Connection Handling
-
-The CLI automatically reconnects if the MCP server connection drops mid-session. When a tool call fails with "closed connection", it will:
-1. Attempt to reconnect to the server
-2. Retry the failed tool call
-3. Continue the conversation
-
-This handles transient socket issues without losing the session.
-
-## Known Issues
-
-### littler doesn't pass CLI args
-
-The CLI uses `#!/usr/bin/env Rscript` instead of `#!/usr/bin/env r` because littler doesn't pass command-line arguments through shebang scripts. This means slightly slower startup but correct arg handling.
-
-### MCP server port conflicts
-
-If `llamar` fails to connect, check for stale server processes:
-```bash
-pkill -f "llamaR::serve"
-```
-
-The `llamar-signal` bot will reuse whatever is on port 7850 without checking its cwd.
-A stale MCP server from a different project will cause "MCP server closed connection" errors on tool calls.
-
-### llamar-signal is a user-level systemd service
-
-```bash
-# Manage with --user (no sudo)
-systemctl --user status llamar-signal
-systemctl --user restart llamar-signal
-
-# Service file location
-~/.config/systemd/user/llamar-signal.service
-```
-
-## Dependencies
-
-**Imports:**
-- `jsonlite` - JSON handling
-
-**Suggests:**
-- `llm.api` - LLM provider abstraction (required for CLI agent)
-- `tinytest` - Testing
-
-## Exports
-
-| Function | Purpose |
-|----------|---------|
-| `serve(port, cwd)` | Start MCP server |
-| `install_cli(path, force)` | Install llamar to PATH |
-| `uninstall_cli(path)` | Remove llamar from PATH |
-
-## Roadmap
-
-See `PLAN.md` for detailed development plan. Current status:
-- Phase 1 (Core Loop) ✅
-- Phase 2 (MCP Foundation) ✅
-- Phase 3.1 (Session Persistence) ✅
-- Phase 3.2 (Context Injection) ✅
-- Phase 3.3 (Long-term Memory) - TODO
-- Phase 4 (Channels) - TODO
-- Phase 5 (Proactive Behavior) - TODO

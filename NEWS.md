@@ -1,3 +1,44 @@
+# corteza 0.6.6 (development)
+
+## Retroactive-extraction runtime (opt-in)
+
+* New `archival` config block. Default off — CRAN users see no behavior
+  change. When enabled, finished turns collapse into a fresh subagent
+  that holds the full transcript, while the parent's history keeps a
+  compact `{summary, subagent_id}` block. The LLM sees live subagents
+  in its system prompt and picks `query_subagent` vs `spawn_subagent`
+  as a normal tool decision.
+* `[Max turns reached]` is no longer a dead-end string: with archival
+  on, the full transcript persists in a subagent for follow-up via
+  `query_subagent`.
+* Recursion supported: subagents finishing their own queries
+  re-evaluate triggers and archive into sub-subagents. Capped at depth
+  3 by default (`archival.trigger.depth_cap`).
+* Subagent transcripts persist to disk via the existing
+  `transcript_append` infra under
+  `agents/subagent-<id>/sessions/<id>.jsonl`.
+* New internal helpers: `subagent_seed_history`, `subagent_turn_set_id`.
+* Startup validation: `archival.enabled` requires `subagents.enabled`.
+  No silent overrides.
+* See `vignette("retroactive-extraction")` for the full opt-in
+  surface, design notes, and known limitations.
+
+## CLI
+
+* `/spawn` now parses `--model`, `--preset`, and `--tools` in any
+  order. Matches the MCP `tool_spawn_subagent` surface.
+
+## Subagents
+
+* Configurable subagent presets (`investigate`, `work`, `minimal`).
+  Default is `investigate` (read/search only).
+* `subagent_spawn(tools = character(0))` is now a documented
+  configuration: spawns a holder with no active tools. Used by the
+  archival runtime to create transcript-only subagents.
+* `resolve_subagent_tools()` honors `config$subagents$default_tools`
+  when neither preset nor tools is supplied (was silently bypassed
+  before).
+
 # corteza 0.6.2
 
 ## CLI

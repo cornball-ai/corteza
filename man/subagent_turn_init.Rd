@@ -4,7 +4,7 @@
 \title{Initialize the child-side turn session.}
 \usage{
 subagent_turn_init(provider = "anthropic", model = NULL, tools_filter = NULL,
-                   system = NULL, max_turns = 10L)
+                   system = NULL, max_turns = 10L, depth = 0L)
 }
 \arguments{
 \item{provider}{LLM provider name (see [new_session()]).}
@@ -17,6 +17,11 @@ expose. NULL uses the subagent config defaults.}
 \item{system}{Optional system prompt string.}
 
 \item{max_turns}{Max tool-use turns per query.}
+
+\item{depth}{Archival depth this child sits at (0 means a direct
+child of the CLI parent). Used by recursion in
+[subagent_turn_prompt()] to avoid archiving past the configured
+depth_cap.}
 }
 \value{
 Invisible TRUE.

@@ -12,6 +12,8 @@ subagent_turn_prompt(prompt)
 Reply text (character).
 }
 \description{
-Forward a prompt to the child-side turn session.
+Captures the pre-turn history length so that, if archival is enabled
+and this query qualifies, the child can recursively archive its own
+turn into a sub-subagent (capped by depth_cap).
 }
 \keyword{internal}

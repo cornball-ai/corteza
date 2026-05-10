@@ -238,11 +238,17 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
     n_tools <- length(skills_as_api_tools(tools))
     display_model <- model %||% "(provider default)"
+    color <- ansi_colors()
     cat(sprintf(
-                "corteza chat | %s @ %s | %d tools | /help, /quit%s\n\n",
-                display_model, provider, n_tools,
+                "%scorteza chat%s | %s%s%s @ %s%s%s | %d tools | %s/help, /quit%s%s\n\n",
+                color$cyan, color$reset,
+                color$bold, display_model, color$reset,
+                color$bold, provider, color$reset,
+                n_tools,
+                color$dim, color$reset,
             if (resumed_count > 0L) {
-                sprintf(" | resumed (%d msgs)", resumed_count)
+                sprintf(" %s| resumed (%d msgs)%s",
+                        color$dim, resumed_count, color$reset)
             } else {
                 ""
             }
@@ -272,7 +278,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     tryCatch(ws_save(disk_session$sessionId),
                              error = function(e) NULL)
                 }
-                cat("Bye.\n")
+                cat(sprintf("%sBye.%s\n", color$dim, color$reset))
                 break
             }
             if (cmd %in% c("/clear", "/reset", "/new")) {
@@ -291,7 +297,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 turn_session$sessionId <- fresh$sessionId
                 turn_session$disk_session <- fresh
                 pending_r_context <- character(0)
-                cat(sprintf("Cleared. New session: %s\n\n", fresh$sessionId))
+                cat(sprintf("%sCleared. New session: %s%s\n\n",
+                            color$dim, fresh$sessionId, color$reset))
                 next
             }
             if (cmd == "/help") {
@@ -326,7 +333,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/spawn") {
                 if (length(parts) < 2L) {
-                    cat("Usage: /spawn <task>\n")
+                    cat(sprintf("%sUsage:%s /spawn <task>\n",
+                                color$dim, color$reset))
                     cat("       /spawn <task> --model <name>\n")
                     cat("       /spawn <task> --preset investigate|work|minimal\n")
                     cat("       /spawn <task> --tools read_file,grep_files,...\n")
@@ -345,10 +353,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     } else {
                         substr(sub_id, 1L, 8L)
                     }
-                    cat(sprintf("Spawned subagent [%s] (id %s)\n", handle, sub_id))
-                    cat(sprintf("Use /ask %s <prompt> to query\n", handle))
+                    cat(sprintf("%sSpawned subagent [%s]%s (id %s%s%s)\n",
+                                color$green, handle, color$reset,
+                                color$dim, sub_id, color$reset))
+                    cat(sprintf("%sUse /ask %s <prompt> to query%s\n",
+                                color$dim, handle, color$reset))
                 }, error = function(e) {
-                    cat(sprintf("Error: %s\n", e$message))
+                    cat(sprintf("%sError:%s %s\n",
+                                color$bright_magenta, color$reset, e$message))
                 })
                 next
             }
@@ -358,34 +370,42 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/ask") {
                 if (length(parts) < 3L) {
-                    cat("Usage: /ask <id-or-seq> <prompt>\n")
+                    cat(sprintf("%sUsage:%s /ask <id-or-seq> <prompt>\n",
+                                color$dim, color$reset))
                     next
                 }
                 sub_id <- parts[2]
                 sub_prompt <- paste(parts[3:length(parts)], collapse = " ")
-                cat(sprintf("Querying subagent %s...\n", sub_id))
+                cat(sprintf("%sQuerying subagent %s...%s\n",
+                            color$dim, sub_id, color$reset))
                 tryCatch({
                     res <- subagent_query(sub_id, sub_prompt)
-                    cat(res, "\n")
+                    cat(sprintf("%s%s%s\n", color$cyan, res, color$reset))
                 }, error = function(e) {
-                    cat(sprintf("Error: %s\n", e$message))
+                    cat(sprintf("%sError:%s %s\n",
+                                color$bright_magenta, color$reset, e$message))
                 })
                 next
             }
             if (cmd == "/kill") {
                 if (length(parts) < 2L) {
-                    cat("Usage: /kill <id-or-seq>\n")
+                    cat(sprintf("%sUsage:%s /kill <id-or-seq>\n",
+                                color$dim, color$reset))
                     next
                 }
                 ok <- tryCatch(subagent_kill(parts[2]),
                                error = function(e) {
-                                   cat(sprintf("Error: %s\n", e$message))
+                                   cat(sprintf("%sError:%s %s\n",
+                                               color$bright_magenta,
+                                               color$reset, e$message))
                                    FALSE
                                })
                 if (isTRUE(ok)) {
-                    cat(sprintf("Subagent %s terminated\n", parts[2]))
+                    cat(sprintf("%sSubagent %s terminated%s\n",
+                                color$dim, parts[2], color$reset))
                 } else if (isFALSE(ok)) {
-                    cat(sprintf("Subagent not found: %s\n", parts[2]))
+                    cat(sprintf("%sSubagent not found: %s%s\n",
+                                color$yellow, parts[2], color$reset))
                 }
                 next
             }
@@ -544,8 +564,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             # /r is handled separately below to keep its existing
             # multi-line pending_r_context plumbing.
             if (!startsWith(sp, "/r ")) {
-                cat(sprintf("Unknown command: %s. Type /help for the list.\n",
-                            cmd))
+                cat(sprintf("%sUnknown command: %s. Type /help for the list.%s\n",
+                            color$yellow, cmd, color$reset))
                 next
             }
         }
@@ -596,12 +616,16 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         transcript_append(disk_session$session, "user", prompt)
 
-        cat(sprintf("\u25cf Thinking with %s\n",
-                    model %||% "(provider default)"))
+        cat(sprintf("%s\u25cf%s Thinking with %s%s%s\n",
+                    color$cyan, color$reset,
+                    color$bold, model %||% "(provider default)",
+                    color$reset))
+        pre_turn_len <- length(turn_session$history %||% list())
         result <- tryCatch(
                            turn(prompt, turn_session),
                            error = function(e) {
-            message("Error: ", e$message)
+            message(sprintf("%sError:%s %s",
+                            color$bright_magenta, color$reset, e$message))
             NULL
         }
         )
@@ -611,11 +635,22 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
         reply <- result$reply %||% ""
         if (nchar(reply) == 0) {
-            cat("[No response text]\n\n")
+            cat(sprintf("%s[No response text]%s\n\n",
+                        color$dim, color$reset))
         } else {
             cat(reply, "\n\n")
         }
         transcript_append(disk_session$session, "assistant", reply)
+
+        # Archival hook: opt-in via config$archival$enabled. Mutates
+        # turn_session$history in place when triggers fire.
+        maybe_archive_turn(
+            turn_session = turn_session, prompt = prompt,
+            pre_turn_len = pre_turn_len, result = result, config = config,
+            parent_session_id = disk_session$session$sessionId,
+            max_turns_hit = isTRUE(grepl("Max turns", reply)),
+            depth = 0L
+        )
     }
 
     invisible(disk_session$session)
