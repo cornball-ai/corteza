@@ -12,6 +12,12 @@ expect_equal(cfg$archival$trigger$depth_cap, 3L)
 expect_equal(cfg$archival$summary$style, "structured")
 # summary$model should be NULL (= match parent), not a literal string.
 expect_null(cfg$archival$summary$model)
+# summary$timeout_seconds bounds the LLM summary call so a hung
+# provider can't wedge the parent.
+expect_equal(cfg$archival$summary$timeout_seconds, 60L)
+# Async is on by default so the parent CLI never blocks on a slow
+# summarization call.
+expect_true(isTRUE(cfg$archival$async))
 
 # Subagents block defaults TRUE so a normal cfg passes the
 # archival/subagents validation when archival is later enabled.

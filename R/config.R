@@ -234,6 +234,16 @@ load_config <- function(cwd = getwd()) {
         arc$summary$style <- "structured"
     }
     # arc$summary$model: NULL means "match parent provider/model".
+    if (is.null(arc$summary$timeout_seconds)) {
+        arc$summary$timeout_seconds <- 60L
+    }
+    # Async archival: spawn + seed + persist sync, summary in
+    # callr::r_bg. Default TRUE so the parent CLI never blocks on a
+    # slow LLM. Set FALSE to fall back to synchronous (with the same
+    # timeout but blocking).
+    if (is.null(arc$async)) {
+        arc$async <- TRUE
+    }
     config$archival <- arc
 
     # Archival requires the subagent runtime. Refuse to load a config

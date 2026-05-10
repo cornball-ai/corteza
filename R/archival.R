@@ -293,12 +293,14 @@ archival_summary_system_prompt <- function(style) {
 
 #' Generate a summary for a history slice via a single LLM call.
 #'
-#' Uses llm.api::agent with no tools and max_turns = 1. Provider/model
-#' default to the parent's; archival_archive_turn applies the
-#' summary$model override if the user set one.
+#' Uses `llm.api::agent` with no tools and `max_turns = 1`. The whole
+#' call is run inside `callr::r(timeout = ...)` so a hung provider can't
+#' wedge the parent CLI: we kill the child process and return a
+#' placeholder string instead.
 #' @noRd
 archival_summarize <- function(history_slice, style = "structured",
-                               provider = "anthropic", model = NULL) {
+                               provider = "anthropic", model = NULL,
+                               timeout_seconds = 30L) {
     # Ollama JSON-mode reliability is wildly variable, so force
     # paragraph style for ollama no matter what config says.
     if (identical(provider, "ollama") && identical(style, "structured")) {
@@ -310,21 +312,27 @@ archival_summarize <- function(history_slice, style = "structured",
     sys <- archival_summary_system_prompt(style)
     user <- sprintf("Summarize the following completed agent turn:\n\n%s",
                     archival_render_transcript(history_slice))
-    resp <- tryCatch(
-        llm.api::agent(prompt = user, system = sys, tools = list(),
-                       model = model, provider = provider,
-                       max_turns = 1L, history = list(), verbose = FALSE),
+    summary <- tryCatch(
+        callr::r(
+            function(prompt, system, model, provider) {
+                resp <- llm.api::agent(
+                    prompt = prompt, system = system, tools = list(),
+                    model = model, provider = provider,
+                    max_turns = 1L, history = list(), verbose = FALSE
+                )
+                as.character(resp$content %||% "")
+            },
+            args = list(prompt = user, system = sys, model = model,
+                        provider = provider),
+            timeout = timeout_seconds
+        ),
         error = function(e) {
-            log_event("archival_summary_failed", error = conditionMessage(e),
-                      level = "warn")
+            log_event("archival_summary_failed",
+                      error = conditionMessage(e), level = "warn")
             NULL
         }
     )
-    if (is.null(resp)) {
-        return("[summary unavailable]")
-    }
-    summary <- as.character(resp$content %||% "")
-    if (!nzchar(summary)) {
+    if (is.null(summary) || !nzchar(summary)) {
         return("[summary unavailable]")
     }
     if (identical(style, "structured")) {
@@ -332,6 +340,53 @@ archival_summarize <- function(history_slice, style = "structured",
     } else {
         summary
     }
+}
+
+#' Generate the summary in a background process; do not wait.
+#'
+#' Used by `archival_archive_turn` when `archival$async` is enabled
+#' (the default). The bg child runs the same summary call as
+#' `archival_summarize` and appends the result to the holder's
+#' on-disk transcript when finished. The parent doesn't poll or join;
+#' if the bg child crashes, the holder still has the full slice for
+#' `query_subagent` to draw on.
+#' @noRd
+archival_summarize_bg <- function(subagent_id, history_slice, style,
+                                  provider, model, cwd = getwd(),
+                                  timeout_seconds = 60L) {
+    callr::r_bg(
+        function(subagent_id, history_slice, style, provider, model,
+                 cwd, timeout_seconds) {
+            library(corteza)
+            setwd(cwd)
+            summary <- tryCatch(
+                corteza:::archival_summarize(
+                    history_slice, style = style, provider = provider,
+                    model = model, timeout_seconds = timeout_seconds
+                ),
+                error = function(e) "[summary unavailable]"
+            )
+            agent_id <- paste0("subagent-", subagent_id)
+            sess <- list(sessionId = subagent_id, cwd = cwd,
+                         provider = provider, model = model)
+            tryCatch(
+                corteza:::transcript_append(
+                    sess, "assistant",
+                    paste0("[archival summary]\n\n", summary),
+                    provider = "corteza", model = "archival",
+                    agent_id = agent_id
+                ),
+                error = function(e) NULL
+            )
+            invisible(TRUE)
+        },
+        args = list(subagent_id = subagent_id,
+                    history_slice = history_slice,
+                    style = style, provider = provider, model = model,
+                    cwd = cwd, timeout_seconds = timeout_seconds),
+        supervise = FALSE
+    )
+    invisible(NULL)
 }
 
 # ---- Persistence (reuse transcript_append) ----
@@ -420,16 +475,56 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
         return(NULL)
     }
 
-    # Generate the summary in the parent process. Provider stays with
-    # the parent; model can be overridden via summary$model.
     summary_model <- arc_cfg$summary$model %||% parent_model
     summary_style <- arc_cfg$summary$style %||% "structured"
-    summary <- archival_summarize(history_slice,
-                                  style = summary_style,
-                                  provider = parent_provider,
-                                  model = summary_model)
+    is_async <- isTRUE(arc_cfg$async %||% TRUE)
 
-    # Persist on disk via the existing transcript layer.
+    if (is_async) {
+        # Persist the slice now with a placeholder summary so the
+        # holder's transcript has the body content immediately. The
+        # real summary is appended later by the bg process. The
+        # placeholder is what shows up in the parent's history; the
+        # holder still owns the full slice for query_subagent.
+        placeholder <- sprintf(
+            "[archived turn pending summary] | task=%s | %d entries",
+            archival_first_line(prompt), length(history_slice)
+        )
+        persist_attempt <- tryCatch({
+            archival_persist_subagent(subagent_id, history_slice,
+                                      placeholder,
+                                      parent_session_id = parent_session_id,
+                                      provider = parent_provider,
+                                      model = parent_model)
+            TRUE
+        }, error = function(e) {
+            log_event("archival_failed", phase = "persist",
+                      error = conditionMessage(e), level = "warn")
+            FALSE
+        })
+        if (!isTRUE(persist_attempt)) {
+            try(subagent_kill(subagent_id), silent = TRUE)
+            return(NULL)
+        }
+        # Fire-and-forget bg summary. supervise = FALSE so it survives
+        # parent exit; if it fails, the placeholder stays.
+        timeout_secs <- as.integer(arc_cfg$summary$timeout_seconds %||% 60L)
+        archival_summarize_bg(subagent_id, history_slice,
+                              style = summary_style,
+                              provider = parent_provider,
+                              model = summary_model,
+                              cwd = getwd(),
+                              timeout_seconds = timeout_secs)
+        log_event("archival_succeeded_async", subagent_id = subagent_id,
+                  depth = depth, slice_len = length(history_slice))
+        return(list(summary = placeholder, subagent_id = subagent_id))
+    }
+
+    # Synchronous path. Used when archival$async is set to FALSE.
+    timeout_secs <- as.integer(arc_cfg$summary$timeout_seconds %||% 30L)
+    summary <- archival_summarize(history_slice, style = summary_style,
+                                  provider = parent_provider,
+                                  model = summary_model,
+                                  timeout_seconds = timeout_secs)
     persist_attempt <- tryCatch({
         archival_persist_subagent(subagent_id, history_slice, summary,
                                   parent_session_id = parent_session_id,
@@ -514,6 +609,19 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
         return(invisible())
     }
 
+    # Surface the wait. With async = TRUE (default) the spawn + seed +
+    # persist round-trip is ~250-500ms; the summary runs in r_bg and
+    # the prompt returns immediately. With async = FALSE the
+    # summarization LLM call is sync (capped by summary.timeout_seconds)
+    # and can be tens of seconds.
+    if (depth == 0L && interactive()) {
+        if (isTRUE(arc_cfg$async %||% TRUE)) {
+            cat("● Archiving (summary in background)...\n")
+        } else {
+            cat("● Archiving turn (this may take a few seconds)...\n")
+        }
+    }
+
     archived <- archival_archive_turn(
         turn_session = turn_session, prompt = prompt,
         history_slice = slice, arc_cfg = arc_cfg, depth = depth,
@@ -523,7 +631,21 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
         config = config
     )
     if (is.null(archived)) {
+        if (depth == 0L && interactive()) {
+            cat("  Archive failed; turn left intact (see log for details).\n")
+        }
         return(invisible())
+    }
+
+    if (depth == 0L && interactive()) {
+        info <- .subagent_registry[[archived$subagent_id]]
+        handle <- if (!is.null(info$seq)) {
+            as.character(info$seq)
+        } else {
+            substr(archived$subagent_id, 1L, 8L)
+        }
+        cat(sprintf("  Archived to subagent [%s]. /ask %s ...\n",
+                    handle, handle))
     }
 
     # Replace the turn slice with one synthetic assistant message that
