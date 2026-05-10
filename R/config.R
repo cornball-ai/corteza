@@ -222,7 +222,7 @@ load_config <- function(cwd = getwd()) {
         arc$trigger$token_threshold <- 8000L
     }
     if (is.null(arc$trigger$tool_call_threshold)) {
-        arc$trigger$tool_call_threshold <- 10L
+        arc$trigger$tool_call_threshold <- 5L
     }
     if (is.null(arc$trigger$depth_cap)) {
         arc$trigger$depth_cap <- 3L

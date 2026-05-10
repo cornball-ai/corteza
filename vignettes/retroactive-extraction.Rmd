@@ -44,7 +44,7 @@ Add to your project or global config:
     "trigger": {
       "on_max_turns": true,
       "token_threshold": 8000,
-      "tool_call_threshold": 10,
+      "tool_call_threshold": 5,
       "depth_cap": 3
     },
     "summary": {

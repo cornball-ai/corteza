@@ -7,7 +7,7 @@ cfg <- corteza:::load_config(tempdir())
 expect_false(isTRUE(cfg$archival$enabled))
 expect_true(isTRUE(cfg$archival$trigger$on_max_turns))
 expect_equal(cfg$archival$trigger$token_threshold, 8000L)
-expect_equal(cfg$archival$trigger$tool_call_threshold, 10L)
+expect_equal(cfg$archival$trigger$tool_call_threshold, 5L)
 expect_equal(cfg$archival$trigger$depth_cap, 3L)
 expect_equal(cfg$archival$summary$style, "structured")
 # summary$model should be NULL (= match parent), not a literal string.
