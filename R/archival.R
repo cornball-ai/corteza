@@ -53,6 +53,8 @@ archival_count_tool_calls <- function(history_slice) {
     }
     total <- 0L
     for (entry in history_slice) {
+        # Anthropic-style: content is a list of typed blocks with
+        # type in {"tool_use", "tool_result"}.
         cnt <- entry$content
         if (is.list(cnt)) {
             for (block in cnt) {
@@ -61,6 +63,14 @@ archival_count_tool_calls <- function(history_slice) {
                     total <- total + 1L
                 }
             }
+        }
+        # OpenAI-style (also moonshot/kimi): assistant carries a
+        # tool_calls field; results come back as role == "tool".
+        if (!is.null(entry$tool_calls)) {
+            total <- total + length(entry$tool_calls)
+        }
+        if (identical(entry$role, "tool")) {
+            total <- total + 1L
         }
     }
     as.integer(total %/% 2L)

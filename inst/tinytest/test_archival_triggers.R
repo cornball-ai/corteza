@@ -65,6 +65,26 @@ expect_equal(count_tools(slice_with_tools(3L)), 3L)
 # Plain text content contributes nothing.
 expect_equal(count_tools(list(list(role = "user", content = "hi"))), 0L)
 
+# OpenAI-style shape (moonshot/kimi/openai): assistant has tool_calls
+# field, results come back as role=="tool". 2 calls + 2 results -> 2
+# pairs. This shape is what tripped Troy's first archival run: the
+# Anthropic-only counter returned 0 and the threshold never fired.
+openai_slice <- list(
+    list(role = "user", content = "find foo"),
+    list(role = "assistant", content = "",
+         tool_calls = list(
+             list(id = "c1", type = "function",
+                  `function` = list(name = "list_files",
+                                    arguments = "{\"path\":\".\"}")),
+             list(id = "c2", type = "function",
+                  `function` = list(name = "read_file",
+                                    arguments = "{\"path\":\"foo.R\"}"))
+         )),
+    list(role = "tool", content = "ok", tool_call_id = "c1"),
+    list(role = "tool", content = "contents", tool_call_id = "c2")
+)
+expect_equal(count_tools(openai_slice), 2L)
+
 # Token estimator unit tests.
 expect_equal(est_tokens(list()), 0L)
 # 4 chars -> 1 token.
