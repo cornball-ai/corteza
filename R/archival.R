@@ -457,6 +457,14 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
                   level = "warn")
         return(NULL)
     }
+    # Holders aren't doing active work — they hold state for later
+    # query_subagent calls. The default 30-minute subagent timeout was
+    # designed for tool-using workers where a stuck child shouldn't
+    # linger. Override it here so holders live as long as the parent
+    # process. (One year is "effectively unlimited" given subagents
+    # die with the CLI anyway.)
+    .subagent_registry[[subagent_id]]$timeout <-
+        Sys.time() + 365 * 24 * 60 * 60
 
     # Seed the child's history.
     seed_attempt <- tryCatch({
