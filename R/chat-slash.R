@@ -59,6 +59,7 @@ chat_help_text <- function() {
         "  /trace [N]                    Show last N tool executions (default 20)",
         "  /permissions                  Show tool approval and sandbox settings",
         "  /dryrun                       Toggle dry-run mode (preview tools)",
+        "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
         "  /compact                      Summarize conversation to free context",
         "  /r <expr>                     Eval R expression locally; output staged for next prompt",
         "",

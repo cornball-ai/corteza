@@ -129,6 +129,31 @@ classify_data <- function(call, context = NULL) {
     "random"
 }
 
+# Run the plan-mode gate. Returns a deny decision to short-circuit when
+# the session is in plan mode and the tool would mutate state, or NULL.
+# `exit_plan_mode` is always allowed (it's the escape hatch). Reads pass
+# through. Sticky data-class routing still applies to the read result.
+check_plan_mode <- function(call) {
+    if (!isTRUE(call$context$plan_mode)) {
+        return(NULL)
+    }
+    tool <- call$tool %||% ""
+    if (identical(tool, "exit_plan_mode")) {
+        return(NULL)
+    }
+    op <- classify_op(tool)
+    if (op %in% c("write", "exec")) {
+        return(list(
+            model = "cloud",
+            approval = "deny",
+            reason = sprintf(
+                "plan mode: %s would modify state; present a plan via exit_plan_mode first",
+                tool)
+        ))
+    }
+    NULL
+}
+
 # Run hard safety checks. Returns a decision list to short-circuit, or NULL.
 check_safety <- function(call) {
     paths <- path.expand(call$paths %||% character())
@@ -227,6 +252,11 @@ policy <- function(call) {
     safety <- check_safety(call)
     if (!is.null(safety)) {
         return(safety)
+    }
+
+    plan <- check_plan_mode(call)
+    if (!is.null(plan)) {
+        return(plan)
     }
 
     user_fn <- getOption("corteza.policy")

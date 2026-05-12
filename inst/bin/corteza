@@ -104,6 +104,7 @@ Commands (in chat):
   /review [ref]  Review local changes with the current model
   /config        Show active runtime configuration
   /permissions   Show tool approval and sandbox settings
+  /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /sessions      List sessions
@@ -1520,6 +1521,26 @@ run_agent <- function(opts) {
                       color$dim, color$reset))
         }
         next
+      } else if (cmd == "/plan") {
+        # /plan with no args toggles plan mode. /plan <task> turns it
+        # on and submits <task> as the next user prompt (falls through
+        # to normal handling).
+        rest <- trimws(cmd_rest)
+        if (!nzchar(rest)) {
+          opts$plan_mode <- !isTRUE(opts$plan_mode)
+          if (opts$plan_mode) {
+            cat(sprintf("%sPlan mode enabled - reads only; LLM proposes a plan via exit_plan_mode%s\n",
+                        color$yellow, color$reset))
+          } else {
+            cat(sprintf("%sPlan mode disabled%s\n",
+                        color$dim, color$reset))
+          }
+          next
+        }
+        opts$plan_mode <- TRUE
+        cat(sprintf("%sPlan mode enabled.%s\n", color$dim, color$reset))
+        prompt <- rest
+        # Fall through to regular prompt handling.
       } else if (cmd == "/trace") {
         # Show tool execution trace
         n <- if (!is.null(cmd_arg)) as.integer(cmd_arg) else 20L
@@ -1683,6 +1704,7 @@ Commands:
   /review [ref]  Review local changes with the current model
   /config        Show active runtime configuration
   /permissions   Show tool approval and sandbox settings
+  /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /sessions      List sessions for this directory
@@ -1769,7 +1791,8 @@ Tool output:
       system = system_prompt,
       history = api_history,
       approval_cb = function(call, decision) TRUE,
-      max_turns = 20L
+      max_turns = 20L,
+      plan_mode = isTRUE(opts$plan_mode)
     )
 
     # CLI tool_handler returns plain strings; turn() expects MCP-format.
@@ -1794,6 +1817,10 @@ Tool output:
         tool_executor = cli_executor,
         tools = tools
       )
+      # Sync plan-mode state back to opts so a successful
+      # exit_plan_mode call inside this turn lifts plan mode for the
+      # next iteration (turn_session is per-turn, opts persists).
+      opts$plan_mode <- isTRUE(turn_session$plan_mode)
       # Reshape to the llm.api::agent result shape so downstream
       # compaction / token-tracking code keeps working unchanged.
       list(
