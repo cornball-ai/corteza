@@ -387,6 +387,47 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 })
                 next
             }
+            if (cmd == "/queue") {
+                if (length(parts) < 3L) {
+                    cat(sprintf("%sUsage:%s /queue <id-or-seq> <prompt>\n",
+                                color$dim, color$reset))
+                    next
+                }
+                sub_id <- parts[2]
+                sub_prompt <- paste(parts[3:length(parts)], collapse = " ")
+                tryCatch({
+                    subagent_query(sub_id, sub_prompt, wait = FALSE)
+                    cat(sprintf("%sQueued for subagent %s; collect with /collect %s%s\n",
+                                color$dim, sub_id, sub_id, color$reset))
+                }, error = function(e) {
+                    cat(sprintf("%sError:%s %s\n",
+                                color$bright_magenta, color$reset, e$message))
+                })
+                next
+            }
+            if (cmd == "/collect") {
+                if (length(parts) < 2L) {
+                    cat(sprintf("%sUsage:%s /collect <id-or-seq>\n",
+                                color$dim, color$reset))
+                    next
+                }
+                sub_id <- parts[2]
+                cat(sprintf("%sCollecting from subagent %s...%s\n",
+                            color$dim, sub_id, color$reset))
+                tryCatch({
+                    res <- subagent_collect(sub_id)
+                    if (is.null(res)) {
+                        cat(sprintf("%sStill working; try /collect %s again.%s\n",
+                                    color$yellow, sub_id, color$reset))
+                    } else {
+                        cat(sprintf("%s%s%s\n", color$cyan, res, color$reset))
+                    }
+                }, error = function(e) {
+                    cat(sprintf("%sError:%s %s\n",
+                                color$bright_magenta, color$reset, e$message))
+                })
+                next
+            }
             if (cmd == "/kill") {
                 if (length(parts) < 2L) {
                     cat(sprintf("%sUsage:%s /kill <id-or-seq>\n",

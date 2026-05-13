@@ -1023,15 +1023,48 @@ tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
 #'
 #' @param id (character) Subagent ID.
 #' @param prompt (character) Prompt to send.
+#' @param wait (logical) If TRUE (default), block until the child
+#'   replies and return the reply. If FALSE, fire the prompt and
+#'   return immediately; caller collects via `collect_subagent`.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_query_subagent <- function(id, prompt) {
+tool_query_subagent <- function(id, prompt, wait = TRUE) {
     tryCatch({
-        result <- subagent_query(id, prompt)
-        ok(result)
+        result <- subagent_query(id, prompt, wait = wait)
+        if (isTRUE(wait)) {
+            ok(result)
+        } else {
+            ok(sprintf("Queued for subagent %s; collect with collect_subagent.",
+                       result))
+        }
     }, error = function(e) {
         err(paste("Query failed:", e$message))
+    })
+}
+
+#' Collect the result of a previously-fired async subagent query.
+#'
+#' @param id (character) Subagent ID.
+#' @param wait (logical) If TRUE (default), block up to `timeout`
+#'   seconds. If FALSE, poll once and return immediately.
+#' @param timeout (numeric) Maximum seconds to block when `wait =
+#'   TRUE`. Default 60.
+#' @return An MCP tool-result list. On timeout returns a note that
+#'   the query is still running.
+#' @keywords internal
+#' @export
+tool_collect_subagent <- function(id, wait = TRUE, timeout = 60) {
+    tryCatch({
+        result <- subagent_collect(id, wait = wait, timeout = timeout)
+        if (is.null(result)) {
+            ok(sprintf("Subagent %s still working; try collect_subagent again.",
+                       id))
+        } else {
+            ok(result)
+        }
+    }, error = function(e) {
+        err(paste("Collect failed:", e$message))
     })
 }
 
@@ -1135,6 +1168,7 @@ register_builtin_skills <- function() {
     # Subagent tools
     register_skill_from_fn("spawn_subagent", tool_spawn_subagent)
     register_skill_from_fn("query_subagent", tool_query_subagent)
+    register_skill_from_fn("collect_subagent", tool_collect_subagent)
     register_skill_from_fn("list_subagents", tool_list_subagents)
     register_skill_from_fn("kill_subagent", tool_kill_subagent)
 

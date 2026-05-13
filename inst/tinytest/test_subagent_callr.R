@@ -28,6 +28,27 @@ if (nzchar(Sys.getenv("ANTHROPIC_API_KEY"))) {
     res <- corteza::subagent_query(id, "Reply with exactly the word 'pong'.")
     expect_true(is.character(res))
     expect_true(nzchar(res))
+
+    # Async round-trip: fire, see pending state, collect.
+    invisible(corteza::subagent_query(id, "Reply with exactly 'ping'.",
+                                       wait = FALSE))
+    info <- corteza:::.subagent_registry[[id]]
+    expect_true(!is.null(info[["pending"]]))
+
+    # Non-blocking collect can race the child to completion; if it
+    # already returned, that consumed the pending result and we're
+    # done. Otherwise block on the second collect.
+    poll <- corteza::subagent_collect(id, wait = FALSE)
+    expect_true(is.null(poll) || is.character(poll))
+    res2 <- if (is.character(poll)) {
+        poll
+    } else {
+        corteza::subagent_collect(id, wait = TRUE, timeout = 60)
+    }
+    expect_true(is.character(res2))
+    expect_true(nzchar(res2))
+    info <- corteza:::.subagent_registry[[id]]
+    expect_null(info[["pending"]])
 }
 
 # Kill cleans up registry + closes the session.
