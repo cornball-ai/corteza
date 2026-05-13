@@ -452,15 +452,25 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
 #' replies, any tool calls it makes resolve against the child's
 #' in-process skill registry, and history accumulates across queries.
 #'
+#' With `wait = FALSE` the call returns immediately after firing the
+#' prompt; the parent collects the reply later with [subagent_collect()].
+#' A subagent can only carry one in-flight async query at a time:
+#' firing a second one while the first is pending raises an error.
+#'
 #' @param id Subagent identifier. Accepts the canonical UUID, a unique
 #'   UUID prefix, or the per-session sequence number printed by
 #'   `subagent_list()` / `/agents`.
 #' @param prompt Prompt to send.
+#' @param wait If TRUE (default), block until the child replies and
+#'   return the reply text. If FALSE, fire the prompt and return the
+#'   canonical id invisibly; caller must collect via
+#'   [subagent_collect()].
 #' @param timeout Timeout in seconds (currently advisory; callr-level
 #'   hard timeouts are future work).
-#' @return Reply text (character).
+#' @return Reply text (character) when `wait = TRUE`. Canonical id
+#'   (character, invisibly) when `wait = FALSE`.
 #' @export
-subagent_query <- function(id, prompt, timeout = 60L) {
+subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
     canonical <- resolve_subagent_id(id)
     if (is.null(canonical)) {
         stop("Subagent not found: ", id, call. = FALSE)
@@ -469,6 +479,34 @@ subagent_query <- function(id, prompt, timeout = 60L) {
     if (Sys.time() > info$timeout) {
         subagent_kill(canonical)
         stop("Subagent expired: ", canonical, call. = FALSE)
+    }
+
+    if (!isTRUE(wait)) {
+        # `[[ ]]` not `$`: list `$` prefix-matches, so info$pending
+        # would silently return info$pending_started_at when pending
+        # itself has been NULL-stripped from the list.
+        pending <- info[["pending"]]
+        if (!is.null(pending)) {
+            snippet <- substr(pending, 1L, 60L)
+            stop(sprintf("Subagent %s is busy with: %s", canonical, snippet),
+                 call. = FALSE)
+        }
+        tryCatch(
+            info$session$call(
+                function(p) corteza::subagent_turn_prompt(p),
+                list(p = prompt)
+            ),
+            error = function(e) {
+                stop("Subagent query failed to start: ",
+                     conditionMessage(e), call. = FALSE)
+            }
+        )
+        info$pending <- prompt
+        info$pending_started_at <- Sys.time()
+        .subagent_registry[[canonical]] <- info
+        log_event("subagent_query_async", subagent_id = canonical,
+                  prompt_length = nchar(prompt))
+        return(invisible(canonical))
     }
 
     reply <- tryCatch(
@@ -482,6 +520,54 @@ subagent_query <- function(id, prompt, timeout = 60L) {
     )
     log_event("subagent_query", subagent_id = canonical,
               prompt_length = nchar(prompt))
+    as.character(reply)
+}
+
+#' Collect the result of a previously-fired async subagent query.
+#'
+#' Pairs with `subagent_query(..., wait = FALSE)`. Returns the reply
+#' text once the child finishes its turn, or NULL while the query is
+#' still running. Result is read exactly once: after a successful
+#' collect the pending slot is cleared, so the next async query can
+#' fire.
+#'
+#' @param id Subagent identifier (UUID, prefix, or sequence number).
+#' @param wait If TRUE (default), block up to `timeout` seconds waiting
+#'   for the child to finish. If FALSE, poll once and return
+#'   immediately.
+#' @param timeout Maximum seconds to block when `wait = TRUE`. On
+#'   timeout the child is left running; caller may collect again later
+#'   or kill explicitly.
+#' @return Reply text (character) when ready; NULL when still running.
+#' @export
+subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
+    canonical <- resolve_subagent_id(id)
+    if (is.null(canonical)) {
+        stop("Subagent not found: ", id, call. = FALSE)
+    }
+    info <- .subagent_registry[[canonical]]
+    if (is.null(info[["pending"]])) {
+        stop("No pending query for subagent ", canonical, call. = FALSE)
+    }
+    timeout_ms <- if (isTRUE(wait)) as.integer(timeout * 1000L) else 0L
+    state <- info$session$poll_process(timeout_ms)
+    if (state != "ready") {
+        return(invisible(NULL))
+    }
+    reply <- tryCatch(
+        info$session$get_result(),
+        error = function(e) {
+            info$pending <- NULL
+            info$pending_started_at <- NULL
+            .subagent_registry[[canonical]] <- info
+            stop("Subagent query failed: ", conditionMessage(e),
+                 call. = FALSE)
+        }
+    )
+    info$pending <- NULL
+    info$pending_started_at <- NULL
+    .subagent_registry[[canonical]] <- info
+    log_event("subagent_collect", subagent_id = canonical)
     as.character(reply)
 }
 
@@ -516,13 +602,18 @@ subagent_list <- function() {
     if (length(ids) == 0L) return(list())
     out <- lapply(ids, function(id) {
         info <- .subagent_registry[[id]]
+        # `[[ ]]` for pending fields: list `$` prefix-matches, so
+        # info$pending would silently return info$pending_started_at
+        # whenever pending itself has been NULL-stripped.
         list(
             id = info$id,
             seq = info$seq,
             task = info$task,
             started_at = info$started_at,
             time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
-                                                 units = "mins"))
+                                                 units = "mins")),
+            pending = info[["pending"]],
+            pending_started_at = info[["pending_started_at"]]
         )
     })
     # Sort by seq ascending so the user-visible numbering is stable.
@@ -565,10 +656,22 @@ format_subagent_list <- function(agents) {
         }
         seq_str <- if (!is.null(a$seq)) sprintf("%d", a$seq) else "?"
         id_short <- substr(a$id, 1L, 8L)
-        lines <- c(lines, sprintf("  [%s] %s (%s) %s",
-                                  seq_str, a$task, time_str, id_short))
+        # `[[ ]]` not `$`: list `$` prefix-matches, so a$pending would
+        # silently return a$pending_started_at whenever pending itself
+        # is NULL.
+        pending <- a[["pending"]]
+        state_str <- if (!is.null(pending)) {
+            snippet <- substr(pending, 1L, 40L)
+            if (nchar(pending) > 40L) snippet <- paste0(snippet, "...")
+            sprintf(" busy: %s", snippet)
+        } else {
+            " idle"
+        }
+        lines <- c(lines, sprintf("  [%s] %s (%s)%s %s",
+                                  seq_str, a$task, time_str,
+                                  state_str, id_short))
     }
     paste(c(lines, "",
-            "Use the sequence number, the 8-char prefix, or the full id with /ask and /kill."),
+            "Use the sequence number, the 8-char prefix, or the full id with /ask, /collect, and /kill."),
           collapse = "\n")
 }

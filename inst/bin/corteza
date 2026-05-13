@@ -1679,6 +1679,35 @@ run_agent <- function(opts) {
           cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
         })
         next
+      } else if (cmd == "/queue" && length(cmd_parts) >= 3) {
+        # Fire async query: /queue <id> <prompt>
+        subagent_id <- cmd_parts[2]
+        subagent_prompt <- paste(cmd_parts[3:length(cmd_parts)], collapse = " ")
+        tryCatch({
+          corteza::subagent_query(subagent_id, subagent_prompt, wait = FALSE)
+          cat(sprintf("%sQueued for subagent %s; collect with /collect %s%s\n",
+                      color$dim, subagent_id, subagent_id, color$reset))
+        }, error = function(e) {
+          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
+        })
+        next
+      } else if (cmd == "/collect" && length(cmd_parts) >= 2) {
+        # Collect pending reply: /collect <id>
+        subagent_id <- cmd_parts[2]
+        cat(sprintf("%sCollecting from subagent %s...%s\n",
+                    color$dim, subagent_id, color$reset))
+        tryCatch({
+          result <- corteza::subagent_collect(subagent_id)
+          if (is.null(result)) {
+            cat(sprintf("%sStill working; try /collect %s again.%s\n",
+                        color$yellow, subagent_id, color$reset))
+          } else {
+            cat(sprintf("%s%s%s\n", color$cyan, result, color$reset))
+          }
+        }, error = function(e) {
+          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
+        })
+        next
       } else if (cmd == "/kill" && length(cmd_parts) >= 2) {
         # Kill a subagent
         subagent_id <- cmd_parts[2]
@@ -1720,7 +1749,9 @@ Subagents:
   /spawn <task> --preset <name>          investigate (default), work, minimal
   /spawn <task> --tools <a,b,c>          Explicit tool filter (overrides preset)
   /agents                                List active subagents
-  /ask <id> <prompt>                     Query a subagent
+  /ask <id> <prompt>                     Query a subagent (blocks for reply)
+  /queue <id> <prompt>                   Fire a query and return; collect later
+  /collect <id>                          Collect a pending reply
   /kill <id>                             Terminate a subagent
 
 Skills:
