@@ -1,4 +1,18 @@
-# corteza 0.6.6 (development)
+# corteza 0.6.5.1 (development)
+
+## Plan mode
+
+* New session-scoped `plan_mode` flag. When on, the LLM is told to
+  research and propose rather than act: the policy engine denies
+  write/exec tool calls (`write_file`, `replace_in_file`, `bash`,
+  `run_r`, `run_r_script`), and an `exit_plan_mode` tool is injected
+  into the tool list. A successful `exit_plan_mode` call flips the
+  flag back off so the LLM proceeds with the work.
+* `/plan` slash command in `chat()` and the `corteza` CLI: bare
+  toggles, `/plan <task>` enables and submits the task as the next
+  prompt.
+* Subagents inherit `plan_mode` from `parent_session` so spawning a
+  child can't launder a write through plan mode.
 
 ## Retroactive-extraction runtime (opt-in)
 
