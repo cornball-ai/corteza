@@ -5,12 +5,10 @@
 
 reg <- corteza:::.subagent_registry
 
-# Snapshot + restore so we don't leak stub entries across tests.
+# Snapshot any prior registry state, then start clean. We restore at
+# the bottom rather than via on.exit() because top-level on.exit in
+# tinytest files attaches to the global frame and isn't reliable.
 prior <- as.list(reg)
-on.exit({
-    rm(list = ls(reg), envir = reg)
-    for (nm in names(prior)) reg[[nm]] <- prior[[nm]]
-}, add = TRUE)
 rm(list = ls(reg), envir = reg)
 
 # Stub a registry entry with no real callr session. Guard paths
@@ -33,13 +31,24 @@ err <- tryCatch(corteza::subagent_collect(stub_id),
 expect_inherits(err, "error")
 expect_true(grepl("No pending query", conditionMessage(err)))
 
-# Now flip the stub to busy and verify subagent_query(wait=FALSE)
-# refuses to stack a second call.
+# Flip the stub to busy and verify both wait paths refuse to stack a
+# second call. The session=NULL stub means any call past the busy
+# guard would NPE on info$session$..., so reaching the guard message
+# is itself proof that the guard fires before the session is touched.
 reg[[stub_id]]$pending <- "in-flight prompt"
 reg[[stub_id]]$pending_started_at <- Sys.time()
 
 err <- tryCatch(
     corteza::subagent_query(stub_id, "second prompt", wait = FALSE),
+    error = function(e) e
+)
+expect_inherits(err, "error")
+expect_true(grepl("is busy with", conditionMessage(err)))
+
+# Same guard must apply to the sync path: r_session can only carry one
+# in-flight call.
+err <- tryCatch(
+    corteza::subagent_query(stub_id, "second prompt", wait = TRUE),
     error = function(e) e
 )
 expect_inherits(err, "error")
@@ -67,3 +76,7 @@ reg[[stub_id]]$pending <- "checking the deploy log"
 busy_listing <- corteza:::format_subagent_list(corteza::subagent_list())
 expect_true(grepl("busy:", busy_listing))
 expect_true(grepl("checking the deploy log", busy_listing))
+
+# Cleanup: drop stub, restore prior entries.
+rm(list = ls(reg), envir = reg)
+for (nm in names(prior)) reg[[nm]] <- prior[[nm]]

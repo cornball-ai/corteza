@@ -481,16 +481,20 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
         stop("Subagent expired: ", canonical, call. = FALSE)
     }
 
+    # One-in-flight invariant: a session can carry only one outstanding
+    # callr call at a time, so both wait paths must refuse to stack on
+    # top of a pending async query.
+    # `[[ ]]` not `$`: list `$` prefix-matches, so info$pending would
+    # silently return info$pending_started_at when pending itself has
+    # been NULL-stripped from the list.
+    pending <- info[["pending"]]
+    if (!is.null(pending)) {
+        snippet <- substr(pending, 1L, 60L)
+        stop(sprintf("Subagent %s is busy with: %s", canonical, snippet),
+             call. = FALSE)
+    }
+
     if (!isTRUE(wait)) {
-        # `[[ ]]` not `$`: list `$` prefix-matches, so info$pending
-        # would silently return info$pending_started_at when pending
-        # itself has been NULL-stripped from the list.
-        pending <- info[["pending"]]
-        if (!is.null(pending)) {
-            snippet <- substr(pending, 1L, 60L)
-            stop(sprintf("Subagent %s is busy with: %s", canonical, snippet),
-                 call. = FALSE)
-        }
         tryCatch(
             info$session$call(
                 function(p) corteza::subagent_turn_prompt(p),
