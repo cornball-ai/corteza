@@ -441,6 +441,27 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                             else "disabled"))
                 next
             }
+            if (cmd == "/plan") {
+                rest <- if (length(parts) >= 2L) {
+                    paste(parts[-1], collapse = " ")
+                } else ""
+                rest <- trimws(rest)
+                if (!nzchar(rest)) {
+                    turn_session$plan_mode <- !isTRUE(turn_session$plan_mode)
+                    cat(sprintf("%sPlan mode %s%s\n",
+                                color$dim,
+                                if (isTRUE(turn_session$plan_mode))
+                                    "enabled (reads only; LLM proposes a plan via exit_plan_mode)"
+                                else "disabled",
+                                color$reset))
+                    next
+                }
+                turn_session$plan_mode <- TRUE
+                cat(sprintf("%sPlan mode enabled.%s\n",
+                            color$dim, color$reset))
+                prompt <- rest
+                # Fall through to normal prompt handling below.
+            }
             if (cmd == "/context") {
                 files <- config$context_files %||% character(0)
                 # System prompt: full briefing, agent_context, skill
@@ -562,8 +583,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             # /r is handled separately below to keep its existing
-            # multi-line pending_r_context plumbing.
-            if (!startsWith(sp, "/r ")) {
+            # multi-line pending_r_context plumbing. /plan <text> falls
+            # through here too: the /plan branch above rewrote `prompt`
+            # to the args, so we want regular prompt handling, not an
+            # "Unknown command" complaint.
+            if (!startsWith(sp, "/r ") && cmd != "/plan") {
                 cat(sprintf("%sUnknown command: %s. Type /help for the list.%s\n",
                             color$yellow, cmd, color$reset))
                 next

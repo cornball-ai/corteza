@@ -1138,6 +1138,11 @@ register_builtin_skills <- function() {
     register_skill_from_fn("list_subagents", tool_list_subagents)
     register_skill_from_fn("kill_subagent", tool_kill_subagent)
 
+    # Plan mode: exit_plan_mode is registered always but exposed in the
+    # tool list only when session$plan_mode is TRUE
+    # (see .plan_mode_filter_tools).
+    register_skill_from_fn("exit_plan_mode", tool_exit_plan_mode)
+
     invisible(list_skills())
 }
 

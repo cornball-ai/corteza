@@ -139,6 +139,7 @@ cli_tool_label <- function(tool_name, long = FALSE) {
         git_log = "Git Log",
         r_help = "R Help",
         installed_packages = "Installed Packages",
+        exit_plan_mode = "Exit Plan Mode",
         tools::toTitleCase(gsub("_", " ", gsub("::", " ", tool_name)))
     )
 
@@ -167,6 +168,7 @@ cli_tool_label <- function(tool_name, long = FALSE) {
         git_log = "Git log",
         r_help = "R help",
         installed_packages = "List installed packages",
+        exit_plan_mode = "Submit plan and exit plan mode",
         label
     )
 }
@@ -222,6 +224,17 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
 
     if (tool_name == "run_r_script" && !is.null(cwd) && nzchar(cwd)) {
         lines <- c(lines, sprintf("Project: %s", cwd))
+    }
+
+    if (tool_name == "exit_plan_mode") {
+        plan <- args$plan %||% ""
+        if (nzchar(plan)) {
+            lines <- c(
+                lines,
+                .cli_wrap_lines(strsplit(plan, "\n", fixed = TRUE)[[1]], width)
+            )
+        }
+        return(lines)
     }
 
     call <- list(tool = tool_name, args = args)

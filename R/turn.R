@@ -80,6 +80,11 @@ default_local_model <- function() {
 #'   denies (safe fallback).
 #' @param max_turns Maximum LLM turns per call.
 #' @param verbose Print tool call progress.
+#' @param plan_mode Logical. When TRUE, the session is in plan mode:
+#'   the LLM is told to research and propose without acting, the policy
+#'   engine denies write/exec tool calls (except \code{exit_plan_mode}),
+#'   and \code{exit_plan_mode} is added to the tool list. A successful
+#'   \code{exit_plan_mode} call flips this back to FALSE.
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -94,7 +99,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         history = NULL, model_map = NULL,
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
-                        verbose = FALSE) {
+                        verbose = FALSE, plan_mode = FALSE) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -119,6 +124,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$recent_classes <- character()
     s$on_tool <- list()
     s$turn_number <- 0L
+    s$plan_mode <- isTRUE(plan_mode)
     s
 }
 
@@ -175,7 +181,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      tool = internal_name,
                      args = as.list(args),
                      channel = session$channel,
-                     context = list(recent_classes = session$recent_classes)
+                     context = list(recent_classes = session$recent_classes,
+                                    plan_mode = isTRUE(session$plan_mode))
         )
         # Resolve once up front so policy() and the sticky classifier
         # below see the same paths/urls.
@@ -245,6 +252,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         error = function(e) err(paste("Tool error:", conditionMessage(e)))
         )
         success <- !isTRUE(raw$isError)
+        if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
+            session$plan_mode <- FALSE
+        }
         outcome_text("ran", .flatten_mcp_result(raw), success)
     }
 }
@@ -401,13 +411,16 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         ensure_skills()
         tools <- skills_as_api_tools(session$tools_filter)
     }
+    tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
+    system <- .plan_mode_compose_system(session$system,
+                                        isTRUE(session$plan_mode))
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     response <- llm.api::agent(
                                prompt = prompt,
                                tools = tools,
                                tool_handler = tool_handler,
-                               system = session$system,
+                               system = system,
                                model = .resolve_model(session),
                                provider = session$provider,
                                max_turns = session$max_turns,

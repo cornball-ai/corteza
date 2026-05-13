@@ -115,13 +115,15 @@ resolve_subagent_id <- function(input) {
 #' @export
 subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
-                               max_turns = 10L, depth = 0L) {
+                               max_turns = 10L, depth = 0L,
+                               plan_mode = FALSE) {
     session <- new_session(
         channel = "console",
         provider = provider,
         tools_filter = tools_filter,
         system = system,
-        max_turns = as.integer(max_turns)
+        max_turns = as.integer(max_turns),
+        plan_mode = isTRUE(plan_mode)
     )
     if (!is.null(model)) session$model_map$cloud <- model
     .subagent_state$session <- session
@@ -389,10 +391,15 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     # knows its own depth for recursion gating.
     child_depth <- as.integer((parent_session$archival_depth %||% 0L) + 1L)
 
+    # Plan mode is inherited: if the parent is in plan mode, the child
+    # is too, so a spawned subagent can't launder a write through a
+    # child process.
+    child_plan_mode <- isTRUE(parent_session$plan_mode)
+
     tryCatch(
         session$run(
             function(cwd, provider, model, tools_filter, system, max_turns,
-                     depth, id) {
+                     depth, id, plan_mode) {
                 library(corteza)
                 corteza::worker_init(cwd = cwd)
                 corteza::subagent_turn_init(
@@ -401,13 +408,15 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
                     tools_filter = tools_filter,
                     system = system,
                     max_turns = max_turns,
-                    depth = depth
+                    depth = depth,
+                    plan_mode = plan_mode
                 )
                 corteza::subagent_turn_set_id(id)
             },
             list(cwd = cwd, provider = spawn_provider, model = spawn_model,
                  tools_filter = effective_tools, system = system_prompt,
-                 max_turns = 10L, depth = child_depth, id = id)
+                 max_turns = 10L, depth = child_depth, id = id,
+                 plan_mode = child_plan_mode)
         ),
         error = function(e) {
             try(session$close(), silent = TRUE)
