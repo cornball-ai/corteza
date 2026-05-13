@@ -554,21 +554,19 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     if (state != "ready") {
         return(invisible(NULL))
     }
-    reply <- tryCatch(
-        info$session$get_result(),
-        error = function(e) {
-            info$pending <- NULL
-            info$pending_started_at <- NULL
-            .subagent_registry[[canonical]] <- info
-            stop("Subagent query failed: ", conditionMessage(e),
-                 call. = FALSE)
-        }
-    )
+    # callr's r_session: poll_process == "ready" means a message is
+    # available; read() returns the callr_session_result with $result
+    # (the call's return value) and $error (NULL when successful).
+    msg <- info$session$read()
     info$pending <- NULL
     info$pending_started_at <- NULL
     .subagent_registry[[canonical]] <- info
+    if (!is.null(msg$error)) {
+        stop("Subagent query failed: ",
+             conditionMessage(msg$error), call. = FALSE)
+    }
     log_event("subagent_collect", subagent_id = canonical)
-    as.character(reply)
+    as.character(msg$result)
 }
 
 #' Kill a subagent.
