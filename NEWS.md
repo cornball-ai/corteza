@@ -1,3 +1,52 @@
+# corteza 0.6.6
+
+## Async subagent queries
+
+* `subagent_query(id, prompt, wait = FALSE)` fires a prompt and
+  returns the canonical id immediately; the parent collects the
+  reply later with `subagent_collect(id)`. A subagent can carry
+  only one in-flight async query at a time — both wait paths
+  refuse to stack on top of a pending call.
+* CLI gains `/queue <id> <prompt>` (fire) and `/collect <id>`
+  (drain). `/agents` distinguishes idle vs busy.
+* New MCP tool `collect_subagent` mirrors the CLI surface.
+
+## Durable subagent transcripts
+
+* Each working subagent now writes an append-only JSONL transcript
+  at `agents/subagent-<id>/sessions/<id>.jsonl`, matching the
+  shape archival holders already use. Disk space is cheap; context
+  is expensive. Compaction (below) can rewrite the in-memory
+  history without losing anything on disk.
+
+## Context-budget helpers
+
+* Token-counting helpers moved out of `inst/bin/corteza` into
+  package code so chat, the CLI loop, and subagents share the
+  same budget math: `context_limit_for_model()`, `format_tokens()`,
+  `estimate_text_tokens()`, `estimate_history_tokens()`,
+  `estimate_tool_tokens()`, `estimate_live_context_tokens()`,
+  `context_usage_pct()`. Also `default_provider_model()` for
+  resolving the model identity a subagent will actually run with.
+
+## Subagent context compaction
+
+* New `subagents.context_compaction` config block. Defaults to
+  `mode: inherit_strict` with `compact_pct: 75`. Working subagents
+  compact their own in-memory history after each turn when usage
+  passes the threshold; the on-disk transcript stays intact.
+  Archive holders are skipped via a kind marker stamped by
+  `subagent_seed_history()`.
+
+## Token visibility in /agents
+
+* `/agents` now shows model, age, live context (tokens / limit),
+  cumulative input/output tokens, and cumulative cost per
+  subagent. Live tokens are computed via a child-side
+  `r_session$run()` call per `/agents` invocation; busy children
+  show `ctx ?`. Cost is captured when the provider returns it;
+  shown as `?` otherwise (most non-Anthropic providers).
+
 # corteza 0.6.5.1 (development)
 
 ## Plan mode
