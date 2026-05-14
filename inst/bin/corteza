@@ -241,51 +241,12 @@ cli_worker_close <- function(worker) {
 # Display helpers
 # ============================================================================
 
-# Detect whether the terminal interprets ANSI escape sequences. Modern
-# Linux/macOS terminals and Windows Terminal / ConEmu / VS Code's
-# integrated terminal do; the classic powershell.exe and cmd.exe
-# consoles do not unless VT mode is explicitly enabled. Emitting
-# escapes into a non-VT console leaves "[32m" garbage on screen, so
-# we default OFF for classic Windows consoles and let NO_COLOR /
-# FORCE_COLOR override either way.
-.ansi_supported <- function() {
-  if (nzchar(Sys.getenv("NO_COLOR"))) return(FALSE)
-  if (nzchar(Sys.getenv("FORCE_COLOR"))) return(TRUE)
-  if (.Platform$OS.type != "windows") return(TRUE)
-  # Windows Terminal, ConEmu, VS Code, and anything that advertises a
-  # real terminal type all set one of these.
-  any(nzchar(Sys.getenv(c("WT_SESSION", "ConEmuANSI", "TERM_PROGRAM"))))
-}
-
-.ansi <- .ansi_supported()
-
-color <- if (.ansi) {
-  list(
-    reset = "\033[0m",
-    bold = "\033[1m",
-    dim = "\033[2m",
-    red = "\033[31m",
-    green = "\033[32m",
-    yellow = "\033[33m",
-    blue = "\033[34m",
-    magenta = "\033[35m",
-    cyan = "\033[36m",
-    white = "\033[37m",
-    bright_red = "\033[91m",
-    bright_green = "\033[92m",
-    bright_yellow = "\033[93m",
-    bright_blue = "\033[94m",
-    bright_magenta = "\033[95m",
-    bright_cyan = "\033[96m"
-  )
-} else {
-  # No-op escapes for terminals that don't interpret VT sequences.
-  stats::setNames(as.list(rep("", 16L)),
-                  c("reset", "bold", "dim",
-                    "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-                    "bright_red", "bright_green", "bright_yellow",
-                    "bright_blue", "bright_magenta", "bright_cyan"))
-}
+# Source of truth for ANSI support + the color palette is the package
+# (R/cli-colors.R). The CLI used to keep its own copies of both, which
+# meant chat() and the CLI could disagree about whether to emit colors
+# (e.g. RStudio's R console is not a tty but does render ANSI). The
+# duplicate is gone; both surfaces now share one decision.
+color <- corteza:::ansi_colors()
 
 print_banner <- function(session_id = NULL) {
   cat(sprintf("\n%s corteza%s", color$cyan, color$reset))
@@ -1026,12 +987,19 @@ run_agent <- function(opts) {
     elapsed_ms <- as.numeric(difftime(Sys.time(), start_time, units = "secs")) * 1000
 
     if (!failed) {
-      lines <- length(strsplit(text, "\n")[[1]])
-      cat(sprintf("  %s⎿%s %d line%s in %dms\n",
-                  color$dim, color$reset,
-                  lines,
-                  if (identical(lines, 1L)) "" else "s",
-                  round(elapsed_ms)))
+      # File-edit tools (replace_in_file, write_file) attach a diff
+      # payload alongside the LLM-facing text. Render it inline so the
+      # user sees what changed instead of just a "N lines" summary.
+      if (!is.null(result$diff)) {
+        corteza:::render_tool_diff(result$diff)
+      } else {
+        lines <- length(strsplit(text, "\n")[[1]])
+        cat(sprintf("  %s⎿%s %d line%s in %dms\n",
+                    color$dim, color$reset,
+                    lines,
+                    if (identical(lines, 1L)) "" else "s",
+                    round(elapsed_ms)))
+      }
       # Store in buffer for /last command
       tool_buffer_add(name, args, text)
     }
@@ -1185,7 +1153,7 @@ run_agent <- function(opts) {
         } else {
           tool_buffer_add("git_diff", list(ref = material$target), material$diff)
           cat(sprintf("\n%sDiff against %s%s\n", color$cyan, material$target, color$reset))
-          cat(material$diff, "\n")
+          cat(corteza:::colorize_diff(material$diff), "\n")
         }
         next
       } else if (cmd == "/review") {

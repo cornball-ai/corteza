@@ -252,6 +252,15 @@ tool_write_file <- function(path, content, append = FALSE, create_dirs = TRUE) {
     content <- content %||% ""
     append <- isTRUE(append)
 
+    # Read prior content so we can show the user a diff after the
+    # write. Empty string when the file is new or unreadable; that
+    # path produces an all-green diff, which is what we want.
+    old_content <- ""
+    if (file.exists(path) && !dir.exists(path)) {
+        old_content <- tryCatch(tool_read_text(path),
+                                error = function(e) "")
+    }
+
     write_error <- tryCatch({
         tool_write_text(path, content, append = append)
         NULL
@@ -260,8 +269,16 @@ tool_write_file <- function(path, content, append = FALSE, create_dirs = TRUE) {
         return(err(paste("Write error:", write_error)))
     }
 
-    ok(sprintf("%s %d byte(s) to %s", if (append) "Appended" else "Wrote",
-               nchar(content, type = "bytes"), path))
+    summary <- sprintf("%s %d byte(s) to %s",
+                       if (append) "Appended" else "Wrote",
+                       nchar(content, type = "bytes"), path)
+    # Append mode writes after existing content; the on-disk file now
+    # has old_content + content. Reflect that in the displayed diff so
+    # the user sees what was actually written, not a misleading
+    # whole-file overwrite preview.
+    new_for_diff <- if (append) paste0(old_content, content) else content
+    diff <- compute_unified_diff(old_content, new_for_diff, path)
+    ok_with_diff(summary, diff)
 }
 
 #' Replace exact text in a file without rewriting the whole file manually.
@@ -336,10 +353,13 @@ tool_replace_in_file <- function(path, old_text, new_text, all = FALSE,
         return(err(paste("Write error:", write_error)))
     }
 
-    ok(sprintf("Updated %s (%d replacement%s)",
-               path,
-            if (replace_all) match_count else 1L,
-            if ((if (replace_all) match_count else 1L) == 1L) "" else "s"))
+    replacements <- if (replace_all) match_count else 1L
+    summary <- sprintf("Updated %s (%d replacement%s)",
+                       path,
+                       replacements,
+                       if (replacements == 1L) "" else "s")
+    diff <- compute_unified_diff(original, updated, path)
+    ok_with_diff(summary, diff)
 }
 
 # Search ----

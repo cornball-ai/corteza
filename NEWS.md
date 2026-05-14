@@ -1,3 +1,30 @@
+# corteza 0.6.6.2
+
+## Inline diffs on file edits
+
+* `replace_in_file` and `write_file` now attach a unified-diff payload
+  to their MCP result. The CLI and `corteza::chat()` render it inline
+  in the tool-call output as `⎿ Added N, removed M` followed by one
+  row per kept line (`NNNN +|-| content` with red/green color) instead
+  of the prior `N lines in Xms` summary. The LLM-facing result text is
+  unchanged — the diff is for the human reading the terminal.
+* Tool labels renamed for clarity: `replace_in_file` → "Update",
+  `write_file` → "Write" (matches the inline-diff phrasing).
+* Diff generation shells out to the system `diff -u`. If `diff` isn't
+  on `PATH` the tool degrades to a one-line size summary rather than
+  failing. Diff payload is capped at 200 lines / 20000 chars with a
+  `[diff truncated: N more lines]` marker so big writes don't dump
+  thousands of lines into chat scrollback.
+* The `/diff` slash command's output is also ANSI-colored.
+
+## Console color policy is shared
+
+* `ansi_supported()` / `ansi_colors()` in the package are now the
+  single source of truth for both `corteza::chat()` and the
+  `~/bin/corteza` CLI. RStudio's R console (which is not a tty) is now
+  correctly detected as ANSI-capable, and `NO_COLOR` / `FORCE_COLOR`
+  overrides work in both surfaces.
+
 # corteza 0.6.6.1
 
 ## Interrupt key
