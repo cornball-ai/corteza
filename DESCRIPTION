@@ -5,6 +5,9 @@ Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
            comment = c(ORCID = "0009-0005-4248-604X")),
+    person("Grant", "McDermott", role = "ctb",
+           email = "contact@grantmcdermott.com",
+           comment = c(ORCID = "0000-0001-7883-8573")),
     person("cornball.ai", role = "cph"))
 Description: An agent runtime that gives Large Language Models (LLMs)
     from 'Anthropic' <https://www.anthropic.com/>, 'OpenAI'
