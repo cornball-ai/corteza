@@ -9,7 +9,10 @@ subagent_turn_prompt(prompt)
 \item{prompt}{User prompt (character).}
 }
 \value{
-Reply text (character).
+A list with `$reply` (character, the LLM reply text) and
+  `$usage` (list with `input_tokens`, `output_tokens`, `total_tokens`,
+  and optionally `cost` — provider-dependent). Callers extract the
+  reply and accumulate usage into the parent-side registry.
 }
 \description{
 Captures the pre-turn history length so that, if archival is enabled

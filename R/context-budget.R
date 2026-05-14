@@ -39,6 +39,26 @@ MODEL_CONTEXT_LIMITS <- list(
     "qwen2.5" = 32000L
 )
 
+#' Provider-specific default model name.
+#'
+#' Resolves the actual model a subagent (or chat session) will run
+#' with when no explicit \code{model} is set. Mirrors the defaults
+#' the CLI script picks at startup so /agents, compaction, and the
+#' CLI all show the same model identity. Returns NULL for unknown
+#' providers (lets llm.api fall back to its own default).
+#' @param provider Provider name.
+#' @return Model name (character) or NULL.
+#' @keywords internal
+#' @export
+default_provider_model <- function(provider) {
+    switch(provider %||% "",
+           anthropic = "claude-sonnet-4-20250514",
+           openai    = "gpt-4o",
+           moonshot  = "kimi-k2.6",
+           ollama    = "llama3.2",
+           NULL)
+}
+
 #' Look up the context window for a given model.
 #'
 #' Tries exact match, then prefix match either direction (so
@@ -74,6 +94,36 @@ format_tokens <- function(n) {
     } else {
         as.character(n)
     }
+}
+
+#' Format an age in seconds as a compact string (e.g. "12s", "3m", "2h").
+#' @keywords internal
+#' @export
+format_age <- function(seconds) {
+    s <- as.numeric(seconds)
+    if (is.na(s) || s < 0) {
+        return("?")
+    }
+    if (s < 60) {
+        sprintf("%ds", as.integer(round(s)))
+    } else if (s < 3600) {
+        sprintf("%dm", as.integer(round(s / 60)))
+    } else {
+        sprintf("%.1fh", s / 3600)
+    }
+}
+
+#' Format a live-context display like "4.2K/200K" or "?".
+#'
+#' Used by /agents to summarize live tokens versus model limit.
+#' Returns "?" when either value is NA.
+#' @keywords internal
+#' @export
+format_live_ctx <- function(tokens, limit) {
+    if (is.na(tokens) || is.na(limit) || is.null(tokens) || is.null(limit)) {
+        return("ctx ?")
+    }
+    sprintf("ctx %s/%s", format_tokens(tokens), format_tokens(limit))
 }
 
 #' Rough token estimate from raw text.
