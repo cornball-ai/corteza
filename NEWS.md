@@ -1,3 +1,22 @@
+# corteza 0.6.6.1
+
+## Interrupt key
+
+* Pressing the interrupt key during an in-flight agent turn now aborts
+  the turn cleanly and returns control to the prompt instead of
+  escaping the REPL entirely. Both `corteza::chat()` and the
+  `~/bin/corteza` CLI catch the R-level interrupt.
+* In the CLI, if the interrupt arrives while a tool call is running
+  inside the `callr` worker subprocess, the worker is sent SIGINT so
+  the in-flight tool (e.g. a long `bash` or `run_r` call) actually
+  stops. The worker is recycled only if it doesn't return to idle.
+* The aborted exchange is recorded in history with an
+  `[Interrupted by user before completing.]` marker so the next turn's
+  model sees that the prior turn ended early.
+* In `corteza::chat()` running under RStudio, Esc fires the interrupt
+  as expected. In the terminal CLI, only Ctrl+C is an interrupt —
+  terminals send raw `^[` for Esc, which is not a signal.
+
 # corteza 0.6.6
 
 ## Async subagent queries
