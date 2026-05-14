@@ -5,24 +5,19 @@
     cat(prompt_str)
     utils::flush.console()
 
-    script <- paste(
-        'out="$1"',
-        'IFS= read -r -e line || exit 1',
-        'printf "%s\\n" "$line" > "$out"',
-        'while IFS= read -r -t 0.01 next; do',
-        '  printf "%s\\n" "$next" >> "$out"',
-        'done',
-        sep = "\n"
-    )
+    script <- paste('out="$1"', 'IFS= read -r -e line || exit 1',
+                    'printf "%s\\n" "$line" > "$out"',
+                    'while IFS= read -r -t 0.01 next; do',
+                    '  printf "%s\\n" "$next" >> "$out"', 'done', sep = "\n")
 
     path <- tempfile("corteza-prompt-")
     on.exit(unlink(path), add = TRUE)
     status <- suppressWarnings(
-        system2(
-            "bash",
-            c("-c", shQuote(script), "bash", shQuote(path)),
-            stdout = "",
-            stderr = ""
+                               system2(
+                                       "bash",
+                                       c("-c", shQuote(script), "bash", shQuote(path)),
+                                       stdout = "",
+                                       stderr = ""
         )
     )
     if (!is.null(status) && status != 0L) {
@@ -44,8 +39,8 @@ read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
             .prompt_input_state$stdin_con <- file("stdin", open = "r")
         }
         line <- tryCatch(
-            readLines(.prompt_input_state$stdin_con, n = 1L, warn = FALSE),
-            error = function(e) character()
+                         readLines(.prompt_input_state$stdin_con, n = 1L, warn = FALSE),
+                         error = function(e) character()
         )
         if (length(line) == 0L) {
             return(character())
@@ -54,10 +49,8 @@ read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
     }
 
     if (isTRUE(tryCatch(isatty(stdin()), error = function(e) FALSE))) {
-        out <- tryCatch(
-            .read_prompt_via_bash(prompt_str),
-            error = function(e) NULL
-        )
+        out <- tryCatch(.read_prompt_via_bash(prompt_str),
+                        error = function(e) NULL)
         if (!is.null(out)) {
             if (length(out) == 0L) {
                 return(character())
@@ -75,8 +68,8 @@ read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
         .prompt_input_state$stdin_con <- file("stdin", open = "r")
     }
     line <- tryCatch(
-        readLines(.prompt_input_state$stdin_con, n = 1L, warn = FALSE),
-        error = function(e) character()
+                     readLines(.prompt_input_state$stdin_con, n = 1L, warn = FALSE),
+                     error = function(e) character()
     )
     if (length(line) == 0L) {
         return(character())
@@ -119,58 +112,45 @@ read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
 
 cli_tool_label <- function(tool_name, long = FALSE) {
     label <- switch(
-        tool_name,
-        bash = "Bash",
-        cmd = "Command",
-        run_r = "Run R",
-        run_r_script = "Run R Script",
-        read_file = "Read File",
-        "base::readLines" = "Read File",
-        write_file = "Write File",
-        "base::writeLines" = "Write File",
-        replace_in_file = "Replace in File",
-        list_files = "List Files",
-        "base::list.files" = "List Files",
-        grep_files = "Grep Files",
-        web_search = "Web Search",
-        fetch_url = "Fetch URL",
-        git_status = "Git Status",
-        git_diff = "Git Diff",
-        git_log = "Git Log",
-        r_help = "R Help",
-        installed_packages = "Installed Packages",
-        exit_plan_mode = "Exit Plan Mode",
-        tools::toTitleCase(gsub("_", " ", gsub("::", " ", tool_name)))
+                    tool_name,
+                    bash = "Bash",
+                    cmd = "Command",
+                    run_r = "Run R",
+                    run_r_script = "Run R Script",
+                    read_file = "Read File",
+                    "base::readLines" = "Read File",
+                    write_file = "Write File",
+                    "base::writeLines" = "Write File",
+                    replace_in_file = "Replace in File",
+                    list_files = "List Files",
+                    "base::list.files" = "List Files",
+                    grep_files = "Grep Files",
+                    web_search = "Web Search",
+                    fetch_url = "Fetch URL",
+                    git_status = "Git Status",
+                    git_diff = "Git Diff",
+                    git_log = "Git Log",
+                    r_help = "R Help",
+                    installed_packages = "Installed Packages",
+                    exit_plan_mode = "Exit Plan Mode",
+                    tools::toTitleCase(gsub("_", " ", gsub("::", " ", tool_name)))
     )
 
     if (!isTRUE(long)) {
         return(label)
     }
 
-    switch(
-        tool_name,
-        bash = "Bash command",
-        cmd = "System command",
-        run_r = "Run R code",
-        run_r_script = "Run R script",
-        read_file = "Read file",
-        "base::readLines" = "Read file",
-        write_file = "Write file",
-        "base::writeLines" = "Write file",
-        replace_in_file = "Replace in file",
-        list_files = "List files",
-        "base::list.files" = "List files",
-        grep_files = "Search files",
-        web_search = "Web search",
-        fetch_url = "Fetch URL",
-        git_status = "Git status",
-        git_diff = "Git diff",
-        git_log = "Git log",
-        r_help = "R help",
-        installed_packages = "List installed packages",
-        exit_plan_mode = "Submit plan and exit plan mode",
-        label
-    )
+    switch(tool_name, bash = "Bash command", cmd = "System command",
+           run_r = "Run R code", run_r_script = "Run R script",
+           read_file = "Read file", "base::readLines" = "Read file",
+           write_file = "Write file", "base::writeLines" = "Write file",
+           replace_in_file = "Replace in file", list_files = "List files",
+           "base::list.files" = "List files", grep_files = "Search files",
+           web_search = "Web search", fetch_url = "Fetch URL",
+           git_status = "Git status", git_diff = "Git diff",
+           git_log = "Git log", r_help = "R help",
+           installed_packages = "List installed packages",
+           exit_plan_mode = "Submit plan and exit plan mode", label)
 }
 
 cli_tool_preview <- function(tool_name, args = list(), width = 72L) {
@@ -198,8 +178,8 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
         cmd <- args$command %||% args$cmd %||% ""
         if (nzchar(cmd)) {
             lines <- c(
-                lines,
-                .cli_wrap_lines(strsplit(cmd, "\n", fixed = TRUE)[[1]], width)
+                       lines,
+                       .cli_wrap_lines(strsplit(cmd, "\n", fixed = TRUE)[[1]], width)
             )
         }
         if (!is.null(cwd) && nzchar(cwd)) {
@@ -212,8 +192,8 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
         code <- args$code %||% ""
         if (nzchar(code)) {
             lines <- c(
-                lines,
-                .cli_wrap_lines(strsplit(code, "\n", fixed = TRUE)[[1]], width)
+                       lines,
+                       .cli_wrap_lines(strsplit(code, "\n", fixed = TRUE)[[1]], width)
             )
         }
         if (!is.null(cwd) && nzchar(cwd)) {
@@ -230,8 +210,8 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
         plan <- args$plan %||% ""
         if (nzchar(plan)) {
             lines <- c(
-                lines,
-                .cli_wrap_lines(strsplit(plan, "\n", fixed = TRUE)[[1]], width)
+                       lines,
+                       .cli_wrap_lines(strsplit(plan, "\n", fixed = TRUE)[[1]], width)
             )
         }
         return(lines)
@@ -274,15 +254,15 @@ cli_call_access_lines <- function(call, cwd = NULL) {
 
     op <- classify_op(call$tool %||% "")
     lines <- switch(
-        op,
-        read = "Read access to files or external content",
-        write = "Write access to local files",
-        exec = if ((call$tool %||% "") %in% c("run_r", "run_r_script")) {
+                    op,
+                    read = "Read access to files or external content",
+                    write = "Write access to local files",
+                    exec = if ((call$tool %||% "") %in% c("run_r", "run_r_script")) {
             "Executes local R code"
         } else {
             "Executes local shell commands"
         },
-        "Tool access"
+                    "Tool access"
     )
 
     if ((call$tool %||% "") %in% c("bash", "cmd") &&
@@ -305,26 +285,23 @@ cli_call_warning_lines <- function(call, cwd = NULL, decision = NULL) {
 
     if ((call$tool %||% "") %in% c("bash", "cmd")) {
         warnings <- c(
-            warnings,
-            "Shell commands can invoke scripts, hooks, and other executables from the working directory."
+                      warnings,
+                      "Shell commands can invoke scripts, hooks, and other executables from the working directory."
         )
     }
     if ((call$tool %||% "") %in% c("run_r", "run_r_script")) {
         warnings <- c(
-            warnings,
-            "R code runs locally with access to your current session, packages, and project files."
+                      warnings,
+                      "R code runs locally with access to your current session, packages, and project files."
         )
     }
     if (!is.null(cwd) && nzchar(cwd) && length(call$paths) > 0L) {
-        outside <- vapply(
-            call$paths,
-            function(path) !is_path_under(path, cwd),
-            logical(1)
-        )
+        outside <- vapply(call$paths,
+                          function(path) !is_path_under(path, cwd), logical(1))
         if (any(outside)) {
             warnings <- c(
-                warnings,
-                "Some referenced paths are outside the current project directory."
+                          warnings,
+                          "Some referenced paths are outside the current project directory."
             )
         }
     }
@@ -337,8 +314,7 @@ cli_call_warning_lines <- function(call, cwd = NULL, decision = NULL) {
 }
 
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
-                               cwd = NULL,
-                               persistent_label = "Allow always",
+                               cwd = NULL, persistent_label = "Allow always",
                                width = 88L) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
@@ -360,12 +336,7 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
         reasons <- c(reasons, sprintf("Model route: %s", decision$model))
     }
 
-    lines <- c(
-        "",
-        strrep("-", width),
-        sprintf(" %s", title),
-        ""
-    )
+    lines <- c("", strrep("-", width), sprintf(" %s", title), "")
 
     if (length(details) > 0L) {
         lines <- c(lines, paste0("   ", details), "")
@@ -402,10 +373,11 @@ cli_event_summary <- function(event, width = 88L) {
     if (identical(event$event, "tool_call") ||
         identical(event$outcome, "start")) {
         return(list(
-            kind = "start",
-            title = title,
-            detail_lines = cli_tool_detail_lines(tool, args, width = width - 6L)
-        ))
+                    kind = "start",
+                    title = title,
+                    detail_lines = cli_tool_detail_lines(tool, args,
+                    width = width - 6L)
+            ))
     }
 
     if (identical(event$event, "tool_result") ||
@@ -422,29 +394,30 @@ cli_event_summary <- function(event, width = 88L) {
         }
         elapsed <- round(event$elapsed_ms %||% 0)
         detail <- sprintf(
-            "%d line%s in %dms",
-            lines,
+                          "%d line%s in %dms",
+                          lines,
             if (identical(lines, 1L)) "" else "s",
-            elapsed
+                          elapsed
         )
         return(list(
-            kind = if (success) "ok" else "error",
-            title = cli_tool_label(tool),
-            detail_lines = detail
-        ))
+                    kind = if (success) "ok" else "error",
+                    title = cli_tool_label(tool),
+                    detail_lines = detail
+            ))
     }
 
     if (!is.null(event$level) && event$level %in% c("warn", "error")) {
         return(list(
-            kind = event$level,
-            title = event$level,
-            detail_lines = event$message %||% (event$event %||% "")
-        ))
+                    kind = event$level,
+                    title = event$level,
+                    detail_lines = event$message %||% (event$event %||% "")
+            ))
     }
 
     list(
-        kind = event$outcome %||% (event$event %||% "other"),
-        title = title,
-        detail_lines = character()
+         kind = event$outcome %||% (event$event %||% "other"),
+         title = title,
+         detail_lines = character()
     )
 }
+

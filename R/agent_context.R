@@ -66,8 +66,8 @@ agent_context_defaults <- function(agent) {
         return(list(memory = TRUE, project = TRUE, global = TRUE, soul = TRUE))
     }
     switch(agent,
-           claude = list(memory = FALSE, project = TRUE,
-                         global = TRUE, soul = TRUE),
+           claude = list(memory = FALSE, project = TRUE, global = TRUE,
+                         soul = TRUE),
            codex = list(memory = TRUE, project = TRUE, global = TRUE, soul = TRUE),
            corteza = list(memory = TRUE, project = TRUE,
                           global = TRUE, soul = TRUE),

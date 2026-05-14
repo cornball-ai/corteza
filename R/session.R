@@ -36,14 +36,12 @@ sessions_store_path <- function(agent_id = DEFAULT_AGENT_ID) {
 session_id <- function() {
     # Generate UUID v4
     hex <- c(0:9, letters[1:6])
-    paste0(
-           paste0(sample(hex, 8, replace = TRUE), collapse = ""), "-",
-           paste0(sample(hex, 4, replace = TRUE), collapse = ""), "-",
-           "4", paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
-           sample(c("8", "9", "a", "b"), 1), paste0(sample(hex, 3, replace = TRUE),
-            collapse = ""), "-",
-           paste0(sample(hex, 12, replace = TRUE), collapse = "")
-    )
+    paste0(paste0(sample(hex, 8, replace = TRUE), collapse = ""), "-",
+           paste0(sample(hex, 4, replace = TRUE), collapse = ""), "-", "4",
+           paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
+           sample(c("8", "9", "a", "b"), 1),
+           paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
+           paste0(sample(hex, 12, replace = TRUE), collapse = ""))
 }
 
 #' Get path to session transcript file
@@ -68,10 +66,8 @@ store_load <- function(agent_id = DEFAULT_AGENT_ID) {
         return(list())
     }
 
-    tryCatch(
-             jsonlite::fromJSON(path, simplifyVector = FALSE),
-             error = function(e) list()
-    )
+    tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE),
+             error = function(e) list())
 }
 
 #' Save session metadata store
@@ -130,21 +126,12 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
     now <- as.numeric(Sys.time()) * 1000
     session_key <- session_key %||% paste0("corteza:", id)
 
-    session <- list(
-                    sessionId = id,
-                    sessionKey = session_key,
-                    createdAt = now,
-                    updatedAt = now,
-                    provider = provider,
-                    model = model,
-                    cwd = normalizePath(cwd, mustWork = FALSE),
-                    inputTokens = 0L,
-                    outputTokens = 0L,
-                    totalTokens = 0L,
-                    compactionCount = 0L,
-                    memoryFlushCompactionCount = 0L,
-                    messages = list()
-    )
+    session <- list(sessionId = id, sessionKey = session_key,
+                    createdAt = now, updatedAt = now, provider = provider,
+                    model = model, cwd = normalizePath(cwd, mustWork = FALSE),
+                    inputTokens = 0L, outputTokens = 0L, totalTokens = 0L,
+                    compactionCount = 0L, memoryFlushCompactionCount = 0L,
+                    messages = list())
 
     # Write session header to transcript
     transcript_write_header(id, cwd, agent_id)
@@ -281,10 +268,8 @@ session_latest <- function(agent_id = DEFAULT_AGENT_ID) {
 #' @noRd
 session_add_message <- function(session, role, content) {
     # Store in pi-coding-agent compatible format
-    msg <- list(
-                role = role,
-                content = list(list(type = "text", text = content))
-    )
+    msg <- list(role = role,
+                content = list(list(type = "text", text = content)))
 
     session$messages <- c(session$messages, list(msg))
     session
@@ -403,10 +388,8 @@ transcript_load <- function(id, agent_id = DEFAULT_AGENT_ID,
 
     # Parse all lines
     entries <- lapply(lines, function(line) {
-        tryCatch(
-                 jsonlite::fromJSON(line, simplifyVector = FALSE),
-                 error = function(e) NULL
-        )
+        tryCatch(jsonlite::fromJSON(line, simplifyVector = FALSE),
+                 error = function(e) NULL)
     })
 
     entries <- Filter(Negate(is.null), entries)
@@ -456,14 +439,10 @@ transcript_compact <- function(session, summary, agent_id = DEFAULT_AGENT_ID) {
     # Compaction in pi-coding-agent format is an assistant message with special marker
     # For now, just append as a regular assistant message
     # TODO: Match exact compaction format from pi-coding-agent
-    transcript_append(
-                      session,
-                      role = "assistant",
+    transcript_append(session, role = "assistant",
                       content = paste0("[Compaction Summary]\n\n", summary),
-                      provider = "corteza",
-                      model = "compaction",
-                      agent_id = agent_id
-    )
+                      provider = "corteza", model = "compaction",
+                      agent_id = agent_id)
 }
 
 #' Format session list for display
@@ -495,12 +474,10 @@ format_session_list <- function(sessions) {
         compactions <- if ((s$compactionCount %||% 0) > 0) {
             sprintf(" [%d compactions]", s$compactionCount)
         } else ""
-        sprintf("  %s  %s  %d msgs  %s/%s%s",
-                safe_str(s$sessionKey, "?"),
+        sprintf("  %s  %s  %d msgs  %s/%s%s", safe_str(s$sessionKey, "?"),
                 format_time(s$updatedAt),
             if (is.numeric(s$messages)) s$messages else 0L,
-                safe_str(s$modelProvider, "?"),
-                safe_str(s$model, "default"),
+                safe_str(s$modelProvider, "?"), safe_str(s$model, "default"),
                 compactions)
     }, character(1))
 
@@ -597,10 +574,8 @@ trace_load <- function(session_id, agent_id = DEFAULT_AGENT_ID, n = NULL) {
     }
 
     lapply(lines, function(line) {
-        tryCatch(
-                 jsonlite::fromJSON(line, simplifyVector = FALSE),
-                 error = function(e) NULL
-        )
+        tryCatch(jsonlite::fromJSON(line, simplifyVector = FALSE),
+                 error = function(e) NULL)
     })
 }
 
@@ -624,8 +599,7 @@ format_trace <- function(trace, show_args = FALSE) {
             "?"
         }
 
-        base <- sprintf("  [%s] %s %s (%s)",
-                        status, entry$tool, time_str,
+        base <- sprintf("  [%s] %s %s (%s)", status, entry$tool, time_str,
                         substr(entry$timestamp, 12, 19))
 
         if (show_args && length(entry$args) > 0) {

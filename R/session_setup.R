@@ -68,12 +68,9 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     model <- model %||% config$model
 
     if (isTRUE(validate_api_key)) {
-        key_var <- switch(provider,
-                          anthropic = "ANTHROPIC_API_KEY",
+        key_var <- switch(provider, anthropic = "ANTHROPIC_API_KEY",
                           openai = "OPENAI_API_KEY",
-                          moonshot = "MOONSHOT_API_KEY",
-                          NULL
-        )
+                          moonshot = "MOONSHOT_API_KEY", NULL)
         if (!is.null(key_var) && nchar(Sys.getenv(key_var, "")) == 0L) {
             stop(sprintf("%s not set. Add it to ~/.Renviron", key_var),
                  call. = FALSE)

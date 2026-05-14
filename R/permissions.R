@@ -11,14 +11,8 @@ default_dangerous_tools <- function() {
 #' Default denied paths for filesystem sandboxing
 #' @noRd
 default_denied_paths <- function() {
-    c(
-        "~/.ssh",
-        "~/.gnupg",
-        "~/.aws",
-        "~/.config/gcloud",
-        "~/.kube",
-        "~/.docker"
-    )
+    c("~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.kube",
+        "~/.docker")
 }
 
 #' Get permission for a tool

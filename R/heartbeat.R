@@ -65,12 +65,8 @@ hb_record_tool <- function(name, args, result_text, success) {
         return(invisible(NULL))
     }
 
-    entry <- list(
-                  name = name,
-                  args_hash = hb_hash_args(name, args),
-                  success = success,
-                  timestamp = Sys.time()
-    )
+    entry <- list(name = name, args_hash = hb_hash_args(name, args),
+                  success = success, timestamp = Sys.time())
 
     .heartbeat$tool_history <- c(.heartbeat$tool_history, list(entry))
 
@@ -225,10 +221,8 @@ hb_detect_periodic <- function(project_rules = NULL) {
 
     .heartbeat$last_periodic_turn <- turn
 
-    hb_fire("periodic", paste0(
-                               "[Reminder] Key guidelines for this session:\n",
-                               project_rules
-        ))
+    hb_fire("periodic", paste0("[Reminder] Key guidelines for this session:\n",
+                               project_rules))
 }
 
 # Suppression ----
@@ -297,12 +291,10 @@ hb_hash_args <- function(name, args) {
 #' @return Named list of current state
 #' @noRd
 hb_status <- function() {
-    list(
-         enabled = .heartbeat$enabled %||% FALSE,
+    list(enabled = .heartbeat$enabled %||% FALSE,
          turn_count = .heartbeat$turn_count %||% 0L,
          consecutive_failures = .heartbeat$consecutive_failures %||% 0L,
          tool_history_length = length(.heartbeat$tool_history %||% list()),
-         suppression = .heartbeat$suppression %||% list()
-    )
+         suppression = .heartbeat$suppression %||% list())
 }
 

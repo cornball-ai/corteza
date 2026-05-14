@@ -33,7 +33,11 @@ parse_spawn_flags <- function(text) {
 
     p <- extract(text, "--tools")
     text <- p$text
-    tools <- if (!is.null(p$value)) strsplit(p$value, ",")[[1]] else NULL
+    if (!is.null(p$value)) {
+        tools <- strsplit(p$value, ",")[[1]]
+    } else {
+        tools <- NULL
+    }
 
     list(task = trimws(text), model = model, preset = preset, tools = tools)
 }
@@ -46,41 +50,41 @@ parse_spawn_flags <- function(text) {
 #' @noRd
 chat_help_text <- function() {
     paste(
-        "",
-        "Commands:",
-        "  /quit, /exit, /q              Exit chat",
-        "  /clear, /reset, /new          Clear conversation, keep transcript",
-        "  /help                         Show this help",
-        "  /tools                        List active tools",
-        "  /model <name>                 Switch model",
-        "  /provider <name>              Switch provider (anthropic, openai, moonshot, ollama)",
-        "  /context                      Show live context usage and loaded files",
-        "  /sessions                     List sessions for this directory",
-        "  /trace [N]                    Show last N tool executions (default 20)",
-        "  /permissions                  Show tool approval and sandbox settings",
-        "  /dryrun                       Toggle dry-run mode (preview tools)",
-        "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
-        "  /compact                      Summarize conversation to free context",
-        "  /r <expr>                     Eval R expression locally; output staged for next prompt",
-        "",
-        "Subagents:",
-        "  /spawn <task>                 Spawn a subagent",
-        "  /spawn <task> --model <name>  Spawn with specific model",
-        "  /spawn <task> --preset <name> investigate (default), work, minimal",
-        "  /spawn <task> --tools <a,b,c> Explicit tool filter",
-        "  /agents                       List active subagents",
-        "  /ask <id> <prompt>            Query a subagent (blocks for reply)",
-        "  /queue <id> <prompt>          Fire a query and return; collect later",
-        "  /collect <id>                 Collect a pending reply (NULL if still running)",
-        "  /kill <id>                    Terminate a subagent",
-        "",
-        "Skills:",
-        "  /skill list                   List installed skills",
-        "  /skill install <path|url>     Install a skill (--force to reinstall)",
-        "  /skill remove <name>          Remove a skill",
-        "  /skill test <path>            Run skill tests",
-        "",
-        sep = "\n"
+          "",
+          "Commands:",
+          "  /quit, /exit, /q              Exit chat",
+          "  /clear, /reset, /new          Clear conversation, keep transcript",
+          "  /help                         Show this help",
+          "  /tools                        List active tools",
+          "  /model <name>                 Switch model",
+          "  /provider <name>              Switch provider (anthropic, openai, moonshot, ollama)",
+          "  /context                      Show live context usage and loaded files",
+          "  /sessions                     List sessions for this directory",
+          "  /trace [N]                    Show last N tool executions (default 20)",
+          "  /permissions                  Show tool approval and sandbox settings",
+          "  /dryrun                       Toggle dry-run mode (preview tools)",
+          "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
+          "  /compact                      Summarize conversation to free context",
+          "  /r <expr>                     Eval R expression locally; output staged for next prompt",
+          "",
+          "Subagents:",
+          "  /spawn <task>                 Spawn a subagent",
+          "  /spawn <task> --model <name>  Spawn with specific model",
+          "  /spawn <task> --preset <name> investigate (default), work, minimal",
+          "  /spawn <task> --tools <a,b,c> Explicit tool filter",
+          "  /agents                       List active subagents",
+          "  /ask <id> <prompt>            Query a subagent (blocks for reply)",
+          "  /queue <id> <prompt>          Fire a query and return; collect later",
+          "  /collect <id>                 Collect a pending reply (NULL if still running)",
+          "  /kill <id>                    Terminate a subagent",
+          "",
+          "Skills:",
+          "  /skill list                   List installed skills",
+          "  /skill install <path|url>     Install a skill (--force to reinstall)",
+          "  /skill remove <name>          Remove a skill",
+          "  /skill test <path>            Run skill tests",
+          "",
+          sep = "\n"
     )
 }
 
@@ -100,3 +104,4 @@ chat_format_tools_list <- function(turn_session) {
     }
     paste(c(lines, ""), collapse = "\n")
 }
+

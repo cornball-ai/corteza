@@ -38,13 +38,12 @@ archival_history_tool_calls <- function(history) {
         return(cached)
     }
     has <- tryCatch(
-        exists("history_tool_calls",
-               envir = asNamespace("llm.api"),
-               inherits = FALSE) &&
-            is.function(get("history_tool_calls",
-                            envir = asNamespace("llm.api"),
-                            inherits = FALSE)),
-        error = function(e) FALSE
+                    exists("history_tool_calls", envir = asNamespace("llm.api"),
+                           inherits = FALSE) &&
+                    is.function(get("history_tool_calls",
+                                    envir = asNamespace("llm.api"),
+                                    inherits = FALSE)),
+                    error = function(e) FALSE
     )
     .subagent_counter$llm_api_has_history_helpers <- isTRUE(has)
     isTRUE(has)
@@ -63,21 +62,22 @@ archival_history_tool_calls_fallback <- function(history) {
     calls <- list()
     for (i in seq_along(history)) {
         entry <- history[[i]]
-        if (!is.list(entry)) next
-        if (!identical(entry$role %||% "", "assistant")) next
+        if (!is.list(entry)) {
+            next
+        }
+        if (!identical(entry$role %||% "", "assistant")) {
+            next
+        }
         cnt <- entry$content
         if (is.list(cnt)) {
             for (block in cnt) {
                 if (identical(block$type %||% "", "tool_use")) {
-                    calls[[length(calls) + 1L]] <- list(
-                        id = block$id %||% "",
+                    calls[[length(calls) + 1L]] <- list(id = block$id %||% "",
                         name = block$name %||% "",
-                        arguments = block$input %||% list(),
-                        result = NULL, completed = FALSE,
-                        call_message_index = i,
+                        arguments = block$input %||% list(), result = NULL,
+                        completed = FALSE, call_message_index = i,
                         result_message_index = NA_integer_,
-                        provider_shape = "anthropic"
-                    )
+                        provider_shape = "anthropic")
                 }
             }
         }
@@ -87,8 +87,8 @@ archival_history_tool_calls_fallback <- function(history) {
                 args_raw <- fn$arguments %||% list()
                 args <- if (is.character(args_raw) && length(args_raw) == 1L) {
                     tryCatch(
-                        jsonlite::fromJSON(args_raw, simplifyVector = FALSE),
-                        error = function(e) list()
+                             jsonlite::fromJSON(args_raw, simplifyVector = FALSE),
+                             error = function(e) list()
                     )
                 } else {
                     args_raw
@@ -110,7 +110,9 @@ archival_history_tool_calls_fallback <- function(history) {
     }
     for (i in seq_along(history)) {
         entry <- history[[i]]
-        if (!is.list(entry)) next
+        if (!is.list(entry)) {
+            next
+        }
         role <- entry$role %||% ""
         if (identical(role, "user")) {
             cnt <- entry$content
@@ -118,7 +120,9 @@ archival_history_tool_calls_fallback <- function(history) {
                 for (block in cnt) {
                     if (identical(block$type %||% "", "tool_result")) {
                         target_id <- block$tool_use_id %||% block$id %||% ""
-                        if (!nzchar(target_id)) next
+                        if (!nzchar(target_id)) {
+                            next
+                        }
                         result_text <- .archival_block_result_text(block)
                         for (j in seq_along(calls)) {
                             if (!calls[[j]]$completed &&
@@ -136,7 +140,9 @@ archival_history_tool_calls_fallback <- function(history) {
         }
         if (identical(role, "tool")) {
             target_id <- entry$tool_call_id %||% entry$id %||% ""
-            if (!nzchar(target_id)) next
+            if (!nzchar(target_id)) {
+                next
+            }
             result_text <- as.character(entry$content %||% "")
             for (j in seq_along(calls)) {
                 if (!calls[[j]]$completed &&
@@ -167,3 +173,4 @@ archival_history_tool_calls_fallback <- function(history) {
     }
     as.character(cnt %||% "")
 }
+

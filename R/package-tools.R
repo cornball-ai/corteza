@@ -59,12 +59,10 @@ package_as_skills <- function(pkg, functions = NULL) {
 
         tool_name <- paste0(pkg, "::", fn_name)
 
-        register_skill(skill_spec(
-                                  name = tool_name,
+        register_skill(skill_spec(name = tool_name,
                                   description = paste0("[", pkg, "] ", desc),
                                   params = params,
-                                  handler = make_pkg_handler(pkg, fn_name)
-            ))
+                                  handler = make_pkg_handler(pkg, fn_name)))
 
         registered <- c(registered, tool_name)
     }
@@ -103,11 +101,9 @@ build_params_from_formals <- function(fn, help_md) {
             type <- infer_param_type(f[[i]])
         }
 
-        params[[nm]] <- list(
-                             type = type,
+        params[[nm]] <- list(type = type,
                              description = rd_descs[[nm]] %||% "",
-                             required = required
-        )
+                             required = required)
     }
     params
 }
@@ -129,10 +125,8 @@ parse_saber_params <- function(help_md) {
     params <- list()
 
     for (line in lines) {
-        m <- regmatches(
-                        line,
-                        regexec("^- \\*\\*`([^`]+)`\\*\\*:\\s*(.+)$", line)
-        )[[1]]
+        m <- regmatches(line,
+                        regexec("^- \\*\\*`([^`]+)`\\*\\*:\\s*(.+)$", line))[[1]]
         if (length(m) == 3) {
             params[[m[2]]] <- m[3]
         }
@@ -278,10 +272,8 @@ format_pkg_skill_docs <- function(config) {
         if (!is.null(fns)) {
             # Selective: per-function docs
             for (fn in fns) {
-                doc <- tryCatch(
-                                saber::pkg_help(fn, pkg),
-                                error = function(e) NULL
-                )
+                doc <- tryCatch(saber::pkg_help(fn, pkg),
+                                error = function(e) NULL)
                 if (!is.null(doc)) {
                     parts <- c(parts, sprintf("### %s::%s", pkg, fn),
                                "", doc, "")

@@ -34,15 +34,14 @@ worker_dispatch <- function(name, args, ctx = list(), timeout = 30L,
                              "tool name must be a single non-empty string"))
     }
     if (is.null(get_skill(name))) {
-        stop(make_tool_error(name, args,
-                             sprintf("unknown tool: %s", name)))
+        stop(make_tool_error(name, args, sprintf("unknown tool: %s", name)))
     }
     tryCatch(
-        call_tool(name, args, ctx = ctx, timeout = timeout, dry_run = dry_run),
-        error = function(e) {
-            if (inherits(e, "corteza_tool_error")) stop(e)
-            stop(make_tool_error(name, args, conditionMessage(e), e))
-        }
+             call_tool(name, args, ctx = ctx, timeout = timeout, dry_run = dry_run),
+             error = function(e) {
+        if (inherits(e, "corteza_tool_error")) stop(e)
+        stop(make_tool_error(name, args, conditionMessage(e), e))
+    }
     )
 }
 
@@ -108,21 +107,27 @@ worker_init <- function(cwd = getwd()) {
 cli_worker_drain_events <- function(session, trace = FALSE) {
     lines <- tryCatch(session$read_error_lines(),
                       error = function(e) character())
-    if (length(lines) == 0L) return(invisible(NULL))
-    if (!isTRUE(trace)) return(invisible(NULL))
+    if (length(lines) == 0L) {
+        return(invisible(NULL))
+    }
+    if (!isTRUE(trace)) {
+        return(invisible(NULL))
+    }
     # Pretty-print only when printify is installed, stdout is a TTY,
     # and the user hasn't asked for no-color via the `NO_COLOR` env
     # var (https://no-color.org). Keeps ANSI escapes out of log files
     # and pipes.
     tty_ok <- isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE)) ||
-        isTRUE(tryCatch(isatty(stderr()), error = function(e) FALSE))
+    isTRUE(tryCatch(isatty(stderr()), error = function(e) FALSE))
     pretty <- tty_ok && !nzchar(Sys.getenv("NO_COLOR"))
     for (line in lines) {
         event <- tryCatch(
-            jsonlite::fromJSON(line, simplifyVector = TRUE),
-            error = function(e) NULL
+                          jsonlite::fromJSON(line, simplifyVector = TRUE),
+                          error = function(e) NULL
         )
-        if (is.null(event) || is.null(event$event)) next
+        if (is.null(event) || is.null(event$event)) {
+            next
+        }
         .cli_render_event(event, pretty = pretty)
     }
     invisible(NULL)
@@ -159,12 +164,12 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
             .plain_trace(label, color = 31L)
         }
     } else if (identical(summary$kind, "warn") ||
-               identical(summary$kind, "error")) {
+        identical(summary$kind, "error")) {
         label <- paste(summary$title, detail)
         if (pretty) {
             printify::print_message(
                 if (identical(summary$kind, "warn")) "warning" else "error",
-                label
+                                    label
             )
         } else {
             .plain_trace(label, color = 33L)
@@ -198,12 +203,12 @@ cli_worker_drain_events <- function(session, trace = FALSE) {
 cli_worker_spawn <- function(cwd = getwd()) {
     session <- callr::r_session$new(wait = TRUE)
     session$run(
-        function(cwd) {
-            library(corteza)
-            corteza::worker_init(cwd = cwd)
-        },
-        list(cwd = cwd)
+                function(cwd) {
+        library(corteza)
+        corteza::worker_init(cwd = cwd)
+    },
+                list(cwd = cwd)
     )
-    structure(list(session = session, cwd = cwd),
-              class = "corteza_cli_worker")
+    structure(list(session = session, cwd = cwd), class = "corteza_cli_worker")
 }
+

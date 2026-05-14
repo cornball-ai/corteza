@@ -20,14 +20,19 @@
 #' @noRd
 make_tool_error <- function(tool, args, message, original = NULL) {
     structure(
-        class = c("corteza_tool_error", "error", "condition"),
-        list(
-            message = message,
-            call = NULL,
-            tool = tool,
-            args = args,
-            original_class = if (!is.null(original)) class(original) else NULL,
-            original_message = if (!is.null(original)) conditionMessage(original) else NULL
+              class = c("corteza_tool_error", "error", "condition"),
+              list(
+                   message = message,
+                   call = NULL,
+                   tool = tool,
+                   args = args,
+                   original_class = if (!is.null(original)) class(original) else NULL,
+                   original_message = if (!is.null(original)) {
+                conditionMessage(original)
+            } else {
+                NULL
+            }
         )
     )
 }
+

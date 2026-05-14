@@ -59,10 +59,8 @@ process_request <- function(line, send_fn) {
     }
 
     # Parse JSON-RPC request
-    req <- tryCatch(
-                    jsonlite::fromJSON(line, simplifyVector = FALSE),
-                    error = function(e) NULL
-    )
+    req <- tryCatch(jsonlite::fromJSON(line, simplifyVector = FALSE),
+                    error = function(e) NULL)
 
     if (is.null(req)) {
         log_msg("Invalid JSON received")

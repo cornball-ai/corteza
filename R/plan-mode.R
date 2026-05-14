@@ -51,11 +51,9 @@ tool_exit_plan_mode <- function(plan) {
         if (is.null(skill)) {
             return(tools)
         }
-        tools <- c(tools, list(list(
-                                    name = sanitize_tool_name(skill$name),
+        tools <- c(tools, list(list(name = sanitize_tool_name(skill$name),
                                     description = skill$description,
-                                    input_schema = skill$inputSchema
-                )))
+                                    input_schema = skill$inputSchema)))
         return(tools)
     }
 
@@ -73,8 +71,7 @@ tool_exit_plan_mode <- function(plan) {
           "",
           "# Plan mode",
           "",
-          paste(
-                "You are in plan mode. Research with read-only tools",
+          paste("You are in plan mode. Research with read-only tools",
                 "(read_file, list_files, grep_files, git_log, git_diff,",
                 "git_status, r_help, web_search, fetch_url). Do not edit",
                 "files, run shell commands, or execute R code -- those",
