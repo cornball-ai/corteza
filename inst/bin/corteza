@@ -474,10 +474,10 @@ tool_buffer_list <- function() {
 # Tool approval system
 # ============================================================================
 
-# Check if a tool requires approval
-requires_approval <- function(tool_name, dangerous_tools) {
-  tool_name %in% dangerous_tools
-}
+# requires_approval() lived here in the split-brain era; the unified
+# approval path uses corteza::policy(call, config = ...) + the
+# approval_cb hand-off in corteza::new_session() so this local copy is
+# no longer needed.
 
 # Load approvals from project-local file
 load_approvals <- function(cwd) {
@@ -508,52 +508,66 @@ is_approved <- function(cwd, tool_name) {
   isTRUE(approvals[[tool_name]])
 }
 
-# Ask user for approval
-ask_approval <- function(name, args, cwd) {
-  call <- list(tool = name, args = as.list(args), channel = "cli")
-  call$paths <- corteza:::resolve_paths(call)
-  call$urls <- corteza:::resolve_urls(call)
-  decision <- tryCatch(corteza::policy(call), error = function(e) NULL)
+# Build the approval callback the CLI hands to corteza::new_session().
+# Replaces the historical split-brain setup where corteza::turn() had
+# a no-op approval_cb (`function(...) TRUE`) and the CLI's outer
+# tool_handler ran its own requires_approval / ask_approval / persist
+# pipeline. Now everything routes through policy(config) -> approval_cb
+# so config$permissions ("ask", "allow", "deny") is honored uniformly
+# in chat() and CLI alike, including per-tool overrides like
+# permissions = list(read_file = "ask") or list(bash = "allow").
+#
+# The callback persists "Allow always for this project" choices to
+# .corteza/approvals.json via save_approval(), and short-circuits
+# subsequent prompts via is_approved().
+cli_approval_cb <- function(cwd) {
+  function(call, decision) {
+    name <- call$tool %||% ""
+    if (is_approved(cwd, name)) {
+      return(TRUE)
+    }
 
-  persistent_label <- "Allow always for this project"
-  lines <- corteza:::cli_approval_lines(
-    call,
-    decision,
-    cwd = cwd,
-    persistent_label = persistent_label
-  )
-  cat(paste(lines, collapse = "\n"), "\n")
+    persistent_label <- "Allow always for this project"
+    lines <- corteza:::cli_approval_lines(
+      call,
+      decision,
+      cwd = cwd,
+      persistent_label = persistent_label
+    )
+    cat(paste(lines, collapse = "\n"), "\n")
 
-  response <- cli_read_line(sprintf("%sChoice [1]: %s",
-                                    color$yellow, color$reset))
-  if (length(response) == 0) response <- ""
-  response <- trimws(response)
+    response <- cli_read_line(sprintf("%sChoice [1]: %s",
+                                      color$yellow, color$reset))
+    if (length(response) == 0) response <- ""
+    response <- trimws(response)
+    if (response == "") response <- "1"
 
-  # Default to "1" (allow once) if empty
-  if (response == "") response <- "1"
+    # "Allow always for this project" persists to .corteza/approvals.json
+    # so future runs skip the prompt for this tool.
+    if (response == "2") {
+      save_approval(cwd, name)
+    }
 
-  # Replace the verbose approval block in the terminal with a single-
-  # line `User replied:` summary. Erases (length(lines) + 1) lines:
-  # the approval lines themselves plus the `Choice [1]: ` prompt line
-  # the user just answered. Gated on ANSI support — when escapes
-  # aren't honored we just print the summary below the prompt instead.
-  ansi <- nzchar(color$reset)
-  if (ansi) {
-    cat(sprintf("\033[%dF\033[J", length(lines) + 1L))
+    # Replace the verbose approval block with a one-line `User replied:`
+    # summary. Erase (length(lines) + 1) lines: the approval lines
+    # themselves plus the `Choice [1]: ` prompt line. Gated on ANSI;
+    # when escapes aren't honored we just print the summary below the
+    # prompt instead of erasing.
+    ansi <- nzchar(color$reset)
+    if (ansi) {
+      cat(sprintf("\033[%dF\033[J", length(lines) + 1L))
+    }
+    summary <- corteza:::cli_user_replied_line(
+      call, response,
+      persistent_label = persistent_label,
+      cwd = cwd
+    )
+    cat(sprintf("%s●%s User replied:\n  %s⎿  %s%s\n\n",
+                color$cyan, color$reset,
+                color$dim, summary, color$reset))
+
+    response %in% c("1", "2")
   }
-  summary <- corteza:::cli_user_replied_line(
-    call, response,
-    persistent_label = persistent_label,
-    cwd = cwd
-  )
-  cat(sprintf("%s●%s User replied:\n  %s⎿  %s%s\n\n",
-              color$cyan, color$reset,
-              color$dim, summary, color$reset))
-
-  list(
-    approved = response %in% c("1", "2"),
-    always = response == "2"
-  )
 }
 
 # ============================================================================
@@ -907,14 +921,11 @@ run_agent <- function(opts) {
 
   # `tools` already built above, right after the worker connected.
 
-  # Get approval settings from config
-  approval_mode <- config$approval_mode
-  dangerous_tools <- config$dangerous_tools
-
   # Track turn number for trace
   turn_number <- 0L
 
-  # Tool handler (captures cwd, approval_mode, dangerous_tools, opts in closure)
+  # Tool handler — runs after policy() + approval_cb have already
+  # cleared the call. UI, dispatch, and trace only.
   tool_handler <- function(name, args) {
     # Check dry-run mode first
     if (isTRUE(opts$dry_run)) {
@@ -929,29 +940,11 @@ run_agent <- function(opts) {
       return(sprintf("[DRY RUN] Would call: %s", name))
     }
 
-    # Check if approval needed (only in "ask" mode)
-    approved_by <- "auto"
-    if (approval_mode == "ask" && requires_approval(name, dangerous_tools)) {
-      if (!is_approved(cwd, name)) {
-        approval <- ask_approval(name, args, cwd)
-        if (!approval$approved) {
-          cat(sprintf("%sDenied.%s\n", color$dim, color$reset))
-          return("Tool execution denied by user")
-        }
-        if (approval$always) {
-          save_approval(cwd, name)
-          cat(sprintf("%sApproved for this project%s\n", color$dim, color$reset))
-          approved_by <- "always"
-        } else {
-          approved_by <- "user"
-        }
-      } else {
-        approved_by <- "config"
-      }
-    } else if (approval_mode == "deny" && requires_approval(name, dangerous_tools)) {
-      cat(sprintf("%sDenied (approval_mode=deny).%s\n", color$dim, color$reset))
-      return("Tool execution denied by configuration")
-    }
+    # Approval is now handled upstream in policy() + the cli_approval_cb
+    # passed to corteza::new_session(). By the time tool_handler runs,
+    # the call has already been approved (or denied/declined, in which
+    # case .make_tool_handler returned the rejection text and we never
+    # got here). No outer gate needed.
 
     preview <- corteza:::cli_tool_preview(name, args)
     cat(sprintf("\n%s●%s %s", color$cyan, color$reset,
@@ -1022,7 +1015,11 @@ run_agent <- function(opts) {
       tool_buffer_add(name, args, text)
     }
 
-    # Record trace (CLI-side, in addition to MCP server side)
+    # Record trace (CLI-side, in addition to MCP server side). The
+    # approved_by field used to carry "user" / "always" / "config" /
+    # "auto" from the outer gate; with the unified approval path it
+    # comes from policy()'s decision reason and observers, so we
+    # leave it NULL here.
     tryCatch({
       corteza:::trace_add(
         session_id = session$sessionId,
@@ -1031,7 +1028,6 @@ run_agent <- function(opts) {
         result = text,
         success = !failed,
         elapsed_ms = round(elapsed_ms),
-        approved_by = approved_by,
         turn = turn_number
       )
     }, error = function(e) {
@@ -1714,17 +1710,13 @@ Tool output:
                        local = corteza::default_local_model()),
       system = system_prompt,
       history = api_history,
-      approval_cb = function(call, decision) TRUE,
+      approval_cb = cli_approval_cb(cwd),
       max_turns = 20L,
       plan_mode = isTRUE(opts$plan_mode)
     )
     # Make the loaded config visible to policy()'s config overlay
-    # inside .make_tool_handler. The CLI's outer tool_handler also
-    # gates via requires_approval (belt-and-suspenders), but threading
-    # config here keeps chat() and CLI policy decisions identical so
-    # downstream code can rely on one source of truth. The CLI's
-    # turn-level approval_cb returns TRUE unconditionally so this
-    # doesn't introduce double-prompting.
+    # inside .make_tool_handler so config$permissions and approval_mode
+    # / dangerous_tools are honored consistently with chat().
     turn_session$config <- config
 
     # CLI tool_handler returns plain strings; turn() expects MCP-format.

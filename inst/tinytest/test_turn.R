@@ -263,6 +263,63 @@ local({
     expect_false(file.exists(sandbox))
 })
 
+# CLI channel honors config$permissions through the unified approval
+# path. Two cases codex flagged on the split-brain CLI:
+#   1) permissions = list(read_file = "ask") should make the CLI
+#      prompt for read_file even though it isn't in dangerous_tools
+#      by default.
+#   2) permissions = list(bash = "allow") should make the CLI skip
+#      prompting for bash even though bash IS in dangerous_tools by
+#      default.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.personal_paths = character(),
+        corteza.policy = NULL
+    )
+    on.exit(options(op), add = TRUE)
+
+    fake_executor <- function(name, args) {
+        list(content = list(list(type = "text", text = "ran")))
+    }
+
+    # Case 1: permissions = list(read_file = "ask") in cli channel.
+    called_read <- FALSE
+    s_read <- corteza::new_session(
+        "cli",
+        approval_cb = function(call, decision) {
+            called_read <<- TRUE
+            FALSE
+        }
+    )
+    s_read$config <- list(approval_mode = "ask",
+                          dangerous_tools = corteza:::default_dangerous_tools(),
+                          permissions = list(read_file = "ask"))
+    h_read <- corteza:::.make_tool_handler(s_read,
+                                           tool_executor = fake_executor)
+    h_read("read_file", list(path = tempfile("cli-test-read-")))
+    expect_true(called_read)
+
+    # Case 2: permissions = list(bash = "allow") in cli channel —
+    # tensor would say "ask" (code/exec/cli), config "allow" wins.
+    called_bash <- FALSE
+    s_bash <- corteza::new_session(
+        "cli",
+        approval_cb = function(call, decision) {
+            called_bash <<- TRUE
+            FALSE
+        }
+    )
+    s_bash$config <- list(approval_mode = "ask",
+                          dangerous_tools = corteza:::default_dangerous_tools(),
+                          permissions = list(bash = "allow"))
+    h_bash <- corteza:::.make_tool_handler(s_bash,
+                                           tool_executor = fake_executor)
+    out <- h_bash("bash", list(command = "echo hi"))
+    expect_false(called_bash)
+    expect_true(grepl("ran", out))
+})
+
 # User policy via options("corteza.policy") is the final word — config
 # overlay must NOT downgrade or tighten a verdict that came from the
 # user fn. Codex caught the regression where project config could
