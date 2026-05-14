@@ -13,9 +13,10 @@
 * The aborted exchange is recorded in history with an
   `[Interrupted by user before completing.]` marker so the next turn's
   model sees that the prior turn ended early.
-* In `corteza::chat()` running under RStudio, Esc fires the interrupt
-  as expected. In the terminal CLI, only Ctrl+C is an interrupt —
-  terminals send raw `^[` for Esc, which is not a signal.
+* Interrupt keys differ by environment: in the RStudio console
+  `corteza::chat()` is interrupted by **Esc** (RStudio's console
+  intercepts Ctrl+C for copy). In the terminal `~/bin/corteza` CLI it's
+  **Ctrl+C** — terminals send raw `^[` for Esc, which is not a signal.
 
 ## Other
 
