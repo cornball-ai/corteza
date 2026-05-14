@@ -1760,6 +1760,44 @@ Tool output:
         history = turn_session$history,
         usage = r$usage
       )
+    }, interrupt = function(c) {
+      cat(sprintf("\n%sInterrupted.%s\n", color$yellow, color$reset))
+      # Only touch the worker if a tool call was actually in flight
+      # (state "busy"). When the interrupt arrived during the LLM
+      # round-trip the worker is "idle" and should be left alone —
+      # otherwise we'd needlessly drop worker-local state like the
+      # background-process registry.
+      if (!is.null(worker) && !is.null(worker$session)) {
+        state <- tryCatch(worker$session$get_state(),
+                          error = function(e) "unknown")
+        if (identical(state, "busy")) {
+          tryCatch(worker$session$interrupt(),
+                   error = function(e) NULL)
+          # Drain any queued result so the state machine returns to idle.
+          tryCatch(worker$session$read(), error = function(e) NULL)
+          state <- tryCatch(worker$session$get_state(),
+                            error = function(e) "unknown")
+          if (!identical(state, "idle")) {
+            # Worker didn't recover from SIGINT; recycle it.
+            suppressWarnings(tryCatch(cli_worker_close(worker),
+                                      error = function(e) NULL))
+            worker <<- tryCatch(
+              cli_worker_connect(opts$port, cwd = cwd,
+                                 tools_filter = opts$tools),
+              error = function(e2) NULL
+            )
+          }
+        }
+      }
+      # Record the interruption against the persistent session so the
+      # next turn's api_history shows an assistant placeholder where
+      # the aborted reply would have been. The user message was
+      # already saved before turn() ran.
+      marker <- "[Interrupted by user before completing.]"
+      session <<- corteza:::session_add_message(session, "assistant", marker)
+      corteza:::transcript_append(session, "assistant", marker)
+      corteza:::session_save(session)
+      NULL
     }, error = function(e) {
       cat(sprintf("%sError: %s%s\n", color$bright_magenta, e$message, color$reset))
       NULL

@@ -181,9 +181,14 @@ load_saber_briefing <- function(cwd) {
     project <- basename(cwd)
     scan_dir <- dirname(cwd)
     tryCatch({
-        # Suppress saber's cat() to stdout - we want the return value only
+        # saber::briefing() emits its full text via message(); without
+        # suppressMessages it leaks to the user's terminal every time a
+        # subagent calls session_setup, which masquerades as a session
+        # restart. capture.output() handles any stdout cat() too.
         utils::capture.output(
-                              text <- saber::briefing(project = project, scan_dir = scan_dir)
+                              text <- suppressMessages(
+                    saber::briefing(project = project, scan_dir = scan_dir)
+                )
         )
         if (is.null(text) || nchar(trimws(text)) == 0L) {
             NULL

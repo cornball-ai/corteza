@@ -698,6 +698,21 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         pre_turn_len <- length(turn_session$history %||% list())
         result <- tryCatch(
                            turn(prompt, turn_session),
+                           interrupt = function(c) {
+            cat(sprintf("\n%sInterrupted.%s\n", color$yellow, color$reset))
+            # turn() didn't return, so its history update never landed.
+            # Stitch the user prompt and an interruption marker into
+            # turn_session$history so the next turn's LLM call sees
+            # this exchange was aborted instead of silently dropping it.
+            marker <- "[Interrupted by user before completing.]"
+            turn_session$history <- c(
+                                      turn_session$history %||% list(),
+                                      list(list(role = "user", content = prompt),
+                                           list(role = "assistant", content = marker))
+            )
+            transcript_append(disk_session$session, "assistant", marker)
+            NULL
+        },
                            error = function(e) {
             message(sprintf("%sError:%s %s",
                             color$bright_magenta, color$reset, e$message))
