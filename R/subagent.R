@@ -158,6 +158,11 @@ subagent_seed_history <- function(history) {
         stop("Subagent turn session not initialized", call. = FALSE)
     }
     .subagent_state$session$history <- history
+    # Mark this child as an archive holder: its seeded history is the
+    # whole point of the subagent, so context compaction must not
+    # touch it.
+    .subagent_state$kind <- "archive_holder"
+    .subagent_state$protected_history_len <- length(history)
     invisible(TRUE)
 }
 
@@ -250,6 +255,21 @@ subagent_turn_prompt <- function(prompt) {
             }
         }
     }
+
+    # Context compaction. Runs after the turn (never mid-turn) and
+    # after archival has had its shot at the slice. The on-disk
+    # transcript already holds the full record; compaction only
+    # rewrites the in-memory history sent to the model on the next
+    # query. Archive holders are skipped via the kind marker.
+    tryCatch(
+        maybe_compact_turn_session(
+            .subagent_state$session, cfg,
+            kind = .subagent_state$kind),
+        error = function(e) {
+            log_event("subagent_compact_failed",
+                      reason = "unexpected_error",
+                      error = conditionMessage(e), level = "warn")
+        })
 
     as.character(result$reply %||% "")
 }

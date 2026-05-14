@@ -194,6 +194,32 @@ load_config <- function(cwd = getwd()) {
     if (is.null(sub$base_port)) {
         sub$base_port <- 7851L
     }
+    # Child context compaction. Working subagents (not archive holders)
+    # may compact their own in-memory history when it grows past the
+    # effective threshold. The on-disk transcript is unaffected.
+    if (is.null(sub$context_compaction)) {
+        sub$context_compaction <- list()
+    }
+    cc <- sub$context_compaction
+    if (is.null(cc$mode)) {
+        # inherit_strict: effective threshold = min(parent, child).
+        # inherit: use parent's context_compact_pct verbatim.
+        # off: never compact.
+        cc$mode <- "inherit_strict"
+    }
+    if (is.null(cc$compact_pct)) {
+        cc$compact_pct <- 75L
+    }
+    if (is.null(cc$keep_recent_turns)) {
+        cc$keep_recent_turns <- 1L
+    }
+    if (is.null(cc$min_messages)) {
+        cc$min_messages <- 6L
+    }
+    if (is.null(cc$timeout_seconds)) {
+        cc$timeout_seconds <- 60L
+    }
+    sub$context_compaction <- cc
     config$subagents <- sub
 
     # Archival (retroactive-extraction) configuration. Default off so
