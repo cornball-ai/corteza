@@ -1229,22 +1229,11 @@ run_agent <- function(opts) {
       } else if (cmd == "/context") {
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
-        # Component breakdown: same /4 + per-msg/per-tool overhead the
-        # estimator uses, just split so the user can see which slice is
-        # hot.
+        # Component breakdown — same math the composite estimator uses,
+        # just split so the user can see which slice is hot.
         sys_tok <- estimate_text_tokens(system_prompt %||% "")
-        tool_text <- tryCatch(
-          jsonlite::toJSON(tools %||% list(), auto_unbox = TRUE, null = "null"),
-          error = function(e) ""
-        )
-        tools_tok <- estimate_text_tokens(tool_text) +
-          length(tools %||% list()) * 12L
-        msgs <- session$messages %||% list()
-        hist_text <- vapply(msgs, function(m) {
-          sprintf("%s: %s", m$role %||% "unknown", message_text(m))
-        }, character(1))
-        hist_tok <- sum(vapply(hist_text, estimate_text_tokens, integer(1))) +
-          length(msgs) * 6L
+        tools_tok <- estimate_tool_tokens(tools)
+        hist_tok <- estimate_history_tokens(session$messages %||% list())
         cat(sprintf("%sLive context:%s %s / %s tokens (auto-compact at %d%%)\n",
                     color$bold, color$reset,
                     format_tokens(session_tokens), format_tokens(context_limit),

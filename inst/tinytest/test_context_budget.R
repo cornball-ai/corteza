@@ -92,3 +92,15 @@ expect_equal(corteza::context_usage_pct(session_empty, model = "gpt-4o"), 0)
 # a 128k-context model.
 pct <- corteza::context_usage_pct(session_msg, model = "gpt-4o")
 expect_true(pct > 0 && pct < 1)
+
+# CLI vs turn_session shape ----
+# CLI sessions store messages under $messages; turn_session (and
+# therefore subagents) stores them under $history. The estimator
+# must count tokens for either shape, otherwise the upcoming
+# subagent compaction path silently undercounts to 0.
+msgs <- list(list(role = "user", content = "abcd efgh"))
+cli_shape  <- list(messages = msgs)
+turn_shape <- list(history  = msgs)
+expect_equal(corteza::estimate_live_context_tokens(cli_shape),
+             corteza::estimate_live_context_tokens(turn_shape))
+expect_true(corteza::estimate_live_context_tokens(turn_shape) > 0L)

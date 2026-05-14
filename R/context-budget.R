@@ -174,7 +174,11 @@ estimate_live_context_tokens <- function(session, system_prompt = NULL,
                                          tools = NULL) {
     sys_tok <- estimate_text_tokens(system_prompt %||% "")
     tools_tok <- estimate_tool_tokens(tools)
-    history_tok <- estimate_history_tokens(session$messages %||% list())
+    # CLI sessions store the live message list under $messages;
+    # turn_sessions (used by subagents) use $history. Accept either
+    # so both call paths get a correct count.
+    messages <- session$messages %||% session$history %||% list()
+    history_tok <- estimate_history_tokens(messages)
     as.integer(sys_tok + tools_tok + history_tok)
 }
 
