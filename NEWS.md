@@ -53,6 +53,23 @@
   when neither preset nor tools is supplied (was silently bypassed
   before).
 
+## MCP
+
+* Fix MCP stdio transport compatibility with Claude Code: read from
+  `file("stdin")` rather than `stdin()` (which reads from the script
+  source under `Rscript -e`), echo the client's `protocolVersion` in
+  the `initialize` response instead of hardcoding it, and serialize
+  empty `capabilities.tools` as a JSON object (`{}`) rather than an
+  array (`[]`). Thanks to Grant McDermott (@grantmcdermott, #62).
+
+## Documentation
+
+* New `configuration` vignette covering config files and precedence,
+  CLI flags, the full JSON config-key surface (core, context, safety,
+  skills, subagents, channels, etc.), slash commands, MCP server setup
+  (stdio and socket transports), session tuning, systemd service, and
+  environment variables. Thanks to Bob Rudis (@hrbrmstr, #54).
+
 # corteza 0.6.2
 
 ## CLI
