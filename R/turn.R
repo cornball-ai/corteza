@@ -182,6 +182,23 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      context = list(recent_classes = session$recent_classes,
                                     plan_mode = isTRUE(session$plan_mode))
         )
+
+        # Dry-run mode: short-circuit before policy/approval. A dry
+        # run is a "show me what would happen" preview; prompting the
+        # user to approve a *preview* would be incoherent, and a
+        # config-driven "deny" on the tool would silently swallow the
+        # preview the user is trying to see. The tool_executor is
+        # expected to render the preview itself when it detects the
+        # dry-run flag on the session.
+        if (isTRUE(session$dry_run)) {
+            raw <- tryCatch(
+                            tool_executor(internal_name, as.list(args)),
+                            error = function(e) err(paste("Tool error:",
+                                                          conditionMessage(e)))
+            )
+            return(.flatten_mcp_result(raw))
+        }
+
         # Resolve once up front so policy() and the sticky classifier
         # below see the same paths/urls.
         call$paths <- resolve_paths(call)

@@ -508,6 +508,43 @@ is_approved <- function(cwd, tool_name) {
   isTRUE(approvals[[tool_name]])
 }
 
+# Build a one-shot turn-session for a memory flush and run
+# corteza::turn() on it. The flush is just another agent turn — same
+# model, same tools, same approval gate — pointed at the flush prompt
+# and the session's full message history. Routing through turn() (not
+# raw agent()) keeps the policy + approval_cb path consistent so a
+# flush that decides to call write_file still respects
+# config$permissions.
+.run_memory_flush <- function(flush_prompt, flush_history, system_prompt,
+                              provider, model, config, cwd, tools,
+                              cli_executor, dry_run = FALSE) {
+  flush_session <- corteza::new_session(
+    channel = "cli",
+    provider = provider,
+    model_map = list(cloud = resolve_provider_model(provider, model),
+                     local = corteza::default_local_model()),
+    system = system_prompt,
+    history = flush_history,
+    approval_cb = cli_approval_cb(cwd),
+    max_turns = 20L
+  )
+  flush_session$config <- config
+  flush_session$dry_run <- isTRUE(dry_run)
+  tryCatch({
+    r <- corteza::turn(
+      prompt = flush_prompt,
+      session = flush_session,
+      tool_executor = cli_executor,
+      tools = tools
+    )
+    list(content = r$reply, history = flush_session$history)
+  }, error = function(e) {
+    cat(sprintf("%sFlush failed: %s%s\n",
+                color$bright_magenta, e$message, color$reset))
+    NULL
+  })
+}
+
 # Build the approval callback the CLI hands to corteza::new_session().
 # Replaces the historical split-brain setup where corteza::turn() had
 # a no-op approval_cb (`function(...) TRUE`) and the CLI's outer
@@ -1061,6 +1098,20 @@ run_agent <- function(opts) {
     }
   }
 
+  # CLI tool_handler returns plain strings; turn() expects MCP-format.
+  # Wrap once, before the REPL loop, so slash commands like /flush can
+  # reuse it. (The per-iteration redefinition inside the loop was left
+  # over from when each turn rebuilt its handler.)
+  cli_executor <- function(name, args) {
+    text <- tool_handler(name, args)
+    if (is.character(text) && length(text) == 1L) {
+      list(content = list(list(type = "text", text = text)))
+    } else {
+      # Tool handler already returned MCP format (mcp_call passthrough)
+      text
+    }
+  }
+
   # REPL
   while (TRUE) {
     prompt <- cli_read_line(sprintf("%s> %s", color$green, color$reset))
@@ -1328,21 +1379,10 @@ run_agent <- function(opts) {
           list(role = m$role, content = text)
         })
 
-        flush_result <- tryCatch({
-          agent(
-            prompt = flush_prompt,
-            tools = tools,
-            tool_handler = tool_handler,
-            system = system_prompt,
-            model = resolve_provider_model(provider, model),
-            provider = provider,
-            history = flush_history,
-            verbose = FALSE
-          )
-        }, error = function(e) {
-          cat(sprintf("%sFlush failed: %s%s\n", color$bright_magenta, e$message, color$reset))
-          NULL
-        })
+        flush_result <- .run_memory_flush(flush_prompt, flush_history,
+                                          system_prompt, provider, model,
+                                          config, cwd, tools, cli_executor,
+                                          dry_run = isTRUE(opts$dry_run))
 
         if (!is.null(flush_result)) {
           content <- flush_result$content
@@ -1718,19 +1758,10 @@ Tool output:
     # inside .make_tool_handler so config$permissions and approval_mode
     # / dangerous_tools are honored consistently with chat().
     turn_session$config <- config
-
-    # CLI tool_handler returns plain strings; turn() expects MCP-format.
-    # Wrap: any "Tool execution denied" / "[DRY RUN]" etc. is still a
-    # valid text response, just inside the MCP shape.
-    cli_executor <- function(name, args) {
-      text <- tool_handler(name, args)
-      if (is.character(text) && length(text) == 1L) {
-        list(content = list(list(type = "text", text = text)))
-      } else {
-        # Tool handler already returned MCP format (mcp_call passthrough)
-        text
-      }
-    }
+    # Dry-run propagates so .make_tool_handler short-circuits before
+    # policy/approval and the CLI's tool_handler renders the preview
+    # instead of executing.
+    turn_session$dry_run <- isTRUE(opts$dry_run)
 
     cat(sprintf("● Thinking with %s\n", display_model))
     pre_turn_len <- length(turn_session$history %||% list())
@@ -1839,21 +1870,10 @@ Tool output:
             list(role = m$role, content = text)
           })
 
-          flush_result <- tryCatch({
-            agent(
-              prompt = flush_prompt,
-              tools = tools,
-              tool_handler = tool_handler,
-              system = system_prompt,
-              model = resolve_provider_model(provider, model),
-              provider = provider,
-              history = flush_history,
-              verbose = FALSE
-            )
-          }, error = function(e) {
-            cat(sprintf("%sFlush failed: %s%s\n", color$bright_magenta, e$message, color$reset))
-            NULL
-          })
+          flush_result <- .run_memory_flush(flush_prompt, flush_history,
+                                            system_prompt, provider, model,
+                                            config, cwd, tools, cli_executor,
+                                            dry_run = isTRUE(opts$dry_run))
 
           if (!is.null(flush_result)) {
             content <- flush_result$content

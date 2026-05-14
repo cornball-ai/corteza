@@ -320,6 +320,51 @@ local({
     expect_true(grepl("ran", out))
 })
 
+# Dry-run mode short-circuits before policy/approval so a preview
+# doesn't prompt or get blocked by a config "deny". Codex caught the
+# regression where the unified approval path turned dry-run into a
+# guarded action.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.personal_paths = character(),
+        corteza.policy = NULL
+    )
+    on.exit(options(op), add = TRUE)
+
+    cb_called <- FALSE
+    fake_executor <- function(name, args) {
+        list(content = list(list(type = "text",
+                                 text = "[DRY RUN] preview")))
+    }
+    s <- corteza::new_session(
+        "cli",
+        approval_cb = function(call, decision) {
+            cb_called <<- TRUE
+            FALSE
+        }
+    )
+    # Config would normally tighten this call to ask/deny, but dry-run
+    # must override.
+    s$config <- list(approval_mode = "ask",
+                     dangerous_tools = corteza:::default_dangerous_tools(),
+                     permissions = list(bash = "deny"))
+    s$dry_run <- TRUE
+    h <- corteza:::.make_tool_handler(s, tool_executor = fake_executor)
+    out <- h("bash", list(command = "rm -rf /"))
+    expect_false(cb_called)
+    expect_true(grepl("DRY RUN", out, fixed = TRUE))
+
+    # Same call without dry_run goes through approval — sanity check
+    # that the short-circuit isn't unconditional.
+    cb_called <- FALSE
+    s$dry_run <- FALSE
+    h2 <- corteza:::.make_tool_handler(s, tool_executor = fake_executor)
+    out2 <- h2("bash", list(command = "echo hi"))
+    expect_false(cb_called) # never reaches cb because config says deny
+    expect_true(grepl("denied|deny", out2, ignore.case = TRUE))
+})
+
 # User policy via options("corteza.policy") is the final word — config
 # overlay must NOT downgrade or tighten a verdict that came from the
 # user fn. Codex caught the regression where project config could
