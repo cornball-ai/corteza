@@ -178,6 +178,35 @@ subagent_turn_prompt <- function(prompt) {
     pre_len <- length(.subagent_state$session$history %||% list())
     result <- turn(prompt, .subagent_state$session)
 
+    # Persist this turn's history slice to disk. The transcript is the
+    # durable record (disk space is cheap); the in-memory history will
+    # be compacted later. Each entry is appended as a separate line so
+    # tool calls and results stay distinguishable.
+    post_len_disk <- length(.subagent_state$session$history %||% list())
+    if (post_len_disk > pre_len && !is.null(.subagent_state$subagent_id)) {
+        sub_id <- .subagent_state$subagent_id
+        agent_id <- paste0("subagent-", sub_id)
+        disk_sess <- list(sessionId = sub_id, cwd = getwd(),
+                          provider = .subagent_state$session$provider,
+                          model = .subagent_state$session$model_map$cloud)
+        disk_slice <- .subagent_state$session$history[
+            (pre_len + 1L):post_len_disk]
+        for (entry in disk_slice) {
+            role <- entry$role %||% "user"
+            body <- archival_history_entry_to_text(entry)
+            tryCatch(
+                transcript_append(disk_sess, role, body,
+                                  provider = disk_sess$provider,
+                                  model = disk_sess$model,
+                                  agent_id = agent_id),
+                error = function(e) {
+                    log_event("subagent_transcript_append_failed",
+                              subagent_id = sub_id,
+                              error = conditionMessage(e), level = "warn")
+                })
+        }
+    }
+
     cfg <- tryCatch(load_config(getwd()), error = function(e) list())
     arc_cfg <- cfg$archival %||% list()
     depth <- .subagent_state$depth %||% 0L
@@ -441,6 +470,17 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                      timeout = Sys.time() + subcfg$timeout_minutes * 60,
                                      depth = child_depth
     )
+    # Initialize the durable transcript file. Disk space is cheap;
+    # context is expensive — the in-memory child history may later be
+    # compacted, but the on-disk transcript is append-only and never
+    # rewritten. Header writes are idempotent.
+    tryCatch(
+        transcript_write_header(id, cwd, agent_id = paste0("subagent-", id)),
+        error = function(e) {
+            log_event("subagent_transcript_init_failed", subagent_id = id,
+                      error = conditionMessage(e), level = "warn")
+        })
+
     log_event("subagent_spawn", subagent_id = id, seq = seq, task = task,
               depth = child_depth)
     id
