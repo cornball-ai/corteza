@@ -39,6 +39,26 @@ MODEL_CONTEXT_LIMITS <- list(
     "qwen2.5" = 32000L
 )
 
+#' Provider-specific default model name.
+#'
+#' Resolves the actual model a subagent (or chat session) will run
+#' with when no explicit \code{model} is set. Mirrors the defaults
+#' the CLI script picks at startup so /agents, compaction, and the
+#' CLI all show the same model identity. Returns NULL for unknown
+#' providers (lets llm.api fall back to its own default).
+#' @param provider Provider name.
+#' @return Model name (character) or NULL.
+#' @keywords internal
+#' @export
+default_provider_model <- function(provider) {
+    switch(provider %||% "",
+           anthropic = "claude-sonnet-4-20250514",
+           openai    = "gpt-4o",
+           moonshot  = "kimi-k2.6",
+           ollama    = "llama3.2",
+           NULL)
+}
+
 #' Look up the context window for a given model.
 #'
 #' Tries exact match, then prefix match either direction (so

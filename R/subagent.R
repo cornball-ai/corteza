@@ -742,9 +742,16 @@ subagent_live_token_count <- function(info) {
         info$session$run(function() {
             sess <- corteza:::.subagent_state$session
             if (is.null(sess)) {
-                return(list(tokens = NA_integer_, limit = NA_integer_))
+                return(list(tokens = NA_integer_, limit = NA_integer_,
+                            model = NULL))
             }
-            model <- sess$model_map$cloud %||% NULL
+            # Match the model the child actually runs with: explicit
+            # model_map$cloud first, otherwise the provider default.
+            # Without this fallback, child sessions spawned with the
+            # default model report `ctx ?` because there's no explicit
+            # model name to look up a limit for.
+            model <- sess$model_map$cloud %||%
+                corteza::default_provider_model(sess$provider)
             tools <- tryCatch(corteza:::skills_as_api_tools(sess$tools_filter),
                               error = function(e) NULL)
             list(
@@ -752,9 +759,11 @@ subagent_live_token_count <- function(info) {
                     list(history = sess$history %||% list()),
                     system_prompt = sess$system, tools = tools),
                 limit = if (is.null(model)) NA_integer_ else
-                    corteza::context_limit_for_model(model))
+                    corteza::context_limit_for_model(model),
+                model = model)
         }),
-        error = function(e) list(tokens = NA_integer_, limit = NA_integer_))
+        error = function(e) list(tokens = NA_integer_, limit = NA_integer_,
+                                 model = NULL))
     result
 }
 
@@ -776,6 +785,14 @@ subagent_list <- function() {
         age_seconds <- as.numeric(difftime(Sys.time(),
                                            info$started_at,
                                            units = "secs"))
+        # Display the actual model the child runs with — explicit
+        # info$model first, otherwise the resolved default for the
+        # provider (live$model, which subagent_live_token_count
+        # already computed inside the child). Falls back to provider
+        # then "?" only if neither is known.
+        resolved_model <- info$model %||% live$model %||%
+            default_provider_model(info$provider) %||%
+            info$provider %||% "?"
         # `[[ ]]` for pending fields: list `$` prefix-matches, so
         # info$pending would silently return info$pending_started_at
         # whenever pending itself has been NULL-stripped.
@@ -783,7 +800,7 @@ subagent_list <- function() {
             id = info$id,
             seq = info$seq,
             task = info$task,
-            model = info$model %||% info$provider %||% "?",
+            model = resolved_model,
             started_at = info$started_at,
             age_seconds = age_seconds,
             time_remaining = as.numeric(difftime(info$timeout, Sys.time(),

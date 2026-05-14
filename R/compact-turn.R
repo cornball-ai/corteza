@@ -266,14 +266,11 @@ maybe_compact_turn_session <- function(session, config, kind = NULL) {
     if (length(history) < min_messages) {
         return(invisible(FALSE))
     }
-    model <- session$model_map$cloud %||% NULL
-    if (is.null(model)) {
-        model <- switch(session$provider %||% "anthropic",
-                        anthropic = "claude-sonnet-4-20250514",
-                        openai    = "gpt-4o",
-                        moonshot  = "moonshot-v1-8k",
-                        NULL)
-    }
+    # Resolve the same model turn() will run with; mirrors
+    # subagent_live_token_count() so /agents, compaction, and the
+    # next API call all reason about the same model identity.
+    model <- session$model_map$cloud %||%
+        default_provider_model(session$provider)
     # Estimate against the same tools turn() will send. turn()
     # resolves tools from session$tools_filter when tools is NULL,
     # so passing NULL here would undercount the live context for any

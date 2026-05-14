@@ -114,3 +114,24 @@ costing_agent <- mock_agent
 costing_agent$cumulative_cost <- 0.0153
 out_cost <- corteza:::format_subagent_list(list(costing_agent))
 expect_true(grepl("$0.0153", out_cost, fixed = TRUE))
+
+# default_provider_model ----
+# Regression for the case where a subagent spawned with the provider
+# default model (no explicit model_map$cloud) used to display the
+# provider name as the model and "ctx ?" because the limit lookup
+# had no key. The helper now resolves the same default the CLI and
+# turn() will use, so /agents shows a real model name and a real
+# context window.
+expect_equal(corteza::default_provider_model("anthropic"),
+             "claude-sonnet-4-20250514")
+expect_equal(corteza::default_provider_model("openai"), "gpt-4o")
+expect_equal(corteza::default_provider_model("moonshot"), "kimi-k2.6")
+expect_equal(corteza::default_provider_model("ollama"), "llama3.2")
+expect_null(corteza::default_provider_model("unknown-provider"))
+expect_null(corteza::default_provider_model(NULL))
+
+# Resolved default models all have a context-limit entry.
+expect_true(corteza::context_limit_for_model(
+    corteza::default_provider_model("anthropic")) > 0L)
+expect_true(corteza::context_limit_for_model(
+    corteza::default_provider_model("moonshot")) > 0L)
