@@ -126,11 +126,8 @@ load_config <- function(cwd = getwd()) {
     # Default skill packages (R packages registered as tools)
     if (is.null(config$skill_packages)) {
         config$skill_packages <- list(
-                                      list(package = "base", functions = c(
-                    "file.exists", "file.copy",
-                    "file.remove", "dir.create",
-                    "Sys.glob"
-                )),
+                                      list(package = "base", functions = c("file.exists", "file.copy",
+                    "file.remove", "dir.create", "Sys.glob")),
                                       list(package = "utils", functions = c("read.csv", "head", "tail"))
         )
     }
@@ -295,3 +292,4 @@ get_context_files <- function(cwd = getwd()) {
     config <- load_config(cwd)
     config$context_files
 }
+

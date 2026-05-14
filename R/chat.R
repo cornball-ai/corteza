@@ -3,10 +3,8 @@
 # Detect providers supported by the currently loaded llm.api namespace.
 # @noRd
 llm_api_supported_providers <- function() {
-    providers <- tryCatch(
-                          eval(formals(llm.api::agent)$provider),
-                          error = function(e) character()
-    )
+    providers <- tryCatch(eval(formals(llm.api::agent)$provider),
+                          error = function(e) character())
 
     unique(as.character(providers %||% character()))
 }
@@ -177,7 +175,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     }
 
     max_turns <- as.integer(
-        max_turns %||% getOption("corteza.max_turns") %||% 50L
+                            max_turns %||% getOption("corteza.max_turns") %||% 50L
     )
 
     cwd <- getwd()
@@ -191,18 +189,13 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
     # Shared pre-session setup: config, provider, API key, skills,
     # system prompt.
-    turn_session <- session_setup(
-                                  channel = "console",
-                                  cwd = cwd,
-                                  provider = provider,
-                                  model = model,
-                                  tools = tools,
-                                  history = history,
+    turn_session <- session_setup(channel = "console", cwd = cwd,
+                                  provider = provider, model = model,
+                                  tools = tools, history = history,
                                   load_project_context = TRUE,
                                   validate_api_key = TRUE,
                                   approval_cb = chat_approval_cb(cwd),
-                                  max_turns = max_turns
-    )
+                                  max_turns = max_turns)
     config <- turn_session$config
     provider <- turn_session$provider
     model <- turn_session$model_map$cloud
@@ -436,11 +429,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 }
                 ok <- tryCatch(subagent_kill(parts[2]),
                                error = function(e) {
-                                   cat(sprintf("%sError:%s %s\n",
-                                               color$bright_magenta,
-                                               color$reset, e$message))
-                                   FALSE
-                               })
+                    cat(sprintf("%sError:%s %s\n",
+                                color$bright_magenta,
+                                color$reset, e$message))
+                    FALSE
+                })
                 if (isTRUE(ok)) {
                     cat(sprintf("%sSubagent %s terminated%s\n",
                                 color$dim, parts[2], color$reset))
@@ -455,8 +448,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/trace") {
-                n <- if (length(parts) >= 2L) suppressWarnings(as.integer(parts[2])) else 20L
-                if (is.na(n)) n <- 20L
+                if (length(parts) >= 2L) {
+                    n <- suppressWarnings(as.integer(parts[2]))
+                } else {
+                    n <- 20L
+                }
+                if (is.na(n)) {
+                    n <- 20L
+                }
                 trace <- tryCatch(trace_load(disk_session$session$sessionId, n = n),
                                   error = function(e) list())
                 if (length(trace) == 0L) {
@@ -470,16 +469,20 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 cat(format_permissions(config), "\n")
                 approvals_path <- file.path(cwd, ".corteza", "approvals.json")
                 cat(sprintf("Project approvals: %s\n",
-                            if (file.exists(approvals_path)) approvals_path else "none"))
+                        if (file.exists(approvals_path)) {
+                            approvals_path
+                        } else {
+                            "none"
+                        }))
                 next
             }
             if (cmd == "/dryrun") {
                 turn_session$config$dry_run <- !isTRUE(turn_session$config$dry_run)
                 config$dry_run <- turn_session$config$dry_run
                 cat(sprintf("Dry-run mode %s\n",
-                            if (isTRUE(turn_session$config$dry_run))
-                                "enabled (tools preview only)"
-                            else "disabled"))
+                        if (isTRUE(turn_session$config$dry_run))
+                            "enabled (tools preview only)"
+                        else "disabled"))
                 next
             }
             if (cmd == "/plan") {
@@ -491,15 +494,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     turn_session$plan_mode <- !isTRUE(turn_session$plan_mode)
                     cat(sprintf("%sPlan mode %s%s\n",
                                 color$dim,
-                                if (isTRUE(turn_session$plan_mode))
-                                    "enabled (reads only; LLM proposes a plan via exit_plan_mode)"
-                                else "disabled",
+                            if (isTRUE(turn_session$plan_mode))
+                                "enabled (reads only; LLM proposes a plan via exit_plan_mode)"
+                            else "disabled",
                                 color$reset))
                     next
                 }
                 turn_session$plan_mode <- TRUE
-                cat(sprintf("%sPlan mode enabled.%s\n",
-                            color$dim, color$reset))
+                cat(sprintf("%sPlan mode enabled.%s\n", color$dim, color$reset))
                 prompt <- rest
                 # Fall through to normal prompt handling below.
             }
@@ -510,26 +512,26 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 # what the LLM actually sees on every turn alongside
                 # the message history.
                 sys_chars <- as.integer(nchar(turn_session$system %||% "",
-                                              type = "chars"))
+                        type = "chars"))
                 hist_chars <- sum(vapply(turn_session$history %||% list(),
-                                         function(m) {
-                                             cnt <- m$content
-                                             if (is.character(cnt)) {
-                                                 sum(nchar(cnt, type = "chars"))
-                                             } else if (is.list(cnt)) {
-                                                 sum(vapply(cnt, function(b) {
-                                                     nchar(b$text %||% "", type = "chars")
-                                                 }, integer(1)))
-                                             } else 0L
-                                         }, integer(1)))
+                        function(m) {
+                    cnt <- m$content
+                    if (is.character(cnt)) {
+                        sum(nchar(cnt, type = "chars"))
+                    } else if (is.list(cnt)) {
+                        sum(vapply(cnt, function(b) {
+                            nchar(b$text %||% "", type = "chars")
+                        }, integer(1)))
+                    } else 0L
+                }, integer(1)))
                 tools_chars <- as.integer(tryCatch(
-                    sum(vapply(skills_as_api_tools(turn_session$tools_filter),
-                               function(t) {
-                                   nchar(jsonlite::toJSON(t, auto_unbox = TRUE),
-                                         type = "chars")
-                               }, integer(1))),
-                    error = function(e) 0L
-                ))
+                        sum(vapply(skills_as_api_tools(turn_session$tools_filter),
+                                   function(t) {
+                    nchar(jsonlite::toJSON(t, auto_unbox = TRUE),
+                          type = "chars")
+                }, integer(1))),
+                        error = function(e) 0L
+                    ))
                 # Break down in tokens so the components add up to the
                 # total. Compute each ceiling separately; the off-by-one
                 # rounding is dwarfed by the /4 heuristic itself.
@@ -547,7 +549,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                         "prompt above.\n", sep = "")
                 } else {
                     cat("Loaded context files:\n")
-                    for (f in files) cat("  ", f, "\n")
+                    for (f in files) {
+                        cat("  ", f, "\n")
+                    }
                 }
                 next
             }
@@ -561,11 +565,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     transcript <- archival_render_transcript(turn_session$history)
                     sys <- "Compress this conversation into a 1-paragraph summary that preserves the user's goals, decisions made, files touched, and unresolved questions. No bullets."
                     resp <- llm.api::agent(prompt = transcript, system = sys,
-                                            tools = list(),
-                                            model = turn_session$model_map$cloud,
-                                            provider = turn_session$provider,
-                                            max_turns = 1L, history = list(),
-                                            verbose = FALSE)
+                        tools = list(),
+                        model = turn_session$model_map$cloud,
+                        provider = turn_session$provider,
+                        max_turns = 1L, history = list(),
+                        verbose = FALSE)
                     as.character(resp$content %||% "")
                 }, error = function(e) {
                     cat(sprintf("Compaction failed: %s\n", e$message))
@@ -585,7 +589,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             # strip_tags / parse_tags helpers that don't exist in the
             # package. Skipping the chat() port to match reality.
             if (cmd %in% c("/skill", "/skills")) {
-                subcmd <- if (length(parts) >= 2L) parts[2] else "list"
+                if (length(parts) >= 2L) {
+                    subcmd <- parts[2]
+                } else {
+                    subcmd <- "list"
+                }
                 if (subcmd == "list") {
                     tryCatch({
                         cat(format_skill_list(skill_list_installed()), "\n")
@@ -638,39 +646,41 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             code <- sub("^/r\\s+", "", trimws(prompt))
             r_env <- new.env(parent = emptyenv())
             result_lines <- tryCatch(
-                capture.output({
-                    r_env$r <- withVisible(eval(parse(text = code),
-                                                envir = .GlobalEnv))
-                    if (r_env$r$visible) print(r_env$r$value)
-                }),
-                error = function(e) {
-                    r_env$r <- NULL
-                    paste("Error:", e$message)
-                }
+                                     capture.output({
+                r_env$r <- withVisible(eval(parse(text = code),
+                        envir = .GlobalEnv))
+                if (r_env$r$visible) print(r_env$r$value)
+            }),
+                                     error = function(e) {
+                r_env$r <- NULL
+                paste("Error:", e$message)
+            }
             )
             result_text <- paste(result_lines, collapse = "\n")
             # Show the output immediately so the user can react.
-            if (nchar(result_text) > 0) cat(result_text, "\n", sep = "")
+            if (nchar(result_text) > 0) {
+                cat(result_text, "\n", sep = "")
+            }
             # Stage for the next send so the LLM has the same context —
             # but a printed data frame or big vector can easily be tens
             # of thousands of tokens, so cap the staged text and fall
             # back to str() for the oversize case.
             staged <- if (nchar(result_text) > 4000L && !is.null(r_env$r)) {
                 str_lines <- tryCatch(
-                    capture.output(utils::str(r_env$r$value)),
-                    error = function(e) paste("Error:", e$message)
+                                      capture.output(utils::str(r_env$r$value)),
+                                      error = function(e) paste("Error:", e$message)
                 )
                 sprintf(
-                    "(%d chars of output truncated; showing str())\n%s",
-                    nchar(result_text),
-                    paste(str_lines, collapse = "\n")
+                        "(%d chars of output truncated; showing str())\n%s",
+                        nchar(result_text),
+                        paste(str_lines, collapse = "\n")
                 )
             } else {
                 result_text
             }
             pending_r_context <- c(
-                pending_r_context,
-                sprintf("[/r] %s\n%s", code, staged)
+                                   pending_r_context,
+                                   sprintf("[/r] %s\n%s", code, staged)
             )
             next
         }
@@ -700,8 +710,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
         reply <- result$reply %||% ""
         if (nchar(reply) == 0) {
-            cat(sprintf("%s[No response text]%s\n\n",
-                        color$dim, color$reset))
+            cat(sprintf("%s[No response text]%s\n\n", color$dim, color$reset))
         } else {
             cat(reply, "\n\n")
         }
@@ -710,11 +719,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         # Archival hook: opt-in via config$archival$enabled. Mutates
         # turn_session$history in place when triggers fire.
         maybe_archive_turn(
-            turn_session = turn_session, prompt = prompt,
-            pre_turn_len = pre_turn_len, result = result, config = config,
-            parent_session_id = disk_session$session$sessionId,
-            max_turns_hit = isTRUE(grepl("Max turns", reply)),
-            depth = 0L
+                           turn_session = turn_session, prompt = prompt,
+                           pre_turn_len = pre_turn_len, result = result, config = config,
+                           parent_session_id = disk_session$session$sessionId,
+                           max_turns_hit = isTRUE(grepl("Max turns", reply)),
+                           depth = 0L
         )
     }
 
@@ -735,11 +744,11 @@ chat_approval_cb <- function(cwd = getwd()) {
         }
 
         lines <- cli_approval_lines(
-            call,
-            decision,
-            gate_reason = "Console session approval required.",
-            cwd = cwd,
-            persistent_label = "Allow always for this session"
+                                    call,
+                                    decision,
+                                    gate_reason = "Console session approval required.",
+                                    cwd = cwd,
+                                    persistent_label = "Allow always for this session"
         )
         cat(paste(lines, collapse = "\n"), "\n")
 
@@ -763,12 +772,9 @@ resolve_disk_session <- function(session_arg, provider, model, cwd) {
     if (is.character(session_arg)) {
         resumed <- session_load(session_arg)
         if (!is.null(resumed)) {
-            return(list(
-                        session = resumed,
-                        sessionId = resumed$sessionId,
+            return(list(session = resumed, sessionId = resumed$sessionId,
                         history = disk_messages_to_history(resumed$messages),
-                        resumed = TRUE
-                ))
+                        resumed = TRUE))
         }
         fresh <- session_new(provider, model, cwd, session_key = session_arg)
         return(list(session = fresh, sessionId = fresh$sessionId,
@@ -830,16 +836,12 @@ chat_trace_observer <- function(session) {
             return(invisible(NULL))
         }
         tryCatch(
-                 trace_add(
-                           session$sessionId,
-                           event$call$tool,
-                           event$call$args,
-                           event$result,
-                           success = event$success,
+                 trace_add(session$sessionId, event$call$tool, event$call$args,
+                           event$result, success = event$success,
                            elapsed_ms = round(event$elapsed_ms),
-                           turn = event$turn_number
-            ),
+                           turn = event$turn_number),
                  error = function(e) NULL
         )
     }
 }
+

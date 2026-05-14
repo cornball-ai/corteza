@@ -44,7 +44,9 @@
 
 # Walk an Rd node tree, produce concatenated plain text.
 .rd_text <- function(node) {
-    if (is.character(node)) return(paste(node, collapse = ""))
+    if (is.character(node)) {
+        return(paste(node, collapse = ""))
+    }
     if (is.list(node)) {
         return(paste(vapply(node, .rd_text, character(1L)), collapse = ""))
     }
@@ -56,12 +58,16 @@
 # function lacks documentation.
 .rd_for <- function(fn_name, pkg = "corteza") {
     db <- tryCatch(tools::Rd_db(pkg), error = function(e) NULL)
-    if (is.null(db)) return(NULL)
+    if (is.null(db)) {
+        return(NULL)
+    }
     for (rd in db) {
         for (el in rd) {
             tag <- attr(el, "Rd_tag")
             if (identical(tag, "\\alias") || identical(tag, "\\name")) {
-                if (identical(trimws(.rd_text(el)), fn_name)) return(rd)
+                if (identical(trimws(.rd_text(el)), fn_name)) {
+                    return(rd)
+                }
             }
         }
     }
@@ -76,8 +82,12 @@
     desc <- ""
     for (el in rd) {
         tag <- attr(el, "Rd_tag")
-        if (identical(tag, "\\title")) title <- trimws(.rd_text(el))
-        else if (identical(tag, "\\description")) desc <- trimws(.rd_text(el))
+        if (identical(tag, "\\title")) {
+            title <- trimws(.rd_text(el))
+        } else
+        if (identical(tag, "\\description")) {
+            desc <- trimws(.rd_text(el))
+        }
     }
     title <- gsub("\\s+", " ", title)
     desc <- gsub("\\s+", " ", desc)
@@ -97,10 +107,16 @@
 .rd_args <- function(rd) {
     out <- list()
     for (el in rd) {
-        if (!identical(attr(el, "Rd_tag"), "\\arguments")) next
+        if (!identical(attr(el, "Rd_tag"), "\\arguments")) {
+            next
+        }
         for (child in el) {
-            if (!identical(attr(child, "Rd_tag"), "\\item")) next
-            if (length(child) < 2L) next
+            if (!identical(attr(child, "Rd_tag"), "\\item")) {
+                next
+            }
+            if (length(child) < 2L) {
+                next
+            }
             nm <- trimws(.rd_text(child[[1]]))
             desc <- trimws(gsub("\\s+", " ", .rd_text(child[[2]])))
             out[[nm]] <- desc
@@ -138,13 +154,15 @@
 
 # Map an R type hint to a JSON Schema type skeleton.
 .r_type_to_json <- function(hint) {
-    simple <- c(
-        character = "string", integer = "integer", numeric = "number",
-        double = "number", logical = "boolean", list = "object",
-        `NULL` = "null"
-    )
-    if (is.null(hint)) return(NULL)
-    if (hint %in% names(simple)) return(list(type = unname(simple[hint])))
+    simple <- c(character = "string", integer = "integer",
+                numeric = "number", double = "number", logical = "boolean",
+                list = "object", `NULL` = "null")
+    if (is.null(hint)) {
+        return(NULL)
+    }
+    if (hint %in% names(simple)) {
+        return(list(type = unname(simple[hint])))
+    }
     if (endsWith(hint, " vector")) {
         inner <- sub(" vector$", "", hint)
         if (inner %in% names(simple)) {
@@ -157,11 +175,21 @@
 # Infer a schema skeleton from a default value (last-resort when the
 # @param has no (type) hint).
 .infer_from_default <- function(default) {
-    if (is.null(default)) return(list(type = "null"))
-    if (is.logical(default) && length(default) == 1L) return(list(type = "boolean"))
-    if (is.integer(default) && length(default) == 1L) return(list(type = "integer"))
-    if (is.double(default) && length(default) == 1L) return(list(type = "number"))
-    if (is.character(default) && length(default) == 1L) return(list(type = "string"))
+    if (is.null(default)) {
+        return(list(type = "null"))
+    }
+    if (is.logical(default) && length(default) == 1L) {
+        return(list(type = "boolean"))
+    }
+    if (is.integer(default) && length(default) == 1L) {
+        return(list(type = "integer"))
+    }
+    if (is.double(default) && length(default) == 1L) {
+        return(list(type = "number"))
+    }
+    if (is.character(default) && length(default) == 1L) {
+        return(list(type = "string"))
+    }
     list(type = "string")
 }
 
@@ -178,7 +206,11 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
     fn <- get(fn_name, envir = asNamespace(pkg))
     fml <- formals(fn)
     rd <- .rd_for(fn_name, pkg)
-    arg_docs <- if (is.null(rd)) list() else .rd_args(rd)
+    if (is.null(rd)) {
+        arg_docs <- list()
+    } else {
+        arg_docs <- .rd_args(rd)
+    }
 
     properties <- list()
     required <- character()
@@ -186,7 +218,9 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
     for (nm in names(fml)) {
         # `...` is never exposed to the LLM; `ctx` is the server-side
         # sentinel that register_skill_from_fn injects at call time.
-        if (nm == "..." || nm == "ctx") next
+        if (nm == "..." || nm == "ctx") {
+            next
+        }
         # An empty formal (required arg) is the empty symbol. Binding
         # it to a local triggers R's missing-argument handling, so we
         # keep it inside the list and only evaluate when optional.
@@ -208,16 +242,24 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
             }
         }
         schema_prop$description <- parsed$desc
-        if (!is.null(parsed$enum)) schema_prop$enum <- parsed$enum
+        if (!is.null(parsed$enum)) {
+            schema_prop$enum <- parsed$enum
+        }
         if (!is_req && is.atomic(evaluated) && length(evaluated) == 1L) {
             schema_prop$default <- evaluated
         }
 
         properties[[nm]] <- schema_prop
-        if (is_req) required <- c(required, nm)
+        if (is_req) {
+            required <- c(required, nm)
+        }
     }
 
-    description <- if (is.null(rd)) "" else .rd_description(rd, max_desc_chars)
+    if (is.null(rd)) {
+        description <- ""
+    } else {
+        description <- .rd_description(rd, max_desc_chars)
+    }
 
     # Empty properties must serialize as {} in JSON, not [].
     # setNames(list(), character(0)) is how jsonlite::toJSON knows to
@@ -228,13 +270,10 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
     }
 
     list(
-        name = fn_name,
-        description = description,
-        input_schema = list(
-            type = "object",
-            properties = properties,
-            required = as.list(required)
-        )
+         name = fn_name,
+         description = description,
+         input_schema = list(type = "object", properties = properties,
+                             required = as.list(required))
     )
 }
 
@@ -254,23 +293,21 @@ register_skill_from_fn <- function(tool_name, fn, available = NULL) {
     fn_name <- deparse(substitute(fn))
     derived <- schema_from_fn(fn_name)
     skill <- list(
-        name = tool_name,
-        description = derived$description,
-        inputSchema = list(
-            type = derived$input_schema$type,
-            properties = derived$input_schema$properties,
-            required = derived$input_schema$required
-        ),
-        handler = function(args, ctx) {
-            fn_formals <- names(formals(fn))
-            call_args <- args[intersect(names(args), fn_formals)]
-            # Server-side context (cwd, session, ...) is injected, not
-            # derived from LLM-provided args. Functions that want it
-            # declare `ctx` in their signature.
-            if ("ctx" %in% fn_formals) call_args$ctx <- ctx
-            do.call(fn, call_args)
-        },
-        available = available
+                  name = tool_name,
+                  description = derived$description,
+                  inputSchema = list(type = derived$input_schema$type,
+                                     properties = derived$input_schema$properties,
+                                     required = derived$input_schema$required),
+                  handler = function(args, ctx) {
+        fn_formals <- names(formals(fn))
+        call_args <- args[intersect(names(args), fn_formals)]
+        # Server-side context (cwd, session, ...) is injected, not
+        # derived from LLM-provided args. Functions that want it
+        # declare `ctx` in their signature.
+        if ("ctx" %in% fn_formals) call_args$ctx <- ctx
+        do.call(fn, call_args)
+    },
+                  available = available
     )
     .skill_registry[[tool_name]] <- skill
     invisible(tool_name)
@@ -319,10 +356,8 @@ schema_from_registry <- function(filter = NULL) {
         isTRUE(tryCatch(entry$available(), error = function(e) TRUE))
     }, mcp_tools)
     lapply(mcp_tools, function(t) {
-        list(
-            name = sanitize_tool_name(t$name),
-            description = t$description,
-            input_schema = t$inputSchema
-        )
+        list(name = sanitize_tool_name(t$name), description = t$description,
+             input_schema = t$inputSchema)
     })
 }
+

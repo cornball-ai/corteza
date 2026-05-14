@@ -30,10 +30,10 @@ ansi_supported <- function() {
 #'   bright_yellow, bright_blue, bright_magenta, bright_cyan.
 #' @noRd
 ansi_colors <- function() {
-    keys <- c("reset", "bold", "dim",
-              "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-              "bright_red", "bright_green", "bright_yellow", "bright_blue",
-              "bright_magenta", "bright_cyan")
+    keys <- c("reset", "bold", "dim", "red", "green", "yellow", "blue",
+              "magenta", "cyan", "white", "bright_red", "bright_green",
+              "bright_yellow", "bright_blue", "bright_magenta",
+              "bright_cyan")
     if (!ansi_supported()) {
         return(stats::setNames(as.list(rep("", length(keys))), keys))
     }
@@ -45,3 +45,4 @@ ansi_colors <- function() {
          bright_yellow = "\033[93m", bright_blue = "\033[94m",
          bright_magenta = "\033[95m", bright_cyan = "\033[96m")
 }
+

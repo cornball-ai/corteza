@@ -45,10 +45,8 @@ load_context <- function(cwd = getwd()) {
         if (file.exists(path)) {
             content <- paste(readLines(path, warn = FALSE), collapse = "\n")
             if (nchar(content) > 0L) {
-                b <- add_context(b, paste(
-                        sprintf("## %s", basename(path)), "", content,
-                        sep = "\n"
-                    ))
+                b <- add_context(b, paste(sprintf("## %s", basename(path)),
+                        "", content, sep = "\n"))
             }
         }
     }
@@ -167,13 +165,10 @@ add_context <- function(builder, text) {
 load_local_agent_context <- function(cwd, config) {
     workspace_dir <- get_workspace_dir()
     tryCatch({
-        text <- agent_context(
-                              agent = "corteza",
-                              project_dir = cwd,
+        text <- agent_context(agent = "corteza", project_dir = cwd,
                               workspace_dir = workspace_dir,
                               include_soul = config$context_include_soul,
-                              include_global = config$context_include_user
-        )
+                              include_global = config$context_include_user)
         if (is.null(text) || nchar(trimws(text)) == 0L) NULL else text
     }, error = function(e) NULL)
 }
@@ -208,10 +203,8 @@ load_saber_agent_context <- function(cwd, config) {
     # namespace yet. When saber doesn't export it (0.3.0 and earlier),
     # this returns NULL and load_local_agent_context() covers the feature
     # via the inlined copy in R/agent_context.R.
-    saber_fn <- tryCatch(
-                         getExportedValue("saber", "agent_context"),
-                         error = function(e) NULL
-    )
+    saber_fn <- tryCatch(getExportedValue("saber", "agent_context"),
+                         error = function(e) NULL)
     if (is.null(saber_fn)) {
         return(NULL)
     }

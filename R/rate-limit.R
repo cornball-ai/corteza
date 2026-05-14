@@ -43,10 +43,8 @@ track_usage <- function(provider, tokens, requests = 1L) {
 
     # Initialize provider tracking if needed
     if (is.null(.rate_state$usage[[provider]])) {
-        .rate_state$usage[[provider]] <- list(
-            tokens_hour = 0L,
-            requests_minute = 0L
-        )
+        .rate_state$usage[[provider]] <- list(tokens_hour = 0L,
+            requests_minute = 0L)
         .rate_state$window_start[[provider]] <- list(hour = now, minute = now)
     }
 
@@ -156,11 +154,8 @@ get_usage_stats <- function(provider = NULL) {
         windows <- .rate_state$window_start[[provider]]
 
         if (is.null(usage)) {
-            return(list(
-                        tokens_hour = 0L,
-                        requests_minute = 0L,
-                        limits = limits
-                ))
+            return(list(tokens_hour = 0L, requests_minute = 0L,
+                        limits = limits))
         }
 
         list(
@@ -190,7 +185,8 @@ format_usage_stats <- function(provider) {
     if (!is.null(stats$limits$tokens_per_hour)) {
         pct <- (stats$tokens_hour / stats$limits$tokens_per_hour) * 100
         lines <- c(lines, sprintf("  Tokens: %d / %d (%.1f%%)",
-                                  stats$tokens_hour, stats$limits$tokens_per_hour, pct))
+                                  stats$tokens_hour,
+                                  stats$limits$tokens_per_hour, pct))
     } else {
         lines <- c(lines, sprintf("  Tokens: %d (no limit)", stats$tokens_hour))
     }

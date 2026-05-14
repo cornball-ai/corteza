@@ -78,8 +78,8 @@ resolve_subagent_id <- function(input) {
         return(matches[1])
     }
     if (length(matches) > 1L) {
-        stop(sprintf("Ambiguous subagent id '%s' matches: %s",
-                     s, paste(matches, collapse = ", ")),
+        stop(sprintf("Ambiguous subagent id '%s' matches: %s", s,
+                     paste(matches, collapse = ", ")),
              call. = FALSE)
     }
     NULL
@@ -115,17 +115,14 @@ resolve_subagent_id <- function(input) {
 #' @export
 subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
-                               max_turns = 10L, depth = 0L,
-                               plan_mode = FALSE) {
-    session <- new_session(
-        channel = "console",
-        provider = provider,
-        tools_filter = tools_filter,
-        system = system,
-        max_turns = as.integer(max_turns),
-        plan_mode = isTRUE(plan_mode)
-    )
-    if (!is.null(model)) session$model_map$cloud <- model
+                               max_turns = 10L, depth = 0L, plan_mode = FALSE) {
+    session <- new_session(channel = "console", provider = provider,
+                           tools_filter = tools_filter, system = system,
+                           max_turns = as.integer(max_turns),
+                           plan_mode = isTRUE(plan_mode))
+    if (!is.null(model)) {
+        session$model_map$cloud <- model
+    }
     .subagent_state$session <- session
     .subagent_state$depth <- as.integer(depth)
     .subagent_state$subagent_id <- NULL
@@ -190,7 +187,7 @@ subagent_turn_prompt <- function(prompt) {
         if (post_len > pre_len) {
             slice <- .subagent_state$session$history[(pre_len + 1L):post_len]
             max_turns_hit <- isTRUE(grepl("Max turns",
-                                          as.character(result$reply %||% "")))
+                    as.character(result$reply %||% "")))
             if (archival_should_trigger(arc_cfg, slice, depth = depth,
                                         max_turns_hit = max_turns_hit) &&
                 !archival_slice_has_unfinished_tool_use(slice)) {
@@ -200,7 +197,7 @@ subagent_turn_prompt <- function(prompt) {
                     arc_cfg = arc_cfg, depth = depth,
                     parent_session_id = .subagent_state$subagent_id,
                     parent_provider = .subagent_state$session$provider %||%
-                        "anthropic",
+                    "anthropic",
                     parent_model = .subagent_state$session$model_map$cloud,
                     config = cfg
                 )
@@ -229,18 +226,20 @@ subagent_turn_prompt <- function(prompt) {
 }
 
 SUBAGENT_DEFAULTS <- list(
-    max_concurrent = 3L,
-    timeout_minutes = 30L,
-    allow_nested = FALSE,
-    default_tools = c("read_file", "grep_files", "r_help", "web_search", "fetch_url")
+                          max_concurrent = 3L,
+                          timeout_minutes = 30L,
+                          allow_nested = FALSE,
+                          default_tools = c("read_file", "grep_files", "r_help", "web_search",
+        "fetch_url")
 )
 
 SUBAGENT_PRESETS <- list(
-    investigate = c("read_file", "grep_files", "r_help", "web_search", "fetch_url"),
-    work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
-             "bash", "write_file", "replace_in_file", "list_files",
-             "git_status", "git_diff", "git_log", "run_r"),
-    minimal = c("read_file", "grep_files")
+                         investigate = c("read_file", "grep_files", "r_help", "web_search",
+        "fetch_url"),
+                         work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
+                                  "bash", "write_file", "replace_in_file", "list_files",
+                                  "git_status", "git_diff", "git_log", "run_r"),
+                         minimal = c("read_file", "grep_files")
 )
 
 #' Get subagent configuration.
@@ -250,11 +249,11 @@ SUBAGENT_PRESETS <- list(
 get_subagent_config <- function(config = list()) {
     cfg <- config$subagents %||% list()
     list(
-        enabled = cfg$enabled %||% TRUE,
-        max_concurrent = cfg$max_concurrent %||% SUBAGENT_DEFAULTS$max_concurrent,
-        timeout_minutes = cfg$timeout_minutes %||% SUBAGENT_DEFAULTS$timeout_minutes,
-        allow_nested = cfg$allow_nested %||% SUBAGENT_DEFAULTS$allow_nested,
-        default_tools = cfg$default_tools %||% SUBAGENT_DEFAULTS$default_tools
+         enabled = cfg$enabled %||% TRUE,
+         max_concurrent = cfg$max_concurrent %||% SUBAGENT_DEFAULTS$max_concurrent,
+         timeout_minutes = cfg$timeout_minutes %||% SUBAGENT_DEFAULTS$timeout_minutes,
+         allow_nested = cfg$allow_nested %||% SUBAGENT_DEFAULTS$allow_nested,
+         default_tools = cfg$default_tools %||% SUBAGENT_DEFAULTS$default_tools
     )
 }
 
@@ -275,8 +274,7 @@ resolve_subagent_tools <- function(preset = NULL, tools = NULL,
     }
     preset_tools <- SUBAGENT_PRESETS[[preset]]
     if (is.null(preset_tools)) {
-        stop(sprintf("Unknown subagent preset: '%s'. Use: %s",
-                     preset,
+        stop(sprintf("Unknown subagent preset: '%s'. Use: %s", preset,
                      paste(names(SUBAGENT_PRESETS), collapse = ", ")),
              call. = FALSE)
     }
@@ -312,8 +310,7 @@ subagent_session_key <- function(parent_key) {
 #' @return Subagent ID (character).
 #' @importFrom callr r_session
 #' @export
-subagent_spawn <- function(task, model = NULL, tools = NULL,
-                           preset = NULL,
+subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                            parent_session = NULL, config = NULL) {
     if (is.null(config)) {
         config <- load_config(getwd())
@@ -335,7 +332,11 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
         }
     }
 
-    cwd <- if (!is.null(parent_session$cwd)) parent_session$cwd else getwd()
+    if (!is.null(parent_session$cwd)) {
+        cwd <- parent_session$cwd
+    } else {
+        cwd <- getwd()
+    }
 
     parent_key <- if (!is.null(parent_session)) {
         parent_session$sessionKey
@@ -346,34 +347,34 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     id <- sub("^agent:main:subagent:", "", session_key)
 
     store_update(session_key, list(
-        sessionId = id,
-        spawnedBy = parent_key,
-        task = task,
-        status = "starting",
-        createdAt = as.numeric(Sys.time()) * 1000
-    ))
+                                   sessionId = id,
+                                   spawnedBy = parent_key,
+                                   task = task,
+                                   status = "starting",
+                                   createdAt = as.numeric(Sys.time()) * 1000
+        ))
 
     # Spin up the child session and initialize corteza inside it.
     session <- tryCatch(
-        callr::r_session$new(wait = TRUE),
-        error = function(e) {
-            store_update(session_key, list(status = "failed"))
-            stop("Failed to start subagent session: ", conditionMessage(e),
-                 call. = FALSE)
-        }
+                        callr::r_session$new(wait = TRUE),
+                        error = function(e) {
+        store_update(session_key, list(status = "failed"))
+        stop("Failed to start subagent session: ", conditionMessage(e),
+             call. = FALSE)
+    }
     )
     # Compose the child's system prompt: focus on the task, forbid
     # conversational drift and (if nested is disabled) recursive
     # spawning.
     system_prompt <- paste0(
-        "You are a specialized subagent spawned for a specific task.\n",
-        "- Stay focused on the assigned task\n",
-        "- Do not initiate new conversations\n",
-        "- Be concise in responses\n",
-        "- Report completion clearly\n",
+                            "You are a specialized subagent spawned for a specific task.\n",
+                            "- Stay focused on the assigned task\n",
+                            "- Do not initiate new conversations\n",
+                            "- Be concise in responses\n",
+                            "- Report completion clearly\n",
         if (!isTRUE(subcfg$allow_nested))
-            "- You cannot spawn additional subagents\n" else "",
-        "\n## Task\n", task
+                            "- You cannot spawn additional subagents\n" else "",
+                            "\n## Task\n", task
     )
     effective_tools <- resolve_subagent_tools(
         preset = preset, tools = tools,
@@ -381,10 +382,10 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     )
     # Default provider/model from parent session when available, else config/env.
     spawn_provider <- parent_session$provider %||%
-        getOption("corteza.provider", "anthropic")
+    getOption("corteza.provider", "anthropic")
     spawn_model <- model %||%
-        parent_session$model_map$cloud %||%
-        getOption("corteza.model", NULL)
+    parent_session$model_map$cloud %||%
+    getOption("corteza.model", NULL)
 
     # Archival depth: parent depth + 1. Caller stamps
     # `parent_session$archival_depth` before calling spawn so the child
@@ -397,48 +398,48 @@ subagent_spawn <- function(task, model = NULL, tools = NULL,
     child_plan_mode <- isTRUE(parent_session$plan_mode)
 
     tryCatch(
-        session$run(
-            function(cwd, provider, model, tools_filter, system, max_turns,
-                     depth, id, plan_mode) {
-                library(corteza)
-                corteza::worker_init(cwd = cwd)
-                corteza::subagent_turn_init(
-                    provider = provider,
-                    model = model,
-                    tools_filter = tools_filter,
-                    system = system,
-                    max_turns = max_turns,
-                    depth = depth,
-                    plan_mode = plan_mode
-                )
-                corteza::subagent_turn_set_id(id)
-            },
-            list(cwd = cwd, provider = spawn_provider, model = spawn_model,
-                 tools_filter = effective_tools, system = system_prompt,
-                 max_turns = 10L, depth = child_depth, id = id,
-                 plan_mode = child_plan_mode)
+             session$run(
+                         function(cwd, provider, model, tools_filter, system, max_turns,
+                                  depth, id, plan_mode) {
+        library(corteza)
+        corteza::worker_init(cwd = cwd)
+        corteza::subagent_turn_init(
+                                    provider = provider,
+                                    model = model,
+                                    tools_filter = tools_filter,
+                                    system = system,
+                                    max_turns = max_turns,
+                                    depth = depth,
+                                    plan_mode = plan_mode
+        )
+        corteza::subagent_turn_set_id(id)
+    },
+                         list(cwd = cwd, provider = spawn_provider, model = spawn_model,
+                              tools_filter = effective_tools, system = system_prompt,
+                              max_turns = 10L, depth = child_depth, id = id,
+                              plan_mode = child_plan_mode)
         ),
-        error = function(e) {
-            try(session$close(), silent = TRUE)
-            store_update(session_key, list(status = "failed"))
-            stop("Failed to initialize subagent: ", conditionMessage(e),
-                 call. = FALSE)
-        }
+             error = function(e) {
+        try(session$close(), silent = TRUE)
+        store_update(session_key, list(status = "failed"))
+        stop("Failed to initialize subagent: ", conditionMessage(e),
+             call. = FALSE)
+    }
     )
 
     store_update(session_key, list(status = "running"))
     seq <- next_subagent_seq()
     .subagent_registry[[id]] <- list(
-        id = id,
-        seq = seq,
-        session_key = session_key,
-        session = session,
-        task = task,
-        tools = tools,
-        model = model,
-        started_at = Sys.time(),
-        timeout = Sys.time() + subcfg$timeout_minutes * 60,
-        depth = child_depth
+                                     id = id,
+                                     seq = seq,
+                                     session_key = session_key,
+                                     session = session,
+                                     task = task,
+                                     tools = tools,
+                                     model = model,
+                                     started_at = Sys.time(),
+                                     timeout = Sys.time() + subcfg$timeout_minutes * 60,
+                                     depth = child_depth
     )
     log_event("subagent_spawn", subagent_id = id, seq = seq, task = task,
               depth = child_depth)
@@ -496,14 +497,14 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
 
     if (!isTRUE(wait)) {
         tryCatch(
-            info$session$call(
-                function(p) corteza::subagent_turn_prompt(p),
-                list(p = prompt)
+                 info$session$call(
+                                   function(p) corteza::subagent_turn_prompt(p),
+                                   list(p = prompt)
             ),
-            error = function(e) {
-                stop("Subagent query failed to start: ",
-                     conditionMessage(e), call. = FALSE)
-            }
+                 error = function(e) {
+            stop("Subagent query failed to start: ",
+                 conditionMessage(e), call. = FALSE)
+        }
         )
         info$pending <- prompt
         info$pending_started_at <- Sys.time()
@@ -514,13 +515,13 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
     }
 
     reply <- tryCatch(
-        info$session$run(
-            function(p) corteza::subagent_turn_prompt(p),
-            list(p = prompt)
+                      info$session$run(
+                                       function(p) corteza::subagent_turn_prompt(p),
+                                       list(p = prompt)
         ),
-        error = function(e) {
-            stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
-        }
+                      error = function(e) {
+        stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
+    }
     )
     log_event("subagent_query", subagent_id = canonical,
               prompt_length = nchar(prompt))
@@ -553,7 +554,11 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     if (is.null(info[["pending"]])) {
         stop("No pending query for subagent ", canonical, call. = FALSE)
     }
-    timeout_ms <- if (isTRUE(wait)) as.integer(timeout * 1000L) else 0L
+    if (isTRUE(wait)) {
+        timeout_ms <- as.integer(timeout * 1000L)
+    } else {
+        timeout_ms <- 0L
+    }
     state <- info$session$poll_process(timeout_ms)
     if (state != "ready") {
         return(invisible(NULL))
@@ -566,8 +571,8 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     info$pending_started_at <- NULL
     .subagent_registry[[canonical]] <- info
     if (!is.null(msg$error)) {
-        stop("Subagent query failed: ",
-             conditionMessage(msg$error), call. = FALSE)
+        stop("Subagent query failed: ", conditionMessage(msg$error),
+             call. = FALSE)
     }
     log_event("subagent_collect", subagent_id = canonical)
     as.character(msg$result)
@@ -587,9 +592,9 @@ subagent_kill <- function(id) {
         return(invisible(FALSE))
     }
     store_update(info$session_key, list(
-        status = "completed",
-        completedAt = as.numeric(Sys.time()) * 1000
-    ))
+                                        status = "completed",
+                                        completedAt = as.numeric(Sys.time()) * 1000
+        ))
     tryCatch(info$session$close(), error = function(e) NULL)
     rm(list = canonical, envir = .subagent_registry)
     log_event("subagent_kill", subagent_id = canonical)
@@ -601,21 +606,23 @@ subagent_kill <- function(id) {
 #' @export
 subagent_list <- function() {
     ids <- ls(.subagent_registry)
-    if (length(ids) == 0L) return(list())
+    if (length(ids) == 0L) {
+        return(list())
+    }
     out <- lapply(ids, function(id) {
         info <- .subagent_registry[[id]]
         # `[[ ]]` for pending fields: list `$` prefix-matches, so
         # info$pending would silently return info$pending_started_at
         # whenever pending itself has been NULL-stripped.
         list(
-            id = info$id,
-            seq = info$seq,
-            task = info$task,
-            started_at = info$started_at,
-            time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
-                                                 units = "mins")),
-            pending = info[["pending"]],
-            pending_started_at = info[["pending_started_at"]]
+             id = info$id,
+             seq = info$seq,
+             task = info$task,
+             started_at = info$started_at,
+             time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
+                    units = "mins")),
+             pending = info[["pending"]],
+             pending_started_at = info[["pending_started_at"]]
         )
     })
     # Sort by seq ascending so the user-visible numbering is stable.
@@ -648,7 +655,9 @@ subagent_cleanup <- function() {
 #' @return Character string for display.
 #' @noRd
 format_subagent_list <- function(agents) {
-    if (length(agents) == 0L) return("No active subagents.")
+    if (length(agents) == 0L) {
+        return("No active subagents.")
+    }
     lines <- c("Active subagents:")
     for (a in agents) {
         time_str <- if (a$time_remaining > 0) {
@@ -656,7 +665,11 @@ format_subagent_list <- function(agents) {
         } else {
             "expired"
         }
-        seq_str <- if (!is.null(a$seq)) sprintf("%d", a$seq) else "?"
+        if (!is.null(a$seq)) {
+            seq_str <- sprintf("%d", a$seq)
+        } else {
+            seq_str <- "?"
+        }
         id_short <- substr(a$id, 1L, 8L)
         # `[[ ]]` not `$`: list `$` prefix-matches, so a$pending would
         # silently return a$pending_started_at whenever pending itself
@@ -664,16 +677,18 @@ format_subagent_list <- function(agents) {
         pending <- a[["pending"]]
         state_str <- if (!is.null(pending)) {
             snippet <- substr(pending, 1L, 40L)
-            if (nchar(pending) > 40L) snippet <- paste0(snippet, "...")
+            if (nchar(pending) > 40L) {
+                snippet <- paste0(snippet, "...")
+            }
             sprintf(" busy: %s", snippet)
         } else {
             " idle"
         }
-        lines <- c(lines, sprintf("  [%s] %s (%s)%s %s",
-                                  seq_str, a$task, time_str,
-                                  state_str, id_short))
+        lines <- c(lines, sprintf("  [%s] %s (%s)%s %s", seq_str, a$task,
+                                  time_str, state_str, id_short))
     }
     paste(c(lines, "",
             "Use the sequence number, the 8-char prefix, or the full id with /ask, /collect, and /kill."),
           collapse = "\n")
 }
+

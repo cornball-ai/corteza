@@ -21,7 +21,9 @@
     n <- length(existing) + 1L
     repeat {
         id <- sprintf(".h_%03d", n)
-        if (!exists(id, envir = .handle_store, inherits = FALSE)) return(id)
+        if (!exists(id, envir = .handle_store, inherits = FALSE)) {
+            return(id)
+        }
         n <- n + 1L
     }
 }
@@ -32,12 +34,24 @@
 #' matrices are always handled. Anything over 10 KB is handled.
 #' @noRd
 .is_large_result <- function(x) {
-    if (is.null(x)) return(FALSE)
-    if (is.atomic(x) && length(x) == 1L) return(FALSE)
-    if (is.data.frame(x)) return(TRUE)
-    if (is.matrix(x)) return(TRUE)
-    if (is.list(x) && length(x) > 10L) return(TRUE)
-    if (is.atomic(x) && length(x) > 50L) return(TRUE)
+    if (is.null(x)) {
+        return(FALSE)
+    }
+    if (is.atomic(x) && length(x) == 1L) {
+        return(FALSE)
+    }
+    if (is.data.frame(x)) {
+        return(TRUE)
+    }
+    if (is.matrix(x)) {
+        return(TRUE)
+    }
+    if (is.list(x) && length(x) > 10L) {
+        return(TRUE)
+    }
+    if (is.atomic(x) && length(x) > 50L) {
+        return(TRUE)
+    }
     tryCatch(as.numeric(utils::object.size(x)) > 10000L,
              error = function(e) FALSE)
 }
@@ -46,8 +60,8 @@
 #' @noRd
 .default_summary <- function(x) {
     out <- tryCatch(
-        utils::capture.output(utils::str(x, max.level = 1L, list.len = 10L)),
-        error = function(e) paste("Error summarising:", conditionMessage(e))
+                    utils::capture.output(utils::str(x, max.level = 1L, list.len = 10L)),
+                    error = function(e) paste("Error summarising:", conditionMessage(e))
     )
     paste(out, collapse = "\n")
 }
@@ -71,8 +85,12 @@ with_handle <- function(value, summary_fn = .default_summary) {
 #' @return The stashed value, or NULL if the handle is unknown.
 #' @noRd
 get_handle <- function(handle) {
-    if (!is.character(handle) || length(handle) != 1L) return(NULL)
-    if (!exists(handle, envir = .handle_store, inherits = FALSE)) return(NULL)
+    if (!is.character(handle) || length(handle) != 1L) {
+        return(NULL)
+    }
+    if (!exists(handle, envir = .handle_store, inherits = FALSE)) {
+        return(NULL)
+    }
     get(handle, envir = .handle_store)
 }
 
@@ -132,3 +150,4 @@ tool_read_handle <- function(handle, op = "str") {
                      error = function(e) paste("Error:", conditionMessage(e)))
     ok(paste(text, collapse = "\n"))
 }
+

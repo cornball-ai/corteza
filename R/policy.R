@@ -51,8 +51,8 @@ get_code_paths <- function() {
 resolve_paths <- function(call) {
     args <- call$args %||% list()
     out <- character()
-    for (key in c("path", "file", "filename", "dir", "directory",
-                  "dest", "destination", "from", "to", "src", "target")) {
+    for (key in c("path", "file", "filename", "dir", "directory", "dest",
+                  "destination", "from", "to", "src", "target")) {
         v <- args[[key]]
         if (is.character(v)) {
             out <- c(out, v)
@@ -78,9 +78,8 @@ resolve_urls <- function(call) {
 
 # Classify the operation class of a tool.
 classify_op <- function(tool_name) {
-    read_tools <- c("read_file", "list_files", "grep_files",
-                    "git_log", "git_diff", "git_status",
-                    "web_search", "fetch_url",
+    read_tools <- c("read_file", "list_files", "grep_files", "git_log",
+                    "git_diff", "git_status", "web_search", "fetch_url",
                     "r_help", "installed_packages")
     write_tools <- c("write_file", "replace_in_file")
     exec_tools <- c("bash", "cmd", "run_r", "run_r_script")
@@ -144,12 +143,12 @@ check_plan_mode <- function(call) {
     op <- classify_op(tool)
     if (op %in% c("write", "exec")) {
         return(list(
-            model = "cloud",
-            approval = "deny",
-            reason = sprintf(
-                "plan mode: %s would modify state; present a plan via exit_plan_mode first",
-                tool)
-        ))
+                    model = "cloud",
+                    approval = "deny",
+                    reason = sprintf(
+                                     "plan mode: %s would modify state; present a plan via exit_plan_mode first",
+                                     tool)
+            ))
     }
     NULL
 }
@@ -212,10 +211,8 @@ default_policy <- function(call) {
     op <- classify_op(call$tool %||% "")
     channel <- call$channel %||% "cli"
 
-    approval <- tryCatch(
-                         .default_tensor[[data_class]][[op]][[channel]],
-                         error = function(e) NULL
-    )
+    approval <- tryCatch(.default_tensor[[data_class]][[op]][[channel]],
+                         error = function(e) NULL)
     if (is.null(approval)) {
         approval <- "ask"
     }

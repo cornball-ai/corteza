@@ -244,10 +244,8 @@ validate_skill_args <- function(skill, args) {
 #' @return Character string preview
 #' @noRd
 format_dry_run_preview <- function(skill, args) {
-    lines <- c(
-               sprintf("[DRY RUN] Would execute: %s", skill$name),
-               sprintf("Description: %s", skill$description)
-    )
+    lines <- c(sprintf("[DRY RUN] Would execute: %s", skill$name),
+               sprintf("Description: %s", skill$description))
 
     if (length(args) > 0) {
         lines <- c(lines, "Arguments:")
@@ -367,11 +365,8 @@ skills_as_tools <- function() {
     skill_names <- list_skills()
     lapply(skill_names, function(name) {
         skill <- get_skill(name)
-        list(
-             name = skill$name,
-             description = skill$description,
-             inputSchema = skill$inputSchema
-        )
+        list(name = skill$name, description = skill$description,
+             inputSchema = skill$inputSchema)
     })
 }
 
@@ -420,13 +415,9 @@ parse_skill_md <- function(path) {
         # No frontmatter, treat entire file as body
         body <- paste(lines, collapse = "\n")
         body <- gsub("\\{baseDir\\}", dirname(path), body)
-        return(list(
-                    name = tools::file_path_sans_ext(basename(dirname(path))),
-                    description = "",
-                    metadata = list(),
-                    body = body,
-                    path = path
-            ))
+        return(list(name = tools::file_path_sans_ext(basename(dirname(path))),
+                    description = "", metadata = list(), body = body,
+                    path = path))
     }
 
     # Find end of frontmatter
@@ -638,16 +629,13 @@ parse_skill_json <- function(path) {
     tryCatch({
         meta <- jsonlite::fromJSON(path, simplifyVector = FALSE)
 
-        list(
-             name = meta$name %||% basename(dirname(path)),
+        list(name = meta$name %||% basename(dirname(path)),
              version = meta$version %||% "0.0.0",
              schema_version = meta$schema_version %||% "1",
              description = meta$description %||% "",
              tools = meta$tools %||% list(),
              dependencies = meta$dependencies %||% list(),
-             author = meta$author,
-             license = meta$license
-        )
+             author = meta$author, license = meta$license)
     }, error = function(e) {
         warning(sprintf("Failed to parse SKILL.json at %s: %s", path,
                         e$message))
@@ -720,8 +708,8 @@ skill_install <- function(source, target_dir = NULL, force = FALSE) {
         # For GitHub URLs, try git clone
         if (grepl("github.com", source)) {
             temp_dir <- tempfile("skill_")
-            result <- system2("git", c("clone", "--depth", "1", source,
-                                       temp_dir),
+            result <- system2("git",
+                              c("clone", "--depth", "1", source, temp_dir),
                               stdout = TRUE, stderr = TRUE)
             if (!dir.exists(temp_dir)) {
                 stop("Failed to clone repository: ", paste(result,
@@ -819,12 +807,8 @@ skill_list_installed <- function(skill_dir = NULL) {
     skill_dir <- path.expand(skill_dir)
 
     if (!dir.exists(skill_dir)) {
-        return(data.frame(
-                          name = character(),
-                          version = character(),
-                          description = character(),
-                          stringsAsFactors = FALSE
-            ))
+        return(data.frame(name = character(), version = character(),
+                          description = character(), stringsAsFactors = FALSE))
     }
 
     dirs <- list.dirs(skill_dir, recursive = FALSE, full.names = TRUE)
@@ -955,8 +939,8 @@ format_skill_list <- function(skills) {
 
     for (i in seq_len(nrow(skills))) {
         s <- skills[i,]
-        lines <- c(lines, sprintf("  %s (v%s) - %s",
-                                  s$name, s$version, s$description))
+        lines <- c(lines,
+                   sprintf("  %s (v%s) - %s", s$name, s$version, s$description))
     }
 
     paste(lines, collapse = "\n")

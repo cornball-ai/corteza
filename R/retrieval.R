@@ -21,12 +21,8 @@ ws_score <- function(meta, prompt, current_turn) {
     if (length(prompt_words) == 0) {
         keyword <- 0
     } else {
-        target_text <- tolower(paste(
-                                     meta$name,
-                                     meta$class,
-                                     meta$origin$tool %||% "",
-                                     collapse = " "
-            ))
+        target_text <- tolower(paste(meta$name, meta$class,
+                                     meta$origin$tool %||% "", collapse = " "))
         matches <- sum(vapply(prompt_words, function(w) {
             grepl(w, target_text, fixed = TRUE)
         }, logical(1)))
@@ -87,9 +83,8 @@ ws_retrieve <- function(prompt, budget_chars = 8000L, current_turn = NULL) {
         value <- ws_get(nm)
         score <- ws_score(meta, prompt, current_turn)
         summary <- ws_summarize(nm, value, meta)
-        list(name = nm, value = value, meta = meta,
-             summary = summary, score = score,
-             chars = nchar(summary))
+        list(name = nm, value = value, meta = meta, summary = summary,
+             score = score, chars = nchar(summary))
     })
 
     # Sort by score descending
@@ -177,8 +172,8 @@ ws_summarize <- function(name, value, meta, max_chars = 2000L) {
             "character(0)"
         } else if (length(value) > 1) {
             sample_items <- head(value, 3)
-            sample_str <- paste(sprintf('"%s"',
-                                        substr(sample_items, 1, 50)), collapse = ", ")
+            sample_str <- paste(sprintf('"%s"', substr(sample_items, 1, 50)),
+                                collapse = ", ")
             sprintf("character[%d]: %s%s", length(value), sample_str,
                 if (length(value) > 3) ", ..." else "")
         } else {
@@ -269,8 +264,8 @@ ws_digest <- function() {
         desc
     }, character(1))
 
-    sprintf("Workspace: %d objects, %.1fMB. Items: %s",
-            length(nms), total_mb, paste(items, collapse = ", "))
+    sprintf("Workspace: %d objects, %.1fMB. Items: %s", length(nms),
+            total_mb, paste(items, collapse = ", "))
 }
 
 #' Format retrieved objects as markdown context for system prompt

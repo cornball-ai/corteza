@@ -40,6 +40,8 @@ err <- function(text) {
 #' @param ... Messages to log
 #' @noRd
 log_msg <- function(...) {
-    if (.corteza_verbose()) cat(..., "\n", file = stderr())
+    if (.corteza_verbose()) {
+        cat(..., "\n", file = stderr())
+    }
 }
 

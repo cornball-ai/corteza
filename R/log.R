@@ -101,7 +101,9 @@ log_event <- function(event, ..., level = "info") {
         sprintf('{"event":"%s","error":"json_serialization_failed"}', event)
     }
     )
-    if (.corteza_verbose()) cat(json, "\n", file = stderr())
+    if (.corteza_verbose()) {
+        cat(json, "\n", file = stderr())
+    }
 
     invisible(NULL)
 }
@@ -141,14 +143,9 @@ log_tool_call <- function(tool, args = list(), level = "info") {
 #' @noRd
 log_tool_result <- function(tool, success, result_lines = NULL,
                             elapsed_ms = NULL, level = "info") {
-    log_event(
-              "tool_result",
-              tool = tool,
-              success = success,
-              result_lines = result_lines,
-              elapsed_ms = elapsed_ms,
-              level = level
-    )
+    log_event("tool_result", tool = tool, success = success,
+              result_lines = result_lines, elapsed_ms = elapsed_ms,
+              level = level)
 }
 
 #' Log an LLM API call
@@ -164,15 +161,9 @@ log_tool_result <- function(tool, success, result_lines = NULL,
 log_llm_call <- function(provider, model, input_tokens = NULL,
                          output_tokens = NULL, elapsed_ms = NULL,
                          level = "info") {
-    log_event(
-              "llm_call",
-              provider = provider,
-              model = model,
-              input_tokens = input_tokens,
-              output_tokens = output_tokens,
-              elapsed_ms = elapsed_ms,
-              level = level
-    )
+    log_event("llm_call", provider = provider, model = model,
+              input_tokens = input_tokens, output_tokens = output_tokens,
+              elapsed_ms = elapsed_ms, level = level)
 }
 
 #' Log an error
@@ -183,13 +174,8 @@ log_llm_call <- function(provider, model, input_tokens = NULL,
 #' @return Invisible NULL
 #' @noRd
 log_error <- function(message, error_type = NULL, ...) {
-    log_event(
-              "error",
-              message = message,
-              error_type = error_type,
-              ...,
-              level = "error"
-    )
+    log_event("error", message = message, error_type = error_type, ...,
+              level = "error")
 }
 
 #' Log a warning

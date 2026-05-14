@@ -30,16 +30,10 @@ ce_init <- function(cwd, config = list()) {
     .context_engine$dirty <- TRUE
 
     # Initialize conversation index
-    .context_engine$conversation <- data.frame(
-        turn = integer(),
-        role = character(),
-        content = character(),
-        tokens = integer(),
-        tool_calls = I(list()),
-        files_touched = I(list()),
-        timestamp = as.POSIXct(character()),
-        stringsAsFactors = FALSE
-    )
+    .context_engine$conversation <- data.frame(turn = integer(),
+        role = character(), content = character(), tokens = integer(),
+        tool_calls = I(list()), files_touched = I(list()),
+        timestamp = as.POSIXct(character()), stringsAsFactors = FALSE)
 
     # Build in-memory file index
     ce_index_files(cwd)
@@ -75,16 +69,11 @@ ce_index_turn <- function(turn, role, content, tool_calls = NULL,
                           files_touched = NULL) {
     tokens <- ceiling(nchar(content) / 4L)
 
-    row <- data.frame(
-                      turn = as.integer(turn),
-                      role = role,
-                      content = content,
-                      tokens = tokens,
+    row <- data.frame(turn = as.integer(turn), role = role,
+                      content = content, tokens = tokens,
                       tool_calls = I(list(tool_calls %||% character())),
                       files_touched = I(list(files_touched %||% character())),
-                      timestamp = Sys.time(),
-                      stringsAsFactors = FALSE
-    )
+                      timestamp = Sys.time(), stringsAsFactors = FALSE)
 
     conv <- .context_engine$conversation
     .context_engine$conversation <- rbind(conv, row)
@@ -144,8 +133,7 @@ ce_index_files <- function(cwd,
                            extensions = c("R", "r", "Rmd", "md", "json", "yaml", "yml", "c",
         "cpp", "h", "js", "css", "html", "sql", "sh", "py",
         "Rd"),
-                           extra_files = c("DESCRIPTION", "NAMESPACE", "Makefile", "Dockerfile",
-        ".Rbuildignore"),
+                           extra_files = c("DESCRIPTION", "NAMESPACE", "Makefile", "Dockerfile", ".Rbuildignore"),
                            max_file_size = 100000L) {
     index <- list()
     # winslash="/" everywhere keeps index keys free of backslashes, so
@@ -157,7 +145,11 @@ ce_index_files <- function(cwd,
     ext_pattern <- sprintf("\\.(%s)$", paste(extensions, collapse = "|"))
     all_files <- list.files(cwd, recursive = TRUE, full.names = TRUE)
 
-    prefix <- if (endsWith(cwd_norm, "/")) cwd_norm else paste0(cwd_norm, "/")
+    if (endsWith(cwd_norm, "/")) {
+        prefix <- cwd_norm
+    } else {
+        prefix <- paste0(cwd_norm, "/")
+    }
     for (f in all_files) {
         norm <- normalizePath(f, winslash = "/", mustWork = FALSE)
         rel <- if (startsWith(norm, prefix)) {
@@ -211,8 +203,12 @@ ce_update_files <- function(paths) {
         # An absolute path starts with "/" on POSIX or a drive letter
         # followed by colon on Windows (e.g. "C:/..." or "C:\...").
         is_abs <- startsWith(p, "/") ||
-            grepl("^[A-Za-z]:[/\\\\]", p)
-        abs_path <- if (is_abs) p else file.path(cwd, p)
+        grepl("^[A-Za-z]:[/\\\\]", p)
+        if (is_abs) {
+            abs_path <- p
+        } else {
+            abs_path <- file.path(cwd, p)
+        }
         if (!file.exists(abs_path)) {
             # File deleted: remove from index
             # Can't normalizePath a deleted file, but we can normalize its
@@ -220,10 +216,15 @@ ce_update_files <- function(paths) {
             # handles macOS where /var -> /private/var: the stored key used
             # fully-normalized paths, so the deletion key must match.
             parent <- dirname(abs_path)
-            norm_parent <- normalizePath(parent, winslash = "/", mustWork = FALSE)
+            norm_parent <- normalizePath(parent, winslash = "/",
+                mustWork = FALSE)
             norm_abs <- paste(norm_parent, basename(abs_path), sep = "/")
             norm_cwd <- normalizePath(cwd, winslash = "/", mustWork = FALSE)
-            prefix <- if (endsWith(norm_cwd, "/")) norm_cwd else paste0(norm_cwd, "/")
+            if (endsWith(norm_cwd, "/")) {
+                prefix <- norm_cwd
+            } else {
+                prefix <- paste0(norm_cwd, "/")
+            }
             rel <- if (startsWith(norm_abs, prefix)) {
                 substring(norm_abs, nchar(prefix) + 1L)
             } else {
@@ -240,7 +241,11 @@ ce_update_files <- function(paths) {
         if (!is.null(lines)) {
             norm_cwd <- normalizePath(cwd, winslash = "/", mustWork = FALSE)
             norm_abs <- normalizePath(abs_path, winslash = "/", mustWork = FALSE)
-            prefix <- if (endsWith(norm_cwd, "/")) norm_cwd else paste0(norm_cwd, "/")
+            if (endsWith(norm_cwd, "/")) {
+                prefix <- norm_cwd
+            } else {
+                prefix <- paste0(norm_cwd, "/")
+            }
             rel <- if (startsWith(norm_abs, prefix)) {
                 substring(norm_abs, nchar(prefix) + 1L)
             } else {
@@ -342,10 +347,8 @@ ce_update_symbols <- function(cwd) {
         return(invisible(FALSE))
     }
 
-    .context_engine$symbol_index <- tryCatch(
-        saber::symbols(cwd),
-        error = function(e) NULL
-    )
+    .context_engine$symbol_index <- tryCatch(saber::symbols(cwd),
+        error = function(e) NULL)
     invisible(!is.null(.context_engine$symbol_index))
 }
 
@@ -462,8 +465,7 @@ ce_related_code <- function(prompt, max_results = 10L) {
         }
 
         snippet <- paste(sprintf("%s:%d-%d %s()", file, start, end, fn_name),
-                         paste(lines[start:end], collapse = "\n"),
-                         sep = "\n")
+                         paste(lines[start:end], collapse = "\n"), sep = "\n")
         snippets <- c(snippets, snippet)
     }
 

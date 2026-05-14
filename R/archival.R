@@ -79,8 +79,8 @@ archival_estimate_tokens <- function(history_slice) {
                 # sees it; estimate via deparse length as a stand-in.
                 if (!is.null(block$input)) {
                     chars <- chars +
-                        sum(nchar(paste(deparse(block$input), collapse = " "),
-                                  type = "chars"))
+                    sum(nchar(paste(deparse(block$input), collapse = " "),
+                              type = "chars"))
                 }
             }
         }
@@ -221,30 +221,34 @@ archival_history_entry_to_text <- function(entry) {
     # `[tool_result: ...]`. Skip the generic character branch below to
     # avoid duplicating the body.
     if (identical(role, "tool")) {
-        parts <- c(parts, sprintf("[tool_result: %s]",
-                                  as.character(cnt %||% "")))
+        parts <- c(parts,
+                   sprintf("[tool_result: %s]", as.character(cnt %||% "")))
     } else if (is.character(cnt)) {
         # Collapse first; nzchar(vec) returns a vector and would error
         # the if-condition for multi-element character content.
         flat <- paste(cnt, collapse = "\n")
-        if (nzchar(flat)) parts <- c(parts, flat)
+        if (nzchar(flat)) {
+            parts <- c(parts, flat)
+        }
     } else if (is.list(cnt)) {
         for (block in cnt) {
             btype <- block$type %||% "text"
             if (identical(btype, "text")) {
                 txt <- paste(block$text %||% "", collapse = "\n")
-                if (nzchar(txt)) parts <- c(parts, txt)
+                if (nzchar(txt)) {
+                    parts <- c(parts, txt)
+                }
             } else if (identical(btype, "tool_use")) {
                 args_str <- if (!is.null(block$input)) {
                     paste(deparse(block$input), collapse = " ")
                 } else ""
                 parts <- c(parts, sprintf("[tool_use: %s(%s)]",
-                                          block$name %||% "?", args_str))
+                        block$name %||% "?", args_str))
             } else if (identical(btype, "tool_result")) {
                 parts <- c(parts, sprintf(
-                    "[tool_result: %s]",
-                    .archival_block_result_text(block)
-                ))
+                        "[tool_result: %s]",
+                        .archival_block_result_text(block)
+                    ))
             }
         }
     }
@@ -276,10 +280,8 @@ archival_history_entry_to_text <- function(entry) {
 #' the LLM can read.
 #' @noRd
 archival_validate_structured <- function(text) {
-    parsed <- tryCatch(
-        jsonlite::fromJSON(text, simplifyVector = FALSE),
-        error = function(e) NULL
-    )
+    parsed <- tryCatch(jsonlite::fromJSON(text, simplifyVector = FALSE),
+                       error = function(e) NULL)
     if (is.null(parsed)) {
         return(paste0("[unparsed] ", text))
     }
@@ -289,30 +291,30 @@ archival_validate_structured <- function(text) {
 # ---- Summary prompt templates ----
 
 ARCHIVAL_PROMPT_STRUCTURED <- paste(
-    "You compress a completed agent turn into a JSON object so the parent",
-    "agent can keep a compact record while a held subagent retains the full",
-    "transcript.",
-    "",
-    "Produce a JSON object with keys:",
-    "  \"outcome\": one short sentence describing what was accomplished.",
-    "  \"key_findings\": array of strings, max 5.",
-    "  \"files_touched\": array of file paths.",
-    "  \"tools_used\": array of tool names.",
-    "  \"open_questions\": array of strings, may be empty.",
-    "",
-    "Output ONLY the JSON object, no surrounding prose, no code fences.",
-    sep = "\n"
+                                    "You compress a completed agent turn into a JSON object so the parent",
+                                    "agent can keep a compact record while a held subagent retains the full",
+                                    "transcript.",
+                                    "",
+                                    "Produce a JSON object with keys:",
+                                    "  \"outcome\": one short sentence describing what was accomplished.",
+                                    "  \"key_findings\": array of strings, max 5.",
+                                    "  \"files_touched\": array of file paths.",
+                                    "  \"tools_used\": array of tool names.",
+                                    "  \"open_questions\": array of strings, may be empty.",
+                                    "",
+                                    "Output ONLY the JSON object, no surrounding prose, no code fences.",
+                                    sep = "\n"
 )
 
 ARCHIVAL_PROMPT_PARAGRAPH <- paste(
-    "You compress a completed agent turn into one paragraph so the parent",
-    "agent can keep a compact record while a held subagent retains the full",
-    "transcript.",
-    "",
-    "Write 3-5 sentences covering the user's request, the work the agent",
-    "performed, the outcome, and any unresolved threads. No bullet points,",
-    "no headings.",
-    sep = "\n"
+                                   "You compress a completed agent turn into one paragraph so the parent",
+                                   "agent can keep a compact record while a held subagent retains the full",
+                                   "transcript.",
+                                   "",
+                                   "Write 3-5 sentences covering the user's request, the work the agent",
+                                   "performed, the outcome, and any unresolved threads. No bullet points,",
+                                   "no headings.",
+                                   sep = "\n"
 )
 
 #' Pick the system prompt for the configured summary style.
@@ -349,24 +351,24 @@ archival_summarize <- function(history_slice, style = "structured",
     user <- sprintf("Summarize the following completed agent turn:\n\n%s",
                     archival_render_transcript(history_slice))
     summary <- tryCatch(
-        callr::r(
-            function(prompt, system, model, provider) {
-                resp <- llm.api::agent(
-                    prompt = prompt, system = system, tools = list(),
-                    model = model, provider = provider,
-                    max_turns = 1L, history = list(), verbose = FALSE
-                )
-                as.character(resp$content %||% "")
-            },
-            args = list(prompt = user, system = sys, model = model,
-                        provider = provider),
-            timeout = timeout_seconds
+                        callr::r(
+                                 function(prompt, system, model, provider) {
+        resp <- llm.api::agent(
+                               prompt = prompt, system = system, tools = list(),
+                               model = model, provider = provider,
+                               max_turns = 1L, history = list(), verbose = FALSE
+        )
+        as.character(resp$content %||% "")
+    },
+                                 args = list(prompt = user, system = sys, model = model,
+                provider = provider),
+                                 timeout = timeout_seconds
         ),
-        error = function(e) {
-            log_event("archival_summary_failed",
-                      error = conditionMessage(e), level = "warn")
-            NULL
-        }
+                        error = function(e) {
+        log_event("archival_summary_failed",
+                  error = conditionMessage(e), level = "warn")
+        NULL
+    }
     )
     if (is.null(summary) || !nzchar(summary)) {
         return("[summary unavailable]")
@@ -391,36 +393,35 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                                   provider, model, cwd = getwd(),
                                   timeout_seconds = 60L) {
     callr::r_bg(
-        function(subagent_id, history_slice, style, provider, model,
-                 cwd, timeout_seconds) {
-            library(corteza)
-            setwd(cwd)
-            summary <- tryCatch(
-                corteza:::archival_summarize(
-                    history_slice, style = style, provider = provider,
-                    model = model, timeout_seconds = timeout_seconds
-                ),
-                error = function(e) "[summary unavailable]"
-            )
-            agent_id <- paste0("subagent-", subagent_id)
-            sess <- list(sessionId = subagent_id, cwd = cwd,
-                         provider = provider, model = model)
-            tryCatch(
-                corteza:::transcript_append(
-                    sess, "assistant",
-                    paste0("[archival summary]\n\n", summary),
-                    provider = "corteza", model = "archival",
-                    agent_id = agent_id
-                ),
-                error = function(e) NULL
-            )
-            invisible(TRUE)
-        },
-        args = list(subagent_id = subagent_id,
-                    history_slice = history_slice,
-                    style = style, provider = provider, model = model,
-                    cwd = cwd, timeout_seconds = timeout_seconds),
-        supervise = FALSE
+                function(subagent_id, history_slice, style, provider, model,
+                         cwd, timeout_seconds) {
+        library(corteza)
+        setwd(cwd)
+        summary <- tryCatch(
+                            corteza:::archival_summarize(history_slice, style = style,
+                provider = provider, model = model,
+                timeout_seconds = timeout_seconds),
+                            error = function(e) "[summary unavailable]"
+        )
+        agent_id <- paste0("subagent-", subagent_id)
+        sess <- list(sessionId = subagent_id, cwd = cwd,
+                     provider = provider, model = model)
+        tryCatch(
+                 corteza:::transcript_append(
+                sess, "assistant",
+                paste0("[archival summary]\n\n", summary),
+                provider = "corteza", model = "archival",
+                agent_id = agent_id
+            ),
+                 error = function(e) NULL
+        )
+        invisible(TRUE)
+    },
+                args = list(subagent_id = subagent_id,
+                            history_slice = history_slice,
+                            style = style, provider = provider, model = model,
+                            cwd = cwd, timeout_seconds = timeout_seconds),
+                supervise = FALSE
     )
     invisible(NULL)
 }
@@ -433,11 +434,11 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
 #' lives in its own bucket: agents/subagent-<id>/sessions/<id>.jsonl.
 #' @noRd
 archival_persist_subagent <- function(subagent_id, history_slice, summary,
-                                      parent_session_id, provider = "anthropic",
-                                      model = NULL) {
+                                      parent_session_id,
+                                      provider = "anthropic", model = NULL) {
     agent_id <- paste0("subagent-", subagent_id)
-    sess <- list(sessionId = subagent_id, cwd = getwd(),
-                 provider = provider, model = model)
+    sess <- list(sessionId = subagent_id, cwd = getwd(), provider = provider,
+                 model = model)
     transcript_write_header(subagent_id, sess$cwd, agent_id)
     for (entry in history_slice) {
         role <- entry$role %||% "user"
@@ -463,8 +464,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
                                   arc_cfg, depth = 0L,
                                   parent_session_id = NULL,
                                   parent_provider = "anthropic",
-                                  parent_model = NULL,
-                                  config = NULL) {
+                                  parent_model = NULL, config = NULL) {
     if (is.null(config)) {
         config <- load_config(getwd())
     }
@@ -489,8 +489,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
     subagent_id <- spawn_attempt
     info <- .subagent_registry[[subagent_id]]
     if (is.null(info)) {
-        log_event("archival_failed", phase = "registry_lookup",
-                  level = "warn")
+        log_event("archival_failed", phase = "registry_lookup", level = "warn")
         return(NULL)
     }
     # Holders aren't doing active work — they hold state for later
@@ -500,13 +499,13 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
     # process. (One year is "effectively unlimited" given subagents
     # die with the CLI anyway.)
     .subagent_registry[[subagent_id]]$timeout <-
-        Sys.time() + 365 * 24 * 60 * 60
+    Sys.time() + 365 * 24 * 60 * 60
 
     # Seed the child's history.
     seed_attempt <- tryCatch({
         info$session$run(
-            function(h) corteza::subagent_seed_history(h),
-            list(h = history_slice)
+                         function(h) corteza::subagent_seed_history(h),
+                         list(h = history_slice)
         )
         TRUE
     }, error = function(e) {
@@ -530,8 +529,8 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
         # placeholder is what shows up in the parent's history; the
         # holder still owns the full slice for query_subagent.
         placeholder <- sprintf(
-            "[archived turn pending summary] | task=%s | %d entries",
-            archival_first_line(prompt), length(history_slice)
+                               "[archived turn pending summary] | task=%s | %d entries",
+                               archival_first_line(prompt), length(history_slice)
         )
         persist_attempt <- tryCatch({
             archival_persist_subagent(subagent_id, history_slice,
@@ -597,8 +596,14 @@ archival_first_line <- function(text) {
         return("(no prompt)")
     }
     parts <- strsplit(text[1], "\n", fixed = TRUE)[[1]]
-    line <- if (length(parts) >= 1L) parts[1] else ""
-    if (is.na(line)) line <- ""
+    if (length(parts) >= 1L) {
+        line <- parts[1]
+    } else {
+        line <- ""
+    }
+    if (is.na(line)) {
+        line <- ""
+    }
     line <- trimws(line)
     if (!nzchar(line)) {
         return("(no prompt)")
@@ -667,12 +672,12 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     }
 
     archived <- archival_archive_turn(
-        turn_session = turn_session, prompt = prompt,
-        history_slice = slice, arc_cfg = arc_cfg, depth = depth,
-        parent_session_id = parent_session_id,
-        parent_provider = turn_session$provider %||% "anthropic",
-        parent_model = turn_session$model_map$cloud,
-        config = config
+                                      turn_session = turn_session, prompt = prompt,
+                                      history_slice = slice, arc_cfg = arc_cfg, depth = depth,
+                                      parent_session_id = parent_session_id,
+                                      parent_provider = turn_session$provider %||% "anthropic",
+                                      parent_model = turn_session$model_map$cloud,
+                                      config = config
     )
     if (is.null(archived)) {
         if (depth == 0L && interactive()) {
@@ -705,20 +710,21 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
         user_msg <- list(role = "user", content = prompt)
     }
     archived_assistant <- list(
-        role = "assistant",
-        content = sprintf("[archived turn]\nsubagent_id: %s\n\n%s",
-                          archived$subagent_id, archived$summary)
+                               role = "assistant",
+                               content = sprintf("[archived turn]\nsubagent_id: %s\n\n%s",
+            archived$subagent_id, archived$summary)
     )
     turn_session$history <- c(keep, list(user_msg), list(archived_assistant))
 
     # Refresh system prompt so the new subagent shows up in the live
     # listing on the next turn. load_context reads the registry fresh.
     new_system <- tryCatch(
-        load_context(turn_session$cwd %||% getwd()),
-        error = function(e) NULL
+                           load_context(turn_session$cwd %||% getwd()),
+                           error = function(e) NULL
     )
     if (!is.null(new_system)) {
         turn_session$system <- new_system
     }
     invisible()
 }
+

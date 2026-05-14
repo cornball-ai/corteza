@@ -29,17 +29,10 @@ ws_put <- function(name, value, origin = list(), deps = character(),
                    pinned = FALSE) {
     .workspace[[name]] <- value
 
-    meta <- list(
-                 name = name,
-                 class = class(value)[1],
-                 origin = origin,
-                 turn = .workspace_state$turn,
-                 timestamp = Sys.time(),
-                 deps = deps,
-                 byte_size = as.integer(object.size(value)),
-                 stale = FALSE,
-                 pinned = pinned
-    )
+    meta <- list(name = name, class = class(value)[1], origin = origin,
+                 turn = .workspace_state$turn, timestamp = Sys.time(),
+                 deps = deps, byte_size = as.integer(object.size(value)),
+                 stale = FALSE, pinned = pinned)
     .workspace_meta[[name]] <- meta
 
     invisible(name)
@@ -112,15 +105,10 @@ ws_exists <- function(name) {
 ws_list <- function() {
     nms <- ws_names()
     if (length(nms) == 0) {
-        return(data.frame(
-                          name = character(),
-                          class = character(),
-                          turn = integer(),
-                          byte_size = integer(),
-                          stale = logical(),
-                          pinned = logical(),
-                          stringsAsFactors = FALSE
-            ))
+        return(data.frame(name = character(), class = character(),
+                          turn = integer(), byte_size = integer(),
+                          stale = logical(), pinned = logical(),
+                          stringsAsFactors = FALSE))
     }
 
     rows <- lapply(nms, function(nm) {
@@ -251,8 +239,8 @@ ws_clear <- function() {
 #' No-capture tool list
 #' @noRd
 ws_no_capture_tools <- function() {
-    c("base::writeLines",
-        "spawn_subagent", "query_subagent", "list_subagents", "kill_subagent")
+    c("base::writeLines", "spawn_subagent", "query_subagent",
+        "list_subagents", "kill_subagent")
 }
 
 #' Capture a tool result into the workspace
@@ -411,10 +399,8 @@ ws_load <- function(session_id, agent_id = "main") {
     }
 
     # Load metadata
-    state <- tryCatch(
-                      jsonlite::fromJSON(json_path, simplifyVector = FALSE),
-                      error = function(e) NULL
-    )
+    state <- tryCatch(jsonlite::fromJSON(json_path, simplifyVector = FALSE),
+                      error = function(e) NULL)
     if (is.null(state)) {
         return(invisible(FALSE))
     }

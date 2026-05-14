@@ -40,10 +40,8 @@ default_local_model <- function() {
     if (isTRUE(.local_model_cache$initialized)) {
         return(.local_model_cache$value)
     }
-    candidates <- getOption(
-                            "corteza.local_models",
-                            c("gpt-oss:120b", "gpt-oss:20b")
-    )
+    candidates <- getOption("corteza.local_models",
+                            c("gpt-oss:120b", "gpt-oss:20b"))
     available <- tryCatch(
                           llm.api::list_ollama_models()$name,
                           error = function(e) character()
@@ -238,14 +236,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         }
 
         .fire_observers(session, list(
-            call = call,
-            decision = decision,
-            outcome = "start",
-            result = NULL,
-            success = NA,
-            elapsed_ms = 0,
-            turn_number = session$turn_number
-        ))
+                                      call = call,
+                                      decision = decision,
+                                      outcome = "start",
+                                      result = NULL,
+                                      success = NA,
+                                      elapsed_ms = 0,
+                                      turn_number = session$turn_number
+            ))
 
         raw <- tryCatch(
                         tool_executor(internal_name, as.list(args)),
@@ -270,10 +268,10 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # only fires when the caller hasn't picked a model themselves.
 .resolve_model <- function(session) {
     explicit <- session$model_map$cloud %||% getOption("corteza.model", NULL)
-    if (!is.null(explicit) && nzchar(explicit)) return(explicit)
-    switch(session$provider %||% "anthropic",
-           moonshot = "kimi-k2.6",
-           NULL)
+    if (!is.null(explicit) && nzchar(explicit)) {
+        return(explicit)
+    }
+    switch(session$provider %||% "anthropic", moonshot = "kimi-k2.6", NULL)
 }
 
 # ---- Public entry point ----
@@ -339,7 +337,9 @@ observer_progress <- function() {
         # Observer's purpose is to print tool-call traces; gate behind
         # the corteza.verbose option so non-interactive scripts are
         # silent by default.
-        if (!.corteza_verbose()) return(invisible())
+        if (!.corteza_verbose()) {
+            return(invisible())
+        }
 
         if (identical(event$outcome, "start")) {
             summary <- cli_event_summary(event, width = 84L)
@@ -439,3 +439,4 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
          raw = response
     )
 }
+

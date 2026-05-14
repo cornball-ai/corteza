@@ -9,8 +9,8 @@
                             web = c("web_search", "fetch_url"),
                             git = c("git_status", "git_diff", "git_log"),
                             r = c("r_help", "installed_packages"),
-                            subagent = c("spawn_subagent", "query_subagent",
-        "list_subagents", "kill_subagent")
+                            subagent = c("spawn_subagent", "query_subagent", "list_subagents",
+        "kill_subagent")
 )
 
 #' Tools hidden by config
@@ -122,11 +122,8 @@ ensure_skills <- function() {
 skills_as_api_tools <- function(filter = NULL) {
     mcp_tools <- get_tools(filter)
     lapply(mcp_tools, function(t) {
-        list(
-             name = sanitize_tool_name(t$name),
-             description = t$description,
-             input_schema = t$inputSchema
-        )
+        list(name = sanitize_tool_name(t$name), description = t$description,
+             input_schema = t$inputSchema)
     })
 }
 
