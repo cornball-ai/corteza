@@ -1,3 +1,27 @@
+# corteza 0.6.6.3
+
+## Approval prompt
+
+* The tool-approval prompt is much tighter. The `Reason` section
+  (gate text + `Policy:` + `Model route:`) is gone; `Access` collapses
+  to a single line that names the path or command (e.g. `Write to
+  CLAUDE.md`, `Run command in /home/troy/corteza`); the redundant
+  `Path:` detail line above `Access` is suppressed when it would just
+  repeat the same path. Choices 1 and 3 carry key hints: `(Enter)` and
+  `(Esc)`.
+* Boilerplate warnings ("Shell commands can invoke scripts...",
+  "R code runs locally...") no longer appear on every bash / run_r
+  prompt. Noteworthy warnings — credential paths, paths outside the
+  project — still surface.
+* After the user answers, both surfaces print a single-line
+  `● User replied:` summary paraphrasing the chosen action (e.g.
+  "Allow writing to CLAUDE.md once").
+* In the terminal CLI, the approval block is erased and replaced by
+  the `User replied:` summary via ANSI cursor-up + clear-down. In
+  `corteza::chat()` running under RStudio (whose console doesn't
+  honor cursor-position escapes) the block stays in scrollback with
+  the summary appended below.
+
 # corteza 0.6.6.2
 
 ## Inline diffs on file edits

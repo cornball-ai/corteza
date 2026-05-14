@@ -515,12 +515,12 @@ ask_approval <- function(name, args, cwd) {
   call$urls <- corteza:::resolve_urls(call)
   decision <- tryCatch(corteza::policy(call), error = function(e) NULL)
 
+  persistent_label <- "Allow always for this project"
   lines <- corteza:::cli_approval_lines(
     call,
     decision,
-    gate_reason = sprintf("Project config requires approval for %s.", name),
     cwd = cwd,
-    persistent_label = "Allow always for this project"
+    persistent_label = persistent_label
   )
   cat(paste(lines, collapse = "\n"), "\n")
 
@@ -531,6 +531,24 @@ ask_approval <- function(name, args, cwd) {
 
   # Default to "1" (allow once) if empty
   if (response == "") response <- "1"
+
+  # Replace the verbose approval block in the terminal with a single-
+  # line `User replied:` summary. Erases (length(lines) + 1) lines:
+  # the approval lines themselves plus the `Choice [1]: ` prompt line
+  # the user just answered. Gated on ANSI support — when escapes
+  # aren't honored we just print the summary below the prompt instead.
+  ansi <- nzchar(color$reset)
+  if (ansi) {
+    cat(sprintf("\033[%dF\033[J", length(lines) + 1L))
+  }
+  summary <- corteza:::cli_user_replied_line(
+    call, response,
+    persistent_label = persistent_label,
+    cwd = cwd
+  )
+  cat(sprintf("%s●%s User replied:\n  %s⎿  %s%s\n\n",
+              color$cyan, color$reset,
+              color$dim, summary, color$reset))
 
   list(
     approved = response %in% c("1", "2"),
