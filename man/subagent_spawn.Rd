@@ -13,11 +13,13 @@ into an agent loop).}
 \item{model}{Optional model override (reserved for later use).}
 
 \item{tools}{Optional explicit tool filter (character vector).
-Overrides `preset` when provided.}
+Overrides `preset` when provided. Fixed for the lifetime of the
+child — cannot be expanded after spawn.}
 
 \item{preset}{Preset name: `"investigate"` (read/search only, default),
 `"work"` (investigate + bash + write/edit), or `"minimal"`
-(read_file + grep_files only).}
+(read_file + grep_files only). Fixed for the lifetime of the
+child.}
 
 \item{parent_session}{Parent session object; read for
 nested-spawning control and session-key derivation.}

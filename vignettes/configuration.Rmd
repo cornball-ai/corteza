@@ -128,6 +128,8 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `subagents.default_tools` | string[] | `["base::readLines", "base::writeLines", "bash", "grep_files"]` | Tools available to subagents |
 | `subagents.base_port` | integer | `7851` | Starting port for subagent MCP servers |
 
+**Permission model.** Subagents have no interactive approval channel back to the parent or user. A child's tool list is fixed at spawn time — via the `--preset` or `--tools` flags on `/spawn`, or the `preset` / `tools` arguments to `subagent_spawn()`. There is no mid-run path to escalate to a riskier capability: the child's approval callback denies by default, and the parent cannot grant new tools after the fact. If a task may need shell, write, or network capability, choose a preset or explicit tool list that includes it at spawn time; otherwise the child should report that it is blocked.
+
 ### Workspace
 
 | Key | Type | Default | Description |

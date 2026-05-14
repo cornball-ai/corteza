@@ -96,9 +96,13 @@ resolve_subagent_id <- function(input) {
 #'
 #' Called once per child just after [worker_init()]. Creates a
 #' `new_session()` configured with the subagent's provider/model/tools
-#' and stores it where [subagent_turn_prompt()] can find it. Subagents
-#' deny all tool approvals by default so a subagent can't run bash
-#' without the parent opting in.
+#' and stores it where [subagent_turn_prompt()] can find it. The
+#' child's `approval_cb` denies by default: subagents have no
+#' interactive approval channel back to the parent or user, and tool
+#' permissions are fixed at spawn time via `tools_filter` (derived
+#' from the parent's `preset` or explicit `tools` argument to
+#' [subagent_spawn()]). There is no way to grant additional capability
+#' mid-run.
 #'
 #' @param provider LLM provider name (see [new_session()]).
 #' @param model Optional model override.
@@ -325,14 +329,25 @@ subagent_session_key <- function(parent_key) {
 #' registry set up. Stores the handle in the package-level registry
 #' keyed by subagent id.
 #'
+#' @section Permissions:
+#' Subagents have no interactive approval channel back to the parent
+#' or user. The child's `approval_cb` denies by default and there is
+#' no mid-run escalation path. Whatever capability the child needs
+#' must be granted at spawn time through `preset` or `tools`. If a
+#' task may need shell, write, or network capability, pick a preset
+#' that includes it (or pass an explicit `tools` list); otherwise the
+#' child should report that it is blocked rather than retry.
+#'
 #' @param task Task description (stored for bookkeeping; not yet fed
 #'   into an agent loop).
 #' @param model Optional model override (reserved for later use).
 #' @param tools Optional explicit tool filter (character vector).
-#'   Overrides `preset` when provided.
+#'   Overrides `preset` when provided. Fixed for the lifetime of the
+#'   child — cannot be expanded after spawn.
 #' @param preset Preset name: `"investigate"` (read/search only, default),
 #'   `"work"` (investigate + bash + write/edit), or `"minimal"`
-#'   (read_file + grep_files only).
+#'   (read_file + grep_files only). Fixed for the lifetime of the
+#'   child.
 #' @param parent_session Parent session object; read for
 #'   nested-spawning control and session-key derivation.
 #' @param config Config list.
