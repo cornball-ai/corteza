@@ -68,3 +68,36 @@ expect_false(is.null(fb))
 expect_true(isTRUE(fb$fallback))
 expect_identical(fb$lines, character(0L))
 expect_true(nzchar(fb$summary))
+
+# Restore the diff-binary cache so the truncation tests below run
+# against the real `diff` again.
+if (is.null(saved)) {
+    suppressWarnings(rm(list = "value", envir = cache))
+} else {
+    assign("value", saved, envir = cache)
+}
+
+# Truncation: a big new file gets capped so chat scrollback / callr
+# serialization don't blow up. Counts in summary still reflect the
+# full diff.
+big_new <- paste(sprintf("line %04d", seq_len(1000)), collapse = "\n")
+big <- corteza:::compute_unified_diff("", big_new, "big.R",
+                                      max_lines = 50L)
+expect_false(is.null(big))
+expect_true(isTRUE(big$truncated))
+# 50 retained lines plus the truncation marker.
+expect_equal(length(big$lines), 51L)
+expect_true(any(grepl("^\\[diff truncated:", big$lines)))
+expect_true(grepl("Added 1000 lines", big$summary, fixed = TRUE))
+
+# Char-budget trip: lots of small lines but tight max_chars.
+tight <- corteza:::compute_unified_diff("", big_new, "big.R",
+                                        max_lines = 1000L,
+                                        max_chars = 200L)
+expect_false(is.null(tight))
+expect_true(isTRUE(tight$truncated))
+expect_true(length(tight$lines) < 50L)
+
+# Default budgets leave a small diff untouched.
+small <- corteza:::compute_unified_diff("a\nb\nc\n", "a\nB\nc\n", "x.R")
+expect_false(isTRUE(small$truncated))

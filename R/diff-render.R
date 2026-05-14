@@ -65,25 +65,38 @@
 #' Returns NULL when the two inputs are byte-identical (signal to the
 #' caller that no diff display is warranted). When `diff` isn't on PATH,
 #' returns a fallback payload describing the size of the change without
-#' the per-line content.
+#' the per-line content. Large diffs are truncated to keep the payload
+#' bounded — both for serialization across the callr worker boundary
+#' and for chat scrollback hygiene — but the `summary` counts always
+#' reflect the full diff.
 #'
 #' @param old_text Character scalar, prior file contents. Empty string
 #'   means "new file".
 #' @param new_text Character scalar, new file contents.
 #' @param path Character scalar, the file path the diff describes; used
 #'   for the `+++` / `---` header labels.
+#' @param max_lines Cap on the number of diff lines retained for
+#'   display. Beyond this, a `[diff truncated: N more lines]` marker is
+#'   appended in place of the rest. Set to `Inf` to disable.
+#' @param max_chars Cap on total characters across retained lines.
+#'   Tripped if a small number of long lines blow past the budget even
+#'   though `max_lines` hasn't.
 #' @return NULL if identical, else a list with:
 #'   \itemize{
 #'     \item \code{path}: input path
-#'     \item \code{summary}: one-line summary string
+#'     \item \code{summary}: one-line summary string (always reflects
+#'       the full diff, not the truncated lines)
 #'     \item \code{lines}: character vector of uncolored diff lines
 #'       (header + hunks). May be empty when only the fallback
-#'       summary is available.
+#'       summary is available, or truncated for large diffs.
 #'     \item \code{fallback}: logical TRUE when `diff` was unavailable
 #'       and the payload is summary-only.
+#'     \item \code{truncated}: logical TRUE when `lines` was clipped.
 #'   }
 #' @noRd
-compute_unified_diff <- function(old_text, new_text, path) {
+compute_unified_diff <- function(old_text, new_text, path,
+                                 max_lines = 200L,
+                                 max_chars = 20000L) {
     old_text <- old_text %||% ""
     new_text <- new_text %||% ""
     path <- path %||% "(unnamed)"
@@ -148,10 +161,52 @@ compute_unified_diff <- function(old_text, new_text, path) {
     }
 
     counts <- .diff_summary_counts(res)
+    full_lines <- as.character(res)
+    clipped <- .clip_diff_lines(full_lines, max_lines, max_chars)
     list(path = path,
          summary = .diff_summary_line(counts$added, counts$removed),
-         lines = as.character(res),
-         fallback = FALSE)
+         lines = clipped$lines,
+         fallback = FALSE,
+         truncated = clipped$truncated)
+}
+
+#' Clip a diff-line vector to the configured budgets.
+#'
+#' Returns a list with the (possibly clipped) `lines` and a `truncated`
+#' flag. When the budget is busted we keep the first N lines and append
+#' a `[diff truncated: N more lines]` marker so the reader knows there
+#' was more.
+#' @noRd
+.clip_diff_lines <- function(lines, max_lines, max_chars) {
+    total <- length(lines)
+    if (total == 0L) {
+        return(list(lines = lines, truncated = FALSE))
+    }
+
+    keep <- min(total, as.integer(max_lines))
+    head <- lines[seq_len(keep)]
+
+    # Character budget: walk the kept lines until we'd exceed max_chars,
+    # then drop the rest. Counts newlines so the budget matches what
+    # the user actually sees.
+    if (is.finite(max_chars)) {
+        widths <- nchar(head, type = "bytes") + 1L
+        running <- cumsum(widths)
+        within <- which(running <= as.integer(max_chars))
+        keep_chars <- if (length(within) == 0L) 0L else max(within)
+        if (keep_chars < length(head)) {
+            head <- head[seq_len(keep_chars)]
+        }
+    }
+
+    truncated <- length(head) < total
+    if (truncated) {
+        dropped <- total - length(head)
+        head <- c(head,
+                  sprintf("[diff truncated: %d more line%s]",
+                          dropped, if (dropped == 1L) "" else "s"))
+    }
+    list(lines = head, truncated = truncated)
 }
 
 #' Render a diff payload to the terminal.
