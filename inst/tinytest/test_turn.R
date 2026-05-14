@@ -200,11 +200,11 @@ local({
     # no s_none$config — policy() sees config = NULL.
     h_none <- corteza:::.make_tool_handler(s_none,
                                            tool_executor = fake_executor)
-    out_none <- h_none("write_file",
-                       list(path = "/tmp/corteza-test-no-cfg.txt",
-                            content = "x"))
+    sanity_path <- tempfile("corteza-test-no-cfg-")
+    on.exit(unlink(sanity_path, force = TRUE), add = TRUE)
+    h_none("write_file", list(path = sanity_path, content = "x"))
     expect_false(called_none)
-    expect_false(file.exists("/tmp/corteza-test-no-cfg.txt"))
+    expect_false(file.exists(sanity_path))
 })
 
 # Per-tool permissions override approval_mode: setting permissions =
@@ -255,11 +255,60 @@ local({
                      dangerous_tools = c("write_file"),
                      permissions = list(write_file = "allow"))
     h <- corteza:::.make_tool_handler(s, tool_executor = fake_executor)
-    out <- h("write_file", list(path = "/tmp/should-not-write.txt",
-                                content = "x"))
+    sandbox <- tempfile("corteza-test-allow-")
+    on.exit(unlink(sandbox, force = TRUE), add = TRUE)
+    out <- h("write_file", list(path = sandbox, content = "x"))
     expect_false(called)
     expect_true(grepl("ran", out))
-    expect_false(file.exists("/tmp/should-not-write.txt"))
+    expect_false(file.exists(sandbox))
+})
+
+# User policy via options("corteza.policy") is the final word — config
+# overlay must NOT downgrade or tighten a verdict that came from the
+# user fn. Codex caught the regression where project config could
+# override a process-level user policy.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.personal_paths = character(),
+        corteza.policy = function(call) {
+            if (identical(call$tool %||% "", "bash")) {
+                list(model = "cloud", approval = "ask",
+                     reason = "user fn: always ask for bash")
+            } else {
+                NULL
+            }
+        }
+    )
+    on.exit(options(op), add = TRUE)
+
+    # Config tries to allow bash via per-tool permissions. User policy
+    # says ask. User policy wins.
+    cfg <- list(approval_mode = "ask",
+                dangerous_tools = c("bash"),
+                permissions = list(bash = "allow"))
+
+    d <- corteza::policy(list(tool = "bash",
+                              args = list(command = "ls"),
+                              channel = "console"),
+                         config = cfg)
+    expect_equal(d$approval, "ask")
+    expect_equal(d$reason, "user fn: always ask for bash")
+
+    # Config also can't tighten when user fn said allow.
+    options(corteza.policy = function(call) {
+        list(model = "cloud", approval = "allow",
+             reason = "user fn: trust everything")
+    })
+    cfg_tight <- list(approval_mode = "ask",
+                      dangerous_tools = c("bash"),
+                      permissions = list(bash = "deny"))
+    d2 <- corteza::policy(list(tool = "bash",
+                               args = list(command = "rm -rf /"),
+                               channel = "console"),
+                          config = cfg_tight)
+    expect_equal(d2$approval, "allow")
+    expect_equal(d2$reason, "user fn: trust everything")
 })
 
 # ---- turn(): smoke test that session is still usable ----

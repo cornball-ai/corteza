@@ -278,7 +278,12 @@ policy <- function(call, config = NULL) {
             if (is.null(user$reason)) {
                 user$reason <- "user policy"
             }
-            return(.apply_config_overlay(user, call, config))
+            # User policy is final. Project config does NOT overlay
+            # here — a process-level user policy is explicitly the
+            # "I know better than the project config" hook, so we
+            # respect that precedence in both directions: config can't
+            # tighten and can't relax it.
+            return(user)
         }
     }
 
