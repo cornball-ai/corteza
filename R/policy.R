@@ -186,7 +186,7 @@ check_safety <- function(call) {
     ),
                         code = list(
                                     read = list(cli = "allow", console = "allow", matrix = "allow"),
-                                    write = list(cli = "ask", console = "allow", matrix = "ask"),
+                                    write = list(cli = "ask", console = "ask", matrix = "ask"),
                                     exec = list(cli = "ask", console = "allow", matrix = "ask")
     ),
                         random = list(

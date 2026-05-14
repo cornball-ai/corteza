@@ -389,7 +389,7 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
         " Do you want to proceed?",
         "   1. Allow once (Enter)",
         sprintf("   2. %s", persistent_label),
-        "   3. Deny (Esc)"
+        "   3. Deny"
     )
 }
 

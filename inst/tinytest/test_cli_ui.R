@@ -27,7 +27,11 @@ expect_false(any(grepl("Model route", lines, fixed = TRUE)))
 expect_false(any(grepl("Reason", lines, fixed = TRUE)))
 # Key hints land on choices 1 and 3.
 expect_true(any(grepl("Allow once (Enter)", lines, fixed = TRUE)))
-expect_true(any(grepl("Deny (Esc)", lines, fixed = TRUE)))
+# `(Esc)` was advertised in an earlier draft but Esc isn't actually
+# wired to deny in either surface (codex caught the lie). Choice 3
+# stays unadorned until raw-keystroke handling is added.
+expect_true(any(grepl("^   3\\. Deny$", lines)))
+expect_false(any(grepl("Deny (Esc)", lines, fixed = TRUE)))
 expect_true(any(grepl("Allow always for this session", lines, fixed = TRUE)))
 
 # Duplicate Path detail under the title is suppressed once Access
