@@ -17,6 +17,12 @@
   as expected. In the terminal CLI, only Ctrl+C is an interrupt —
   terminals send raw `^[` for Esc, which is not a signal.
 
+## Other
+
+* `load_saber_briefing()` now wraps `saber::briefing()` in
+  `suppressMessages()` so the briefing text no longer leaks to the
+  user's terminal every time a subagent calls `session_setup()`.
+
 # corteza 0.6.6
 
 ## Async subagent queries
