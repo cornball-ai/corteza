@@ -21,6 +21,17 @@ expect_equal(length(active), 1L)
 expect_equal(active[[1]]$id, id)
 expect_equal(active[[1]]$task, "test task")
 
+# Spawn creates a durable transcript file. The file is the on-disk
+# record of the child's history — append-only, never rewritten, so
+# later context compaction can't lose anything.
+transcript_path <- corteza:::session_transcript_path(
+    id, agent_id = paste0("subagent-", id))
+expect_true(file.exists(transcript_path),
+            info = "subagent transcript should exist after spawn")
+header_line <- readLines(transcript_path, n = 1L)
+expect_true(grepl('"type":"session"', header_line, fixed = TRUE),
+            info = "transcript first line should be a session header")
+
 # Query: runs through turn() inside the child, which needs a live
 # LLM API key. Skip this check if no provider key is available —
 # the spawn+registry+kill round-trip is what matters here.
@@ -49,6 +60,13 @@ if (nzchar(Sys.getenv("ANTHROPIC_API_KEY"))) {
     expect_true(nzchar(res2))
     info <- corteza:::.subagent_registry[[id]]
     expect_null(info[["pending"]])
+
+    # After two queries the transcript must contain both turns. We
+    # don't pin exact content (provider replies vary) but the file
+    # should have grown beyond just the header.
+    lines <- readLines(transcript_path)
+    expect_true(length(lines) >= 3L,
+                info = "transcript should hold header + at least one turn")
 }
 
 # Kill cleans up registry + closes the session.
