@@ -76,6 +76,36 @@ format_tokens <- function(n) {
     }
 }
 
+#' Format an age in seconds as a compact string (e.g. "12s", "3m", "2h").
+#' @keywords internal
+#' @export
+format_age <- function(seconds) {
+    s <- as.numeric(seconds)
+    if (is.na(s) || s < 0) {
+        return("?")
+    }
+    if (s < 60) {
+        sprintf("%ds", as.integer(round(s)))
+    } else if (s < 3600) {
+        sprintf("%dm", as.integer(round(s / 60)))
+    } else {
+        sprintf("%.1fh", s / 3600)
+    }
+}
+
+#' Format a live-context display like "4.2K/200K" or "?".
+#'
+#' Used by /agents to summarize live tokens versus model limit.
+#' Returns "?" when either value is NA.
+#' @keywords internal
+#' @export
+format_live_ctx <- function(tokens, limit) {
+    if (is.na(tokens) || is.na(limit) || is.null(tokens) || is.null(limit)) {
+        return("ctx ?")
+    }
+    sprintf("ctx %s/%s", format_tokens(tokens), format_tokens(limit))
+}
+
 #' Rough token estimate from raw text.
 #'
 #' Returns `ceil(nchar(text) / 4)`. Good enough for budget decisions

@@ -9,5 +9,7 @@ subagent_list()
 List of subagent info objects.
 }
 \description{
-List active subagents.
+Returns a list of info objects per agent: id/seq/task/started_at/
+time_remaining/pending plus model/age/cumulative usage and a
+best-effort live token count for idle agents (`NA` for busy).
 }
