@@ -1026,12 +1026,19 @@ run_agent <- function(opts) {
     elapsed_ms <- as.numeric(difftime(Sys.time(), start_time, units = "secs")) * 1000
 
     if (!failed) {
-      lines <- length(strsplit(text, "\n")[[1]])
-      cat(sprintf("  %s⎿%s %d line%s in %dms\n",
-                  color$dim, color$reset,
-                  lines,
-                  if (identical(lines, 1L)) "" else "s",
-                  round(elapsed_ms)))
+      # File-edit tools (replace_in_file, write_file) attach a diff
+      # payload alongside the LLM-facing text. Render it inline so the
+      # user sees what changed instead of just a "N lines" summary.
+      if (!is.null(result$diff)) {
+        corteza:::render_tool_diff(result$diff)
+      } else {
+        lines <- length(strsplit(text, "\n")[[1]])
+        cat(sprintf("  %s⎿%s %d line%s in %dms\n",
+                    color$dim, color$reset,
+                    lines,
+                    if (identical(lines, 1L)) "" else "s",
+                    round(elapsed_ms)))
+      }
       # Store in buffer for /last command
       tool_buffer_add(name, args, text)
     }
@@ -1185,7 +1192,7 @@ run_agent <- function(opts) {
         } else {
           tool_buffer_add("git_diff", list(ref = material$target), material$diff)
           cat(sprintf("\n%sDiff against %s%s\n", color$cyan, material$target, color$reset))
-          cat(material$diff, "\n")
+          cat(corteza:::colorize_diff(material$diff), "\n")
         }
         next
       } else if (cmd == "/review") {

@@ -46,3 +46,46 @@ ansi_colors <- function() {
          bright_magenta = "\033[95m", bright_cyan = "\033[96m")
 }
 
+#' Colorize a unified-diff string for terminal display.
+#'
+#' Matches `git diff` / `git --color=always`'s palette: green additions,
+#' red deletions, cyan hunk headers, bold file headers, dim metadata
+#' lines. The `+++ ` / `--- ` file-header check has to run before the
+#' bare `+` / `-` check or the file-header lines would be colored as
+#' add/delete rows.
+#'
+#' Returns `text` unchanged when the terminal doesn't support ANSI.
+#' @param text Character scalar, raw diff output.
+#' @param palette Optional palette from \code{ansi_colors()}; tests pass
+#'   a forced palette to assert escape sequences are emitted.
+#' @return Character scalar with ANSI escapes interleaved.
+#' @noRd
+colorize_diff <- function(text, palette = ansi_colors()) {
+    if (!is.character(text) || length(text) != 1L || !nzchar(text)) {
+        return(text)
+    }
+    if (!nzchar(palette$reset)) {
+        return(text)
+    }
+    lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
+    paint <- function(ln) {
+        if (startsWith(ln, "diff --git ") || startsWith(ln, "index ") ||
+            startsWith(ln, "similarity ") || startsWith(ln, "rename ") ||
+            startsWith(ln, "new file") || startsWith(ln, "deleted file")) {
+            paste0(palette$dim, ln, palette$reset)
+        } else if (startsWith(ln, "+++ ") || startsWith(ln, "--- ")) {
+            paste0(palette$bold, ln, palette$reset)
+        } else if (startsWith(ln, "@@")) {
+            paste0(palette$cyan, ln, palette$reset)
+        } else if (startsWith(ln, "+")) {
+            paste0(palette$green, ln, palette$reset)
+        } else if (startsWith(ln, "-")) {
+            paste0(palette$red, ln, palette$reset)
+        } else {
+            ln
+        }
+    }
+    paste(vapply(lines, paint, character(1L), USE.NAMES = FALSE),
+          collapse = "\n")
+}
+

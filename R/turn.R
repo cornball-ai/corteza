@@ -198,7 +198,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 
         start <- Sys.time()
 
-        outcome_text <- function(kind, text, success) {
+        outcome_text <- function(kind, text, success, diff = NULL) {
             event <- list(
                           call = call,
                           decision = decision,
@@ -208,7 +208,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                           elapsed_ms = as.numeric(
                     difftime(Sys.time(), start, units = "secs")
                 ) * 1000,
-                          turn_number = session$turn_number
+                          turn_number = session$turn_number,
+                          diff = diff
             )
             .fire_observers(session, event)
             text
@@ -253,7 +254,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
-        outcome_text("ran", .flatten_mcp_result(raw), success)
+        outcome_text("ran", .flatten_mcp_result(raw), success,
+                     diff = raw$diff)
     }
 }
 
@@ -363,6 +365,14 @@ observer_progress <- function() {
         }
 
         if (!identical(event$outcome, "ran")) {
+            return(invisible())
+        }
+
+        # File-edit tools attach a diff payload to their result. When
+        # present, render the colored hunks in place of the usual
+        # one-line "N lines" summary so the user can see what changed.
+        if (!is.null(event$diff)) {
+            render_tool_diff(event$diff)
             return(invisible())
         }
 

@@ -18,6 +18,20 @@
   intercepts Ctrl+C for copy). In the terminal `~/bin/corteza` CLI it's
   **Ctrl+C** — terminals send raw `^[` for Esc, which is not a signal.
 
+## Inline diffs on file edits
+
+* `replace_in_file` and `write_file` now attach a unified-diff payload
+  to their MCP result. The CLI and `corteza::chat()` render it inline
+  in the tool-call output (`Added N, removed M`, then colored hunks)
+  instead of the prior `N lines in Xms` summary, so it's obvious what
+  the agent actually changed. The LLM-facing result text is unchanged
+  — the diff is for the human reading the terminal.
+* Diff generation shells out to the system `diff -u`. If `diff` isn't
+  on `PATH` the tool degrades to a one-line size summary rather than
+  failing.
+* The `/diff` slash command's output is now ANSI-colored (same
+  red/green/cyan palette as `git diff --color=always`).
+
 ## Other
 
 * `load_saber_briefing()` now wraps `saber::briefing()` in
