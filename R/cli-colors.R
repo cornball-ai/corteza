@@ -12,6 +12,21 @@
 #' @return Single logical.
 #' @noRd
 ansi_supported <- function() {
+    # NO_COLOR / FORCE_COLOR are the conventional overrides; they win
+    # over auto-detection so users can force either side. RStudio's R
+    # console pane is not a tty (isatty(stdout()) is FALSE) but it
+    # does render ANSI escape sequences — without the RSTUDIO check,
+    # corteza::chat() would emit plain text in RStudio while the
+    # terminal CLI gets colored output.
+    if (nzchar(Sys.getenv("NO_COLOR"))) {
+        return(FALSE)
+    }
+    if (nzchar(Sys.getenv("FORCE_COLOR"))) {
+        return(TRUE)
+    }
+    if (identical(Sys.getenv("RSTUDIO"), "1")) {
+        return(TRUE)
+    }
     if (.Platform$OS.type == "windows") {
         return(any(nzchar(Sys.getenv(c("WT_SESSION", "ConEmuANSI",
                                        "TERM_PROGRAM")))))
