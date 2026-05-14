@@ -112,6 +112,12 @@ Commands (in chat):
   /model <name>  Switch model
   /provider <p>  Switch provider
 
+Keys:
+  Ctrl+C         Interrupt the current turn and return to the prompt.
+                 (Esc does nothing here — terminals send a raw ^[ byte,
+                 not a signal. In RStudio's corteza::chat() the split is
+                 reversed: Esc interrupts, Ctrl+C is copy.)
+
 Project context is loaded from saber::briefing() and saber::agent_context().
 Additional files can be loaded via the `context_files` config key.
 

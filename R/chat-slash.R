@@ -84,6 +84,12 @@ chat_help_text <- function() {
           "  /skill remove <name>          Remove a skill",
           "  /skill test <path>            Run skill tests",
           "",
+          "Keys:",
+          "  Esc                           Interrupt the current turn and return to the prompt.",
+          "                                (RStudio's console intercepts Ctrl+C for copy. In the",
+          "                                terminal ~/bin/corteza CLI the split is reversed:",
+          "                                Ctrl+C interrupts, Esc does nothing.)",
+          "",
           sep = "\n"
     )
 }
