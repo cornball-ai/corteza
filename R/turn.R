@@ -186,7 +186,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # below see the same paths/urls.
         call$paths <- resolve_paths(call)
         call$urls <- resolve_urls(call)
-        decision <- policy(call)
+        # Pass session$config so the /permissions contract (configured
+        # approval_mode + dangerous_tools + per-tool permissions) is
+        # enforced regardless of how the data class falls out. Without
+        # this, a CLAUDE.md edit could classify as `random` and skip
+        # the prompt in chat() even though `replace_in_file` is in the
+        # default dangerous_tools list.
+        decision <- policy(call, config = session$config)
 
         # Sticky: record the class regardless of the decision outcome.
         # Even a denied tool call means the LLM is trying to touch that

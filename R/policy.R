@@ -232,13 +232,28 @@ default_policy <- function(call) {
 #' \code{"cloud"} or \code{"local"}; \code{approval} is \code{"allow"},
 #' \code{"ask"}, or \code{"deny"}.
 #'
+#' When \code{config} is supplied, the project's
+#' \code{approval_mode} / \code{dangerous_tools} / per-tool
+#' \code{permissions} are overlaid on top of the default tensor: a
+#' tool the user has configured as \code{"ask"} or \code{"deny"} will
+#' have its decision promoted accordingly. Safety verdicts (credential
+#' paths, plan mode) still win because those represent invariants the
+#' user can't waive from config.
+#'
+#' Both \code{corteza::chat()} and the CLI tool dispatch loop pass
+#' their session's config through here so the \code{/permissions}
+#' contract advertised by both surfaces is enforced consistently.
+#'
 #' @param call A list describing the tool call. See the file header in
 #'   \code{R/policy.R} for the expected fields.
+#' @param config Optional config list from \code{load_config()}. When
+#'   \code{NULL} (default), only the built-in tensor and user policy
+#'   apply; this matches the historical \code{policy(call)} contract.
 #'
 #' @return A decision list with fields \code{model}, \code{approval},
 #'   \code{reason}.
 #' @export
-policy <- function(call) {
+policy <- function(call, config = NULL) {
     if (is.null(call$paths)) {
         call$paths <- resolve_paths(call)
     }
@@ -263,10 +278,52 @@ policy <- function(call) {
             if (is.null(user$reason)) {
                 user$reason <- "user policy"
             }
-            return(user)
+            return(.apply_config_overlay(user, call, config))
         }
     }
 
-    default_policy(call)
+    .apply_config_overlay(default_policy(call), call, config)
+}
+
+#' Overlay the configured tool permissions on top of a base policy
+#' decision. Honors approval_mode + dangerous_tools + per-tool
+#' permissions so the /permissions contract is actually enforced in
+#' both chat() and CLI. Promotes allow → ask / deny when config
+#' demands it; never downgrades a safety-driven deny.
+#' @noRd
+.apply_config_overlay <- function(base, call, config) {
+    if (is.null(config)) {
+        return(base)
+    }
+    tool <- call$tool %||% ""
+    if (!nzchar(tool)) {
+        return(base)
+    }
+    perm <- tryCatch(get_tool_permission(tool, config),
+                     error = function(e) NULL)
+    if (is.null(perm)) {
+        return(base)
+    }
+    if (identical(perm, "allow")) {
+        # Config explicitly allows — but a tensor-driven "ask" or
+        # safety-driven "deny" still wins. We only override when the
+        # user has actively widened the rules.
+        return(base)
+    }
+    if (identical(perm, "deny")) {
+        return(list(model = base$model %||% "cloud",
+                    approval = "deny",
+                    reason = sprintf("config: %s denied", tool)))
+    }
+    if (identical(perm, "ask") && !identical(base$approval, "deny")) {
+        # Promote allow → ask. Don't downgrade a safety-driven deny.
+        if (identical(base$approval, "allow")) {
+            return(list(model = base$model %||% "cloud",
+                        approval = "ask",
+                        reason = sprintf("config: %s requires approval",
+                                         tool)))
+        }
+    }
+    base
 }
 

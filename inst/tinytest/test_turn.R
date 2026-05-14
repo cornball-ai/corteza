@@ -112,6 +112,116 @@ local({
     expect_true("code" %in% s$recent_classes)
 })
 
+# ---- /permissions contract: config-driven approval gate ----
+# Codex found that chat() was silently approving write_file /
+# replace_in_file when the target path classified as `random` (the
+# tensor cell random/write/console = "allow"). The CLI separately
+# enforced approval_mode + dangerous_tools, so the two surfaces
+# disagreed about what required approval. policy() now overlays
+# session$config so both honor /permissions.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.personal_paths = character(),
+        corteza.policy = NULL
+    )
+    on.exit(options(op), add = TRUE)
+
+    default_cfg <- list(
+        approval_mode = "ask",
+        dangerous_tools = corteza:::default_dangerous_tools()
+    )
+
+    # write_file in console: even though the path doesn't fall under
+    # `code_paths`, the dangerous-tools config must force "ask".
+    called_write <- FALSE
+    s_write <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            called_write <<- TRUE
+            FALSE
+        }
+    )
+    s_write$config <- default_cfg
+    h_write <- corteza:::.make_tool_handler(s_write)
+    out_write <- h_write("write_file",
+                         list(path = "/tmp/corteza-test-write.txt",
+                              content = "x"))
+    expect_true(called_write)
+    expect_true(grepl("declined", out_write))
+
+    # replace_in_file in console: same — must hit approval_cb.
+    called_replace <- FALSE
+    s_replace <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            called_replace <<- TRUE
+            FALSE
+        }
+    )
+    s_replace$config <- default_cfg
+    h_replace <- corteza:::.make_tool_handler(s_replace)
+    out_replace <- h_replace("replace_in_file",
+                             list(path = "/tmp/corteza-test-replace.txt",
+                                  old_text = "a", new_text = "b"))
+    expect_true(called_replace)
+    expect_true(grepl("declined", out_replace))
+
+    # bash in console: also in dangerous_tools by default.
+    called_bash <- FALSE
+    s_bash <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            called_bash <<- TRUE
+            FALSE
+        }
+    )
+    s_bash$config <- default_cfg
+    h_bash <- corteza:::.make_tool_handler(s_bash)
+    out_bash <- h_bash("bash", list(command = "ls /tmp"))
+    expect_true(called_bash)
+
+    # Sanity: without config, the historical contract holds — a
+    # write_file in console that classifies as random falls into the
+    # tensor allow cell and approval_cb does not fire.
+    called_none <- FALSE
+    s_none <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            called_none <<- TRUE
+            FALSE
+        }
+    )
+    # no s_none$config — policy() sees config = NULL.
+    h_none <- corteza:::.make_tool_handler(s_none)
+    out_none <- h_none("write_file",
+                       list(path = "/tmp/corteza-test-no-cfg.txt",
+                            content = "x"))
+    expect_false(called_none)
+})
+
+# Per-tool permissions override approval_mode: setting permissions =
+# list(bash = "deny") in config should make the handler refuse the
+# call regardless of the default tensor.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.policy = NULL
+    )
+    on.exit(options(op), add = TRUE)
+
+    s <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) TRUE
+    )
+    s$config <- list(approval_mode = "ask",
+                     dangerous_tools = c("bash"),
+                     permissions = list(bash = "deny"))
+    h <- corteza:::.make_tool_handler(s)
+    out <- h("bash", list(command = "echo no"))
+    expect_true(grepl("denied|deny", out, ignore.case = TRUE))
+})
+
 # ---- turn(): smoke test that session is still usable ----
 
 s <- corteza::new_session("cli")
