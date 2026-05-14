@@ -62,10 +62,16 @@ compact_find_cut <- function(history, keep_recent_turns = 1L) {
     }
     # Walk from the end; find the start index of the (keep_recent +
     # 1)th-from-last user turn. Everything before that is summarizable.
+    #
+    # Anthropic-style tool_result messages also have role == "user",
+    # but they're the second half of a tool_use round-trip — not a
+    # new user turn. Filter those out so the boundary lands on real
+    # human prompts.
     user_starts <- integer(0)
     for (i in seq_len(n)) {
         role <- history[[i]]$role %||% ""
-        if (identical(role, "user")) {
+        if (identical(role, "user") &&
+            !compact_entry_is_tool_result_only(history[[i]])) {
             user_starts <- c(user_starts, i)
         }
     }
@@ -80,50 +86,74 @@ compact_find_cut <- function(history, keep_recent_turns = 1L) {
     if (cut <= 0L) {
         return(0L)
     }
-    # Don't split a tool_use / tool_result pair. If the entry at
-    # `cut` has a tool_use whose tool_result lands in the kept tail,
-    # walk back until we're past the pair.
+    # Don't split any tool_use / tool_result pair. Walk the cut back
+    # until every tool_use in the prefix `history[1..cut]` has its
+    # matching tool_result also in that prefix — i.e., no dangling
+    # tool_use whose tool_result lives in the kept tail.
     while (cut > 0L &&
-           compact_entry_has_open_tool_use(history[[cut]], history,
-                                           after_idx = cut)) {
+           compact_prefix_has_unmatched_tool_use(history, cut)) {
         cut <- cut - 1L
     }
     as.integer(cut)
 }
 
-#' Does this entry contain a tool_use whose tool_result lives in
-#' `history` after `after_idx`?
+#' Does a user-role entry contain only tool_result blocks?
+#'
+#' Anthropic-style chat history puts tool_result blocks inside a
+#' user message; this helps `compact_find_cut` avoid treating them
+#' as user-turn boundaries.
 #' @noRd
-compact_entry_has_open_tool_use <- function(entry, history, after_idx) {
+compact_entry_is_tool_result_only <- function(entry) {
     cnt <- entry$content
-    if (!is.list(cnt)) {
+    if (!is.list(cnt) || length(cnt) == 0L) {
         return(FALSE)
     }
-    ids <- character(0)
     for (block in cnt) {
-        if (identical(block$type, "tool_use")) {
-            tid <- block$id %||% ""
-            if (nzchar(tid)) ids <- c(ids, tid)
+        bt <- block$type %||% ""
+        if (!identical(bt, "tool_result")) {
+            return(FALSE)
         }
     }
-    if (length(ids) == 0L) {
+    TRUE
+}
+
+#' Does any tool_use in `history[1..cut]` have its matching
+#' tool_result in `history[(cut+1):n]`?
+#' @noRd
+compact_prefix_has_unmatched_tool_use <- function(history, cut) {
+    n <- length(history)
+    if (cut <= 0L || cut >= n) {
         return(FALSE)
     }
-    n <- length(history)
-    if (after_idx >= n) {
-        return(TRUE)
-    }
-    for (j in (after_idx + 1L):n) {
-        c2 <- history[[j]]$content
+    # Collect tool_use ids in prefix.
+    prefix_uses <- character(0)
+    for (i in seq_len(cut)) {
+        c2 <- history[[i]]$content
         if (!is.list(c2)) next
         for (block in c2) {
-            if (identical(block$type, "tool_result") &&
-                (block$tool_use_id %||% "") %in% ids) {
-                return(TRUE)
+            if (identical(block$type %||% "", "tool_use")) {
+                tid <- block$id %||% ""
+                if (nzchar(tid)) prefix_uses <- c(prefix_uses, tid)
             }
         }
     }
-    FALSE
+    if (length(prefix_uses) == 0L) {
+        return(FALSE)
+    }
+    # Collect tool_result ids in prefix to remove already-matched ones.
+    prefix_results <- character(0)
+    for (i in seq_len(cut)) {
+        c2 <- history[[i]]$content
+        if (!is.list(c2)) next
+        for (block in c2) {
+            if (identical(block$type %||% "", "tool_result")) {
+                tid <- block$tool_use_id %||% ""
+                if (nzchar(tid)) prefix_results <- c(prefix_results, tid)
+            }
+        }
+    }
+    open <- setdiff(prefix_uses, prefix_results)
+    length(open) > 0L
 }
 
 # Stripped-down summarization prompt — same shape the CLI uses.
@@ -244,9 +274,16 @@ maybe_compact_turn_session <- function(session, config, kind = NULL) {
                         moonshot  = "moonshot-v1-8k",
                         NULL)
     }
+    # Estimate against the same tools turn() will send. turn()
+    # resolves tools from session$tools_filter when tools is NULL,
+    # so passing NULL here would undercount the live context for any
+    # subagent with an active tool filter.
+    tools_for_estimate <- tryCatch(
+        skills_as_api_tools(session$tools_filter),
+        error = function(e) NULL)
     pct <- context_usage_pct(list(history = history), model = model,
                              system_prompt = session$system,
-                             tools = NULL)
+                             tools = tools_for_estimate)
     if (pct < threshold) {
         return(invisible(FALSE))
     }

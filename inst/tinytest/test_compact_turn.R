@@ -79,11 +79,61 @@ toolchain <- list(
     list(role = "user", content = "next"),
     list(role = "assistant", content = "reply"))
 cut_toolchain <- corteza:::compact_find_cut(toolchain, keep_recent_turns = 1L)
-# The exact value depends on how user_starts iterate, but the
-# constraint is: cut must not land on entry 2 (tool_use paired with
-# tool_result still in the kept tail).
+# Critical: tool_result messages (role == "user" but content is a
+# tool_result block) must NOT count as user-turn boundaries — they
+# are the second half of the previous assistant tool_use. The only
+# real user turns here are entry 1 ("do a thing") and entry 4
+# ("next"). With keep_recent_turns = 1 the safe answer is cut = 3
+# (summarize entries 1-3, keeping the tool_use/tool_result pair
+# intact in the prefix). The unsafe cut is 2, which would split
+# the pair across the boundary.
 expect_true(cut_toolchain != 2L,
             info = "cut must not split tool_use / tool_result pair")
+expect_equal(cut_toolchain, 3L,
+             info = "cut sits after the tool_use pair, before the next user turn")
+
+# Regression for the more subtle P1: a long turn with multiple
+# tool_use/tool_result rounds before the final assistant. None of
+# the user-tagged tool_result messages should look like a new user
+# turn, so with keep_recent_turns = 1 the entire turn must stay
+# together (cut = 0).
+multi_tool_turn <- list(
+    list(role = "user", content = "do it"),               # 1 real user
+    list(role = "assistant",
+         content = list(list(type = "tool_use",
+                             id = "tu_a", name = "x", input = list()))),
+    list(role = "user",                                    # 3 tool_result, NOT a turn
+         content = list(list(type = "tool_result",
+                             tool_use_id = "tu_a", content = "..."))),
+    list(role = "assistant",
+         content = list(list(type = "tool_use",
+                             id = "tu_b", name = "y", input = list()))),
+    list(role = "user",                                    # 5 tool_result, NOT a turn
+         content = list(list(type = "tool_result",
+                             tool_use_id = "tu_b", content = "..."))),
+    list(role = "assistant", content = "all done"))
+expect_equal(
+    corteza:::compact_find_cut(multi_tool_turn, keep_recent_turns = 1L),
+    0L,
+    info = "tool_result-only user msgs must not split a single turn")
+
+# compact_entry_is_tool_result_only --------
+
+expect_false(corteza:::compact_entry_is_tool_result_only(
+    list(role = "user", content = "plain text")))
+expect_false(corteza:::compact_entry_is_tool_result_only(
+    list(role = "user",
+         content = list(list(type = "text", text = "hi")))))
+expect_true(corteza:::compact_entry_is_tool_result_only(
+    list(role = "user",
+         content = list(list(type = "tool_result",
+                             tool_use_id = "tu_1", content = "ok")))))
+# Mixed content (text + tool_result) is not tool_result-only.
+expect_false(corteza:::compact_entry_is_tool_result_only(
+    list(role = "user",
+         content = list(list(type = "text", text = "hi"),
+                        list(type = "tool_result", tool_use_id = "tu_1",
+                             content = "ok")))))
 
 # compact_rewrite_history --------
 
