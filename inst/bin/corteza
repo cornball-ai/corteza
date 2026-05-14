@@ -1718,6 +1718,14 @@ Tool output:
       max_turns = 20L,
       plan_mode = isTRUE(opts$plan_mode)
     )
+    # Make the loaded config visible to policy()'s config overlay
+    # inside .make_tool_handler. The CLI's outer tool_handler also
+    # gates via requires_approval (belt-and-suspenders), but threading
+    # config here keeps chat() and CLI policy decisions identical so
+    # downstream code can rely on one source of truth. The CLI's
+    # turn-level approval_cb returns TRUE unconditionally so this
+    # doesn't introduce double-prompting.
+    turn_session$config <- config
 
     # CLI tool_handler returns plain strings; turn() expects MCP-format.
     # Wrap: any "Tool execution denied" / "[DRY RUN]" etc. is still a

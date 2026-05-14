@@ -288,8 +288,27 @@ policy <- function(call, config = NULL) {
 #' Overlay the configured tool permissions on top of a base policy
 #' decision. Honors approval_mode + dangerous_tools + per-tool
 #' permissions so the /permissions contract is actually enforced in
-#' both chat() and CLI. Promotes allow → ask / deny when config
-#' demands it; never downgrades a safety-driven deny.
+#' both chat() and CLI.
+#'
+#' Resolution rules (in order):
+#'
+#' \itemize{
+#'   \item Safety verdicts (credential paths, etc.) have already
+#'     short-circuited by the time we get here, so a base \code{"deny"}
+#'     can only come from the data tensor or a user fn. We never
+#'     downgrade that.
+#'   \item Config \code{"deny"} wins over base \code{"allow"} or
+#'     \code{"ask"} — config can always tighten.
+#'   \item Config \code{"ask"} promotes base \code{"allow"} to
+#'     \code{"ask"}. (It doesn't downgrade base \code{"deny"}.)
+#'   \item Config \code{"allow"} downgrades base \code{"ask"} to
+#'     \code{"allow"}. This mirrors the CLI's
+#'     \code{requires_approval(name, dangerous_tools)} semantics: a
+#'     tool the user has explicitly marked allow skips approval
+#'     regardless of data class. It does **not** override a base
+#'     \code{"deny"} — config can tighten or relax \code{"ask"},
+#'     never widen a \code{"deny"}.
+#' }
 #' @noRd
 .apply_config_overlay <- function(base, call, config) {
     if (is.null(config)) {
@@ -304,25 +323,28 @@ policy <- function(call, config = NULL) {
     if (is.null(perm)) {
         return(base)
     }
-    if (identical(perm, "allow")) {
-        # Config explicitly allows — but a tensor-driven "ask" or
-        # safety-driven "deny" still wins. We only override when the
-        # user has actively widened the rules.
-        return(base)
-    }
+
     if (identical(perm, "deny")) {
         return(list(model = base$model %||% "cloud",
                     approval = "deny",
                     reason = sprintf("config: %s denied", tool)))
     }
-    if (identical(perm, "ask") && !identical(base$approval, "deny")) {
-        # Promote allow → ask. Don't downgrade a safety-driven deny.
+    if (identical(perm, "ask")) {
         if (identical(base$approval, "allow")) {
             return(list(model = base$model %||% "cloud",
                         approval = "ask",
                         reason = sprintf("config: %s requires approval",
                                          tool)))
         }
+        return(base)
+    }
+    if (identical(perm, "allow")) {
+        if (identical(base$approval, "ask")) {
+            return(list(model = base$model %||% "cloud",
+                        approval = "allow",
+                        reason = sprintf("config: %s allowed", tool)))
+        }
+        return(base)
     }
     base
 }

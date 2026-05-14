@@ -183,8 +183,13 @@ local({
 
     # Sanity: without config, the historical contract holds — a
     # write_file in console that classifies as random falls into the
-    # tensor allow cell and approval_cb does not fire.
+    # tensor allow cell and approval_cb does not fire. Use a fake
+    # tool_executor so the test doesn't actually touch the
+    # filesystem when the negative-case write goes through.
     called_none <- FALSE
+    fake_executor <- function(name, args) {
+        list(content = list(list(type = "text", text = "stub")))
+    }
     s_none <- corteza::new_session(
         "console",
         approval_cb = function(call, decision) {
@@ -193,11 +198,13 @@ local({
         }
     )
     # no s_none$config — policy() sees config = NULL.
-    h_none <- corteza:::.make_tool_handler(s_none)
+    h_none <- corteza:::.make_tool_handler(s_none,
+                                           tool_executor = fake_executor)
     out_none <- h_none("write_file",
                        list(path = "/tmp/corteza-test-no-cfg.txt",
                             content = "x"))
     expect_false(called_none)
+    expect_false(file.exists("/tmp/corteza-test-no-cfg.txt"))
 })
 
 # Per-tool permissions override approval_mode: setting permissions =
@@ -220,6 +227,39 @@ local({
     h <- corteza:::.make_tool_handler(s)
     out <- h("bash", list(command = "echo no"))
     expect_true(grepl("denied|deny", out, ignore.case = TRUE))
+})
+
+# Per-tool permissions = "allow" should downgrade a tensor-driven
+# "ask" so the tool runs without prompting. Mirrors the CLI's
+# requires_approval() semantics: a tool the user has explicitly
+# marked allow skips approval regardless of how the data classifies.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.policy = NULL
+    )
+    on.exit(options(op), add = TRUE)
+
+    called <- FALSE
+    fake_executor <- function(name, args) {
+        list(content = list(list(type = "text", text = "ran")))
+    }
+    s <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            called <<- TRUE
+            FALSE
+        }
+    )
+    s$config <- list(approval_mode = "ask",
+                     dangerous_tools = c("write_file"),
+                     permissions = list(write_file = "allow"))
+    h <- corteza:::.make_tool_handler(s, tool_executor = fake_executor)
+    out <- h("write_file", list(path = "/tmp/should-not-write.txt",
+                                content = "x"))
+    expect_false(called)
+    expect_true(grepl("ran", out))
+    expect_false(file.exists("/tmp/should-not-write.txt"))
 })
 
 # ---- turn(): smoke test that session is still usable ----
