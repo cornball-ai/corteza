@@ -593,31 +593,128 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/compact") {
-                if (length(turn_session$history %||% list()) < 2L) {
+                if (length(disk_session$session$messages %||% list()) < 2L) {
                     cat("Nothing to compact.\n")
                     next
                 }
-                cat("Compacting...\n")
-                compact_text <- tryCatch({
-                    transcript <- archival_render_transcript(turn_session$history)
-                    sys <- "Compress this conversation into a 1-paragraph summary that preserves the user's goals, decisions made, files touched, and unresolved questions. No bullets."
-                    resp <- llm.api::agent(prompt = transcript, system = sys,
-                        tools = list(),
-                        model = turn_session$model_map$cloud,
-                        provider = turn_session$provider,
-                        max_turns = 1L, history = list(),
-                        verbose = FALSE)
-                    as.character(resp$content %||% "")
-                }, error = function(e) {
-                    cat(sprintf("Compaction failed: %s\n", e$message))
-                    NULL
-                })
-                if (!is.null(compact_text) && nzchar(compact_text)) {
+                # Use the shared do_compact() so chat() and the CLI
+                # summarize sessions through the same prompt and
+                # model-call shape.
+                result <- do_compact(disk_session$session,
+                                     turn_session$provider,
+                                     turn_session$model_map$cloud)
+                if (!is.null(result) && nzchar(result$summary)) {
                     turn_session$history <- list(
-                        list(role = "assistant", content = compact_text)
+                        list(role = "assistant", content = result$summary)
                     )
-                    transcript_compact(disk_session$session, compact_text)
+                    transcript_compact(disk_session$session, result$summary)
                     cat("Compacted.\n")
+                }
+                next
+            }
+            if (cmd == "/status") {
+                tools_filter <- turn_session$tools_filter
+                tools <- skills_as_api_tools(tools_filter)
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                sess_tokens <- estimate_live_context_tokens(
+                                                            disk_session$session,
+                                                            turn_session$system %||% "",
+                                                            tools
+                )
+                ctx_limit <- context_limit_for_model(disp_model)
+                docs <- tryCatch(list_skill_docs(),
+                                 error = function(e) character())
+                cat(format_status_summary(
+                                          session = disk_session$session,
+                                          provider = turn_session$provider %||% provider,
+                                          display_model = disp_model,
+                                          tools = tools,
+                                          opts = list(dry_run = isTRUE(turn_session$config$dry_run)),
+                                          config = config,
+                                          session_tokens = sess_tokens,
+                                          context_limit = ctx_limit,
+                                          context_files = config$context_files %||% character(),
+                                          skill_docs = docs
+                    ), "\n")
+                next
+            }
+            if (cmd == "/doctor") {
+                tools <- skills_as_api_tools(turn_session$tools_filter)
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                docs <- tryCatch(list_skill_docs(),
+                                 error = function(e) character())
+                cat(format_doctor_report(
+                                         cwd = cwd,
+                                         session = disk_session$session,
+                                         provider = turn_session$provider %||% provider,
+                                         display_model = disp_model,
+                                         tools = tools,
+                                         config = config,
+                                         context_files = config$context_files %||% character(),
+                                         skill_docs = docs
+                    ), "\n")
+                next
+            }
+            if (cmd == "/config") {
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                cat(format_config_summary(
+                                          config = config,
+                                          provider = turn_session$provider %||% provider,
+                                          display_model = disp_model,
+                                          opts = list(port = config$port,
+                                                      tools = turn_session$tools_filter,
+                                                      dry_run = isTRUE(turn_session$config$dry_run))
+                    ), "\n")
+                next
+            }
+            if (cmd == "/diff") {
+                ref <- if (length(parts) >= 2L) parts[2] else NULL
+                material <- collect_git_diff(ref)
+                if (!isTRUE(material$ok)) {
+                    cat(sprintf("%s%s%s\n", color$yellow, material$text,
+                                color$reset))
+                } else {
+                    cat(sprintf("\n%sDiff against %s%s\n",
+                                color$cyan, material$target, color$reset))
+                    cat(colorize_diff(material$diff), "\n")
+                }
+                next
+            }
+            if (cmd == "/review") {
+                ref <- if (length(parts) >= 2L) parts[2] else NULL
+                material <- collect_git_diff(ref)
+                if (!isTRUE(material$ok)) {
+                    cat(sprintf("%s%s%s\n", color$yellow, material$text,
+                                color$reset))
+                    next
+                }
+                provider_check <- provider_status(
+                                                  turn_session$provider %||% provider,
+                                                  model
+                )
+                if (!isTRUE(provider_check$ok)) {
+                    cat(sprintf("%sReview unavailable: %s%s\n",
+                                color$yellow, provider_check$message,
+                                color$reset))
+                    next
+                }
+                cat(sprintf("%sReviewing diff against %s...%s\n",
+                            color$dim, material$target, color$reset))
+                review_result <- run_review(
+                                            turn_session$provider %||% provider,
+                                            model, material$target,
+                                            material$status, material$diff
+                )
+                if (inherits(review_result, "error")) {
+                    cat(sprintf("%sReview failed: %s%s\n",
+                                color$bright_magenta,
+                                conditionMessage(review_result),
+                                color$reset))
+                } else {
+                    cat(review_result$content %||% "", "\n")
                 }
                 next
             }
