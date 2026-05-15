@@ -213,6 +213,13 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # Register observers: progress printer + trace row per tool call.
     add_observer(turn_session, observer_progress())
     add_observer(turn_session, chat_trace_observer(turn_session))
+    # Capture successful tool outputs into the per-session buffer so
+    # /last and /outputs can replay them. Keyed by sessionId in the
+    # package; this observer just relays. The "kind" attr lets /clear
+    # find and replace this specific observer when the session resets.
+    tool_buf_obs <- tool_buffer_observer(disk_session$session)
+    attr(tool_buf_obs, "kind") <- "tool_buffer"
+    add_observer(turn_session, tool_buf_obs)
 
     # Optional experimental layers — off by default; opt in via options.
     if (isTRUE(getOption("corteza.experimental_ce", FALSE))) {
@@ -303,6 +310,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     tryCatch(ws_save(disk_session$sessionId),
                              error = function(e) NULL)
                 }
+                # Drop the tool-output buffer for the outgoing session
+                # so a /clear actually clears (otherwise /last would
+                # still surface results from the old conversation).
+                tool_buffer_reset(disk_session$session)
                 fresh <- session_new(provider, model, cwd)
                 disk_session <- list(session = fresh,
                                      sessionId = fresh$sessionId,
@@ -310,6 +321,15 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 turn_session$history <- list()
                 turn_session$sessionId <- fresh$sessionId
                 turn_session$disk_session <- fresh
+                # Re-register the tool-buffer observer against the new
+                # session so subsequent tool calls land in the fresh
+                # buffer.
+                turn_session$on_tool <- Filter(function(obs) {
+                    !identical(attr(obs, "kind"), "tool_buffer")
+                }, turn_session$on_tool %||% list())
+                obs <- tool_buffer_observer(fresh)
+                attr(obs, "kind") <- "tool_buffer"
+                add_observer(turn_session, obs)
                 pending_r_context <- character(0)
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             color$dim, fresh$sessionId, color$reset))
@@ -668,6 +688,61 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                                                       tools = turn_session$tools_filter,
                                                       dry_run = isTRUE(turn_session$config$dry_run))
                     ), "\n")
+                next
+            }
+            if (cmd == "/last") {
+                n <- if (length(parts) >= 2L) {
+                    suppressWarnings(as.integer(parts[2]))
+                } else {
+                    1L
+                }
+                if (is.na(n)) n <- 1L
+                outputs <- tool_buffer_list(disk_session$session)
+                if (length(outputs) == 0L) {
+                    cat(sprintf("%sNo tool outputs yet.%s\n",
+                                color$dim, color$reset))
+                    next
+                }
+                if (n < 1L || n > length(outputs)) {
+                    cat(sprintf("%sInvalid index. Have %d outputs.%s\n",
+                                color$yellow, length(outputs), color$reset))
+                    next
+                }
+                entry <- outputs[[n]]
+                cat(sprintf("\n%s%s%s @ %s\n",
+                            color$cyan, entry$name, color$reset,
+                            format(entry$time, "%H:%M:%S")))
+                if (length(entry$args) > 0L) {
+                    cat(sprintf("%sArgs: %s%s\n",
+                                color$dim,
+                                jsonlite::toJSON(entry$args, auto_unbox = TRUE),
+                                color$reset))
+                }
+                cat(sprintf("%s%s%s\n", color$dim,
+                            strrep("-", 40), color$reset))
+                cat(entry$result, "\n")
+                next
+            }
+            if (cmd == "/outputs") {
+                outputs <- tool_buffer_list(disk_session$session)
+                if (length(outputs) == 0L) {
+                    cat(sprintf("%sNo tool outputs yet.%s\n",
+                                color$dim, color$reset))
+                    next
+                }
+                cat(sprintf("\n%sRecent tool outputs:%s\n",
+                            color$bold, color$reset))
+                for (i in seq_along(outputs)) {
+                    entry <- outputs[[i]]
+                    lines <- length(strsplit(entry$result %||% "", "\n",
+                                             fixed = TRUE)[[1]])
+                    cat(sprintf("  %s[%d]%s %s%s%s (%d lines) @ %s\n",
+                                color$dim, i, color$reset,
+                                color$cyan, entry$name, color$reset,
+                                lines, format(entry$time, "%H:%M:%S")))
+                }
+                cat(sprintf("\n%sUse /last [N] to view output%s\n",
+                            color$dim, color$reset))
                 next
             }
             if (cmd == "/diff") {

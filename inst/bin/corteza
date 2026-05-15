@@ -353,35 +353,10 @@ print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, c
 # Tool output buffer (for /last command)
 # ============================================================================
 
-# Store last N tool outputs
-.tool_buffer <- new.env(parent = emptyenv())
-.tool_buffer$outputs <- list()
-.tool_buffer$max_size <- 20L
-
-tool_buffer_add <- function(name, args, result) {
-  entry <- list(
-    name = name,
-    args = args,
-    result = result,
-    time = Sys.time()
-  )
-  .tool_buffer$outputs <- c(list(entry), .tool_buffer$outputs)
-  # Trim to max size
-  if (length(.tool_buffer$outputs) > .tool_buffer$max_size) {
-    .tool_buffer$outputs <- .tool_buffer$outputs[1:.tool_buffer$max_size]
-  }
-}
-
-tool_buffer_get <- function(n = 1) {
-  if (n > length(.tool_buffer$outputs)) {
-    return(NULL)
-  }
-  .tool_buffer$outputs[[n]]
-}
-
-tool_buffer_list <- function() {
-  .tool_buffer$outputs
-}
+# Per-session tool output buffer moved to R/tool-buffer.R so the
+# package can key it by sessionId and the chat() surface gets the
+# same behavior. CLI call sites below pass `session` (the persistent
+# session list) instead of the old global-env handle.
 
 # ============================================================================
 # Tool approval system
@@ -742,7 +717,7 @@ run_agent <- function(opts) {
                     round(elapsed_ms)))
       }
       # Store in buffer for /last command
-      tool_buffer_add(name, args, text)
+      corteza:::tool_buffer_add(session, name, args, text)
     }
 
     # Record trace (CLI-side, in addition to MCP server side). The
@@ -928,7 +903,7 @@ run_agent <- function(opts) {
         if (!isTRUE(material$ok)) {
           cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
         } else {
-          tool_buffer_add("git_diff", list(ref = material$target), material$diff)
+          corteza:::tool_buffer_add(session, "git_diff", list(ref = material$target), material$diff)
           cat(sprintf("\n%sDiff against %s%s\n", color$cyan, material$target, color$reset))
           cat(corteza:::colorize_diff(material$diff), "\n")
         }
@@ -956,8 +931,9 @@ run_agent <- function(opts) {
                       color$bright_magenta, review_result$message,
                       color$reset))
         } else {
-          tool_buffer_add("review", list(ref = material$target),
-                          review_result$content)
+          corteza:::tool_buffer_add(session, "review",
+                                    list(ref = material$target),
+                                    review_result$content)
           print_response(review_result$content)
         }
         next
@@ -1110,7 +1086,7 @@ run_agent <- function(opts) {
       } else if (cmd == "/last") {
         # /last [N] - show tool output (default: most recent)
         n <- if (!is.null(cmd_arg)) as.integer(cmd_arg) else 1L
-        outputs <- tool_buffer_list()
+        outputs <- corteza:::tool_buffer_list(session)
 
         if (length(outputs) == 0) {
           cat(sprintf("%sNo tool outputs yet.%s\n", color$dim, color$reset))
@@ -1135,7 +1111,7 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/outputs") {
         # List recent tool outputs
-        outputs <- tool_buffer_list()
+        outputs <- corteza:::tool_buffer_list(session)
         if (length(outputs) == 0) {
           cat(sprintf("%sNo tool outputs yet.%s\n", color$dim, color$reset))
         } else {

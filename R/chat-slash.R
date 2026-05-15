@@ -64,6 +64,8 @@ chat_help_text <- function() {
           "  /config                       Active runtime configuration",
           "  /diff [ref]                   Colored git diff against HEAD or a ref",
           "  /review [ref]                 Review local changes with the current model",
+          "  /last [N]                     Show tool output (1=most recent)",
+          "  /outputs                      List recent tool outputs",
           "  /sessions                     List sessions for this directory",
           "  /trace [N]                    Show last N tool executions (default 20)",
           "  /permissions                  Show tool approval and sandbox settings",
