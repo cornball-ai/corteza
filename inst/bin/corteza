@@ -1126,6 +1126,19 @@ run_agent <- function(opts) {
     prompt <- trimws(prompt)
     if (nchar(prompt) == 0) next
 
+    # Trailing-backslash continuation. A non-slash line ending in an
+    # unescaped `\` drops into paste mode seeded with the line so far.
+    # `\\` at end = literal trailing backslash (no continuation). Slash
+    # commands are exempt — they own their own arg parsing.
+    if (!startsWith(prompt, "/")) {
+      cont_seed <- corteza:::backslash_continuation_seed(prompt)
+      if (!is.null(cont_seed)) {
+        joined <- corteza:::read_paste_block(seed = cont_seed)
+        if (is.null(joined)) next
+        prompt <- joined
+      }
+    }
+
     # Handle commands
     if (startsWith(prompt, "/")) {
       cmd_parts <- strsplit(prompt, "\\s+")[[1]]
@@ -1452,30 +1465,11 @@ run_agent <- function(opts) {
         }
         next
       } else if (cmd == "/paste") {
-        # Read a multi-line block until `/end` on its own line or EOF,
-        # then fall through to the normal turn() call. Multi-line via
-        # Ctrl+Enter / Alt+Enter is unreliable across terminals (most
-        # send the same byte for plain Enter), so /paste is the
-        # dependable path. Optional first text on the same line as
-        # /paste seeds the buffer.
-        rest <- trimws(cmd_rest)
-        buffer <- character()
-        if (nzchar(rest)) {
-          buffer <- c(buffer, rest)
-        }
-        cat(sprintf("%sPaste mode. End with `/end` on its own line (Ctrl+D works too).%s\n",
-                    color$dim, color$reset))
-        repeat {
-          ln <- cli_read_line(sprintf("%s... %s", color$dim, color$reset))
-          if (length(ln) == 0L) break
-          if (identical(trimws(ln), "/end")) break
-          buffer <- c(buffer, ln)
-        }
-        if (length(buffer) == 0L) {
-          cat(sprintf("%sEmpty paste, nothing sent.%s\n", color$dim, color$reset))
-          next
-        }
-        prompt <- paste(buffer, collapse = "\n")
+        # /paste [optional text]: read a multi-line block via the
+        # shared helper, then fall through to the normal turn() call.
+        joined <- corteza:::read_paste_block(seed = trimws(cmd_rest))
+        if (is.null(joined)) next
+        prompt <- joined
         # Fall through to regular prompt handling.
       } else if (cmd == "/plan") {
         # /plan with no args toggles plan mode. /plan <task> turns it

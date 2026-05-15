@@ -53,6 +53,63 @@
     gsub("(\033\\[[0-9;]*m)", "\001\\1\002", prompt_str, perl = TRUE)
 }
 
+# Read a `/paste`-style multi-line block: print a header, accept lines
+# at a continuation prompt, terminate on `/end` or EOF. Returns the
+# joined buffer (single character scalar) or NULL when the buffer ends
+# up empty. Used by both the explicit `/paste` slash command and the
+# implicit trailing-backslash continuation in the chat() and CLI REPL
+# loops, so the UX is identical regardless of how the user got here.
+#
+# `seed` seeds the buffer with the partial line the user already had
+# (the text after `/paste`, or the line-with-trailing-backslash
+# stripped). `continuation_prompt` lets surfaces colorize differently;
+# the rest of the messaging is uniform.
+read_paste_block <- function(seed = NULL,
+                             continuation_prompt = "... ",
+                             header = "Paste mode. End with `/end` on its own line (Ctrl+D works too).",
+                             empty_message = "Empty paste, nothing sent.") {
+    buffer <- character()
+    if (!is.null(seed) && nzchar(trimws(seed))) {
+        buffer <- c(buffer, seed)
+    }
+    cat(header, "\n", sep = "")
+    repeat {
+        ln <- read_prompt_input(continuation_prompt)
+        if (length(ln) == 0L) {
+            break
+        }
+        if (identical(trimws(ln), "/end")) {
+            break
+        }
+        buffer <- c(buffer, ln)
+    }
+    if (length(buffer) == 0L) {
+        cat(empty_message, "\n", sep = "")
+        return(NULL)
+    }
+    paste(buffer, collapse = "\n")
+}
+
+# Detect "trailing unescaped backslash" — odd number of trailing
+# backslashes means the last one is a continuation marker; even
+# means they're all paired escapes and stand for literal backslash
+# characters. Returns the trimmed line (with the trailing `\`
+# dropped) when continuation should fire, or NULL otherwise.
+backslash_continuation_seed <- function(line) {
+    if (!is.character(line) || length(line) != 1L) {
+        return(NULL)
+    }
+    m <- regexpr("\\\\+$", line, perl = TRUE)
+    if (m < 0L) {
+        return(NULL)
+    }
+    n <- attr(m, "match.length")
+    if (n %% 2L != 1L) {
+        return(NULL)
+    }
+    substr(line, 1L, nchar(line) - 1L)
+}
+
 read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
     if (.Platform$OS.type == "windows") {
         if (isTRUE(use_readline)) {

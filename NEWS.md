@@ -17,6 +17,11 @@
   `/end` on its own line (or Ctrl+D). Most terminals can't reliably
   distinguish Ctrl+Enter from plain Enter, so a slash-command sentinel
   is the right abstraction.
+* Trailing-backslash continuation as the mid-line escape hatch. A
+  non-slash line ending with an unescaped `\` drops the backslash and
+  enters paste mode seeded with the line so far. `\\` at end = literal
+  trailing backslash (no continuation). Slash commands keep their own
+  arg parsing.
 
 # corteza 0.6.6.3
 

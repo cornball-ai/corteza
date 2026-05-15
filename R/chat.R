@@ -261,6 +261,21 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             next
         }
         sp <- trimws(prompt)
+        # Trailing-backslash continuation: a non-slash line ending
+        # with an unescaped `\` drops into paste mode seeded with the
+        # line so far. Slash commands are exempt — they have their
+        # own arg parsing. `\\` at end = literal trailing backslash.
+        if (!startsWith(sp, "/")) {
+            cont_seed <- backslash_continuation_seed(prompt)
+            if (!is.null(cont_seed)) {
+                joined <- read_paste_block(seed = cont_seed)
+                if (is.null(joined)) {
+                    next
+                }
+                prompt <- joined
+                sp <- trimws(prompt)
+            }
+        }
         if (startsWith(sp, "/")) {
             parts <- strsplit(sp, "\\s+")[[1]]
             cmd <- tolower(parts[1])
@@ -486,33 +501,16 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/paste") {
-                # Read a multi-line block until `/end` on its own line
-                # or EOF, then fall through to the normal turn() call.
-                # Multi-line input via Ctrl+Enter / Alt+Enter is
-                # unreliable across terminals (most send the same byte
-                # for plain Enter), so /paste is the dependable path.
+                # /paste [optional text]: read a multi-line block via
+                # the shared helper, then fall through to turn().
                 rest <- if (length(parts) >= 2L) {
                     paste(parts[-1], collapse = " ")
                 } else ""
-                rest <- trimws(rest)
-                buffer <- character()
-                if (nzchar(rest)) {
-                    buffer <- c(buffer, rest)
-                }
-                cat(sprintf("%sPaste mode. End with `/end` on its own line (Ctrl+D works too).%s\n",
-                            color$dim, color$reset))
-                repeat {
-                    ln <- read_prompt_input("... ")
-                    if (length(ln) == 0L) break
-                    if (identical(trimws(ln), "/end")) break
-                    buffer <- c(buffer, ln)
-                }
-                if (length(buffer) == 0L) {
-                    cat(sprintf("%sEmpty paste, nothing sent.%s\n",
-                                color$dim, color$reset))
+                joined <- read_paste_block(seed = trimws(rest))
+                if (is.null(joined)) {
                     next
                 }
-                prompt <- paste(buffer, collapse = "\n")
+                prompt <- joined
                 # Fall through to normal prompt handling below.
             } else if (cmd == "/plan") {
                 rest <- if (length(parts) >= 2L) {
@@ -661,11 +659,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             # /r is handled separately below to keep its existing
-            # multi-line pending_r_context plumbing. /plan <text> falls
-            # through here too: the /plan branch above rewrote `prompt`
-            # to the args, so we want regular prompt handling, not an
-            # "Unknown command" complaint.
-            if (!startsWith(sp, "/r ") && cmd != "/plan") {
+            # multi-line pending_r_context plumbing. /plan <text> and
+            # /paste fall through here too: those branches above
+            # rewrote `prompt` to the buffer contents, so we want
+            # regular prompt handling instead of an "Unknown command"
+            # complaint that would discard the buffer.
+            if (!startsWith(sp, "/r ") && cmd != "/plan" && cmd != "/paste") {
                 cat(sprintf("%sUnknown command: %s. Type /help for the list.%s\n",
                             color$yellow, cmd, color$reset))
                 next

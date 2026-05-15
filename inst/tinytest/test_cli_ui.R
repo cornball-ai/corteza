@@ -148,3 +148,25 @@ pretty_result <- tryCatch(
                           error = function(e) e
 )
 expect_false(inherits(pretty_result, "error"))
+
+# Backslash continuation: odd trailing backslashes trigger; even
+# trailing don't. Helper returns the seed (line minus the last `\`)
+# or NULL.
+expect_identical(corteza:::backslash_continuation_seed("foo\\"), "foo")
+expect_null(corteza:::backslash_continuation_seed("foo\\\\"))
+expect_null(corteza:::backslash_continuation_seed("foo"))
+expect_null(corteza:::backslash_continuation_seed(""))
+# Three trailing backslashes is odd, counted as continuation. Seed
+# preserves the two leading backslashes.
+expect_identical(corteza:::backslash_continuation_seed("foo\\\\\\"), "foo\\\\")
+# Non-character / wrong-shape inputs return NULL defensively.
+expect_null(corteza:::backslash_continuation_seed(NULL))
+expect_null(corteza:::backslash_continuation_seed(c("a\\", "b\\")))
+expect_null(corteza:::backslash_continuation_seed(42L))
+
+# ANSI prompt markup wraps escape sequences so bash readline's column
+# math stays correct.
+expect_identical(corteza:::.markup_prompt_for_readline("> "), "> ")
+ansi_wrapped <- corteza:::.markup_prompt_for_readline("\033[32m> \033[0m")
+expect_true(grepl("\001\033\\[32m\002", ansi_wrapped))
+expect_true(grepl("\001\033\\[0m\002", ansi_wrapped))
