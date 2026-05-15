@@ -1137,7 +1137,8 @@ run_agent <- function(opts) {
     if (!startsWith(prompt, "/")) {
       cont_seed <- corteza:::backslash_continuation_seed(prompt)
       if (!is.null(cont_seed)) {
-        joined <- corteza:::read_paste_block(seed = cont_seed)
+        joined <- corteza:::read_paste_block(seed = cont_seed,
+                                             heredoc = TRUE)
         if (is.null(joined)) next
         prompt <- joined
         from_paste <- TRUE

@@ -11,17 +11,20 @@
 * The approval prompt's `Choice [1]: ` dropped the `[1]` shell
   convention; the `(Enter)` hint already lives on choice 1 itself,
   so the bracket was redundant.
-* Multi-line input borrows bash's heredoc-with-continuation idiom in
-  both `corteza::chat()` and the CLI. Two ways to start:
-  - `/paste [optional text]` — explicit entry.
-  - Any non-slash line ending with an unescaped `\` — drops you into
-    paste mode mid-line, seeded with what you already typed.
-  Once in, keep ending lines with `\` to continue; the first line that
-  doesn't end with `\` is the final line and submits. Explicit `/end`
-  on its own line and Ctrl+D (EOF) also terminate. `\\` at end of a
-  line means a literal trailing backslash (no continuation). Paste
-  content that happens to start with `/` is not reinterpreted as a
-  corteza command.
+* Multi-line input in both `corteza::chat()` and the CLI. Two
+  entries with two contracts:
+  - `/paste [optional text]` — explicit "paste anything" mode.
+    Collects every line verbatim (logs, code, paths with literal
+    trailing `\`, etc.) until `/end` on its own line or Ctrl+D.
+  - Any non-slash line ending with an unescaped `\` — drops into
+    bash-heredoc-with-continuation mode mid-line, seeded with what
+    you already typed. Keep ending lines with `\` to continue;
+    the first line without a trailing `\` is final and gets
+    included. `\\` at end of a line stays literal. `/end` and EOF
+    also terminate.
+
+  Paste content that happens to start with `/` is not reinterpreted
+  as a corteza command. No "Paste mode..." banner — IYKYK.
 
 # corteza 0.6.6.3
 

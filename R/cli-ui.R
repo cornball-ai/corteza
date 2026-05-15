@@ -66,19 +66,35 @@
 # the rest of the messaging is uniform.
 read_paste_block <- function(seed = NULL,
                              continuation_prompt = "... ",
-                             header = "Paste mode. Bash heredoc style: end a line with `\\` to continue; the first line without a trailing `\\` submits (or `/end`, Ctrl+D).",
-                             empty_message = "Empty paste, nothing sent.") {
+                             header = "",
+                             empty_message = "Empty paste, nothing sent.",
+                             heredoc = FALSE) {
     buffer <- character()
     if (!is.null(seed) && nzchar(trimws(seed))) {
         buffer <- c(buffer, seed)
     }
-    cat(header, "\n", sep = "")
+    if (nzchar(header)) {
+        cat(header, "\n", sep = "")
+    }
     # State machine over sub-lines: bash's `.read_prompt_via_bash`
     # returns a single string containing pasted multi-line content
     # joined with `\n`. Splitting per call lets us see each pasted
-    # line individually so a `/end` sentinel buried in the paste fires
-    # immediately, and so a line-by-line backslash check still works
-    # when the user pastes a heredoc-style block.
+    # line individually so a `/end` sentinel buried in a paste fires
+    # immediately.
+    #
+    # Two modes diverge only on what counts as "the last line":
+    #
+    #   heredoc = FALSE (the /paste contract): collect every sub-line
+    #     verbatim. Only `/end` or EOF terminates. Backslashes are
+    #     literal. Use this when the user wants to paste arbitrary
+    #     text (logs, code, etc.) and shouldn't have to escape `\` at
+    #     end of line.
+    #
+    #   heredoc = TRUE (trailing-backslash continuation entry):
+    #     bash-heredoc-with-continuation semantics. A sub-line ending
+    #     in an unescaped `\` continues (with the `\` stripped). The
+    #     first sub-line without trailing `\` is the final line and
+    #     gets included. `/end` and EOF still terminate explicitly.
     done <- FALSE
     repeat {
         if (done) break
@@ -98,16 +114,19 @@ read_paste_block <- function(seed = NULL,
                 done <- TRUE
                 break
             }
-            cont_seed <- backslash_continuation_seed(chunk)
-            if (is.null(cont_seed)) {
-                # No trailing unescaped `\` — final sub-line. Include
-                # it, then terminate. Mirrors bash heredoc-with-
-                # continuation.
+            if (isTRUE(heredoc)) {
+                cont_seed <- backslash_continuation_seed(chunk)
+                if (is.null(cont_seed)) {
+                    # No trailing unescaped `\` — final sub-line.
+                    buffer <- c(buffer, chunk)
+                    done <- TRUE
+                    break
+                }
+                buffer <- c(buffer, cont_seed)
+            } else {
+                # /paste mode: keep every line verbatim.
                 buffer <- c(buffer, chunk)
-                done <- TRUE
-                break
             }
-            buffer <- c(buffer, cont_seed)
         }
     }
     if (length(buffer) == 0L) {

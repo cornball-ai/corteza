@@ -272,7 +272,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         if (!startsWith(sp, "/")) {
             cont_seed <- backslash_continuation_seed(prompt)
             if (!is.null(cont_seed)) {
-                joined <- read_paste_block(seed = cont_seed)
+                joined <- read_paste_block(seed = cont_seed,
+                                           heredoc = TRUE)
                 if (is.null(joined)) {
                     next
                 }

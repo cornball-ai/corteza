@@ -178,6 +178,10 @@ expect_true(grepl("\001\033\\[0m\002", ansi_wrapped))
 #      immediately, not consume another input.
 #   2. A line ending with no trailing `\` terminates with the line
 #      included.
+# Heredoc mode: trailing-backslash continuation entry. First sub-line
+# without trailing `\` is final. Embedded `/end` in a pasted block
+# fires immediately (bash drains pasted lines into a single joined
+# string).
 local({
     inputs <- c("line one \\", "line two\n/end\nshould not appear")
     i <- 0L
@@ -186,8 +190,6 @@ local({
         if (i > length(inputs)) return(character())
         inputs[i]
     }
-    # Temporarily shadow read_prompt_input in the corteza namespace
-    # via a stub that closes over our queue. We restore on exit.
     ns <- asNamespace("corteza")
     orig <- ns$read_prompt_input
     on.exit({
@@ -199,17 +201,18 @@ local({
     assign("read_prompt_input", fake_read, envir = ns)
 
     out <- corteza:::read_paste_block(seed = NULL,
-                                      header = "",
-                                      empty_message = "")
+                                      empty_message = "",
+                                      heredoc = TRUE)
     # "line one \" strips to "line one " (trailing space preserved,
-    # matching bash's behavior of leaving whitespace before the
-    # continuation marker untouched). "/end" sub-line terminates.
+    # matching bash's behavior). "line two" has no `\` and is the
+    # final line, included in the buffer. "/end" never reached because
+    # heredoc already terminated.
     expect_identical(out, "line one \nline two")
     expect_equal(i, 2L)
 })
 
-# No trailing backslash on the seeded line still terminates with that
-# line included.
+# Heredoc mode: a single non-backslash line terminates with that line
+# included.
 local({
     inputs <- c("just one line")
     i <- 0L
@@ -229,7 +232,60 @@ local({
     assign("read_prompt_input", fake_read, envir = ns)
 
     out <- corteza:::read_paste_block(seed = "first",
-                                      header = "",
-                                      empty_message = "")
+                                      empty_message = "",
+                                      heredoc = TRUE)
     expect_identical(out, "first\njust one line")
+})
+
+# /paste mode (heredoc = FALSE, the default): collect every sub-line
+# verbatim until /end or EOF. Codex caught the bug where this used to
+# terminate on the first non-backslash line, dropping the rest of a
+# pasted log/code block.
+local({
+    inputs <- c("line one\nline two\nline three\n/end\ndropped")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = NULL,
+                                      empty_message = "")
+    expect_identical(out, "line one\nline two\nline three")
+})
+
+# /paste mode preserves literal trailing backslashes — code or paths
+# with `\` at end of line shouldn't be interpreted as continuation
+# markers in the explicit /paste contract.
+local({
+    inputs <- c("export PATH=foo\\", "/end")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = NULL, empty_message = "")
+    # The `\` survives because /paste mode doesn't strip continuation.
+    expect_identical(out, "export PATH=foo\\")
 })
