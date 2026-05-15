@@ -320,6 +320,73 @@ local({
     expect_true(grepl("ran", out))
 })
 
+# Default executor (no tool_executor passed) must honor session
+# dry_run too — otherwise the short-circuit silently lets the tool
+# run for real. Codex reproduced this: session$dry_run = TRUE with
+# the default handler, then write_file created the file with no
+# prompt. Regression coverage uses a tempfile to verify the file is
+# NOT created when dry_run is on, AND is created when dry_run is off.
+local({
+    op <- options(
+        corteza.code_paths = character(),
+        corteza.personal_paths = character(),
+        corteza.policy = NULL
+    )
+    on.exit(options(op), add = TRUE)
+
+    target <- tempfile("corteza-dryrun-default-")
+    on.exit(unlink(target, force = TRUE), add = TRUE)
+
+    cb_called <- FALSE
+    s <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            cb_called <<- TRUE
+            FALSE
+        }
+    )
+    s$dry_run <- TRUE
+    h <- corteza:::.make_tool_handler(s) # default executor
+    out <- h("write_file", list(path = target, content = "x"))
+    expect_false(cb_called)
+    expect_false(file.exists(target))
+    expect_true(grepl("DRY RUN|dry.run|preview", out, ignore.case = TRUE))
+
+    # chat()'s /dryrun toggles config$dry_run, not session$dry_run.
+    # The handler reads both, so this path must also short-circuit.
+    s2 <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) {
+            cb_called <<- TRUE
+            FALSE
+        }
+    )
+    s2$config <- list(dry_run = TRUE)
+    cb_called <- FALSE
+    h2 <- corteza:::.make_tool_handler(s2)
+    target2 <- tempfile("corteza-dryrun-config-")
+    on.exit(unlink(target2, force = TRUE), add = TRUE)
+    out2 <- h2("write_file", list(path = target2, content = "x"))
+    expect_false(cb_called)
+    expect_false(file.exists(target2))
+
+    # Sanity: turning dry_run off makes the same call execute (and
+    # since approval_cb declines, the tool DOESN'T run for a
+    # different reason: declined, not previewed). Either way the
+    # file must not exist.
+    target3 <- tempfile("corteza-dryrun-off-")
+    on.exit(unlink(target3, force = TRUE), add = TRUE)
+    s3 <- corteza::new_session(
+        "console",
+        approval_cb = function(call, decision) FALSE
+    )
+    s3$config <- list(approval_mode = "ask",
+                     dangerous_tools = corteza:::default_dangerous_tools())
+    h3 <- corteza:::.make_tool_handler(s3)
+    h3("write_file", list(path = target3, content = "x"))
+    expect_false(file.exists(target3))
+})
+
 # Dry-run mode short-circuits before policy/approval so a preview
 # doesn't prompt or get blocked by a config "deny". Codex caught the
 # regression where the unified approval path turned dry-run into a
