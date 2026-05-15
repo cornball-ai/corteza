@@ -48,30 +48,43 @@ expect_true(grepl("Context files (2)", block_files, fixed = TRUE))
 expect_true(grepl("  a.md", block_files, fixed = TRUE))
 expect_true(grepl("  b.md", block_files, fixed = TRUE))
 
-# Filled-cell counts: at 0% none; at 50% half; at 100%+ all.
-empty_bar <- corteza:::.context_meter_bar(0, palette = no_color,
-                                          width = 20L)
+# Filled-cell counts: at 0% none; at 50% half; at 100% all. Bar now
+# takes breakdown + limit and segments cells per component.
+empty_bar <- corteza:::.context_meter_bar(c(system = 0L), limit = 100L,
+                                          palette = no_color, width = 20L)
 expect_equal(sum(strsplit(empty_bar, "")[[1]] == "█"), 0L)
-half_bar <- corteza:::.context_meter_bar(50, palette = no_color,
-                                         width = 20L)
+
+half_bar <- corteza:::.context_meter_bar(c(system = 50L), limit = 100L,
+                                         palette = no_color, width = 20L)
 expect_equal(sum(strsplit(half_bar, "")[[1]] == "█"), 10L)
-full_bar <- corteza:::.context_meter_bar(100, palette = no_color,
-                                         width = 20L)
+
+full_bar <- corteza:::.context_meter_bar(c(system = 100L), limit = 100L,
+                                         palette = no_color, width = 20L)
 expect_equal(sum(strsplit(full_bar, "")[[1]] == "█"), 20L)
-over_bar <- corteza:::.context_meter_bar(150, palette = no_color,
-                                         width = 20L)
+
+over_bar <- corteza:::.context_meter_bar(c(system = 150L), limit = 100L,
+                                         palette = no_color, width = 20L)
 expect_equal(sum(strsplit(over_bar, "")[[1]] == "█"), 20L)
+
+# Segmentation: two components claim proportional runs.
+seg_bar <- corteza:::.context_meter_bar(c(system = 60L, tools = 20L),
+                                        limit = 100L,
+                                        palette = no_color, width = 10L)
+chars <- strsplit(seg_bar, "")[[1]]
+brackets <- which(chars %in% c("[", "]"))
+inner <- chars[(brackets[1] + 1):(brackets[2] - 1)]
+# 60% of 10 = 6 cells for system; 20% of 10 = 2 cells for tools; 2 cells empty.
+expect_equal(sum(inner == "█"), 8L)
 
 # Compact tick appears at the right cell when the bar isn't full
 # past it.
-tick_bar <- corteza:::.context_meter_bar(50, compact_pct = 80,
-                                         palette = no_color,
-                                         width = 10L)
-# 10 cells, compact at 80% = cell 8. Used at 50% = 5 cells. Cells
-# 6/7/9/10 should be ".", cell 8 should be "│".
+tick_bar <- corteza:::.context_meter_bar(c(system = 50L), limit = 100L,
+                                         compact_pct = 80,
+                                         palette = no_color, width = 10L)
+# 10 cells, compact at 80% = cell 8. Used at 50% = 5 cells. Cell 8
+# should be "│".
 chars <- strsplit(tick_bar, "")[[1]]
 brackets <- which(chars %in% c("[", "]"))
-# Strip the brackets to get the inner cells.
 inner <- chars[(brackets[1] + 1):(brackets[2] - 1)]
 expect_equal(sum(inner == "│"), 1L)
 expect_equal(inner[8], "│")
