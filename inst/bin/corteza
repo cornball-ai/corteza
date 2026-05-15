@@ -1737,12 +1737,11 @@ Tool output:
       }
     }
 
-    # Build a per-turn corteza session so policy gating + observers layer
-    # on top of the existing CLI handler. The CLI still runs its own
-    # approval UX inside tool_handler, so we pass an always-approve
-    # approval_cb — policy "deny" verdicts still short-circuit (e.g.
-    # for ~/.ssh), but "ask" verdicts fall through to the CLI's own
-    # ask_approval flow.
+    # Build a per-turn corteza session. Approval is unified through
+    # policy(call, config = ...) + cli_approval_cb(cwd): policy "ask"
+    # verdicts fire the cb (which prompts and persists via
+    # save_approval), "deny" verdicts short-circuit before the tool
+    # runs, "allow" verdicts pass straight through.
     turn_session <- corteza::new_session(
       channel = "cli",
       provider = provider,
