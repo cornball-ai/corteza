@@ -425,6 +425,10 @@ is_approved <- function(cwd, tool_name) {
       tools = tools
     )
     list(content = r$reply, history = flush_session$history)
+  }, corteza_user_deny = function(c) {
+    cat(sprintf("%sMemory flush denied -- skipping.%s\n",
+                color$yellow, color$reset))
+    NULL
   }, error = function(e) {
     cat(sprintf("%sFlush failed: %s%s\n",
                 color$bright_magenta, e$message, color$reset))
