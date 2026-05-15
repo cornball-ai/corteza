@@ -879,6 +879,22 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         turn_start <- Sys.time()
         result <- tryCatch(
                            turn(prompt, turn_session),
+                           corteza_user_deny = function(c) {
+            # User picked "3. Deny" at the approval prompt. Abort the
+            # whole turn (not just this tool call) and seed the next
+            # turn's history with a marker that names the denied tool
+            # so the LLM stops and asks the user what to do instead.
+            cat(sprintf("\n%sDenied -- aborting turn.%s\n",
+                        color$yellow, color$reset))
+            marker <- user_deny_marker(c$tool %||% "?")
+            turn_session$history <- c(
+                                      turn_session$history %||% list(),
+                                      list(list(role = "user", content = prompt),
+                                           list(role = "assistant", content = marker))
+            )
+            transcript_append(disk_session$session, "assistant", marker)
+            NULL
+        },
                            interrupt = function(c) {
             cat(sprintf("\n%sInterrupted.%s\n", color$yellow, color$reset))
             # turn() didn't return, so its history update never landed.
@@ -975,6 +991,9 @@ chat_approval_cb <- function(cwd = getwd()) {
                     color$cyan, color$reset,
                     color$dim, summary, color$reset))
 
+        if (ans == "3") {
+            stop(user_deny_condition(call$tool %||% ""))
+        }
         ans %in% c("1", "2")
     }
 }
