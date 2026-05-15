@@ -252,33 +252,46 @@ cli_call_access_lines <- function(call, cwd = NULL) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
 
-    op <- classify_op(call$tool %||% "")
-    lines <- switch(
-                    op,
-                    read = "Read access to files or external content",
-                    write = "Write access to local files",
-                    exec = if ((call$tool %||% "") %in% c("run_r", "run_r_script")) {
-            "Executes local R code"
+    tool <- call$tool %||% ""
+    op <- classify_op(tool)
+    paths <- unique(call$paths %||% character())
+    urls <- unique(call$urls %||% character())
+    path_str <- if (length(paths) > 0L) paths[[1L]] else ""
+    url_str <- if (length(urls) > 0L) urls[[1L]] else ""
+
+    line <- if (tool %in% c("run_r", "run_r_script")) {
+        "Run R code"
+    } else if (tool %in% c("bash", "cmd")) {
+        if (nzchar(cwd)) {
+            sprintf("Run command in %s", cwd)
         } else {
-            "Executes local shell commands"
-        },
-                    "Tool access"
-    )
+            "Run command"
+        }
+    } else if (nzchar(url_str)) {
+        sprintf("%s %s",
+                switch(op, read = "Fetch", write = "Send to", "Access"),
+                url_str)
+    } else if (nzchar(path_str)) {
+        verb <- switch(op,
+                       read = "Read from",
+                       write = "Write to",
+                       sprintf("%s on", tools::toTitleCase(op)))
+        sprintf("%s %s", verb, path_str)
+    } else {
+        # Fallback when neither a path nor a URL resolved. Better than
+        # showing nothing at all but indicates the tool is non-standard.
+        sprintf("Tool: %s", tool)
+    }
 
-    if ((call$tool %||% "") %in% c("bash", "cmd") &&
-        !is.null(cwd) && nzchar(cwd)) {
-        lines <- c(lines, sprintf("Working directory: %s", cwd))
-    }
-    if (length(call$paths) > 0L) {
-        lines <- c(lines, sprintf("Path: %s", unique(call$paths)))
-    }
-    if (length(call$urls) > 0L) {
-        lines <- c(lines, sprintf("URL: %s", unique(call$urls)))
-    }
-
-    lines
+    line
 }
 
+#' Approval-prompt warnings, both the boilerplate and the noteworthy
+#' kinds. Tests still call this directly; the user-facing approval
+#' prompt now filters via \code{cli_call_noteworthy_warnings()} so the
+#' usual "bash can invoke scripts" reminders no longer clutter every
+#' single prompt.
+#' @noRd
 cli_call_warning_lines <- function(call, cwd = NULL, decision = NULL) {
     call$paths <- call$paths %||% resolve_paths(call)
     warnings <- character()
@@ -313,6 +326,22 @@ cli_call_warning_lines <- function(call, cwd = NULL, decision = NULL) {
     warnings
 }
 
+#' Noteworthy warnings only — the ones a user genuinely needs to see
+#' on each approval prompt. The generic "bash can invoke scripts" /
+#' "R code runs locally" reminders are skipped: they're true for every
+#' bash and run_r call respectively, so they add noise rather than
+#' signal. Credential-touching calls, outside-project paths, and other
+#' policy-flagged conditions stay.
+#' @noRd
+cli_call_noteworthy_warnings <- function(call, cwd = NULL, decision = NULL) {
+    all <- cli_call_warning_lines(call, cwd = cwd, decision = decision)
+    boilerplate <- c(
+                     "Shell commands can invoke scripts, hooks, and other executables from the working directory.",
+                     "R code runs locally with access to your current session, packages, and project files."
+    )
+    all[!all %in% boilerplate]
+}
+
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
                                cwd = NULL, persistent_label = "Allow always",
                                width = 88L) {
@@ -323,17 +352,24 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
     details <- cli_tool_detail_lines(call$tool %||% "", call$args %||% list(),
                                      cwd = cwd, width = width - 6L)
     access <- cli_call_access_lines(call, cwd = cwd)
-    reasons <- character()
-    warnings <- cli_call_warning_lines(call, cwd = cwd, decision = decision)
+    warnings <- cli_call_noteworthy_warnings(call, cwd = cwd,
+                                             decision = decision)
 
-    if (!is.null(gate_reason) && nzchar(gate_reason)) {
-        reasons <- c(reasons, gate_reason)
-    }
-    if (!is.null(decision$reason) && nzchar(decision$reason)) {
-        reasons <- c(reasons, sprintf("Policy: %s", decision$reason))
-    }
-    if (!is.null(decision$model) && nzchar(decision$model)) {
-        reasons <- c(reasons, sprintf("Model route: %s", decision$model))
+    # The Access line already names the path/URL. Skip detail lines
+    # that duplicate that name so we don't show the path three times
+    # (title preview, detail, Access).
+    if (length(details) > 0L) {
+        path_in_access <- regmatches(
+                                     access,
+                                     regexpr("(?:Read from|Write to|Fetch|Send to|.* on)\\s+(.+)$",
+                                             access, perl = TRUE)
+        )
+        if (length(path_in_access) > 0L) {
+            access_path <- sub("^[A-Za-z ]+\\s+", "", path_in_access)
+            details <- details[!grepl(sprintf("^Path:\\s*%s$",
+                                              regex_escape(access_path)),
+                                      details)]
+        }
     }
 
     lines <- c("", strrep("-", width), sprintf(" %s", title), "")
@@ -344,10 +380,6 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
 
     lines <- c(lines, " Access", paste0("   ", access), "")
 
-    if (length(reasons) > 0L) {
-        lines <- c(lines, " Reason", paste0("   ", reasons), "")
-    }
-
     if (length(warnings) > 0L) {
         lines <- c(lines, " Warning", paste0("   ", warnings), "")
     }
@@ -355,10 +387,93 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
     c(
         lines,
         " Do you want to proceed?",
-        "   1. Allow once",
+        "   1. Allow once (Enter)",
         sprintf("   2. %s", persistent_label),
         "   3. Deny"
     )
+}
+
+# Tiny helper: escape regex special chars in a literal string so we can
+# embed it in a pattern. Used to test whether a detail line repeats the
+# path name already shown on the Access line.
+# @noRd
+regex_escape <- function(x) {
+    gsub("([\\^\\$\\.\\|\\?\\*\\+\\(\\)\\[\\]\\{\\}\\\\])", "\\\\\\1", x,
+         perl = TRUE)
+}
+
+#' Build the action phrase shown in the `User replied:` summary after
+#' an approval prompt resolves. Used by both the CLI and chat()
+#' surfaces so the wording is consistent.
+#'
+#' Examples:
+#' \itemize{
+#'   \item replace_in_file CLAUDE.md, choice 1 → "Allow writing to CLAUDE.md once"
+#'   \item bash `git status`, choice 2 → "Always allow running `git status` for this project"
+#'   \item run_r, choice 3 → "Deny running R code"
+#' }
+#'
+#' @param call The call list (tool + args + resolved paths/urls).
+#' @param choice "1", "2", or "3".
+#' @param persistent_label The "always allow" label text (varies by
+#'   surface: "Allow always for this project" vs ".. for this session").
+#' @param cwd Working directory; passed through for command-style
+#'   paraphrases.
+#' @return Character scalar.
+#' @noRd
+cli_user_replied_line <- function(call, choice,
+                                  persistent_label = "Allow always for this project",
+                                  cwd = NULL) {
+    call$paths <- call$paths %||% resolve_paths(call)
+    call$urls <- call$urls %||% resolve_urls(call)
+    tool <- call$tool %||% ""
+    op <- classify_op(tool)
+    paths <- unique(call$paths %||% character())
+    urls <- unique(call$urls %||% character())
+
+    target <- if (tool %in% c("bash", "cmd")) {
+        cmd <- call$args$command %||% ""
+        if (nchar(cmd) > 40L) cmd <- paste0(substr(cmd, 1, 37), "...")
+        if (nzchar(cmd)) sprintf("`%s`", cmd) else "shell command"
+    } else if (tool %in% c("run_r", "run_r_script")) {
+        "R code"
+    } else if (length(paths) > 0L) {
+        paths[[1L]]
+    } else if (length(urls) > 0L) {
+        urls[[1L]]
+    } else {
+        tool
+    }
+
+    verb <- if (tool %in% c("run_r", "run_r_script")) {
+        "running"
+    } else if (tool %in% c("bash", "cmd")) {
+        "running"
+    } else {
+        switch(op,
+               read = "reading",
+               write = "writing to",
+               exec = "running",
+               sprintf("using %s on", tool))
+    }
+
+    action <- sprintf("%s %s", verb, target)
+
+    # Translate the persistent label down to the short "for this
+    # <scope>" phrasing used in the summary. Catches both the CLI's
+    # "Allow always for this project" and chat()'s "... for this
+    # session".
+    scope <- sub("^Allow always(\\s+for\\s+)", "\\1",
+                 persistent_label, perl = TRUE)
+    if (identical(scope, persistent_label)) {
+        scope <- "for this project"
+    }
+
+    switch(choice,
+           "1" = sprintf("Allow %s once", action),
+           "2" = sprintf("Always allow %s %s", action, scope),
+           "3" = sprintf("Deny %s", action),
+           sprintf("Choice %s on %s", choice, tool))
 }
 
 cli_event_summary <- function(event, width = 88L) {

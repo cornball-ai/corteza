@@ -751,6 +751,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 # "allow always" support.
 chat_approval_cb <- function(cwd = getwd()) {
     approved <- new.env(parent = emptyenv())
+    color <- ansi_colors()
 
     function(call, decision) {
         key <- call$tool %||% ""
@@ -758,12 +759,12 @@ chat_approval_cb <- function(cwd = getwd()) {
             return(TRUE)
         }
 
+        persistent_label <- "Allow always for this session"
         lines <- cli_approval_lines(
                                     call,
                                     decision,
-                                    gate_reason = "Console session approval required.",
                                     cwd = cwd,
-                                    persistent_label = "Allow always for this session"
+                                    persistent_label = persistent_label
         )
         cat(paste(lines, collapse = "\n"), "\n")
 
@@ -778,6 +779,16 @@ chat_approval_cb <- function(cwd = getwd()) {
         if (ans == "2") {
             approved[[key]] <- TRUE
         }
+        # RStudio's R console doesn't honor cursor-position escapes, so
+        # we leave the approval block in scrollback and just append the
+        # one-line summary below it.
+        summary <- cli_user_replied_line(call, ans,
+                                         persistent_label = persistent_label,
+                                         cwd = cwd)
+        cat(sprintf("%s●%s User replied:\n  %s⎿  %s%s\n\n",
+                    color$cyan, color$reset,
+                    color$dim, summary, color$reset))
+
         ans %in% c("1", "2")
     }
 }

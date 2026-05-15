@@ -169,9 +169,24 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 .make_tool_handler <- function(session, tool_executor = NULL) {
+    # Either session$dry_run (set by inst/bin/corteza per REPL
+    # iteration) or session$config$dry_run (chat()'s /dryrun toggle)
+    # counts. We read at call time so toggles between turns take
+    # effect immediately.
+    session_dry_run <- function() {
+        isTRUE(session$dry_run) || isTRUE(session$config$dry_run)
+    }
     if (is.null(tool_executor)) {
         ensure_skills()
-        tool_executor <- function(name, args) call_skill(name, as.list(args))
+        # Default in-process executor: thread dry_run through to
+        # call_skill / skill_run so the short-circuit below is safe
+        # for chat() and embedded sessions that don't supply a
+        # custom executor. Without this, the CLI's custom executor
+        # honored dry-run via opts$dry_run but every other surface
+        # would silently execute the tool during a "preview".
+        tool_executor <- function(name, args) {
+            call_skill(name, as.list(args), dry_run = session_dry_run())
+        }
     }
     function(name, args) {
         internal_name <- unsanitize_tool_name(name)
@@ -182,11 +197,35 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      context = list(recent_classes = session$recent_classes,
                                     plan_mode = isTRUE(session$plan_mode))
         )
+
+        # Dry-run mode: short-circuit before policy/approval. A dry
+        # run is a "show me what would happen" preview; prompting the
+        # user to approve a *preview* would be incoherent, and a
+        # config-driven "deny" on the tool would silently swallow the
+        # preview the user is trying to see. The tool_executor must
+        # already be dry-run-safe (either the CLI's custom executor
+        # that checks opts$dry_run, or the default executor above
+        # which passes dry_run = TRUE down to skill_run).
+        if (session_dry_run()) {
+            raw <- tryCatch(
+                            tool_executor(internal_name, as.list(args)),
+                            error = function(e) err(paste("Tool error:",
+                                                          conditionMessage(e)))
+            )
+            return(.flatten_mcp_result(raw))
+        }
+
         # Resolve once up front so policy() and the sticky classifier
         # below see the same paths/urls.
         call$paths <- resolve_paths(call)
         call$urls <- resolve_urls(call)
-        decision <- policy(call)
+        # Pass session$config so the /permissions contract (configured
+        # approval_mode + dangerous_tools + per-tool permissions) is
+        # enforced regardless of how the data class falls out. Without
+        # this, a CLAUDE.md edit could classify as `random` and skip
+        # the prompt in chat() even though `replace_in_file` is in the
+        # default dangerous_tools list.
+        decision <- policy(call, config = session$config)
 
         # Sticky: record the class regardless of the decision outcome.
         # Even a denied tool call means the LLM is trying to touch that

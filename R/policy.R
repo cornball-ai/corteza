@@ -186,7 +186,7 @@ check_safety <- function(call) {
     ),
                         code = list(
                                     read = list(cli = "allow", console = "allow", matrix = "allow"),
-                                    write = list(cli = "ask", console = "allow", matrix = "ask"),
+                                    write = list(cli = "ask", console = "ask", matrix = "ask"),
                                     exec = list(cli = "ask", console = "allow", matrix = "ask")
     ),
                         random = list(
@@ -232,13 +232,28 @@ default_policy <- function(call) {
 #' \code{"cloud"} or \code{"local"}; \code{approval} is \code{"allow"},
 #' \code{"ask"}, or \code{"deny"}.
 #'
+#' When \code{config} is supplied, the project's
+#' \code{approval_mode} / \code{dangerous_tools} / per-tool
+#' \code{permissions} are overlaid on top of the default tensor: a
+#' tool the user has configured as \code{"ask"} or \code{"deny"} will
+#' have its decision promoted accordingly. Safety verdicts (credential
+#' paths, plan mode) still win because those represent invariants the
+#' user can't waive from config.
+#'
+#' Both \code{corteza::chat()} and the CLI tool dispatch loop pass
+#' their session's config through here so the \code{/permissions}
+#' contract advertised by both surfaces is enforced consistently.
+#'
 #' @param call A list describing the tool call. See the file header in
 #'   \code{R/policy.R} for the expected fields.
+#' @param config Optional config list from \code{load_config()}. When
+#'   \code{NULL} (default), only the built-in tensor and user policy
+#'   apply; this matches the historical \code{policy(call)} contract.
 #'
 #' @return A decision list with fields \code{model}, \code{approval},
 #'   \code{reason}.
 #' @export
-policy <- function(call) {
+policy <- function(call, config = NULL) {
     if (is.null(call$paths)) {
         call$paths <- resolve_paths(call)
     }
@@ -263,10 +278,79 @@ policy <- function(call) {
             if (is.null(user$reason)) {
                 user$reason <- "user policy"
             }
+            # User policy is final. Project config does NOT overlay
+            # here — a process-level user policy is explicitly the
+            # "I know better than the project config" hook, so we
+            # respect that precedence in both directions: config can't
+            # tighten and can't relax it.
             return(user)
         }
     }
 
-    default_policy(call)
+    .apply_config_overlay(default_policy(call), call, config)
+}
+
+#' Overlay the configured tool permissions on top of a base policy
+#' decision. Honors approval_mode + dangerous_tools + per-tool
+#' permissions so the /permissions contract is actually enforced in
+#' both chat() and CLI.
+#'
+#' Resolution rules (in order):
+#'
+#' \itemize{
+#'   \item Safety verdicts (credential paths, etc.) have already
+#'     short-circuited by the time we get here, so a base \code{"deny"}
+#'     can only come from the data tensor or a user fn. We never
+#'     downgrade that.
+#'   \item Config \code{"deny"} wins over base \code{"allow"} or
+#'     \code{"ask"} — config can always tighten.
+#'   \item Config \code{"ask"} promotes base \code{"allow"} to
+#'     \code{"ask"}. (It doesn't downgrade base \code{"deny"}.)
+#'   \item Config \code{"allow"} downgrades base \code{"ask"} to
+#'     \code{"allow"}. This mirrors the CLI's
+#'     \code{requires_approval(name, dangerous_tools)} semantics: a
+#'     tool the user has explicitly marked allow skips approval
+#'     regardless of data class. It does **not** override a base
+#'     \code{"deny"} — config can tighten or relax \code{"ask"},
+#'     never widen a \code{"deny"}.
+#' }
+#' @noRd
+.apply_config_overlay <- function(base, call, config) {
+    if (is.null(config)) {
+        return(base)
+    }
+    tool <- call$tool %||% ""
+    if (!nzchar(tool)) {
+        return(base)
+    }
+    perm <- tryCatch(get_tool_permission(tool, config),
+                     error = function(e) NULL)
+    if (is.null(perm)) {
+        return(base)
+    }
+
+    if (identical(perm, "deny")) {
+        return(list(model = base$model %||% "cloud",
+                    approval = "deny",
+                    reason = sprintf("config: %s denied", tool)))
+    }
+    if (identical(perm, "ask")) {
+        if (identical(base$approval, "allow")) {
+            return(list(model = base$model %||% "cloud",
+                        approval = "ask",
+                        reason = sprintf("config: %s requires approval",
+                                         tool)))
+        }
+        return(base)
+    }
+    if (identical(perm, "allow")) {
+        if (identical(base$approval, "ask")) {
+            return(list(model = base$model %||% "cloud",
+                        approval = "allow",
+                        reason = sprintf("config: %s allowed", tool)))
+        }
+        return(base)
+    }
+    base
 }
 
