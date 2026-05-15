@@ -2,10 +2,18 @@
 .prompt_input_state$stdin_con <- NULL
 
 .read_prompt_via_bash <- function(prompt_str = "> ") {
-    cat(prompt_str)
+    # Hand the prompt to bash's `read -e -p` instead of cat()ing it
+    # ourselves. Readline now owns the cursor position, so a Backspace
+    # past the start of the user's input stops at the prompt instead
+    # of erasing it. ANSI color escapes confuse readline's column math
+    # unless wrapped in \001 ... \002 (RL_PROMPT_START_IGNORE /
+    # RL_PROMPT_END_IGNORE); markup_prompt does that wrap.
     utils::flush.console()
+    bash_prompt <- .markup_prompt_for_readline(prompt_str)
 
-    script <- paste('out="$1"', 'IFS= read -r -e line || exit 1',
+    script <- paste('out="$1"',
+                    'prompt="$2"',
+                    'IFS= read -r -e -p "$prompt" line || exit 1',
                     'printf "%s\\n" "$line" > "$out"',
                     'while IFS= read -r -t 0.01 next; do',
                     '  printf "%s\\n" "$next" >> "$out"', 'done', sep = "\n")
@@ -15,7 +23,8 @@
     status <- suppressWarnings(
                                system2(
                                        "bash",
-                                       c("-c", shQuote(script), "bash", shQuote(path)),
+                                       c("-c", shQuote(script), "bash",
+                                         shQuote(path), shQuote(bash_prompt)),
                                        stdout = "",
                                        stderr = ""
         )
@@ -27,6 +36,21 @@
         return(character())
     }
     readLines(path, warn = FALSE)
+}
+
+# Wrap each ANSI color escape sequence in \001 ... \002 so bash's
+# readline counts only the printable characters when positioning the
+# cursor. Otherwise a colored prompt like "\033[32m> \033[0m" makes
+# readline think the prompt is 12 chars wide instead of 2, and
+# Backspace / line wrap go to the wrong place.
+.markup_prompt_for_readline <- function(prompt_str) {
+    if (!is.character(prompt_str) || length(prompt_str) != 1L) {
+        return(prompt_str)
+    }
+    if (!grepl("\033", prompt_str, fixed = TRUE)) {
+        return(prompt_str)
+    }
+    gsub("(\033\\[[0-9;]*m)", "\001\\1\002", prompt_str, perl = TRUE)
 }
 
 read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {

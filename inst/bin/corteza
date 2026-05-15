@@ -107,6 +107,7 @@ Commands (in chat):
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
+  /paste [text]  Multi-line input. End with `/end` on its own line.
   /sessions      List sessions
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -573,7 +574,7 @@ cli_approval_cb <- function(cwd) {
     )
     cat(paste(lines, collapse = "\n"), "\n")
 
-    response <- cli_read_line(sprintf("%sChoice [1]: %s",
+    response <- cli_read_line(sprintf("%sChoice: %s",
                                       color$yellow, color$reset))
     if (length(response) == 0) response <- ""
     response <- trimws(response)
@@ -587,7 +588,7 @@ cli_approval_cb <- function(cwd) {
 
     # Replace the verbose approval block with a one-line `User replied:`
     # summary. Erase (length(lines) + 1) lines: the approval lines
-    # themselves plus the `Choice [1]: ` prompt line. Gated on ANSI;
+    # themselves plus the `Choice: ` prompt line. Gated on ANSI;
     # when escapes aren't honored we just print the summary below the
     # prompt instead of erasing.
     ansi <- nzchar(color$reset)
@@ -1450,6 +1451,32 @@ run_agent <- function(opts) {
                       color$dim, color$reset))
         }
         next
+      } else if (cmd == "/paste") {
+        # Read a multi-line block until `/end` on its own line or EOF,
+        # then fall through to the normal turn() call. Multi-line via
+        # Ctrl+Enter / Alt+Enter is unreliable across terminals (most
+        # send the same byte for plain Enter), so /paste is the
+        # dependable path. Optional first text on the same line as
+        # /paste seeds the buffer.
+        rest <- trimws(cmd_rest)
+        buffer <- character()
+        if (nzchar(rest)) {
+          buffer <- c(buffer, rest)
+        }
+        cat(sprintf("%sPaste mode. End with `/end` on its own line (Ctrl+D works too).%s\n",
+                    color$dim, color$reset))
+        repeat {
+          ln <- cli_read_line(sprintf("%s... %s", color$dim, color$reset))
+          if (length(ln) == 0L) break
+          if (identical(trimws(ln), "/end")) break
+          buffer <- c(buffer, ln)
+        }
+        if (length(buffer) == 0L) {
+          cat(sprintf("%sEmpty paste, nothing sent.%s\n", color$dim, color$reset))
+          next
+        }
+        prompt <- paste(buffer, collapse = "\n")
+        # Fall through to regular prompt handling.
       } else if (cmd == "/plan") {
         # /plan with no args toggles plan mode. /plan <task> turns it
         # on and submits <task> as the next user prompt (falls through
@@ -1665,6 +1692,7 @@ Commands:
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
+  /paste [text]  Multi-line input. End with `/end` on its own line.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model

@@ -485,7 +485,36 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                         else "disabled"))
                 next
             }
-            if (cmd == "/plan") {
+            if (cmd == "/paste") {
+                # Read a multi-line block until `/end` on its own line
+                # or EOF, then fall through to the normal turn() call.
+                # Multi-line input via Ctrl+Enter / Alt+Enter is
+                # unreliable across terminals (most send the same byte
+                # for plain Enter), so /paste is the dependable path.
+                rest <- if (length(parts) >= 2L) {
+                    paste(parts[-1], collapse = " ")
+                } else ""
+                rest <- trimws(rest)
+                buffer <- character()
+                if (nzchar(rest)) {
+                    buffer <- c(buffer, rest)
+                }
+                cat(sprintf("%sPaste mode. End with `/end` on its own line (Ctrl+D works too).%s\n",
+                            color$dim, color$reset))
+                repeat {
+                    ln <- read_prompt_input("... ")
+                    if (length(ln) == 0L) break
+                    if (identical(trimws(ln), "/end")) break
+                    buffer <- c(buffer, ln)
+                }
+                if (length(buffer) == 0L) {
+                    cat(sprintf("%sEmpty paste, nothing sent.%s\n",
+                                color$dim, color$reset))
+                    next
+                }
+                prompt <- paste(buffer, collapse = "\n")
+                # Fall through to normal prompt handling below.
+            } else if (cmd == "/plan") {
                 rest <- if (length(parts) >= 2L) {
                     paste(parts[-1], collapse = " ")
                 } else ""
@@ -768,7 +797,7 @@ chat_approval_cb <- function(cwd = getwd()) {
         )
         cat(paste(lines, collapse = "\n"), "\n")
 
-        ans <- read_prompt_input("Choice [1]: ")
+        ans <- read_prompt_input("Choice: ")
         if (length(ans) == 0L) {
             ans <- ""
         }
