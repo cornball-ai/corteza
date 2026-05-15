@@ -1,3 +1,28 @@
+# corteza 0.6.6.5
+
+## Slash-command parity between chat() and the CLI
+
+* Display/info helpers used to live in `inst/bin/corteza` only, so
+  `corteza::chat()` couldn't render the same `/status`, `/doctor`,
+  `/config`, `/diff`, or `/review` output. They now live in
+  `R/cli-helpers.R` as internal package functions; both surfaces call
+  them. chat() gets all five commands plus `/last` and `/outputs`.
+* `/compact` in chat() now uses the same `do_compact()` the CLI does,
+  instead of a separate inline implementation. Both routes share one
+  prompt and one chat-call shape.
+* Tool output buffer (`/last`, `/outputs`) is now session-scoped via
+  `session$sessionId` rather than a CLI-process global. Subagents and
+  parents have isolated buffers; `/clear` drops the outgoing
+  session's buffer.
+
+## Dead commands removed
+
+* `/remember` and `/recall` in the CLI are gone. They called
+  `memory_store` / `memory_search` / `strip_tags` / `parse_tags` —
+  none of which exist in the package — and would error on use.
+  `/flush` is alive (rebuilt earlier this cycle as a real memory
+  flush via `.run_memory_flush()`) and stays.
+
 # corteza 0.6.6.4
 
 ## Input handling

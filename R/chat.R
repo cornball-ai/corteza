@@ -213,6 +213,13 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # Register observers: progress printer + trace row per tool call.
     add_observer(turn_session, observer_progress())
     add_observer(turn_session, chat_trace_observer(turn_session))
+    # Capture successful tool outputs into the per-session buffer so
+    # /last and /outputs can replay them. Keyed by sessionId in the
+    # package; this observer just relays. The "kind" attr lets /clear
+    # find and replace this specific observer when the session resets.
+    tool_buf_obs <- tool_buffer_observer(disk_session$session)
+    attr(tool_buf_obs, "kind") <- "tool_buffer"
+    add_observer(turn_session, tool_buf_obs)
 
     # Optional experimental layers — off by default; opt in via options.
     if (isTRUE(getOption("corteza.experimental_ce", FALSE))) {
@@ -303,6 +310,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     tryCatch(ws_save(disk_session$sessionId),
                              error = function(e) NULL)
                 }
+                # Drop the tool-output buffer for the outgoing session
+                # so a /clear actually clears (otherwise /last would
+                # still surface results from the old conversation).
+                tool_buffer_reset(disk_session$session)
                 fresh <- session_new(provider, model, cwd)
                 disk_session <- list(session = fresh,
                                      sessionId = fresh$sessionId,
@@ -310,6 +321,15 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 turn_session$history <- list()
                 turn_session$sessionId <- fresh$sessionId
                 turn_session$disk_session <- fresh
+                # Re-register the tool-buffer observer against the new
+                # session so subsequent tool calls land in the fresh
+                # buffer.
+                turn_session$on_tool <- Filter(function(obs) {
+                    !identical(attr(obs, "kind"), "tool_buffer")
+                }, turn_session$on_tool %||% list())
+                obs <- tool_buffer_observer(fresh)
+                attr(obs, "kind") <- "tool_buffer"
+                add_observer(turn_session, obs)
                 pending_r_context <- character(0)
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             color$dim, fresh$sessionId, color$reset))
@@ -593,31 +613,183 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/compact") {
-                if (length(turn_session$history %||% list()) < 2L) {
+                if (length(disk_session$session$messages %||% list()) < 2L) {
                     cat("Nothing to compact.\n")
                     next
                 }
-                cat("Compacting...\n")
-                compact_text <- tryCatch({
-                    transcript <- archival_render_transcript(turn_session$history)
-                    sys <- "Compress this conversation into a 1-paragraph summary that preserves the user's goals, decisions made, files touched, and unresolved questions. No bullets."
-                    resp <- llm.api::agent(prompt = transcript, system = sys,
-                        tools = list(),
-                        model = turn_session$model_map$cloud,
-                        provider = turn_session$provider,
-                        max_turns = 1L, history = list(),
-                        verbose = FALSE)
-                    as.character(resp$content %||% "")
-                }, error = function(e) {
-                    cat(sprintf("Compaction failed: %s\n", e$message))
-                    NULL
-                })
-                if (!is.null(compact_text) && nzchar(compact_text)) {
+                # Use the shared do_compact() so chat() and the CLI
+                # summarize sessions through the same prompt and
+                # model-call shape.
+                result <- do_compact(disk_session$session,
+                                     turn_session$provider,
+                                     turn_session$model_map$cloud)
+                if (!is.null(result) && nzchar(result$summary)) {
                     turn_session$history <- list(
-                        list(role = "assistant", content = compact_text)
+                        list(role = "assistant", content = result$summary)
                     )
-                    transcript_compact(disk_session$session, compact_text)
+                    transcript_compact(disk_session$session, result$summary)
                     cat("Compacted.\n")
+                }
+                next
+            }
+            if (cmd == "/status") {
+                tools_filter <- turn_session$tools_filter
+                tools <- skills_as_api_tools(tools_filter)
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                sess_tokens <- estimate_live_context_tokens(
+                                                            disk_session$session,
+                                                            turn_session$system %||% "",
+                                                            tools
+                )
+                ctx_limit <- context_limit_for_model(disp_model)
+                docs <- tryCatch(list_skill_docs(),
+                                 error = function(e) character())
+                cat(format_status_summary(
+                                          session = disk_session$session,
+                                          provider = turn_session$provider %||% provider,
+                                          display_model = disp_model,
+                                          tools = tools,
+                                          opts = list(dry_run = isTRUE(turn_session$config$dry_run)),
+                                          config = config,
+                                          session_tokens = sess_tokens,
+                                          context_limit = ctx_limit,
+                                          context_files = config$context_files %||% character(),
+                                          skill_docs = docs
+                    ), "\n")
+                next
+            }
+            if (cmd == "/doctor") {
+                tools <- skills_as_api_tools(turn_session$tools_filter)
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                docs <- tryCatch(list_skill_docs(),
+                                 error = function(e) character())
+                cat(format_doctor_report(
+                                         cwd = cwd,
+                                         session = disk_session$session,
+                                         provider = turn_session$provider %||% provider,
+                                         display_model = disp_model,
+                                         tools = tools,
+                                         config = config,
+                                         context_files = config$context_files %||% character(),
+                                         skill_docs = docs
+                    ), "\n")
+                next
+            }
+            if (cmd == "/config") {
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                cat(format_config_summary(
+                                          config = config,
+                                          provider = turn_session$provider %||% provider,
+                                          display_model = disp_model,
+                                          opts = list(port = config$port,
+                                                      tools = turn_session$tools_filter,
+                                                      dry_run = isTRUE(turn_session$config$dry_run))
+                    ), "\n")
+                next
+            }
+            if (cmd == "/last") {
+                n <- if (length(parts) >= 2L) {
+                    suppressWarnings(as.integer(parts[2]))
+                } else {
+                    1L
+                }
+                if (is.na(n)) n <- 1L
+                outputs <- tool_buffer_list(disk_session$session)
+                if (length(outputs) == 0L) {
+                    cat(sprintf("%sNo tool outputs yet.%s\n",
+                                color$dim, color$reset))
+                    next
+                }
+                if (n < 1L || n > length(outputs)) {
+                    cat(sprintf("%sInvalid index. Have %d outputs.%s\n",
+                                color$yellow, length(outputs), color$reset))
+                    next
+                }
+                entry <- outputs[[n]]
+                cat(sprintf("\n%s%s%s @ %s\n",
+                            color$cyan, entry$name, color$reset,
+                            format(entry$time, "%H:%M:%S")))
+                if (length(entry$args) > 0L) {
+                    cat(sprintf("%sArgs: %s%s\n",
+                                color$dim,
+                                jsonlite::toJSON(entry$args, auto_unbox = TRUE),
+                                color$reset))
+                }
+                cat(sprintf("%s%s%s\n", color$dim,
+                            strrep("-", 40), color$reset))
+                cat(entry$result, "\n")
+                next
+            }
+            if (cmd == "/outputs") {
+                outputs <- tool_buffer_list(disk_session$session)
+                if (length(outputs) == 0L) {
+                    cat(sprintf("%sNo tool outputs yet.%s\n",
+                                color$dim, color$reset))
+                    next
+                }
+                cat(sprintf("\n%sRecent tool outputs:%s\n",
+                            color$bold, color$reset))
+                for (i in seq_along(outputs)) {
+                    entry <- outputs[[i]]
+                    lines <- length(strsplit(entry$result %||% "", "\n",
+                                             fixed = TRUE)[[1]])
+                    cat(sprintf("  %s[%d]%s %s%s%s (%d lines) @ %s\n",
+                                color$dim, i, color$reset,
+                                color$cyan, entry$name, color$reset,
+                                lines, format(entry$time, "%H:%M:%S")))
+                }
+                cat(sprintf("\n%sUse /last [N] to view output%s\n",
+                            color$dim, color$reset))
+                next
+            }
+            if (cmd == "/diff") {
+                ref <- if (length(parts) >= 2L) parts[2] else NULL
+                material <- collect_git_diff(ref)
+                if (!isTRUE(material$ok)) {
+                    cat(sprintf("%s%s%s\n", color$yellow, material$text,
+                                color$reset))
+                } else {
+                    cat(sprintf("\n%sDiff against %s%s\n",
+                                color$cyan, material$target, color$reset))
+                    cat(colorize_diff(material$diff), "\n")
+                }
+                next
+            }
+            if (cmd == "/review") {
+                ref <- if (length(parts) >= 2L) parts[2] else NULL
+                material <- collect_git_diff(ref)
+                if (!isTRUE(material$ok)) {
+                    cat(sprintf("%s%s%s\n", color$yellow, material$text,
+                                color$reset))
+                    next
+                }
+                provider_check <- provider_status(
+                                                  turn_session$provider %||% provider,
+                                                  model
+                )
+                if (!isTRUE(provider_check$ok)) {
+                    cat(sprintf("%sReview unavailable: %s%s\n",
+                                color$yellow, provider_check$message,
+                                color$reset))
+                    next
+                }
+                cat(sprintf("%sReviewing diff against %s...%s\n",
+                            color$dim, material$target, color$reset))
+                review_result <- run_review(
+                                            turn_session$provider %||% provider,
+                                            model, material$target,
+                                            material$status, material$diff
+                )
+                if (inherits(review_result, "error")) {
+                    cat(sprintf("%sReview failed: %s%s\n",
+                                color$bright_magenta,
+                                conditionMessage(review_result),
+                                color$reset))
+                } else {
+                    cat(review_result$content %||% "", "\n")
                 }
                 next
             }
