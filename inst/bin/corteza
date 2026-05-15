@@ -594,9 +594,15 @@ run_agent <- function(opts) {
 
   if (is.null(worker)) return(invisible(NULL))
 
-  # Register built-in skills in the CLI process and build the LLM
-  # tools payload locally — no worker round-trip.
+  # Register built-in skills, user-installed skills from the data
+  # dir + project's .corteza/skills, and any skill packages declared
+  # in config — matching chat()'s session_setup load order so both
+  # surfaces advertise the same tool set to the LLM. Without the
+  # user-skill loads the CLI tool count drifted below chat()'s.
   corteza::ensure_skills()
+  corteza:::load_skills(corteza:::corteza_data_path("skills"))
+  corteza:::load_skills(file.path(cwd, ".corteza", "skills"))
+  corteza:::load_skill_packages(config)
   tools <- cli_worker_tools_for_api(worker, filter = opts$tools)
 
   cat(sprintf("%sConnected. %d tools available.%s\n\n",
