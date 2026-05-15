@@ -564,9 +564,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/context") {
                 files <- config$context_files %||% character(0)
-                # Use the shared estimate_* helpers so chat() and the
-                # CLI's /context numbers match. Each component goes
-                # through the same /4 heuristic the CLI uses.
                 tools <- tryCatch(
                                   skills_as_api_tools(turn_session$tools_filter),
                                   error = function(e) list()
@@ -576,21 +573,23 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 hist_tok <- estimate_history_tokens(
                                                     turn_session$history %||% list()
                 )
-                total_tokens <- as.integer(sys_tok + tools_tok + hist_tok)
-                cat(sprintf("Live context: ~%d tokens (system %d + tools %d + history %d)\n",
-                            total_tokens, sys_tok, tools_tok, hist_tok))
-                if (length(files) == 0L) {
-                    cat("No additional context files loaded via the ",
-                        "`context_files` config key.\n", sep = "")
-                    cat("Project context still comes from saber::briefing() ",
-                        "and saber::agent_context() as part of the system ",
-                        "prompt above.\n", sep = "")
-                } else {
-                    cat("Loaded context files:\n")
-                    for (f in files) {
-                        cat("  ", f, "\n")
-                    }
-                }
+                total_tok <- as.integer(sys_tok + tools_tok + hist_tok)
+                disp_model <- model %||% turn_session$model_map$cloud %||%
+                    "(default)"
+                limit <- context_limit_for_model(disp_model)
+                cat(format_context_block(
+                                         used = total_tok,
+                                         limit = limit,
+                                         breakdown = list(system = sys_tok,
+                                                          tools = tools_tok,
+                                                          history = hist_tok),
+                                         compact_pct = config$context_compact_pct %||% 90L,
+                                         warn_pct = config$context_warn_pct %||% 75L,
+                                         high_pct = config$context_high_pct %||% 90L,
+                                         crit_pct = config$context_crit_pct %||% 95L,
+                                         files = files,
+                                         palette = color
+                    ), "\n", sep = "")
                 next
             }
             if (cmd == "/compact") {

@@ -956,28 +956,24 @@ run_agent <- function(opts) {
       } else if (cmd == "/context") {
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
-        # Component breakdown — same math the composite estimator uses,
-        # just split so the user can see which slice is hot.
+        # Component breakdown — same math the composite estimator
+        # uses, split so the user can see which slice is hot.
         sys_tok <- estimate_text_tokens(system_prompt %||% "")
         tools_tok <- estimate_tool_tokens(tools)
         hist_tok <- estimate_history_tokens(session$messages %||% list())
-        cat(sprintf("%sLive context:%s %s / %s tokens (auto-compact at %d%%)\n",
-                    color$bold, color$reset,
-                    format_tokens(session_tokens), format_tokens(context_limit),
-                    opts$context_compact_pct))
-        cat(sprintf("  system %s + tools %s + history %s\n",
-                    format_tokens(sys_tok), format_tokens(tools_tok),
-                    format_tokens(hist_tok)))
-        if (length(context_files) == 0) {
-          cat(sprintf("%sNo context files loaded.%s\n", color$dim, color$reset))
-          cat("Project context comes from saber::briefing() and saber::agent_context().\n")
-          cat("Add files via the `context_files` config key.\n")
-        } else {
-          cat(sprintf("%sLoaded context files:%s\n", color$bold, color$reset))
-          for (f in context_files) {
-            cat(sprintf("  %s%s%s\n", color$cyan, f, color$reset))
-          }
-        }
+        cat(corteza:::format_context_block(
+                                           used = session_tokens,
+                                           limit = context_limit,
+                                           breakdown = list(system = sys_tok,
+                                                            tools = tools_tok,
+                                                            history = hist_tok),
+                                           compact_pct = opts$context_compact_pct %||% 90L,
+                                           warn_pct = opts$context_warn_pct %||% 75L,
+                                           high_pct = opts$context_high_pct %||% 90L,
+                                           crit_pct = opts$context_crit_pct %||% 95L,
+                                           files = context_files,
+                                           palette = color
+            ), "\n", sep = "")
         next
       } else if (cmd == "/flush") {
         # Manual memory flush: ask LLM to write durable memories
