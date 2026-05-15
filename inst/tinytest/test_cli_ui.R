@@ -170,3 +170,66 @@ expect_identical(corteza:::.markup_prompt_for_readline("> "), "> ")
 ansi_wrapped <- corteza:::.markup_prompt_for_readline("\033[32m> \033[0m")
 expect_true(grepl("\001\033\\[32m\002", ansi_wrapped))
 expect_true(grepl("\001\033\\[0m\002", ansi_wrapped))
+
+# read_paste_block: drive it via a stubbed read_prompt_input so we can
+# test the state machine without a TTY. Two regression cases:
+#   1. A single returned line containing embedded "\n" + "/end"
+#      (mimics bash's pasted-multi-line drain) — must terminate
+#      immediately, not consume another input.
+#   2. A line ending with no trailing `\` terminates with the line
+#      included.
+local({
+    inputs <- c("line one \\", "line two\n/end\nshould not appear")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    # Temporarily shadow read_prompt_input in the corteza namespace
+    # via a stub that closes over our queue. We restore on exit.
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = NULL,
+                                      header = "",
+                                      empty_message = "")
+    # "line one \" strips to "line one " (trailing space preserved,
+    # matching bash's behavior of leaving whitespace before the
+    # continuation marker untouched). "/end" sub-line terminates.
+    expect_identical(out, "line one \nline two")
+    expect_equal(i, 2L)
+})
+
+# No trailing backslash on the seeded line still terminates with that
+# line included.
+local({
+    inputs <- c("just one line")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = "first",
+                                      header = "",
+                                      empty_message = "")
+    expect_identical(out, "first\njust one line")
+})

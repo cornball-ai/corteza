@@ -66,22 +66,49 @@
 # the rest of the messaging is uniform.
 read_paste_block <- function(seed = NULL,
                              continuation_prompt = "... ",
-                             header = "Paste mode. End with `/end` on its own line (Ctrl+D works too).",
+                             header = "Paste mode. Bash heredoc style: end a line with `\\` to continue; the first line without a trailing `\\` submits (or `/end`, Ctrl+D).",
                              empty_message = "Empty paste, nothing sent.") {
     buffer <- character()
     if (!is.null(seed) && nzchar(trimws(seed))) {
         buffer <- c(buffer, seed)
     }
     cat(header, "\n", sep = "")
+    # State machine over sub-lines: bash's `.read_prompt_via_bash`
+    # returns a single string containing pasted multi-line content
+    # joined with `\n`. Splitting per call lets us see each pasted
+    # line individually so a `/end` sentinel buried in the paste fires
+    # immediately, and so a line-by-line backslash check still works
+    # when the user pastes a heredoc-style block.
+    done <- FALSE
     repeat {
+        if (done) break
         ln <- read_prompt_input(continuation_prompt)
         if (length(ln) == 0L) {
+            # EOF (Ctrl+D)
             break
         }
-        if (identical(trimws(ln), "/end")) {
-            break
+        chunks <- unlist(strsplit(ln, "\n", fixed = TRUE), use.names = FALSE)
+        if (length(chunks) == 0L) {
+            chunks <- ""
         }
-        buffer <- c(buffer, ln)
+        for (chunk in chunks) {
+            if (identical(trimws(chunk), "/end")) {
+                # Explicit sentinel — terminate without including the
+                # /end sub-line.
+                done <- TRUE
+                break
+            }
+            cont_seed <- backslash_continuation_seed(chunk)
+            if (is.null(cont_seed)) {
+                # No trailing unescaped `\` — final sub-line. Include
+                # it, then terminate. Mirrors bash heredoc-with-
+                # continuation.
+                buffer <- c(buffer, chunk)
+                done <- TRUE
+                break
+            }
+            buffer <- c(buffer, cont_seed)
+        }
     }
     if (length(buffer) == 0L) {
         cat(empty_message, "\n", sep = "")

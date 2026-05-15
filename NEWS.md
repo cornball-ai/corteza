@@ -11,17 +11,17 @@
 * The approval prompt's `Choice [1]: ` dropped the `[1]` shell
   convention; the `(Enter)` hint already lives on choice 1 itself,
   so the bracket was redundant.
-* New `/paste` slash command in both `corteza::chat()` and the CLI:
-  the dependable multi-line input path. `/paste [optional first
-  text]` enters paste mode; type as many lines as you want; end with
-  `/end` on its own line (or Ctrl+D). Most terminals can't reliably
-  distinguish Ctrl+Enter from plain Enter, so a slash-command sentinel
-  is the right abstraction.
-* Trailing-backslash continuation as the mid-line escape hatch. A
-  non-slash line ending with an unescaped `\` drops the backslash and
-  enters paste mode seeded with the line so far. `\\` at end = literal
-  trailing backslash (no continuation). Slash commands keep their own
-  arg parsing.
+* Multi-line input borrows bash's heredoc-with-continuation idiom in
+  both `corteza::chat()` and the CLI. Two ways to start:
+  - `/paste [optional text]` — explicit entry.
+  - Any non-slash line ending with an unescaped `\` — drops you into
+    paste mode mid-line, seeded with what you already typed.
+  Once in, keep ending lines with `\` to continue; the first line that
+  doesn't end with `\` is the final line and submits. Explicit `/end`
+  on its own line and Ctrl+D (EOF) also terminate. `\\` at end of a
+  line means a literal trailing backslash (no continuation). Paste
+  content that happens to start with `/` is not reinterpreted as a
+  corteza command.
 
 # corteza 0.6.6.3
 

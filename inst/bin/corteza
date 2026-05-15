@@ -107,7 +107,7 @@ Commands (in chat):
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
-  /paste [text]  Multi-line input. End with `/end` on its own line.
+  /paste [text]  Multi-line input. End a line with \ to continue.
   /sessions      List sessions
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -1129,18 +1129,23 @@ run_agent <- function(opts) {
     # Trailing-backslash continuation. A non-slash line ending in an
     # unescaped `\` drops into paste mode seeded with the line so far.
     # `\\` at end = literal trailing backslash (no continuation). Slash
-    # commands are exempt — they own their own arg parsing.
+    # commands are exempt — they own their own arg parsing. `from_paste`
+    # blocks the slash dispatcher below from reinterpreting a paste
+    # that happens to start with `/` (paths, code snippets) as a
+    # corteza command.
+    from_paste <- FALSE
     if (!startsWith(prompt, "/")) {
       cont_seed <- corteza:::backslash_continuation_seed(prompt)
       if (!is.null(cont_seed)) {
         joined <- corteza:::read_paste_block(seed = cont_seed)
         if (is.null(joined)) next
         prompt <- joined
+        from_paste <- TRUE
       }
     }
 
     # Handle commands
-    if (startsWith(prompt, "/")) {
+    if (!from_paste && startsWith(prompt, "/")) {
       cmd_parts <- strsplit(prompt, "\\s+")[[1]]
       cmd <- tolower(cmd_parts[1])
       cmd_arg <- if (length(cmd_parts) > 1) cmd_parts[2] else NULL
@@ -1686,7 +1691,7 @@ Commands:
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
-  /paste [text]  Multi-line input. End with `/end` on its own line.
+  /paste [text]  Multi-line input. End a line with \ to continue.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model

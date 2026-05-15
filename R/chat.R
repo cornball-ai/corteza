@@ -265,6 +265,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         # with an unescaped `\` drops into paste mode seeded with the
         # line so far. Slash commands are exempt — they have their
         # own arg parsing. `\\` at end = literal trailing backslash.
+        # `from_paste` blocks the slash-command dispatcher below from
+        # reinterpreting a paste that happens to start with `/`
+        # (filenames, code snippets, etc.) as a corteza command.
+        from_paste <- FALSE
         if (!startsWith(sp, "/")) {
             cont_seed <- backslash_continuation_seed(prompt)
             if (!is.null(cont_seed)) {
@@ -274,9 +278,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 }
                 prompt <- joined
                 sp <- trimws(prompt)
+                from_paste <- TRUE
             }
         }
-        if (startsWith(sp, "/")) {
+        if (!from_paste && startsWith(sp, "/")) {
             parts <- strsplit(sp, "\\s+")[[1]]
             cmd <- tolower(parts[1])
 
