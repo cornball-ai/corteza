@@ -1,3 +1,17 @@
+# corteza 0.6.6.6
+
+## Per-turn timing footer
+
+* After each `corteza::chat()` or `~/bin/corteza` turn, a dim
+  footer line shows wall-clock duration: `─ Worked for 3m 18s ────`.
+* Fires on success, interrupt (Esc / Ctrl+C), and error. Useful
+  data point in the exact moments you wanted to know how long
+  something ran before you bailed.
+* Static-at-end, not a live ticking counter. A live counter while
+  R is blocked on the LLM HTTP call would need async polling in
+  llm.api or a background process; both are real concurrency
+  surfaces worth their own design pass.
+
 # corteza 0.6.6.5
 
 ## Slash-command parity between chat() and the CLI

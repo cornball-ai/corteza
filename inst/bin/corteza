@@ -1393,6 +1393,7 @@ Tool output:
 
     cat(sprintf("● Thinking with %s\n", display_model))
     pre_turn_len <- length(turn_session$history %||% list())
+    turn_start <- Sys.time()
     result <- tryCatch({
       r <- corteza::turn(
         prompt = prompt,
@@ -1454,8 +1455,17 @@ Tool output:
       NULL
     })
 
+    if (is.null(result)) {
+      # Interrupt or error path. Print the timing footer too so the
+      # user sees how long the aborted turn ran before the prompt
+      # returns.
+      cat(corteza:::turn_footer_line(turn_start, palette = color), "\n",
+          sep = "")
+    }
     if (!is.null(result)) {
       print_response(result$content)
+      cat(corteza:::turn_footer_line(turn_start, palette = color), "\n",
+          sep = "")
 
       session <- corteza:::session_add_message(session, "assistant", result$content)
       corteza:::transcript_append(session, "assistant", result$content)

@@ -896,6 +896,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     color$bold, model %||% "(provider default)",
                     color$reset))
         pre_turn_len <- length(turn_session$history %||% list())
+        turn_start <- Sys.time()
         result <- tryCatch(
                            turn(prompt, turn_session),
                            interrupt = function(c) {
@@ -920,6 +921,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         )
         if (is.null(result)) {
+            # Interrupt or error path. Still print the timing footer
+            # so the user sees how long the aborted turn ran.
+            cat(turn_footer_line(turn_start, palette = color), "\n",
+                sep = "")
             next
         }
 
@@ -929,6 +934,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         } else {
             cat(reply, "\n\n")
         }
+        cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")
         transcript_append(disk_session$session, "assistant", reply)
 
         # Archival hook: opt-in via config$archival$enabled. Mutates
