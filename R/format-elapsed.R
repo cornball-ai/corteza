@@ -46,6 +46,26 @@ format_worked_for <- function(start, end = Sys.time()) {
     sprintf("Worked for %s", paste(parts, collapse = " "))
 }
 
+#' Detect the current terminal width.
+#'
+#' Reads `COLUMNS` (set by most shells when stdin is a tty) first, then
+#' falls back to `getOption("width")` (R's own knowledge of its line
+#' length, set by terminal emulators and `options(width = ...)`).
+#' Returns NULL if neither is available so callers can use a static
+#' default.
+#' @noRd
+detect_terminal_width <- function() {
+    cols <- suppressWarnings(as.integer(Sys.getenv("COLUMNS", "")))
+    if (!is.na(cols) && cols > 0L) {
+        return(cols)
+    }
+    opt <- suppressWarnings(as.integer(getOption("width", 0L)))
+    if (!is.na(opt) && opt > 0L) {
+        return(opt)
+    }
+    NULL
+}
+
 #' Build the full "─ Worked for X ────" footer line a chat()/CLI surface
 #' prints at the end of a turn. Caller supplies the palette so the
 #' dim color wrap matches the rest of its output. The line pads to
@@ -55,11 +75,17 @@ format_worked_for <- function(start, end = Sys.time()) {
 #' @param start Turn start time.
 #' @param end Optional turn end time; defaults to \code{Sys.time()}.
 #' @param palette Optional palette from \code{ansi_colors()}.
-#' @param width Target visible width. Defaults to 60.
+#' @param width Target visible width. When NULL (default), the
+#'   terminal width is detected via COLUMNS / options("width") so the
+#'   footer spans the row. Set explicitly for tests or when a fixed
+#'   width is preferred.
 #' @return Character scalar (no trailing newline).
 #' @noRd
 turn_footer_line <- function(start, end = Sys.time(),
-                             palette = ansi_colors(), width = 60L) {
+                             palette = ansi_colors(), width = NULL) {
+    if (is.null(width)) {
+        width <- detect_terminal_width() %||% 60L
+    }
     body <- sprintf("─ %s ", format_worked_for(start, end))
     pad_n <- max(width - nchar(body), 1L)
     line <- paste0(body, strrep("─", pad_n))

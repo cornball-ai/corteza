@@ -562,7 +562,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 prompt <- rest
                 # Fall through to normal prompt handling below.
             }
-            if (cmd == "/context") {
+            if (cmd %in% c("/context", "/status")) {
                 files <- config$context_files %||% character(0)
                 tools <- tryCatch(
                                   skills_as_api_tools(turn_session$tools_filter),
@@ -577,6 +577,17 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 disp_model <- model %||% turn_session$model_map$cloud %||%
                     "(default)"
                 limit <- context_limit_for_model(disp_model)
+                # Codex-style header: corteza version, model, dir,
+                # session id. /status is now an alias of /context
+                # showing the same block.
+                status_info <- list(
+                                    corteza = as.character(utils::packageVersion("corteza")),
+                                    model = sprintf("%s @ %s", disp_model,
+                                                    turn_session$provider %||% provider),
+                                    dir = cwd,
+                                    session = disk_session$session$sessionKey %||%
+                                        disk_session$session$sessionId %||% "(unset)"
+                )
                 cat(format_context_block(
                                          used = total_tok,
                                          limit = limit,
@@ -588,7 +599,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                                          high_pct = config$context_high_pct %||% 90L,
                                          crit_pct = config$context_crit_pct %||% 95L,
                                          files = files,
-                                         palette = color
+                                         palette = color,
+                                         status_info = status_info
                     ), "\n", sep = "")
                 next
             }
@@ -615,37 +627,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     transcript_compact(disk_session$session, result$summary)
                     cat("Compacted.\n")
                 }
-                next
-            }
-            if (cmd == "/status") {
-                tools_filter <- turn_session$tools_filter
-                tools <- skills_as_api_tools(tools_filter)
-                disp_model <- model %||% turn_session$model_map$cloud %||%
-                    "(default)"
-                # Pass turn_session — its $history is the live
-                # conversation. estimate_live_context_tokens accepts
-                # either $messages or $history, so this also covers
-                # the CLI's session-as-$messages case.
-                sess_tokens <- estimate_live_context_tokens(
-                                                            turn_session,
-                                                            turn_session$system %||% "",
-                                                            tools
-                )
-                ctx_limit <- context_limit_for_model(disp_model)
-                docs <- tryCatch(list_skill_docs(),
-                                 error = function(e) character())
-                cat(format_status_summary(
-                                          session = disk_session$session,
-                                          provider = turn_session$provider %||% provider,
-                                          display_model = disp_model,
-                                          tools = tools,
-                                          opts = list(dry_run = isTRUE(turn_session$config$dry_run)),
-                                          config = config,
-                                          session_tokens = sess_tokens,
-                                          context_limit = ctx_limit,
-                                          context_files = config$context_files %||% character(),
-                                          skill_docs = docs
-                    ), "\n")
                 next
             }
             if (cmd == "/doctor") {

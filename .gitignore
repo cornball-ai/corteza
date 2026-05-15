@@ -1,8 +1,8 @@
 .Rhistory
 .RData
 .Rproj.user
+*.Rproj
 *.swp
 *~
-.llamar/
 vignettes/*.html
 inst/doc/

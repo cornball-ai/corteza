@@ -1,3 +1,32 @@
+# corteza 0.6.6.8
+
+## Tool-count parity between chat() and CLI
+
+* `skills_as_api_tools()` (the chat() path) now applies the same
+  `available()` predicate filter that `schema_from_registry()` (the
+  CLI path) has always used. Conditional tools — `git_*` when not
+  inside a repo, platform-specific shell tools — no longer show up
+  in chat() while being hidden in the CLI. Counts agree.
+
+## Per-turn timing footer spans the terminal
+
+* `turn_footer_line()` defaults to the detected terminal width
+  (`COLUMNS` env, `options("width")`) instead of a fixed 60-char
+  line, so the `─ Worked for 3m 18s ────` separator reaches the
+  right edge.
+
+## /context and /status are one command
+
+* `/status` is now an alias of `/context`. Both render the same
+  block: a Codex-style header (corteza version, model+provider,
+  cwd, session id) followed by the context meter.
+* The meter now segments by component — `system` in bright blue,
+  `tools` in bright magenta, `history` in cyan — so the bar maps
+  visually to the breakdown rows below.
+* Empty cells take the threshold color (yellow / orange / red) once
+  usage crosses the warn line so saturation reads at a glance
+  before any single segment dominates.
+
 # corteza 0.6.6.7
 
 ## /context shows a real meter

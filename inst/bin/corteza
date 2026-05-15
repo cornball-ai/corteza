@@ -97,7 +97,7 @@ Options:
 
 Commands (in chat):
   /quit, /exit   Exit corteza
-  /status        Show current runtime/session status
+  /context, /status  Session header + context meter (model, dir, tokens by component)
   /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
   /diff [ref]    Show git diff against HEAD or a ref
@@ -109,7 +109,6 @@ Commands (in chat):
   /compact       Summarize conversation to free context
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /sessions      List sessions
-  /context       Show live context usage and loaded context files
   /model <name>  Switch model
   /provider <p>  Switch provider
 
@@ -595,9 +594,15 @@ run_agent <- function(opts) {
 
   if (is.null(worker)) return(invisible(NULL))
 
-  # Register built-in skills in the CLI process and build the LLM
-  # tools payload locally — no worker round-trip.
+  # Register built-in skills, user-installed skills from the data
+  # dir + project's .corteza/skills, and any skill packages declared
+  # in config — matching chat()'s session_setup load order so both
+  # surfaces advertise the same tool set to the LLM. Without the
+  # user-skill loads the CLI tool count drifted below chat()'s.
   corteza::ensure_skills()
+  corteza:::load_skills(corteza:::corteza_data_path("skills"))
+  corteza:::load_skills(file.path(cwd, ".corteza", "skills"))
+  corteza:::load_skill_packages(config)
   tools <- cli_worker_tools_for_api(worker, filter = opts$tools)
 
   cat(sprintf("%sConnected. %d tools available.%s\n\n",
@@ -861,16 +866,6 @@ run_agent <- function(opts) {
         sessions <- corteza:::session_list()
         cat(corteza:::format_session_list(sessions), "\n")
         next
-      } else if (cmd == "/status") {
-        config <- corteza:::load_config(cwd)
-        cat(sprintf("\n%s%s%s\n\n",
-                    color$bold,
-                    corteza:::format_status_summary(session, provider, display_model, tools,
-                                          opts, config, session_tokens,
-                                          context_limit, context_files,
-                                          skill_docs),
-                    color$reset))
-        next
       } else if (cmd == "/doctor") {
         config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
@@ -953,7 +948,7 @@ run_agent <- function(opts) {
         corteza:::session_save(session)
         cat(sprintf("%sProvider set to: %s%s\n", color$dim, provider, color$reset))
         next
-      } else if (cmd == "/context") {
+      } else if (cmd %in% c("/context", "/status")) {
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
         # Component breakdown — same math the composite estimator
@@ -961,6 +956,14 @@ run_agent <- function(opts) {
         sys_tok <- estimate_text_tokens(system_prompt %||% "")
         tools_tok <- estimate_tool_tokens(tools)
         hist_tok <- estimate_history_tokens(session$messages %||% list())
+        # Codex-style header above the meter. /status is now an alias
+        # of /context, both surfaces show the same block.
+        status_info <- list(
+          corteza = as.character(utils::packageVersion("corteza")),
+          model = sprintf("%s @ %s", display_model, provider),
+          dir = cwd,
+          session = session$sessionKey %||% session$sessionId %||% "(unset)"
+        )
         cat(corteza:::format_context_block(
                                            used = session_tokens,
                                            limit = context_limit,
@@ -972,7 +975,8 @@ run_agent <- function(opts) {
                                            high_pct = opts$context_high_pct %||% 90L,
                                            crit_pct = opts$context_crit_pct %||% 95L,
                                            files = context_files,
-                                           palette = color
+                                           palette = color,
+                                           status_info = status_info
             ), "\n", sep = "")
         next
       } else if (cmd == "/flush") {
@@ -1279,7 +1283,7 @@ run_agent <- function(opts) {
         cat("
 Commands:
   /quit, /exit   Exit corteza
-  /status        Show runtime and session status
+  /status        Alias for /context
   /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
   /diff [ref]    Show git diff against HEAD or a ref

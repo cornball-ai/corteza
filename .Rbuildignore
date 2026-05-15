@@ -3,14 +3,10 @@
 ^\.git$
 ^\.github$
 ^\.claude$
-^\.llamar$
-^inst/tinytest/\.llamar$
 ^AGENTS\.md$
 ^CLAUDE\.md$
 ^LICENSE\.md$
-^PLAN\.md$
 ^README\.md$
-^claude_desktop_config\.json$
 ^docs$
 ^cran-comments\.md$
 ^tasks$

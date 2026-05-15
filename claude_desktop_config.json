@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "llamar": {
-      "command": "r",
-      "args": ["/home/troy/llamaR/mcp_server.R"]
-    }
-  }
-}

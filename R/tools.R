@@ -120,7 +120,18 @@ ensure_skills <- function() {
 #' @return List of tool definitions for llm.api::agent()
 #' @noRd
 skills_as_api_tools <- function(filter = NULL) {
+    # Drop tools whose `available()` predicate returns FALSE so chat()
+    # and the CLI advertise the same set. Without this, chat() saw
+    # tools the CLI (via schema_from_registry) had already filtered
+    # out — e.g. git_* when not in a repo — and the /status tool count
+    # disagreed between surfaces. Predicates default to TRUE on
+    # error so a broken check doesn't hide a tool.
     mcp_tools <- get_tools(filter)
+    mcp_tools <- Filter(function(t) {
+        entry <- get_skill(t$name)
+        if (is.null(entry$available)) return(TRUE)
+        isTRUE(tryCatch(entry$available(), error = function(e) TRUE))
+    }, mcp_tools)
     lapply(mcp_tools, function(t) {
         list(name = sanitize_tool_name(t$name), description = t$description,
              input_schema = t$inputSchema)
