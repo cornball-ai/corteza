@@ -54,3 +54,26 @@ ansi_line <- corteza:::turn_footer_line(ts(0), ts(60),
                                         palette = ansi, width = 30L)
 expect_true(startsWith(ansi_line, "\033[2m"))
 expect_true(endsWith(ansi_line, "\033[0m"))
+
+# Terminal-width detection: COLUMNS env var wins.
+local({
+    old <- Sys.getenv("COLUMNS")
+    on.exit(Sys.setenv(COLUMNS = old), add = TRUE)
+    Sys.setenv(COLUMNS = "100")
+    expect_identical(corteza:::detect_terminal_width(), 100L)
+    Sys.unsetenv("COLUMNS")
+    # Falls back to options("width").
+    op <- options(width = 72L)
+    on.exit(options(op), add = TRUE)
+    expect_identical(corteza:::detect_terminal_width(), 72L)
+})
+
+# When width = NULL, turn_footer_line picks up the detected width.
+local({
+    old <- Sys.getenv("COLUMNS")
+    on.exit(Sys.setenv(COLUMNS = old), add = TRUE)
+    Sys.setenv(COLUMNS = "120")
+    line <- corteza:::turn_footer_line(ts(0), ts(5),
+                                       palette = no_color, width = NULL)
+    expect_true(nchar(line, type = "chars") >= 120L)
+})
