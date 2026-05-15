@@ -6,7 +6,7 @@
 estimate_text_tokens(text)
 }
 \arguments{
-\item{text}{Character (length 1 or vector; collapsed with `\n`).}
+\item{text}{Character (length 1 or vector; collapsed with newlines).}
 }
 \value{
 Integer.

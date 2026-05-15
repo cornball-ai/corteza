@@ -87,7 +87,7 @@ resolve_subagent_id <- function(input) {
 
 #' Child-side state holder. Populated by [subagent_turn_init()] inside
 #' each spawned child; read by [subagent_turn_prompt()]. The parent's
-#' instance of this env is unused — child processes have their own
+#' instance of this env is unused -- child processes have their own
 #' corteza namespace.
 #' @noRd
 .subagent_state <- new.env(parent = emptyenv())
@@ -179,7 +179,7 @@ subagent_seed_history <- function(history) {
 #' @param prompt User prompt (character).
 #' @return A list with `$reply` (character, the LLM reply text) and
 #'   `$usage` (list with `input_tokens`, `output_tokens`, `total_tokens`,
-#'   and optionally `cost` — provider-dependent). Callers extract the
+#'   and optionally `cost` -- provider-dependent). Callers extract the
 #'   reply and accumulate usage into the parent-side registry.
 #' @keywords internal
 #' @export
@@ -367,7 +367,7 @@ subagent_session_key <- function(parent_key) {
 #' @param model Optional model override (reserved for later use).
 #' @param tools Optional explicit tool filter (character vector).
 #'   Overrides `preset` when provided. Fixed for the lifetime of the
-#'   child — cannot be expanded after spawn.
+#'   child -- cannot be expanded after spawn.
 #' @param preset Preset name (fixed for the lifetime of the child).
 #'   `"investigate"` (default): `read_file`, `grep_files`, `r_help`,
 #'   `web_search`, `fetch_url`. `"work"`: investigate + `bash`,
@@ -520,7 +520,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
         query_count = 0L
     )
     # Initialize the durable transcript file. Disk space is cheap;
-    # context is expensive — the in-memory child history may later be
+    # context is expensive -- the in-memory child history may later be
     # compacted, but the on-disk transcript is append-only and never
     # rewritten. Header writes are idempotent.
     tryCatch(
@@ -699,7 +699,7 @@ subagent_kill <- function(id) {
 #'
 #' `usage` is the `$usage` field returned by `subagent_turn_prompt()`
 #' (originally from `llm.api::agent`). Missing fields are treated as
-#' zero — for providers that don't return cost (moonshot, ollama),
+#' zero -- for providers that don't return cost (moonshot, ollama),
 #' `cumulative_cost` stays NA.
 #' @noRd
 subagent_accumulate_usage <- function(info, usage) {
@@ -740,7 +740,11 @@ subagent_live_token_count <- function(info) {
     }
     result <- tryCatch(
         info$session$run(function() {
-            sess <- corteza:::.subagent_state$session
+            subagent_state <- utils::getFromNamespace(
+                ".subagent_state", "corteza")
+            skills_as_api_tools <- utils::getFromNamespace(
+                "skills_as_api_tools", "corteza")
+            sess <- subagent_state$session
             if (is.null(sess)) {
                 return(list(tokens = NA_integer_, limit = NA_integer_,
                             model = NULL))
@@ -752,7 +756,7 @@ subagent_live_token_count <- function(info) {
             # model name to look up a limit for.
             model <- sess$model_map$cloud %||%
                 corteza::default_provider_model(sess$provider)
-            tools <- tryCatch(corteza:::skills_as_api_tools(sess$tools_filter),
+            tools <- tryCatch(skills_as_api_tools(sess$tools_filter),
                               error = function(e) NULL)
             list(
                 tokens = corteza::estimate_live_context_tokens(
@@ -785,7 +789,7 @@ subagent_list <- function() {
         age_seconds <- as.numeric(difftime(Sys.time(),
                                            info$started_at,
                                            units = "secs"))
-        # Display the actual model the child runs with — explicit
+        # Display the actual model the child runs with -- explicit
         # info$model first, otherwise the resolved default for the
         # provider (live$model, which subagent_live_token_count
         # already computed inside the child). Falls back to provider
@@ -889,7 +893,7 @@ format_subagent_list <- function(agents) {
         } else {
             sprintf("$%.4f", a$cumulative_cost)
         }
-        meta <- sprintf("(%s · %s · %s · %s · %s)",
+        meta <- sprintf("(%s \u00B7 %s \u00B7 %s \u00B7 %s \u00B7 %s)",
                         model_str, age_str, ctx_str, tok_str, cost_str)
         lines <- c(lines, sprintf("  [%s] %s %s (%s)%s %s",
                                   seq_str, a$task, meta, time_str,

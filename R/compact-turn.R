@@ -220,8 +220,9 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
 #' single assistant summary message.
 #'
 #' Pure function: returns the new history list, doesn't mutate
-#' anything. The summary is wrapped in `[compacted history]\n\n...`
-#' so it's visually distinct in the transcript.
+#' anything. The summary is prefixed with a `[compacted history]`
+#' tag (followed by a blank line) so it's visually distinct in the
+#' transcript.
 #' @keywords internal
 compact_rewrite_history <- function(history, cut, summary) {
     if (cut <= 0L || cut >= length(history)) {

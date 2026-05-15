@@ -3,7 +3,7 @@
 # unified-diff algorithm in pure R is significantly more code than the
 # rest of this feature combined; if `diff` isn't on PATH we degrade to
 # a one-line fallback rather than fail the tool call. The output is
-# uncolored — coloring happens at render time via colorize_diff() so
+# uncolored -- coloring happens at render time via colorize_diff() so
 # the same payload can be re-rendered when ANSI is unavailable.
 
 #' Locate the system `diff` binary.
@@ -66,8 +66,8 @@
 #' caller that no diff display is warranted). When `diff` isn't on PATH,
 #' returns a fallback payload describing the size of the change without
 #' the per-line content. Large diffs are truncated to keep the payload
-#' bounded — both for serialization across the callr worker boundary
-#' and for chat scrollback hygiene — but the `summary` counts always
+#' bounded -- both for serialization across the callr worker boundary
+#' and for chat scrollback hygiene -- but the `summary` counts always
 #' reflect the full diff.
 #'
 #' @param old_text Character scalar, prior file contents. Empty string
@@ -230,7 +230,7 @@ compute_unified_diff <- function(old_text, new_text, path,
 #' Walk a unified-diff body and emit one rendered line per hunk row,
 #' annotated with file-relative line numbers and colored +/-.
 #'
-#' Drops the `---` / `+++` file headers and the `@@` hunk headers — the
+#' Drops the `---` / `+++` file headers and the `@@` hunk headers -- the
 #' line numbers we inject make those redundant and the path already
 #' appears in the surrounding tool-call header. Truncation marker lines
 #' from \code{compute_unified_diff()} pass through dim.
@@ -287,7 +287,7 @@ compute_unified_diff <- function(old_text, new_text, path,
             next
         }
         if (startsWith(ln, "\\")) {
-            # `\ No newline at end of file` — drop, not useful for a
+            # `\ No newline at end of file` -- drop, not useful for a
             # human display.
             next
         }
@@ -325,10 +325,10 @@ compute_unified_diff <- function(old_text, new_text, path,
 #' were identical and \code{compute_unified_diff()} returned nothing).
 #'
 #' The rendered shape mirrors Claude Code's inline diff display: a
-#' summary on the `⎿` line, then one row per kept line of the form
+#' summary on the `\u23BF` line, then one row per kept line of the form
 #' \code{NNNN [+|-| ] content} with red/green coloring on `+` and `-`.
 #' The `---` / `+++` path headers and the `@@` hunk markers are
-#' dropped — the line numbers replace the latter and the path already
+#' dropped -- the line numbers replace the latter and the path already
 #' appears in the surrounding tool-call title.
 #'
 #' @param diff Payload from \code{compute_unified_diff()}, or NULL.
@@ -343,7 +343,7 @@ render_tool_diff <- function(diff, palette = ansi_colors(), indent = "  ") {
     }
     summary <- diff$summary %||% ""
     if (nzchar(summary)) {
-        cat(sprintf("%s%s⎿  %s%s\n",
+        cat(sprintf("%s%s\u23BF  %s%s\n",
                     indent, palette$dim %||% "", summary,
                     palette$reset %||% ""))
     }
