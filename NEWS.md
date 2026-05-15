@@ -1,3 +1,16 @@
+# corteza 0.6.7
+
+## Deny aborts the whole turn
+
+* Picking "3. Deny" at the tool-approval prompt now aborts the
+  entire turn instead of declining a single tool call. Previously
+  the deny was returned as a `[user declined: ...]` tool result that
+  the LLM saw and treated as feedback, planning the next call --
+  which forced users to mash "3" through cascades of dependent tool
+  calls. The next turn now starts with a history marker that names
+  the denied tool and tells the LLM to stop and ask the user what to
+  do instead, rather than retrying or planning a workaround.
+
 # corteza 0.6.6.8
 
 ## Tool-count parity between chat() and CLI
