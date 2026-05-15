@@ -1,3 +1,29 @@
+# corteza 0.6.6.7
+
+## /context shows a real meter
+
+* New compact horizontal `/context` display answers the two questions
+  a user actually has: how full is context, and what's using it. Same
+  in both `corteza::chat()` and the CLI:
+
+  ```
+  Context  24.7K / 128.0K  19%  compact 90%
+  [██████████..................................│.....]
+    system    22.0K  89%
+    tools      2.7K  11%
+    history      56
+  ```
+
+  - Filled cells color-grade through normal / warn / high / crit
+    thresholds (defaults 75/90/95) as usage climbs.
+  - The auto-compact threshold shows as a subtle `│` tick at its
+    cell position in the empty part of the bar.
+  - Breakdown rows are right-aligned percentages of the *used* total;
+    rows under 1% drop the percent to avoid "0%" noise.
+* Dropped the "Project context still comes from saber::briefing() and
+  saber::agent_context()..." paragraph — the bar already shows where
+  the system budget is going, and the prose was longer than the data.
+
 # corteza 0.6.6.6
 
 ## Per-turn timing footer
