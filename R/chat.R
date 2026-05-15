@@ -261,7 +261,28 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             next
         }
         sp <- trimws(prompt)
-        if (startsWith(sp, "/")) {
+        # Trailing-backslash continuation: a non-slash line ending
+        # with an unescaped `\` drops into paste mode seeded with the
+        # line so far. Slash commands are exempt — they have their
+        # own arg parsing. `\\` at end = literal trailing backslash.
+        # `from_paste` blocks the slash-command dispatcher below from
+        # reinterpreting a paste that happens to start with `/`
+        # (filenames, code snippets, etc.) as a corteza command.
+        from_paste <- FALSE
+        if (!startsWith(sp, "/")) {
+            cont_seed <- backslash_continuation_seed(prompt)
+            if (!is.null(cont_seed)) {
+                joined <- read_paste_block(seed = cont_seed,
+                                           heredoc = TRUE)
+                if (is.null(joined)) {
+                    next
+                }
+                prompt <- joined
+                sp <- trimws(prompt)
+                from_paste <- TRUE
+            }
+        }
+        if (!from_paste && startsWith(sp, "/")) {
             parts <- strsplit(sp, "\\s+")[[1]]
             cmd <- tolower(parts[1])
 
@@ -485,7 +506,23 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                         else "disabled"))
                 next
             }
-            if (cmd == "/plan") {
+            if (cmd == "/paste") {
+                # /paste [optional text]: read a multi-line block via
+                # the shared helper, then fall through to turn(). Mark
+                # from_paste so the /r local-eval shortcut below
+                # doesn't reinterpret pasted content that happens to
+                # start with `/r `.
+                rest <- if (length(parts) >= 2L) {
+                    paste(parts[-1], collapse = " ")
+                } else ""
+                joined <- read_paste_block(seed = trimws(rest))
+                if (is.null(joined)) {
+                    next
+                }
+                prompt <- joined
+                from_paste <- TRUE
+                # Fall through to normal prompt handling below.
+            } else if (cmd == "/plan") {
                 rest <- if (length(parts) >= 2L) {
                     paste(parts[-1], collapse = " ")
                 } else ""
@@ -632,17 +669,18 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             # /r is handled separately below to keep its existing
-            # multi-line pending_r_context plumbing. /plan <text> falls
-            # through here too: the /plan branch above rewrote `prompt`
-            # to the args, so we want regular prompt handling, not an
-            # "Unknown command" complaint.
-            if (!startsWith(sp, "/r ") && cmd != "/plan") {
+            # multi-line pending_r_context plumbing. /plan <text> and
+            # /paste fall through here too: those branches above
+            # rewrote `prompt` to the buffer contents, so we want
+            # regular prompt handling instead of an "Unknown command"
+            # complaint that would discard the buffer.
+            if (!startsWith(sp, "/r ") && cmd != "/plan" && cmd != "/paste") {
                 cat(sprintf("%sUnknown command: %s. Type /help for the list.%s\n",
                             color$yellow, cmd, color$reset))
                 next
             }
         }
-        if (startsWith(trimws(prompt), "/r ")) {
+        if (!from_paste && startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
             r_env <- new.env(parent = emptyenv())
             result_lines <- tryCatch(
@@ -768,7 +806,7 @@ chat_approval_cb <- function(cwd = getwd()) {
         )
         cat(paste(lines, collapse = "\n"), "\n")
 
-        ans <- read_prompt_input("Choice [1]: ")
+        ans <- read_prompt_input("Choice: ")
         if (length(ans) == 0L) {
             ans <- ""
         }

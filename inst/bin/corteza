@@ -107,6 +107,7 @@ Commands (in chat):
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
+  /paste [text]  Multi-line. Collects every line verbatim until /end.
   /sessions      List sessions
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -573,7 +574,7 @@ cli_approval_cb <- function(cwd) {
     )
     cat(paste(lines, collapse = "\n"), "\n")
 
-    response <- cli_read_line(sprintf("%sChoice [1]: %s",
+    response <- cli_read_line(sprintf("%sChoice: %s",
                                       color$yellow, color$reset))
     if (length(response) == 0) response <- ""
     response <- trimws(response)
@@ -587,7 +588,7 @@ cli_approval_cb <- function(cwd) {
 
     # Replace the verbose approval block with a one-line `User replied:`
     # summary. Erase (length(lines) + 1) lines: the approval lines
-    # themselves plus the `Choice [1]: ` prompt line. Gated on ANSI;
+    # themselves plus the `Choice: ` prompt line. Gated on ANSI;
     # when escapes aren't honored we just print the summary below the
     # prompt instead of erasing.
     ansi <- nzchar(color$reset)
@@ -1125,8 +1126,27 @@ run_agent <- function(opts) {
     prompt <- trimws(prompt)
     if (nchar(prompt) == 0) next
 
+    # Trailing-backslash continuation. A non-slash line ending in an
+    # unescaped `\` drops into paste mode seeded with the line so far.
+    # `\\` at end = literal trailing backslash (no continuation). Slash
+    # commands are exempt — they own their own arg parsing. `from_paste`
+    # blocks the slash dispatcher below from reinterpreting a paste
+    # that happens to start with `/` (paths, code snippets) as a
+    # corteza command.
+    from_paste <- FALSE
+    if (!startsWith(prompt, "/")) {
+      cont_seed <- corteza:::backslash_continuation_seed(prompt)
+      if (!is.null(cont_seed)) {
+        joined <- corteza:::read_paste_block(seed = cont_seed,
+                                             heredoc = TRUE)
+        if (is.null(joined)) next
+        prompt <- joined
+        from_paste <- TRUE
+      }
+    }
+
     # Handle commands
-    if (startsWith(prompt, "/")) {
+    if (!from_paste && startsWith(prompt, "/")) {
       cmd_parts <- strsplit(prompt, "\\s+")[[1]]
       cmd <- tolower(cmd_parts[1])
       cmd_arg <- if (length(cmd_parts) > 1) cmd_parts[2] else NULL
@@ -1450,6 +1470,13 @@ run_agent <- function(opts) {
                       color$dim, color$reset))
         }
         next
+      } else if (cmd == "/paste") {
+        # /paste [optional text]: read a multi-line block via the
+        # shared helper, then fall through to the normal turn() call.
+        joined <- corteza:::read_paste_block(seed = trimws(cmd_rest))
+        if (is.null(joined)) next
+        prompt <- joined
+        # Fall through to regular prompt handling.
       } else if (cmd == "/plan") {
         # /plan with no args toggles plan mode. /plan <task> turns it
         # on and submits <task> as the next user prompt (falls through
@@ -1665,6 +1692,7 @@ Commands:
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
+  /paste [text]  Multi-line. Collects every line verbatim until /end.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model

@@ -2,10 +2,18 @@
 .prompt_input_state$stdin_con <- NULL
 
 .read_prompt_via_bash <- function(prompt_str = "> ") {
-    cat(prompt_str)
+    # Hand the prompt to bash's `read -e -p` instead of cat()ing it
+    # ourselves. Readline now owns the cursor position, so a Backspace
+    # past the start of the user's input stops at the prompt instead
+    # of erasing it. ANSI color escapes confuse readline's column math
+    # unless wrapped in \001 ... \002 (RL_PROMPT_START_IGNORE /
+    # RL_PROMPT_END_IGNORE); markup_prompt does that wrap.
     utils::flush.console()
+    bash_prompt <- .markup_prompt_for_readline(prompt_str)
 
-    script <- paste('out="$1"', 'IFS= read -r -e line || exit 1',
+    script <- paste('out="$1"',
+                    'prompt="$2"',
+                    'IFS= read -r -e -p "$prompt" line || exit 1',
                     'printf "%s\\n" "$line" > "$out"',
                     'while IFS= read -r -t 0.01 next; do',
                     '  printf "%s\\n" "$next" >> "$out"', 'done', sep = "\n")
@@ -15,7 +23,8 @@
     status <- suppressWarnings(
                                system2(
                                        "bash",
-                                       c("-c", shQuote(script), "bash", shQuote(path)),
+                                       c("-c", shQuote(script), "bash",
+                                         shQuote(path), shQuote(bash_prompt)),
                                        stdout = "",
                                        stderr = ""
         )
@@ -27,6 +36,124 @@
         return(character())
     }
     readLines(path, warn = FALSE)
+}
+
+# Wrap each ANSI color escape sequence in \001 ... \002 so bash's
+# readline counts only the printable characters when positioning the
+# cursor. Otherwise a colored prompt like "\033[32m> \033[0m" makes
+# readline think the prompt is 12 chars wide instead of 2, and
+# Backspace / line wrap go to the wrong place.
+.markup_prompt_for_readline <- function(prompt_str) {
+    if (!is.character(prompt_str) || length(prompt_str) != 1L) {
+        return(prompt_str)
+    }
+    if (!grepl("\033", prompt_str, fixed = TRUE)) {
+        return(prompt_str)
+    }
+    gsub("(\033\\[[0-9;]*m)", "\001\\1\002", prompt_str, perl = TRUE)
+}
+
+# Read a `/paste`-style multi-line block: print a header, accept lines
+# at a continuation prompt, terminate on `/end` or EOF. Returns the
+# joined buffer (single character scalar) or NULL when the buffer ends
+# up empty. Used by both the explicit `/paste` slash command and the
+# implicit trailing-backslash continuation in the chat() and CLI REPL
+# loops, so the UX is identical regardless of how the user got here.
+#
+# `seed` seeds the buffer with the partial line the user already had
+# (the text after `/paste`, or the line-with-trailing-backslash
+# stripped). `continuation_prompt` lets surfaces colorize differently;
+# the rest of the messaging is uniform.
+read_paste_block <- function(seed = NULL,
+                             continuation_prompt = "... ",
+                             header = "",
+                             empty_message = "Empty paste, nothing sent.",
+                             heredoc = FALSE) {
+    buffer <- character()
+    if (!is.null(seed) && nzchar(trimws(seed))) {
+        buffer <- c(buffer, seed)
+    }
+    if (nzchar(header)) {
+        cat(header, "\n", sep = "")
+    }
+    # State machine over sub-lines: bash's `.read_prompt_via_bash`
+    # returns a single string containing pasted multi-line content
+    # joined with `\n`. Splitting per call lets us see each pasted
+    # line individually so a `/end` sentinel buried in a paste fires
+    # immediately.
+    #
+    # Two modes diverge only on what counts as "the last line":
+    #
+    #   heredoc = FALSE (the /paste contract): collect every sub-line
+    #     verbatim. Only `/end` or EOF terminates. Backslashes are
+    #     literal. Use this when the user wants to paste arbitrary
+    #     text (logs, code, etc.) and shouldn't have to escape `\` at
+    #     end of line.
+    #
+    #   heredoc = TRUE (trailing-backslash continuation entry):
+    #     bash-heredoc-with-continuation semantics. A sub-line ending
+    #     in an unescaped `\` continues (with the `\` stripped). The
+    #     first sub-line without trailing `\` is the final line and
+    #     gets included. `/end` and EOF still terminate explicitly.
+    done <- FALSE
+    repeat {
+        if (done) break
+        ln <- read_prompt_input(continuation_prompt)
+        if (length(ln) == 0L) {
+            # EOF (Ctrl+D)
+            break
+        }
+        chunks <- unlist(strsplit(ln, "\n", fixed = TRUE), use.names = FALSE)
+        if (length(chunks) == 0L) {
+            chunks <- ""
+        }
+        for (chunk in chunks) {
+            if (identical(trimws(chunk), "/end")) {
+                # Explicit sentinel — terminate without including the
+                # /end sub-line.
+                done <- TRUE
+                break
+            }
+            if (isTRUE(heredoc)) {
+                cont_seed <- backslash_continuation_seed(chunk)
+                if (is.null(cont_seed)) {
+                    # No trailing unescaped `\` — final sub-line.
+                    buffer <- c(buffer, chunk)
+                    done <- TRUE
+                    break
+                }
+                buffer <- c(buffer, cont_seed)
+            } else {
+                # /paste mode: keep every line verbatim.
+                buffer <- c(buffer, chunk)
+            }
+        }
+    }
+    if (length(buffer) == 0L) {
+        cat(empty_message, "\n", sep = "")
+        return(NULL)
+    }
+    paste(buffer, collapse = "\n")
+}
+
+# Detect "trailing unescaped backslash" — odd number of trailing
+# backslashes means the last one is a continuation marker; even
+# means they're all paired escapes and stand for literal backslash
+# characters. Returns the trimmed line (with the trailing `\`
+# dropped) when continuation should fire, or NULL otherwise.
+backslash_continuation_seed <- function(line) {
+    if (!is.character(line) || length(line) != 1L) {
+        return(NULL)
+    }
+    m <- regexpr("\\\\+$", line, perl = TRUE)
+    if (m < 0L) {
+        return(NULL)
+    }
+    n <- attr(m, "match.length")
+    if (n %% 2L != 1L) {
+        return(NULL)
+    }
+    substr(line, 1L, nchar(line) - 1L)
 }
 
 read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {

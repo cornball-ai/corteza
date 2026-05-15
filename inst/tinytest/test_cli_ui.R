@@ -148,3 +148,144 @@ pretty_result <- tryCatch(
                           error = function(e) e
 )
 expect_false(inherits(pretty_result, "error"))
+
+# Backslash continuation: odd trailing backslashes trigger; even
+# trailing don't. Helper returns the seed (line minus the last `\`)
+# or NULL.
+expect_identical(corteza:::backslash_continuation_seed("foo\\"), "foo")
+expect_null(corteza:::backslash_continuation_seed("foo\\\\"))
+expect_null(corteza:::backslash_continuation_seed("foo"))
+expect_null(corteza:::backslash_continuation_seed(""))
+# Three trailing backslashes is odd, counted as continuation. Seed
+# preserves the two leading backslashes.
+expect_identical(corteza:::backslash_continuation_seed("foo\\\\\\"), "foo\\\\")
+# Non-character / wrong-shape inputs return NULL defensively.
+expect_null(corteza:::backslash_continuation_seed(NULL))
+expect_null(corteza:::backslash_continuation_seed(c("a\\", "b\\")))
+expect_null(corteza:::backslash_continuation_seed(42L))
+
+# ANSI prompt markup wraps escape sequences so bash readline's column
+# math stays correct.
+expect_identical(corteza:::.markup_prompt_for_readline("> "), "> ")
+ansi_wrapped <- corteza:::.markup_prompt_for_readline("\033[32m> \033[0m")
+expect_true(grepl("\001\033\\[32m\002", ansi_wrapped))
+expect_true(grepl("\001\033\\[0m\002", ansi_wrapped))
+
+# read_paste_block: drive it via a stubbed read_prompt_input so we can
+# test the state machine without a TTY. Two regression cases:
+#   1. A single returned line containing embedded "\n" + "/end"
+#      (mimics bash's pasted-multi-line drain) — must terminate
+#      immediately, not consume another input.
+#   2. A line ending with no trailing `\` terminates with the line
+#      included.
+# Heredoc mode: trailing-backslash continuation entry. First sub-line
+# without trailing `\` is final. Embedded `/end` in a pasted block
+# fires immediately (bash drains pasted lines into a single joined
+# string).
+local({
+    inputs <- c("line one \\", "line two\n/end\nshould not appear")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = NULL,
+                                      empty_message = "",
+                                      heredoc = TRUE)
+    # "line one \" strips to "line one " (trailing space preserved,
+    # matching bash's behavior). "line two" has no `\` and is the
+    # final line, included in the buffer. "/end" never reached because
+    # heredoc already terminated.
+    expect_identical(out, "line one \nline two")
+    expect_equal(i, 2L)
+})
+
+# Heredoc mode: a single non-backslash line terminates with that line
+# included.
+local({
+    inputs <- c("just one line")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = "first",
+                                      empty_message = "",
+                                      heredoc = TRUE)
+    expect_identical(out, "first\njust one line")
+})
+
+# /paste mode (heredoc = FALSE, the default): collect every sub-line
+# verbatim until /end or EOF. Codex caught the bug where this used to
+# terminate on the first non-backslash line, dropping the rest of a
+# pasted log/code block.
+local({
+    inputs <- c("line one\nline two\nline three\n/end\ndropped")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = NULL,
+                                      empty_message = "")
+    expect_identical(out, "line one\nline two\nline three")
+})
+
+# /paste mode preserves literal trailing backslashes — code or paths
+# with `\` at end of line shouldn't be interpreted as continuation
+# markers in the explicit /paste contract.
+local({
+    inputs <- c("export PATH=foo\\", "/end")
+    i <- 0L
+    fake_read <- function(prompt) {
+        i <<- i + 1L
+        if (i > length(inputs)) return(character())
+        inputs[i]
+    }
+    ns <- asNamespace("corteza")
+    orig <- ns$read_prompt_input
+    on.exit({
+        unlockBinding("read_prompt_input", ns)
+        assign("read_prompt_input", orig, envir = ns)
+        lockBinding("read_prompt_input", ns)
+    }, add = TRUE)
+    unlockBinding("read_prompt_input", ns)
+    assign("read_prompt_input", fake_read, envir = ns)
+
+    out <- corteza:::read_paste_block(seed = NULL, empty_message = "")
+    # The `\` survives because /paste mode doesn't strip continuation.
+    expect_identical(out, "export PATH=foo\\")
+})

@@ -1,3 +1,31 @@
+# corteza 0.6.6.4
+
+## Input handling
+
+* Backspace past the start of your typing no longer eats the `> `
+  prompt character. The bash hack used for line editing now passes
+  the prompt to `read -e -p` so readline owns the cursor instead of
+  the prompt being a `cat()` that readline can't see. ANSI color
+  escapes in the prompt are wrapped in `\001 \002` so readline's
+  column math stays correct.
+* The approval prompt's `Choice [1]: ` dropped the `[1]` shell
+  convention; the `(Enter)` hint already lives on choice 1 itself,
+  so the bracket was redundant.
+* Multi-line input in both `corteza::chat()` and the CLI. Two
+  entries with two contracts:
+  - `/paste [optional text]` — explicit "paste anything" mode.
+    Collects every line verbatim (logs, code, paths with literal
+    trailing `\`, etc.) until `/end` on its own line or Ctrl+D.
+  - Any non-slash line ending with an unescaped `\` — drops into
+    bash-heredoc-with-continuation mode mid-line, seeded with what
+    you already typed. Keep ending lines with `\` to continue;
+    the first line without a trailing `\` is final and gets
+    included. `\\` at end of a line stays literal. `/end` and EOF
+    also terminate.
+
+  Paste content that happens to start with `/` is not reinterpreted
+  as a corteza command. No "Paste mode..." banner — IYKYK.
+
 # corteza 0.6.6.3
 
 ## Approval prompt
