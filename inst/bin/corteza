@@ -107,7 +107,7 @@ Commands (in chat):
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
-  /paste [text]  Multi-line input. End a line with \ to continue.
+  /paste [text]  Multi-line. Collects every line verbatim until /end.
   /sessions      List sessions
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -1692,7 +1692,7 @@ Commands:
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
-  /paste [text]  Multi-line input. End a line with \ to continue.
+  /paste [text]  Multi-line. Collects every line verbatim until /end.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model

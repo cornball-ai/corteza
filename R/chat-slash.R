@@ -65,7 +65,7 @@ chat_help_text <- function() {
           "  /dryrun                       Toggle dry-run mode (preview tools)",
           "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
           "  /compact                      Summarize conversation to free context",
-          "  /paste [text]                 Multi-line input. End a line with `\\` to continue; submit with the first line that doesn't.",
+          "  /paste [text]                 Multi-line input. Collects every line verbatim until `/end` (or Ctrl+D).",
           "  /r <expr>                     Eval R expression locally; output staged for next prompt",
           "",
           "Subagents:",

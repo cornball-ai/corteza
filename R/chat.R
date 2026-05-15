@@ -508,7 +508,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/paste") {
                 # /paste [optional text]: read a multi-line block via
-                # the shared helper, then fall through to turn().
+                # the shared helper, then fall through to turn(). Mark
+                # from_paste so the /r local-eval shortcut below
+                # doesn't reinterpret pasted content that happens to
+                # start with `/r `.
                 rest <- if (length(parts) >= 2L) {
                     paste(parts[-1], collapse = " ")
                 } else ""
@@ -517,6 +520,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     next
                 }
                 prompt <- joined
+                from_paste <- TRUE
                 # Fall through to normal prompt handling below.
             } else if (cmd == "/plan") {
                 rest <- if (length(parts) >= 2L) {
@@ -676,7 +680,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
         }
-        if (startsWith(trimws(prompt), "/r ")) {
+        if (!from_paste && startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
             r_env <- new.env(parent = emptyenv())
             result_lines <- tryCatch(
