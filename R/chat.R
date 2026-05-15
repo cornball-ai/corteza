@@ -564,38 +564,19 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/context") {
                 files <- config$context_files %||% character(0)
-                # System prompt: full briefing, agent_context, skill
-                # docs, package tool docs, live-subagents block. This is
-                # what the LLM actually sees on every turn alongside
-                # the message history.
-                sys_chars <- as.integer(nchar(turn_session$system %||% "",
-                        type = "chars"))
-                hist_chars <- sum(vapply(turn_session$history %||% list(),
-                        function(m) {
-                    cnt <- m$content
-                    if (is.character(cnt)) {
-                        sum(nchar(cnt, type = "chars"))
-                    } else if (is.list(cnt)) {
-                        sum(vapply(cnt, function(b) {
-                            nchar(b$text %||% "", type = "chars")
-                        }, integer(1)))
-                    } else 0L
-                }, integer(1)))
-                tools_chars <- as.integer(tryCatch(
-                        sum(vapply(skills_as_api_tools(turn_session$tools_filter),
-                                   function(t) {
-                    nchar(jsonlite::toJSON(t, auto_unbox = TRUE),
-                          type = "chars")
-                }, integer(1))),
-                        error = function(e) 0L
-                    ))
-                # Break down in tokens so the components add up to the
-                # total. Compute each ceiling separately; the off-by-one
-                # rounding is dwarfed by the /4 heuristic itself.
-                sys_tok <- as.integer(ceiling(sys_chars / 4))
-                tools_tok <- as.integer(ceiling(tools_chars / 4))
-                hist_tok <- as.integer(ceiling(hist_chars / 4))
-                total_tokens <- sys_tok + tools_tok + hist_tok
+                # Use the shared estimate_* helpers so chat() and the
+                # CLI's /context numbers match. Each component goes
+                # through the same /4 heuristic the CLI uses.
+                tools <- tryCatch(
+                                  skills_as_api_tools(turn_session$tools_filter),
+                                  error = function(e) list()
+                )
+                sys_tok <- estimate_text_tokens(turn_session$system %||% "")
+                tools_tok <- estimate_tool_tokens(tools)
+                hist_tok <- estimate_history_tokens(
+                                                    turn_session$history %||% list()
+                )
+                total_tokens <- as.integer(sys_tok + tools_tok + hist_tok)
                 cat(sprintf("Live context: ~%d tokens (system %d + tools %d + history %d)\n",
                             total_tokens, sys_tok, tools_tok, hist_tok))
                 if (length(files) == 0L) {
@@ -613,14 +594,19 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/compact") {
-                if (length(disk_session$session$messages %||% list()) < 2L) {
+                # Live conversation state in chat() lives on
+                # turn_session$history; disk_session$session$messages
+                # only contains what was loaded at startup (or the
+                # last compaction marker) because chat() persists via
+                # transcript_append, not session_add_message. Wrap
+                # the live history in a session-shaped list so the
+                # shared do_compact() sees the actual current turns.
+                live_messages <- turn_session$history %||% list()
+                if (length(live_messages) < 2L) {
                     cat("Nothing to compact.\n")
                     next
                 }
-                # Use the shared do_compact() so chat() and the CLI
-                # summarize sessions through the same prompt and
-                # model-call shape.
-                result <- do_compact(disk_session$session,
+                result <- do_compact(list(messages = live_messages),
                                      turn_session$provider,
                                      turn_session$model_map$cloud)
                 if (!is.null(result) && nzchar(result$summary)) {
@@ -637,8 +623,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 tools <- skills_as_api_tools(tools_filter)
                 disp_model <- model %||% turn_session$model_map$cloud %||%
                     "(default)"
+                # Pass turn_session — its $history is the live
+                # conversation. estimate_live_context_tokens accepts
+                # either $messages or $history, so this also covers
+                # the CLI's session-as-$messages case.
                 sess_tokens <- estimate_live_context_tokens(
-                                                            disk_session$session,
+                                                            turn_session,
                                                             turn_session$system %||% "",
                                                             tools
                 )
