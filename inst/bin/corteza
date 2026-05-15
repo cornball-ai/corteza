@@ -324,33 +324,6 @@ print_response <- function(text) {
 # context_usage_pct, format_tokens) live in the corteza package; they're
 # already attached via library(corteza) above and used unprefixed below.
 
-default_provider_model <- function(provider) {
-  switch(provider,
-    anthropic = "claude-sonnet-4-20250514",
-    openai = "gpt-4o",
-    moonshot = "kimi-k2.6",
-    ollama = "llama3.2",
-    NULL
-  )
-}
-
-resolve_provider_model <- function(provider, model = NULL) {
-  if (!is.null(model) && nzchar(model)) {
-    if (identical(provider, "moonshot") && identical(model, "kimi-k2")) {
-      return("kimi-k2.6")
-    }
-    return(model)
-  }
-  default_provider_model(provider)
-}
-
-preferred_chat_temperature <- function(provider, temperature) {
-  if (identical(provider, "moonshot")) {
-    return(1)
-  }
-  temperature
-}
-
 print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, crit_pct = 95) {
   pct <- (used / limit) * 100
 
@@ -375,67 +348,6 @@ print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, c
   cat(sprintf("%s[%s / %s tokens %.0f%%]%s%s\n",
               col, used_str, limit_str, pct, warn, color$reset))
 }
-
-# ============================================================================
-# Auto-compaction
-# ============================================================================
-
-compact_prompt <- '
-Summarize this conversation concisely, preserving:
-1. What was accomplished (completed tasks, files modified)
-2. Current work in progress
-3. Key decisions and constraints mentioned
-4. Pending tasks or next steps
-5. Any errors encountered and their resolution
-
-Be specific about file names, function names, and technical details.
-Format as a structured summary the assistant can use to continue the work.
-'
-
-do_compact <- function(session, provider, model, system_prompt) {
-  cat(sprintf("%s\nAuto-compacting conversation...%s\n", color$cyan, color$reset))
-
-  # Build conversation text from messages (extract text from content blocks)
-  conv_text <- vapply(session$messages, function(m) {
-    text <- if (is.list(m$content) && length(m$content) > 0 && !is.null(m$content[[1]]$text)) {
-      m$content[[1]]$text
-    } else {
-      m$content
-    }
-    sprintf("[%s]: %s", m$role, text)
-  }, character(1))
-  conv_text <- paste(conv_text, collapse = "\n\n")
-
-  # Ask LLM to summarize
-  summary_prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s", compact_prompt, conv_text)
-
-  result <- tryCatch({
-    llm.api::chat(
-      prompt = summary_prompt,
-      provider = provider,
-      model = resolve_provider_model(provider, model),
-      system = "You are a helpful assistant that creates concise conversation summaries.",
-      temperature = preferred_chat_temperature(provider, 0.3)
-    )
-  }, error = function(e) {
-    cat(sprintf("%sCompaction failed: %s%s\n", color$bright_magenta, e$message, color$reset))
-    NULL
-  })
-
-  if (is.null(result)) {
-    return(NULL)
-  }
-
-  summary <- result$content
-
-  # Estimate tokens in summary (~4 chars per token)
-  new_tokens <- as.integer(nchar(summary) / 4)
-
-  cat(sprintf("%sCompacted to ~%s tokens%s\n", color$green, format_tokens(new_tokens), color$reset))
-
-  list(summary = summary, tokens = new_tokens)
-}
-
 
 # ============================================================================
 # Tool output buffer (for /last command)
@@ -522,7 +434,7 @@ is_approved <- function(cwd, tool_name) {
   flush_session <- corteza::new_session(
     channel = "cli",
     provider = provider,
-    model_map = list(cloud = resolve_provider_model(provider, model),
+    model_map = list(cloud = corteza:::resolve_provider_model(provider, model),
                      local = corteza::default_local_model()),
     system = system_prompt,
     history = flush_history,
@@ -611,232 +523,12 @@ cli_approval_cb <- function(cwd) {
 # ============================================================================
 # CLI status helpers
 # ============================================================================
-
-capture_command <- function(command, args = character()) {
-  output <- tryCatch(
-    system2(command, args, stdout = TRUE, stderr = TRUE),
-    error = function(e) structure(paste("Error:", e$message), status = 1L)
-  )
-
-  list(
-    lines = output,
-    text = paste(output, collapse = "\n"),
-    status = attr(output, "status") %||% 0L
-  )
-}
-
-truncate_output <- function(text, max_lines = 300L, max_chars = 60000L) {
-  if (is.null(text) || nchar(text) == 0) {
-    return("")
-  }
-
-  lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
-  if (length(lines) > max_lines) {
-    lines <- c(lines[seq_len(max_lines)],
-               sprintf("[truncated at %d lines]", max_lines))
-  }
-  text <- paste(lines, collapse = "\n")
-
-  if (nchar(text) > max_chars) {
-    text <- paste0(substr(text, 1, max_chars), "\n[truncated by character limit]")
-  }
-
-  text
-}
-
-provider_env_var <- function(provider) {
-  switch(provider,
-         anthropic = "ANTHROPIC_API_KEY",
-         openai = "OPENAI_API_KEY",
-         paste0(toupper(provider), "_API_KEY"))
-}
-
-provider_status <- function(provider, model = NULL) {
-  if (provider == "ollama") {
-    err <- tryCatch({
-      validate_model(provider, model)
-      NULL
-    }, error = function(e) e$message)
-
-    if (is.null(err)) {
-      return(list(ok = TRUE, message = "ollama reachable"))
-    }
-    return(list(ok = FALSE, message = err))
-  }
-
-  env_var <- provider_env_var(provider)
-  if (nchar(Sys.getenv(env_var, "")) == 0) {
-    return(list(ok = FALSE, message = paste("missing", env_var)))
-  }
-
-  list(ok = TRUE, message = paste(env_var, "set"))
-}
-
-in_git_repo <- function() {
-  result <- capture_command("git", c("rev-parse", "--is-inside-work-tree"))
-  result$status == 0L && identical(trimws(result$text), "true")
-}
-
-collect_git_diff <- function(ref = NULL) {
-  if (!in_git_repo()) {
-    return(list(ok = FALSE, text = "Not inside a git repository."))
-  }
-
-  target <- trimws(ref %||% "")
-  target <- if (nchar(target) > 0) target else "HEAD"
-
-  status <- capture_command("git", c("status", "--short"))
-  diff <- capture_command(
-    "git",
-    c("diff", "--no-ext-diff", "--find-renames", "--unified=3", target)
-  )
-
-  if (diff$status != 0L) {
-    return(list(ok = FALSE, text = diff$text))
-  }
-
-  if (nchar(trimws(diff$text)) == 0) {
-    if (nchar(trimws(status$text)) > 0) {
-      return(list(
-        ok = FALSE,
-        text = paste0(
-          "No tracked diff against ", target,
-          ". Untracked or ignored files may still be present.\n\n",
-          truncate_output(status$text, max_lines = 50L, max_chars = 4000L)
-        )
-      ))
-    }
-    return(list(ok = FALSE, text = paste("No git diff against", target, ".")))
-  }
-
-  list(
-    ok = TRUE,
-    target = target,
-    status = truncate_output(status$text, max_lines = 80L, max_chars = 6000L),
-    diff = truncate_output(diff$text, max_lines = 500L, max_chars = 70000L)
-  )
-}
-
-format_status_summary <- function(session, provider, display_model, tools, opts,
-                                  config, session_tokens, context_limit,
-                                  context_files, skill_docs) {
-  memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
-                     isTRUE(config$memory_flush_enabled)) {
-    "legacy corteza memory enabled"
-  } else {
-    "legacy corteza memory disabled"
-  }
-
-  paste(
-    c(
-      sprintf("Session: %s", session$sessionKey),
-      sprintf("Model: %s @ %s", display_model, provider),
-      sprintf("Tools: %d | Dry-run: %s",
-              length(tools),
-              if (isTRUE(opts$dry_run)) "on" else "off"),
-      sprintf("Context: %d project file(s) | %d skill doc(s) | %s",
-              length(context_files), length(skill_docs), memory_mode),
-      sprintf("Legacy memory tools: %s",
-              if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("Live context: %s / %s tokens",
-              format_tokens(session_tokens), format_tokens(context_limit)),
-      sprintf("Approval mode: %s", config$approval_mode)
-    ),
-    collapse = "\n"
-  )
-}
-
-format_config_summary <- function(config, provider, display_model, opts) {
-  paste(
-    c(
-      "Runtime config",
-      sprintf("provider: %s", provider),
-      sprintf("model: %s", display_model),
-      sprintf("port: %d", opts$port),
-      sprintf("tools: %s",
-              if (is.null(opts$tools)) "all" else paste(opts$tools, collapse = ", ")),
-      sprintf("context files: %s",
-              if (length(config$context_files) > 0) {
-                paste(config$context_files, collapse = ", ")
-              } else {
-                "(none)"
-              }),
-      sprintf("daily memory logs: %s",
-              if (isTRUE(config$context_include_memory_logs)) "enabled" else "disabled"),
-      sprintf("compaction memory flush: %s",
-              if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
-      sprintf("legacy memory tools: %s",
-              if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("approval mode: %s", config$approval_mode),
-      sprintf("dangerous tools: %s",
-              paste(config$dangerous_tools, collapse = ", "))
-    ),
-    collapse = "\n"
-  )
-}
-
-format_doctor_report <- function(cwd, session, provider, display_model, tools,
-                                 config, context_files, skill_docs) {
-  provider_check <- provider_status(provider, model = if (!is.null(session$model)) session$model else NULL)
-  approvals_path <- file.path(cwd, ".corteza", "approvals.json")
-
-  paste(
-    c(
-      "corteza doctor",
-      sprintf("cwd: %s", cwd),
-      sprintf("session: %s", session$sessionKey),
-      sprintf("provider: %s (%s)",
-              provider,
-              if (isTRUE(provider_check$ok)) provider_check$message else paste("check failed:", provider_check$message)),
-      sprintf("model: %s", display_model),
-      sprintf("worker: connected (%d tools)", length(tools)),
-      sprintf("git: %s", if (in_git_repo()) "repository detected" else "not a git repository"),
-      sprintf("context files: %d", length(context_files)),
-      sprintf("skill docs: %d", length(skill_docs)),
-      sprintf("daily memory logs: %s",
-              if (isTRUE(config$context_include_memory_logs)) "enabled" else "disabled"),
-      sprintf("compaction memory flush: %s",
-              if (isTRUE(config$memory_flush_enabled)) "enabled" else "disabled"),
-      sprintf("legacy memory tools: %s",
-              if (isTRUE(config$legacy_memory_tools_enabled)) "visible" else "hidden"),
-      sprintf("approval mode: %s", config$approval_mode),
-      sprintf("project approvals: %s",
-              if (file.exists(approvals_path)) approvals_path else "none")
-    ),
-    collapse = "\n"
-  )
-}
-
-run_review <- function(provider, model, diff_target, diff_status, diff_text) {
-  review_prompt <- paste(
-    "Review the current git changes.",
-    "Focus on bugs, behavioral regressions, risky assumptions, and missing tests.",
-    "List concrete findings first with file paths and line references when the diff makes them available.",
-    "If there are no material issues, reply with exactly: No findings.",
-    "",
-    sprintf("Git diff target: %s", diff_target),
-    "",
-    "Git status:",
-    diff_status %||% "(clean)",
-    "",
-    "Diff:",
-    diff_text,
-    sep = "\n"
-  )
-
-  tryCatch({
-    llm.api::chat(
-      prompt = review_prompt,
-      provider = provider,
-      model = resolve_provider_model(provider, model),
-      system = paste(
-        "You are performing code review on local changes.",
-        "Findings must come first and should prioritize correctness over style."
-      ),
-      temperature = preferred_chat_temperature(provider, 0.1)
-    )
-  }, error = function(e) e)
-}
+#
+# The formatters and shell/git utilities that used to live here moved
+# into R/cli-helpers.R so the chat() slash commands can use the same
+# implementations. The CLI calls them via corteza:::*** below. The
+# stubs that remain in this file are just the LLM-driven /compact
+# call and any CLI-specific glue (UI banners, color wrapping).
 
 # ============================================================================
 # Main agent loop
@@ -1080,7 +772,7 @@ run_agent <- function(opts) {
   model <- opts$model
 
   # Display model
-  display_model <- resolve_provider_model(provider, model)
+  display_model <- corteza:::resolve_provider_model(provider, model)
 
   cat(sprintf("%s%s @ %s%s\n", color$dim, display_model, provider, color$reset))
 
@@ -1174,7 +866,7 @@ run_agent <- function(opts) {
         if (length(session$messages) < 2) {
           cat(sprintf("%sNothing to compact.%s\n", color$dim, color$reset))
         } else {
-          compact_result <- do_compact(session, provider, model, system_prompt)
+          compact_result <- corteza:::do_compact(session, provider, model)
           if (!is.null(compact_result)) {
             # Write compaction marker to transcript
             corteza:::transcript_compact(session, compact_result$summary)
@@ -1198,7 +890,7 @@ run_agent <- function(opts) {
         config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
-                    format_status_summary(session, provider, display_model, tools,
+                    corteza:::format_status_summary(session, provider, display_model, tools,
                                           opts, config, session_tokens,
                                           context_limit, context_files,
                                           skill_docs),
@@ -1208,7 +900,7 @@ run_agent <- function(opts) {
         config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
-                    format_doctor_report(cwd, session, provider, display_model,
+                    corteza:::format_doctor_report(cwd, session, provider, display_model,
                                          tools, config, context_files,
                                          skill_docs),
                     color$reset))
@@ -1217,7 +909,7 @@ run_agent <- function(opts) {
         config <- corteza:::load_config(cwd)
         cat(sprintf("\n%s%s%s\n\n",
                     color$bold,
-                    format_config_summary(config, provider, display_model, opts),
+                    corteza:::format_config_summary(config, provider, display_model, opts),
                     color$reset))
         next
       } else if (cmd == "/permissions") {
@@ -1232,7 +924,7 @@ run_agent <- function(opts) {
                     if (file.exists(approvals_path)) approvals_path else "none"))
         next
       } else if (cmd == "/diff") {
-        material <- collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
+        material <- corteza:::collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
         if (!isTRUE(material$ok)) {
           cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
         } else {
@@ -1242,13 +934,13 @@ run_agent <- function(opts) {
         }
         next
       } else if (cmd == "/review") {
-        material <- collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
+        material <- corteza:::collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
         if (!isTRUE(material$ok)) {
           cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
           next
         }
 
-        provider_check <- provider_status(provider, model)
+        provider_check <- corteza:::provider_status(provider, model)
         if (!isTRUE(provider_check$ok)) {
           cat(sprintf("%sReview unavailable: %s%s\n",
                       color$yellow, provider_check$message, color$reset))
@@ -1257,7 +949,7 @@ run_agent <- function(opts) {
 
         cat(sprintf("%sReviewing diff against %s...%s\n",
                     color$dim, material$target, color$reset))
-        review_result <- run_review(provider, model, material$target,
+        review_result <- corteza:::run_review(provider, model, material$target,
                                     material$status, material$diff)
         if (inherits(review_result, "error")) {
           cat(sprintf("%sReview failed: %s%s\n",
@@ -1270,8 +962,8 @@ run_agent <- function(opts) {
         }
         next
       } else if (cmd == "/model" && nchar(cmd_rest) > 0) {
-        model <- resolve_provider_model(provider, cmd_rest)
-        display_model <- resolve_provider_model(provider, model)
+        model <- corteza:::resolve_provider_model(provider, cmd_rest)
+        display_model <- corteza:::resolve_provider_model(provider, model)
         context_limit <- context_limit_for_model(display_model)
         session$model <- model
         corteza:::session_save(session)
@@ -1279,7 +971,7 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/provider" && nchar(cmd_rest) > 0) {
         provider <- cmd_rest
-        display_model <- resolve_provider_model(provider, model) %||% "(default)"
+        display_model <- corteza:::resolve_provider_model(provider, model) %||% "(default)"
         context_limit <- context_limit_for_model(display_model)
         session$provider <- provider
         corteza:::session_save(session)
@@ -1773,7 +1465,7 @@ Tool output:
     turn_session <- corteza::new_session(
       channel = "cli",
       provider = provider,
-      model_map = list(cloud = resolve_provider_model(provider, model),
+      model_map = list(cloud = corteza:::resolve_provider_model(provider, model),
                        local = corteza::default_local_model()),
       system = system_prompt,
       history = api_history,
@@ -1913,7 +1605,7 @@ Tool output:
           session$memoryFlushCompactionCount <- compaction_count + 1L
         }
 
-        compact_result <- do_compact(session, provider, model, system_prompt)
+        compact_result <- corteza:::do_compact(session, provider, model)
         if (!is.null(compact_result)) {
           # Write compaction marker to transcript (full history preserved)
           corteza:::transcript_compact(session, compact_result$summary)
