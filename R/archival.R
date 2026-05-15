@@ -397,8 +397,12 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                          cwd, timeout_seconds) {
         library(corteza)
         setwd(cwd)
+        archival_summarize <- utils::getFromNamespace(
+            "archival_summarize", "corteza")
+        transcript_append <- utils::getFromNamespace(
+            "transcript_append", "corteza")
         summary <- tryCatch(
-                            corteza:::archival_summarize(history_slice, style = style,
+                            archival_summarize(history_slice, style = style,
                 provider = provider, model = model,
                 timeout_seconds = timeout_seconds),
                             error = function(e) "[summary unavailable]"
@@ -407,7 +411,7 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
         sess <- list(sessionId = subagent_id, cwd = cwd,
                      provider = provider, model = model)
         tryCatch(
-                 corteza:::transcript_append(
+                 transcript_append(
                 sess, "assistant",
                 paste0("[archival summary]\n\n", summary),
                 provider = "corteza", model = "archival",
@@ -492,7 +496,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
         log_event("archival_failed", phase = "registry_lookup", level = "warn")
         return(NULL)
     }
-    # Holders aren't doing active work — they hold state for later
+    # Holders aren't doing active work -- they hold state for later
     # query_subagent calls. The default 30-minute subagent timeout was
     # designed for tool-using workers where a stuck child shouldn't
     # linger. Override it here so holders live as long as the parent
@@ -665,9 +669,9 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     # and can be tens of seconds.
     if (depth == 0L && interactive()) {
         if (isTRUE(arc_cfg$async %||% TRUE)) {
-            cat("● Archiving (summary in background)...\n")
+            cat("\u25CF Archiving (summary in background)...\n")
         } else {
-            cat("● Archiving turn (this may take a few seconds)...\n")
+            cat("\u25CF Archiving turn (this may take a few seconds)...\n")
         }
     }
 

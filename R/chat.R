@@ -221,7 +221,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     attr(tool_buf_obs, "kind") <- "tool_buffer"
     add_observer(turn_session, tool_buf_obs)
 
-    # Optional experimental layers — off by default; opt in via options.
+    # Optional experimental layers -- off by default; opt in via options.
     if (isTRUE(getOption("corteza.experimental_ce", FALSE))) {
         ce_init(cwd, config)
         for (i in seq_along(history)) {
@@ -270,7 +270,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         sp <- trimws(prompt)
         # Trailing-backslash continuation: a non-slash line ending
         # with an unescaped `\` drops into paste mode seeded with the
-        # line so far. Slash commands are exempt — they have their
+        # line so far. Slash commands are exempt -- they have their
         # own arg parsing. `\\` at end = literal trailing backslash.
         # `from_paste` blocks the slash-command dispatcher below from
         # reinterpreting a paste that happens to start with `/`
@@ -841,7 +841,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             if (nchar(result_text) > 0) {
                 cat(result_text, "\n", sep = "")
             }
-            # Stage for the next send so the LLM has the same context —
+            # Stage for the next send so the LLM has the same context --
             # but a printed data frame or big vector can easily be tens
             # of thousands of tokens, so cap the staged text and fall
             # back to str() for the oversize case.
@@ -971,7 +971,7 @@ chat_approval_cb <- function(cwd = getwd()) {
         summary <- cli_user_replied_line(call, ans,
                                          persistent_label = persistent_label,
                                          cwd = cwd)
-        cat(sprintf("%s●%s User replied:\n  %s⎿  %s%s\n\n",
+        cat(sprintf("%s\u25CF%s User replied:\n  %s\u23BF  %s%s\n\n",
                     color$cyan, color$reset,
                     color$dim, summary, color$reset))
 

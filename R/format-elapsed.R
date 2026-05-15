@@ -1,6 +1,6 @@
-# Duration formatting for the per-turn footer ("─ Worked for 3m 18s ─").
+# Duration formatting for the per-turn footer ("\u2500 Worked for 3m 18s \u2500").
 #
-# Pure formatter — takes start and end times and returns a single
+# Pure formatter -- takes start and end times and returns a single
 # character scalar. The CLI and chat() surfaces wrap the result in
 # dim color + dash padding at their own call sites; the package
 # version stays terminal-agnostic and testable without a clock.
@@ -10,10 +10,10 @@
 #'
 #' Rules:
 #' \itemize{
-#'   \item < 1 second → "Worked for <1s".
-#'   \item < 1 minute → "Worked for Ns" (integer seconds).
-#'   \item < 1 hour → "Worked for Mm Ss".
-#'   \item >= 1 hour → "Worked for Hh Mm Ss".
+#'   \item < 1 second -> "Worked for <1s".
+#'   \item < 1 minute -> "Worked for Ns" (integer seconds).
+#'   \item < 1 hour -> "Worked for Mm Ss".
+#'   \item >= 1 hour -> "Worked for Hh Mm Ss".
 #' }
 #'
 #' Defaults are designed so that calling
@@ -66,7 +66,7 @@ detect_terminal_width <- function() {
     NULL
 }
 
-#' Build the full "─ Worked for X ────" footer line a chat()/CLI surface
+#' Build the full "\u2500 Worked for X \u2500\u2500\u2500\u2500" footer line a chat()/CLI surface
 #' prints at the end of a turn. Caller supplies the palette so the
 #' dim color wrap matches the rest of its output. The line pads to
 #' \code{width} characters with the horizontal-rule glyph so the
@@ -86,9 +86,9 @@ turn_footer_line <- function(start, end = Sys.time(),
     if (is.null(width)) {
         width <- detect_terminal_width() %||% 60L
     }
-    body <- sprintf("─ %s ", format_worked_for(start, end))
+    body <- sprintf("\u2500 %s ", format_worked_for(start, end))
     pad_n <- max(width - nchar(body), 1L)
-    line <- paste0(body, strrep("─", pad_n))
+    line <- paste0(body, strrep("\u2500", pad_n))
     sprintf("%s%s%s",
             palette$dim %||% "", line, palette$reset %||% "")
 }

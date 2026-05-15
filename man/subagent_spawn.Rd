@@ -14,7 +14,7 @@ into an agent loop).}
 
 \item{tools}{Optional explicit tool filter (character vector).
 Overrides `preset` when provided. Fixed for the lifetime of the
-child — cannot be expanded after spawn.}
+child -- cannot be expanded after spawn.}
 
 \item{preset}{Preset name (fixed for the lifetime of the child).
 `"investigate"` (default): `read_file`, `grep_files`, `r_help`,

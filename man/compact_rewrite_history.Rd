@@ -8,7 +8,8 @@ compact_rewrite_history(history, cut, summary)
 }
 \description{
 Pure function: returns the new history list, doesn't mutate
-anything. The summary is wrapped in `[compacted history]\n\n...`
-so it's visually distinct in the transcript.
+anything. The summary is prefixed with a `[compacted history]`
+tag (followed by a blank line) so it's visually distinct in the
+transcript.
 }
 \keyword{internal}

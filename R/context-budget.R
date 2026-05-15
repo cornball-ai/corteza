@@ -130,7 +130,7 @@ format_live_ctx <- function(tokens, limit) {
 #'
 #' Returns `ceil(nchar(text) / 4)`. Good enough for budget decisions
 #' but not a substitute for the provider's real usage count.
-#' @param text Character (length 1 or vector; collapsed with `\n`).
+#' @param text Character (length 1 or vector; collapsed with newlines).
 #' @return Integer.
 #' @keywords internal
 #' @export

@@ -1,6 +1,6 @@
 # /context display: one horizontal meter shared by CLI and chat() so
-# both surfaces answer the two questions a user actually has — how
-# full is context, and what's using it — without redundant prose or
+# both surfaces answer the two questions a user actually has -- how
+# full is context, and what's using it -- without redundant prose or
 # layout drift.
 #
 # The renderer is a pure formatter (no side effects, no Sys.time())
@@ -91,7 +91,7 @@
 
     # Distribute cells proportional to each segment's share of the
     # full context window. Floor + remainder rebalancing so the
-    # total filled count matches the rounded usage percent —
+    # total filled count matches the rounded usage percent --
     # otherwise rounding fights the header number.
     raw <- pmax(0, tokens) / limit * width
     seg_cells <- as.integer(floor(raw))
@@ -120,7 +120,7 @@
         col <- .context_segment_color(labels[i], palette)
         end <- min(width, pos + n - 1L)
         for (k in seq.int(pos, end)) {
-            cells[k] <- sprintf("%s█%s", col, palette$reset %||% "")
+            cells[k] <- sprintf("%s\u2588%s", col, palette$reset %||% "")
         }
         pos <- end + 1L
         if (pos > width) break
@@ -128,7 +128,7 @@
     if (pos <= width) {
         for (k in seq.int(pos, width)) {
             cells[k] <- if (k == compact_cell) {
-                sprintf("%s│%s", palette$dim %||% "", palette$reset %||% "")
+                sprintf("%s\u2502%s", palette$dim %||% "", palette$reset %||% "")
             } else {
                 sprintf("%s.%s", empty_color, palette$reset %||% "")
             }
