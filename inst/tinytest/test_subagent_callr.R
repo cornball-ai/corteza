@@ -4,8 +4,13 @@
 # timeout set, so a CRAN/CI hit on the bug stalls the whole check run
 # rather than failing fast. Tracked at r-lib/callr#313 (see comment
 # 4466514612). Same issue category as the tool_run_r_script error-case
-# gate in test_tool_impl.R; not a corteza bug, and not removable here
-# until callr ships the fix.
+# gate in test_tool_impl.R; not a corteza bug.
+#
+# Upstream fix landed in callr dev tree (r-lib/callr@e93efd1, 2026-05-16):
+# treats "|" and "2>&1" as sentinel stream values in setup_callbacks()
+# instead of file paths, so cat(file = stream) no longer opens a
+# hanging pipe-to-command connection on Windows. Remove this gate (and
+# the matching one in test_tool_impl.R) once the fix ships on CRAN.
 
 if (!tinytest::at_home()) {
     exit_file("Gated: r-lib/callr#313 hangs r_session under R CMD check")
