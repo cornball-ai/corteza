@@ -124,8 +124,11 @@ usage broken into system / tools / history.
 ## Things to avoid
 
 - **No `Co-Authored-By` trailers** in commits.
-- **No version bump in the first PR of a batched release** — version
-  bumps go in the last PR (or a dedicated bump-only PR).
+- **Version bumps follow `~/.claude/CLAUDE.md` "Version Bumping":**
+  fourth-component dev markers ride with every non-test code PR
+  (so `main` is always visibly ahead of CRAN); third/minor/major
+  *release* bumps go in the last PR of a batched release, never the
+  first. Test-only, CI-only, and docs-fix PRs don't bump.
 - **No drive-by cosmetic edits** — don't bundle whitespace or comment
   reformats into substantive PRs.
 - **Don't hide real dependencies behind `requireNamespace()`**. If a
