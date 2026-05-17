@@ -17,17 +17,15 @@ result <- corteza:::tool_run_r_script(code = "cat(1+1)")
 expect_false(isTRUE(result$isError))
 expect_true(grepl("2", result$content[[1]]$text))
 
-# Error-case run_r_script: gated under at_home(). On Windows R 4.6.0,
-# callr::rscript() with stderr = "2>&1" + fail_on_status = FALSE hangs
-# indefinitely when the subprocess errors via stop(), even with a 30s
-# timeout. The success case above returns cleanly on the same host, so
-# this is a callr+Windows pipe-cleanup interaction, not a corteza bug.
-# Skip on R CMD check so CRAN's Windows builder doesn't hang; still
-# runs on `tinytest::test_package("corteza")` locally.
-if (at_home()) {
-    result <- corteza:::tool_run_r_script(code = "stop('test error')")
-    expect_true(grepl("Error", result$content[[1]]$text))
-}
+# Error-case run_r_script: the prior implementation hung on Windows
+# with CRAN callr 3.7.6 (r-lib/callr#313, the stdout = "|" +
+# stderr = "2>&1" + stop() trio). tool_run_r_script() now passes
+# stdout = NULL, which skips the hanging cat(file = "|") path in
+# callr's setup_callbacks() while still merging stderr into res$stdout
+# via "2>&1". Assertion checks for the specific message so a generic
+# wrapper Error couldn't accidentally pass.
+result <- corteza:::tool_run_r_script(code = "stop('test error')")
+expect_true(grepl("test error", result$content[[1]]$text, fixed = TRUE))
 
 # Test shell tool (bash when available, cmd on minimal-install Windows)
 if (.Platform$OS.type == "windows" && !file.exists(corteza:::.find_bash_exe())) {
