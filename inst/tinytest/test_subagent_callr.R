@@ -1,9 +1,21 @@
 # Subagent transport: spawn / query / kill via callr::r_session.
-# Gated at_home() because spawning a real r_session + library(corteza)
-# inside it adds ~250 ms per test run, which is too much for R CMD
-# check's per-test budget on busy CI machines.
+# Gated at_home() purely for the per-test budget: the single
+# subagent_spawn() call cold-starts an r_session and loads corteza
+# inside it (~500 ms on Linux), and when ANTHROPIC_API_KEY is set the
+# query/collect path adds multi-second LLM round-trips on top. That's
+# too much for CRAN's per-test budget on busy CI machines, even though
+# the test itself passes under R CMD check on Linux and on Windows
+# (R 4.5.3, both CRAN callr 3.7.6 and the dev tree).
+#
+# Not the r-lib/callr#313 hang: that bug is in setup_callbacks(), which
+# is rscript()/r()/rcmd() — not r_session, which uses tempfile redirects
+# via rs__prehook/rs__posthook. Verified on Windows: r_session
+# spawn/run/run(stop())/close all complete in under a second on both
+# pre-fix and post-fix callr.
 
-if (!tinytest::at_home()) exit_file("subagent callr tests are slow; at_home only")
+if (!tinytest::at_home()) {
+    exit_file("Gated: spawning r_session + corteza load is slow per test")
+}
 
 # Clean registry up-front so prior tests don't leave residue.
 for (id in ls(corteza:::.subagent_registry)) {

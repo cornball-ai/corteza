@@ -499,9 +499,18 @@ tool_run_r_script <- function(code, timeout = 30L) {
     result <- tryCatch({
         # callr::rscript runs Rscript portably (Linux, macOS, Windows).
         # stderr = "2>&1" merges stderr into stdout so the LLM sees both
-        # streams as a single text blob, matching the prior behavior.
+        # streams as a single text blob in res$stdout.
+        #
+        # stdout = NULL (not "|"): in CRAN callr <= 3.7.6 on Windows,
+        # stdout = "|" combined with stderr = "2>&1" hangs indefinitely
+        # when the child errors via stop() — internal timeout never
+        # fires (r-lib/callr#313, fixed upstream in e93efd1). Passing
+        # stdout = NULL skips the hanging cat(file = "|") call in
+        # setup_callbacks() while still populating res$stdout via the
+        # 2>&1 redirect. Can be reverted to "|" once corteza depends
+        # on a fixed callr release.
         res <- callr::rscript(tmp, show = FALSE, fail_on_status = FALSE,
-                              timeout = timeout, stdout = "|",
+                              timeout = timeout, stdout = NULL,
                               stderr = "2>&1")
         if (isTRUE(res$timeout)) {
             paste0("Error: timed out after ", timeout, "s")

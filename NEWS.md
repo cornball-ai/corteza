@@ -11,6 +11,22 @@
   the denied tool and tells the LLM to stop and ask the user what to
   do instead, rather than retrying or planning a workaround.
 
+# corteza 0.6.6.9
+
+## tool_run_r_script dodges callr Windows hang
+
+* `tool_run_r_script()` switches its `callr::rscript()` call from
+  `stdout = "|"` to `stdout = NULL`, with `stderr = "2>&1"`
+  unchanged. The old combination hangs indefinitely on Windows with
+  CRAN callr 3.7.6 when the child script errors via `stop()` — the
+  internal `timeout` never fires (r-lib/callr#313). `res$stdout` is
+  still populated by the `2>&1` redirect, so the return value and
+  LLM-facing text are identical. Can be reverted once we depend on a
+  fixed callr (>= the post-`e93efd1` release).
+* `test_subagent_callr.R` gate rationale corrected: that gate is
+  about per-test budget, not the callr bug; `r_session` uses a
+  separate code path and was empirically verified not affected.
+
 # corteza 0.6.6.8
 
 ## Tool-count parity between chat() and CLI
