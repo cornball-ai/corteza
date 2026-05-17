@@ -1,19 +1,19 @@
 # Subagent transport: spawn / query / kill via callr::r_session.
-# Gated at_home() because callr's r_session has an upstream pipe-cleanup
-# bug that hangs the child process on certain platforms even with a
-# timeout set, so a CRAN/CI hit on the bug stalls the whole check run
-# rather than failing fast. Tracked at r-lib/callr#313 (see comment
-# 4466514612). Same issue category as the tool_run_r_script error-case
-# gate in test_tool_impl.R; not a corteza bug.
+# Gated at_home() purely for the per-test budget: spawning a real
+# r_session and loading corteza inside it is ~250 ms per spawn, and
+# this test spawns several. That's too much for CRAN's per-test budget
+# on busy CI machines, even though the test itself passes under
+# R CMD check on Linux and on Windows (R 4.5.3, both CRAN callr 3.7.6
+# and dev tree).
 #
-# Upstream fix landed in callr dev tree (r-lib/callr@e93efd1, 2026-05-16):
-# treats "|" and "2>&1" as sentinel stream values in setup_callbacks()
-# instead of file paths, so cat(file = stream) no longer opens a
-# hanging pipe-to-command connection on Windows. Remove this gate (and
-# the matching one in test_tool_impl.R) once the fix ships on CRAN.
+# Not the r-lib/callr#313 hang: that bug is in setup_callbacks(), which
+# is rscript()/r()/rcmd() — not r_session, which uses tempfile redirects
+# via rs__prehook/rs__posthook. Verified on Windows: r_session
+# spawn/run/run(stop())/close all complete in under a second on both
+# pre-fix and post-fix callr.
 
 if (!tinytest::at_home()) {
-    exit_file("Gated: r-lib/callr#313 hangs r_session under R CMD check")
+    exit_file("Gated: spawning r_session + corteza load is slow per test")
 }
 
 # Clean registry up-front so prior tests don't leave residue.
