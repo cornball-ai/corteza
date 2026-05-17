@@ -594,7 +594,7 @@ tool_shell_impl <- function(args, shell_name) {
                         stop(sprintf("Unknown shell %s", shell_name), call. = FALSE)
     )
 
-    exe_args <- switch(shell_name, bash = c("-lc", cmd), cmd = c("/c", cmd))
+    exe_args <- switch(shell_name, bash = c("-c", cmd), cmd = c("/c", cmd))
 
     if (background) {
         proc <- processx::process$new(shell_exe, exe_args, stdout = "|",
@@ -606,10 +606,10 @@ tool_shell_impl <- function(args, shell_name) {
                 )))
     }
 
-    # Windows cmd.exe does not need shQuote and doesn't understand -lc.
+    # Windows cmd.exe does not need shQuote and doesn't understand -c.
     exe_args_fg <- switch(
                           shell_name,
-                          bash = c("-lc", shQuote(cmd)),
+                          bash = c("-c", shQuote(cmd)),
                           cmd = c("/c", cmd)
     )
 
