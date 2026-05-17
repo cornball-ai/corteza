@@ -124,8 +124,6 @@ usage broken into system / tools / history.
 ## Things to avoid
 
 - **No `Co-Authored-By` trailers** in commits.
-- **No version bump in the first PR of a batched release** — version
-  bumps go in the last PR (or a dedicated bump-only PR).
 - **No drive-by cosmetic edits** — don't bundle whitespace or comment
   reformats into substantive PRs.
 - **Don't hide real dependencies behind `requireNamespace()`**. If a
