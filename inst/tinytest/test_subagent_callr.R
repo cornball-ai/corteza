@@ -1,9 +1,15 @@
 # Subagent transport: spawn / query / kill via callr::r_session.
-# Gated at_home() because spawning a real r_session + library(corteza)
-# inside it adds ~250 ms per test run, which is too much for R CMD
-# check's per-test budget on busy CI machines.
+# Gated at_home() because callr's r_session has an upstream pipe-cleanup
+# bug that hangs the child process on certain platforms even with a
+# timeout set, so a CRAN/CI hit on the bug stalls the whole check run
+# rather than failing fast. Tracked at r-lib/callr#313 (see comment
+# 4466514612). Same issue category as the tool_run_r_script error-case
+# gate in test_tool_impl.R; not a corteza bug, and not removable here
+# until callr ships the fix.
 
-if (!tinytest::at_home()) exit_file("subagent callr tests are slow; at_home only")
+if (!tinytest::at_home()) {
+    exit_file("Gated: r-lib/callr#313 hangs r_session under R CMD check")
+}
 
 # Clean registry up-front so prior tests don't leave residue.
 for (id in ls(corteza:::.subagent_registry)) {
