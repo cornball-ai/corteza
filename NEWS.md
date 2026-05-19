@@ -1,3 +1,32 @@
+# corteza 0.6.6.14
+
+## Persistent task list the LLM maintains across turns
+
+* New internal `task_create(tasks)` / `task_update(index, status)`
+  LLM tools (Claude-Code-style TaskCreate pattern). The list lives
+  on the session, is injected into each turn's system prompt as
+  numbered `[ ] / [>] / [x] / [-]` lines, and is shown to the user
+  as a compact summary whenever it changes during a turn. Status
+  is `pending`, `in_progress`, `completed`, or `cancelled`.
+  Promoting a task to `in_progress` auto-demotes any other
+  `in_progress` task to `pending` so the "one active at a time"
+  invariant holds without rejecting valid edits.
+* Tools dispatched via an in-process intercept in
+  `.make_tool_handler()` (`R/turn.R`) rather than the normal skill
+  executor, so the CLI's callr-worker dispatch can't strand
+  mutations in the wrong process. The intercept fires before
+  dry-run, policy, and approval -- task-list updates never prompt
+  the user.
+* `/tasks` (and `/tasks clear`) slash commands in both `chat()`
+  and the terminal CLI. `/clear` wipes the task list along with
+  the conversation, matching the "fresh start" intent.
+* Persistence: task list is saved as part of the session record
+  (`session_new`, `session_save`, `session_load`) so it survives
+  CLI restarts and `chat(session = ...)` resumes.
+* Distinct from `/plan` mode, which is a one-shot
+  research-and-propose flow; the task list tracks ongoing
+  progress for multi-step work without changing the policy gate.
+
 # corteza 0.6.6.13
 
 ## chat() banner resolves provider default model

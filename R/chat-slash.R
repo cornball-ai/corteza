@@ -73,6 +73,7 @@ chat_help_text <- function() {
           "  /compact                      Summarize conversation to free context",
           "  /paste [text]                 Multi-line input. Collects every line verbatim until `/end` (or Ctrl+D).",
           "  /copy                         Copy the last assistant response to the system clipboard.",
+          "  /tasks [clear]                Show (or clear) the current task list.",
           "  /r <expr>                     Eval R expression locally; output staged for next prompt",
           "",
           "Subagents:",

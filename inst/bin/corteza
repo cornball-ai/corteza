@@ -109,6 +109,7 @@ Commands (in chat):
   /compact       Summarize conversation to free context
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
+  /tasks [clear] Show (or clear) the current task list.
   /sessions      List sessions
   /model <name>  Switch model
   /provider <p>  Switch provider
@@ -824,6 +825,7 @@ run_agent <- function(opts) {
       } else if (cmd == "/clear") {
         # Clear in-memory messages (transcript preserved on disk)
         session$messages <- list()
+        session$tasks <- list()
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
         corteza:::session_save(session)
@@ -832,6 +834,22 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/copy") {
         corteza:::chat_handle_copy(last_assistant_response)
+        next
+      } else if (cmd == "/tasks") {
+        if (length(cmd_parts) >= 2L &&
+            identical(tolower(cmd_parts[2]), "clear")) {
+          session$tasks <- list()
+          corteza:::session_save(session)
+          cat("Task list cleared.\n")
+          next
+        }
+        rendered <- corteza:::format_task_list_display(
+          session$tasks %||% list(), palette = color)
+        if (is.null(rendered)) {
+          cat("No tasks.\n")
+        } else {
+          cat(rendered, "\n", sep = "")
+        }
         next
       } else if (cmd == "/compact") {
         if (length(session$messages) < 2) {
@@ -1286,6 +1304,7 @@ Commands:
   /compact       Summarize conversation to free context
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
+  /tasks [clear] Show (or clear) the current task list.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -1382,6 +1401,17 @@ Tool output:
     # policy/approval and the CLI's tool_handler renders the preview
     # instead of executing.
     turn_session$dry_run <- isTRUE(opts$dry_run)
+    # Carry the persistent task list into the per-turn env so the
+    # LLM sees its prior commitments via task_compose_system().
+    turn_session$tasks <- session$tasks %||% list()
+    # task_create's approval prompt routes through cli_read_line so
+    # stdin reads work under the non-interactive Rscript launch
+    # (base readline() returns "" immediately there, which would
+    # silently auto-approve every plan).
+    turn_session$task_approval_cb <- function() {
+        ans <- cli_read_line("Approve this plan? [y/n] ")
+        tolower(trimws(ans)) %in% c("", "y", "yes")
+    }
 
     cat(sprintf("● Thinking with %s\n", display_model))
     pre_turn_len <- length(turn_session$history %||% list())
@@ -1458,6 +1488,18 @@ Tool output:
       cat(sprintf("%sError: %s%s\n", color$bright_magenta, e$message, color$reset))
       NULL
     })
+
+    # Sync task-list mutations to the persistent session record
+    # regardless of turn outcome (codex finding: prior code only
+    # synced on success, so an interrupt right after task_create
+    # approval threw away the just-approved plan). The handlers
+    # above already session_save() the marker; doing the tasks
+    # sync now means the next session_save() picks it up.
+    if (isTRUE(turn_session$tasks_dirty)) {
+      session$tasks <- turn_session$tasks
+      corteza:::session_save(session)
+      turn_session$tasks_dirty <- FALSE
+    }
 
     if (is.null(result)) {
       # Interrupt or error path. Print the timing footer too so the

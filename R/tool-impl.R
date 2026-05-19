@@ -1190,6 +1190,13 @@ register_builtin_skills <- function() {
     # (see .plan_mode_filter_tools).
     register_skill_from_fn("exit_plan_mode", tool_exit_plan_mode)
 
+    # Task tracker: schema only -- the real handlers live in
+    # task_tool_intercept() called from .make_tool_handler(), so they
+    # mutate the main-process session env (the registered stubs would
+    # mutate a worker-process copy under the CLI's callr dispatch).
+    register_skill_from_fn("task_create", tool_task_create)
+    register_skill_from_fn("task_update", tool_task_update)
+
     invisible(list_skills())
 }
 

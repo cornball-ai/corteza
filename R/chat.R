@@ -205,6 +205,16 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # Attach on-disk session metadata so observers can trace.
     turn_session$sessionId <- disk_session$sessionId
     turn_session$disk_session <- disk_session$session
+    # Carry any persisted task list from the resumed session into the
+    # live turn_session env so the next turn's prompt addendum sees it.
+    turn_session$tasks <- disk_session$session$tasks %||% list()
+    # task_create routes the approval prompt through this cb so we
+    # use the R-console's blocking readline() and an empty Enter
+    # means "yes" (matching the rest of corteza's prompt UX).
+    turn_session$task_approval_cb <- function() {
+        ans <- readline("Approve this plan? [y/n] ")
+        tolower(trimws(ans)) %in% c("", "y", "yes")
+    }
 
     # Workspace setup (session-scoped, resumed from disk when appropriate)
     ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
@@ -338,6 +348,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 add_observer(turn_session, obs)
                 pending_r_context <- character(0)
                 last_assistant_response <- ""
+                # /clear wipes the task list -- a new conversation
+                # has no carried-over commitments.
+                turn_session$tasks <- list()
+                turn_session$tasks_dirty <- TRUE
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             color$dim, fresh$sessionId, color$reset))
                 next
@@ -348,6 +362,31 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/copy") {
                 chat_handle_copy(last_assistant_response)
+                next
+            }
+            if (cmd == "/tasks") {
+                if (length(parts) >= 2L &&
+                    identical(tolower(parts[2]), "clear")) {
+                    turn_session$tasks <- list()
+                    turn_session$tasks_dirty <- FALSE
+                    # Persist immediately. If the user clears and
+                    # exits before another assistant turn, the
+                    # post-turn dirty-flag sync would never fire and
+                    # the clear would be lost.
+                    disk_session$session$tasks <- list()
+                    tryCatch(session_save(disk_session$session),
+                             error = function(e) NULL)
+                    cat("Task list cleared.\n")
+                    next
+                }
+                rendered <- format_task_list_display(
+                    turn_session$tasks %||% list(),
+                    palette = color)
+                if (is.null(rendered)) {
+                    cat("No tasks.\n")
+                } else {
+                    cat(rendered, "\n", sep = "")
+                }
                 next
             }
             if (cmd == "/tools") {
@@ -939,6 +978,19 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             NULL
         }
         )
+        # Sync task-list mutations to the on-disk session record
+        # regardless of turn outcome. The intercept prints inline as
+        # changes happen, so there's no end-of-turn display here --
+        # but an approved plan should survive an aborted turn (codex
+        # finding: prior code only synced on success, so an interrupt
+        # right after approval threw away the just-approved plan).
+        if (isTRUE(turn_session$tasks_dirty)) {
+            disk_session$session$tasks <- turn_session$tasks
+            tryCatch(session_save(disk_session$session),
+                     error = function(e) NULL)
+            turn_session$tasks_dirty <- FALSE
+        }
+
         if (is.null(result)) {
             # Interrupt or error path. Still print the timing footer
             # so the user sees how long the aborted turn ran.
@@ -1098,4 +1150,3 @@ chat_trace_observer <- function(session) {
         )
     }
 }
-
