@@ -479,7 +479,7 @@ cli_call_noteworthy_warnings <- function(call, cwd = NULL, decision = NULL) {
 
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
                                cwd = NULL, persistent_label = "Allow always",
-                               width = 88L) {
+                               deny_label = "Deny", width = 88L) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
 
@@ -524,7 +524,7 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
         " Do you want to proceed?",
         "   1. Allow once (Enter)",
         sprintf("   2. %s", persistent_label),
-        "   3. Deny"
+        sprintf("   3. %s", deny_label)
     )
 }
 

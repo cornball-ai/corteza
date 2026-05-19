@@ -431,11 +431,15 @@ cli_approval_cb <- function(cwd) {
     }
 
     persistent_label <- "Allow always for this project"
+    # Terminal CLI catches Ctrl+C as the interrupt that aborts the
+    # turn -- same outcome as picking Deny. Surface the shortcut so
+    # users don't have to type "3" + Enter.
     lines <- corteza:::cli_approval_lines(
       call,
       decision,
       cwd = cwd,
-      persistent_label = persistent_label
+      persistent_label = persistent_label,
+      deny_label = "Deny (Ctrl+C)"
     )
     cat(paste(lines, collapse = "\n"), "\n")
 

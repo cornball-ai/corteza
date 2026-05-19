@@ -12,7 +12,8 @@ lines <- corteza:::cli_approval_lines(
                                       call,
                                       decision,
                                       cwd = "/tmp/project",
-                                      persistent_label = "Allow always for this session"
+                                      persistent_label = "Allow always for this session",
+                                      deny_label = "Deny (Esc)"
 )
 
 # Title still reflects the long tool label.
@@ -25,14 +26,29 @@ expect_false(any(grepl("Write access to local files", lines, fixed = TRUE)))
 expect_false(any(grepl("Policy:", lines, fixed = TRUE)))
 expect_false(any(grepl("Model route", lines, fixed = TRUE)))
 expect_false(any(grepl("Reason", lines, fixed = TRUE)))
-# Key hints land on choices 1 and 3.
+# Key hints land on choices 1 and 3. Choice 3 advertises the
+# surface-appropriate interrupt key (Esc in the R console, Ctrl+C in
+# the terminal CLI). The key doesn't literally cancel the prompt
+# itself -- readline doesn't catch Esc/Ctrl+C -- but it cancels the
+# in-flight turn, which is the user-facing escape hatch they want.
 expect_true(any(grepl("Allow once (Enter)", lines, fixed = TRUE)))
-# `(Esc)` was advertised in an earlier draft but Esc isn't actually
-# wired to deny in either surface (codex caught the lie). Choice 3
-# stays unadorned until raw-keystroke handling is added.
-expect_true(any(grepl("^   3\\. Deny$", lines)))
-expect_false(any(grepl("Deny (Esc)", lines, fixed = TRUE)))
+expect_true(any(grepl("Deny (Esc)", lines, fixed = TRUE)))
 expect_true(any(grepl("Allow always for this session", lines, fixed = TRUE)))
+
+# CLI surface uses Ctrl+C instead of Esc.
+cli_lines <- corteza:::cli_approval_lines(
+                                          call,
+                                          decision,
+                                          cwd = "/tmp/project",
+                                          persistent_label = "Allow always for this project",
+                                          deny_label = "Deny (Ctrl+C)"
+)
+expect_true(any(grepl("Deny (Ctrl+C)", cli_lines, fixed = TRUE)))
+
+# Default deny_label stays unadorned for callers that don't pass it.
+default_lines <- corteza:::cli_approval_lines(call, decision,
+                                              cwd = "/tmp/project")
+expect_true(any(grepl("^   3\\. Deny$", default_lines)))
 
 # Duplicate Path detail under the title is suppressed once Access
 # names the same path.

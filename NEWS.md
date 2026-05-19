@@ -1,3 +1,19 @@
+# corteza 0.6.6.12
+
+## Approval-prompt deny advertises the surface-appropriate
+## interrupt key
+
+* `cli_approval_lines()` takes a new `deny_label` argument (default
+  `"Deny"`). `corteza::chat()` passes `"Deny (Esc)"`; the terminal
+  CLI passes `"Deny (Ctrl+C)"`. The key doesn't literally cancel
+  the readline prompt itself, but it cancels the in-flight turn,
+  which is the user-facing escape hatch users want to know about.
+  Deny still raises the `corteza_user_deny` marker; Esc/Ctrl+C
+  during a turn raises an interrupt marker. The LLM treats both as
+  "stop and check with the user" -- the wording of the interrupt
+  marker is less directive than the deny marker, worth tightening
+  in a follow-up.
+
 # corteza 0.6.6.11
 
 ## Markdown rendering for chat() responses
