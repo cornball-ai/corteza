@@ -72,6 +72,7 @@ chat_help_text <- function() {
           "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
           "  /compact                      Summarize conversation to free context",
           "  /paste [text]                 Multi-line input. Collects every line verbatim until `/end` (or Ctrl+D).",
+          "  /copy                         Copy the last assistant response to the system clipboard.",
           "  /r <expr>                     Eval R expression locally; output staged for next prompt",
           "",
           "Subagents:",
@@ -99,6 +100,137 @@ chat_help_text <- function() {
           "",
           sep = "\n"
     )
+}
+
+#' Detect the runtime context the user is driving corteza from. Used by
+#' `/copy` to choose a context-appropriate clipboard-fallback message.
+#' Returns one of `"rstudio_server"`, `"rstudio_desktop"`, `"ssh"`, or
+#' `"other"`.
+#' @noRd
+chat_clipboard_context <- function() {
+    if (identical(Sys.getenv("RSTUDIO_PROGRAM_MODE"), "server")) {
+        return("rstudio_server")
+    }
+    if (identical(Sys.getenv("RSTUDIO"), "1")) {
+        return("rstudio_desktop")
+    }
+    if (nzchar(Sys.getenv("SSH_CONNECTION"))) {
+        return("ssh")
+    }
+    "other"
+}
+
+#' Try to write `text` to the system clipboard via clipr. Returns TRUE on
+#' success, FALSE if clipr is missing, the clipboard isn't reachable, or
+#' the write itself fails. Warnings from clipr's xclip/xsel probing are
+#' suppressed so they don't bleed into the chat output.
+#' @noRd
+chat_clipboard_write <- function(text) {
+    if (!requireNamespace("clipr", quietly = TRUE)) {
+        return(FALSE)
+    }
+    if (!suppressWarnings(clipr::clipr_available())) {
+        return(FALSE)
+    }
+    tryCatch({
+        suppressWarnings(clipr::write_clip(text))
+        TRUE
+    },
+             error = function(e) FALSE
+    )
+}
+
+#' Emit an OSC 52 clipboard escape sequence so the user's *local*
+#' terminal emulator writes `text` into their *local* system clipboard.
+#' Works over SSH, screen, and tmux (when tmux passthrough is enabled).
+#' Cannot detect whether the terminal actually honored the escape, so
+#' callers should treat success as best-effort and pair with the file
+#' fallback.
+#'
+#' Returns TRUE if the escape was emitted, FALSE if the environment is
+#' clearly unsuitable (no /dev/tty, TERM is "dumb", text is too large,
+#' or non-Unix).
+#' @noRd
+chat_osc52_write <- function(text) {
+    if (.Platform$OS.type != "unix") {
+        return(FALSE)
+    }
+    term <- Sys.getenv("TERM")
+    if (!nzchar(term) || term == "dumb") {
+        return(FALSE)
+    }
+    raw <- charToRaw(enc2utf8(text))
+    # xterm and most terminals cap OSC 52 around 100k base64 chars; stay
+    # well under to avoid silent truncation.
+    if (length(raw) > 74000L) {
+        return(FALSE)
+    }
+    b64 <- jsonlite::base64_enc(raw)
+    esc <- paste0("\033]52;c;", b64, "\007")
+
+    # tmux only forwards OSC 52 when (a) wrapped in DCS-passthrough
+    # *and* (b) `set -g allow-passthrough on` is configured. (b) we
+    # cannot detect; emit the wrapped form anyway and let tmux drop
+    # it silently if disabled.
+    if (nzchar(Sys.getenv("TMUX"))) {
+        inner <- gsub("\033", "\033\033", esc, fixed = TRUE)
+        esc <- paste0("\033Ptmux;", inner, "\033\\")
+    }
+    tryCatch({
+        tty <- suppressWarnings(file("/dev/tty", "w"))
+        on.exit(close(tty), add = TRUE)
+        cat(esc, file = tty)
+        TRUE
+    },
+             error = function(e) FALSE,
+             warning = function(w) FALSE
+    )
+}
+
+#' Resolve the on-disk file path used by `/copy`. On Unix this is
+#' /tmp/corteza_response.md, a stable well-known location the user
+#' can scp / rsync from another device. On Windows we fall back to
+#' tempdir() since /tmp isn't standard.
+#' @noRd
+chat_copy_fallback_path <- function() {
+    if (.Platform$OS.type == "unix") {
+        "/tmp/corteza_response.md"
+    } else {
+        file.path(tempdir(), "corteza_response.md")
+    }
+}
+
+#' Handle the `/copy` slash command. Always writes the response to a
+#' file so the user has a recoverable copy; additionally attempts the
+#' system clipboard (clipr) and, when that's unreachable, an OSC 52
+#' terminal escape. Prints one terse status line.
+#' @noRd
+chat_handle_copy <- function(text) {
+    if (!nzchar(text)) {
+        cat("Nothing to copy.\n")
+        return(invisible())
+    }
+    n <- nchar(text)
+    path <- chat_copy_fallback_path()
+    writeLines(text, path)
+
+    # On RStudio Server console, neither clipr (xclip) nor OSC 52 can
+    # reach the browser-side clipboard, and clipr's xclip probing
+    # leaks warnings through suppressWarnings() under RStudio Server.
+    # Skip both transports there and go straight to the file.
+    ctx <- chat_clipboard_context()
+    clipped <- if (ctx == "rstudio_server") {
+        FALSE
+    } else {
+        chat_clipboard_write(text) || chat_osc52_write(text)
+    }
+
+    if (clipped) {
+        cat(sprintf("Copied (%d chars) to clipboard | Saved to %s\n", n, path))
+    } else {
+        cat(sprintf("Saved (%d chars) to %s\n", n, path))
+    }
+    invisible()
 }
 
 #' Format the active tool list for /tools.

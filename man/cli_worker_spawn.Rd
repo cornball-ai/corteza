@@ -16,9 +16,12 @@ A list with `session` (the `callr::r_session` instance) and
 Starts a fresh `callr::r_session`, loads corteza inside it, and runs
 `worker_init()` so skills are registered in the session. Returns an
 opaque handle the CLI uses for tool dispatch.
+}
+\details{
 Schema production is CLI-side. The worker registers skills only so
 it can execute them; the CLI builds the LLM `tools` payload from its
 own registry via `schema_from_registry()`. Nothing about schema
 shape travels over the worker pipe.
+
 }
 \keyword{internal}

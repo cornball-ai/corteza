@@ -17,7 +17,10 @@ Called by the LLM after it has finished research in plan mode. The
 plan text is shown to the user; on approval the session leaves plan
 mode and the LLM proceeds with the work. On decline the session
 stays in plan mode and the LLM iterates.
+}
+\details{
 This tool is only exposed when the session is in plan mode. Outside
 plan mode it is hidden from the LLM's tool list.
+
 }
 \keyword{internal}

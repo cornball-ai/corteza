@@ -35,6 +35,8 @@ Subagent ID (character).
 Starts a fresh `callr::r_session` with corteza loaded and its tool
 registry set up. Stores the handle in the package-level registry
 keyed by subagent id.
+}
+\details{
 Permissions: subagents have no interactive approval channel back
 to the parent or user. The child's `approval_cb` denies by default
 and there is no mid-run escalation path. Whatever capability the
@@ -43,4 +45,5 @@ child needs must be granted at spawn time through `preset` or
 pick a preset that includes it (or pass an explicit `tools` list);
 otherwise the child should report that it is blocked rather than
 retry.
+
 }

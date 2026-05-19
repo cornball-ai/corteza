@@ -258,6 +258,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # message, so the LLM sees what the user evaluated locally.
     pending_r_context <- character(0)
 
+    # Most recent assistant reply text, exposed via /copy.
+    last_assistant_response <- ""
+
     while (TRUE) {
         prompt <- read_prompt_input("> ")
         if (length(prompt) == 0L) {
@@ -279,8 +282,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         if (!startsWith(sp, "/")) {
             cont_seed <- backslash_continuation_seed(prompt)
             if (!is.null(cont_seed)) {
-                joined <- read_paste_block(seed = cont_seed,
-                                           heredoc = TRUE)
+                joined <- read_paste_block(seed = cont_seed, heredoc = TRUE)
                 if (is.null(joined)) {
                     next
                 }
@@ -331,12 +333,17 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 attr(obs, "kind") <- "tool_buffer"
                 add_observer(turn_session, obs)
                 pending_r_context <- character(0)
+                last_assistant_response <- ""
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             color$dim, fresh$sessionId, color$reset))
                 next
             }
             if (cmd == "/help") {
                 cat(chat_help_text())
+                next
+            }
+            if (cmd == "/copy") {
+                chat_handle_copy(last_assistant_response)
                 next
             }
             if (cmd == "/tools") {
@@ -571,11 +578,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 sys_tok <- estimate_text_tokens(turn_session$system %||% "")
                 tools_tok <- estimate_tool_tokens(tools)
                 hist_tok <- estimate_history_tokens(
-                                                    turn_session$history %||% list()
+                    turn_session$history %||% list()
                 )
                 total_tok <- as.integer(sys_tok + tools_tok + hist_tok)
                 disp_model <- model %||% turn_session$model_map$cloud %||%
-                    "(default)"
+                "(default)"
                 limit <- context_limit_for_model(disp_model)
                 # Codex-style header: corteza version, model, dir,
                 # session id. /status is now an alias of /context
@@ -583,24 +590,24 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 status_info <- list(
                                     corteza = as.character(utils::packageVersion("corteza")),
                                     model = sprintf("%s @ %s", disp_model,
-                                                    turn_session$provider %||% provider),
+                        turn_session$provider %||% provider),
                                     dir = cwd,
                                     session = disk_session$session$sessionKey %||%
-                                        disk_session$session$sessionId %||% "(unset)"
+                                    disk_session$session$sessionId %||% "(unset)"
                 )
                 cat(format_context_block(
-                                         used = total_tok,
-                                         limit = limit,
-                                         breakdown = list(system = sys_tok,
-                                                          tools = tools_tok,
-                                                          history = hist_tok),
-                                         compact_pct = config$context_compact_pct %||% 90L,
-                                         warn_pct = config$context_warn_pct %||% 75L,
-                                         high_pct = config$context_high_pct %||% 90L,
-                                         crit_pct = config$context_crit_pct %||% 95L,
-                                         files = files,
-                                         palette = color,
-                                         status_info = status_info
+                        used = total_tok,
+                        limit = limit,
+                        breakdown = list(system = sys_tok,
+                            tools = tools_tok,
+                            history = hist_tok),
+                        compact_pct = config$context_compact_pct %||% 90L,
+                        warn_pct = config$context_warn_pct %||% 75L,
+                        high_pct = config$context_high_pct %||% 90L,
+                        crit_pct = config$context_crit_pct %||% 95L,
+                        files = files,
+                        palette = color,
+                        status_info = status_info
                     ), "\n", sep = "")
                 next
             }
@@ -632,31 +639,31 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             if (cmd == "/doctor") {
                 tools <- skills_as_api_tools(turn_session$tools_filter)
                 disp_model <- model %||% turn_session$model_map$cloud %||%
-                    "(default)"
+                "(default)"
                 docs <- tryCatch(list_skill_docs(),
                                  error = function(e) character())
                 cat(format_doctor_report(
-                                         cwd = cwd,
-                                         session = disk_session$session,
-                                         provider = turn_session$provider %||% provider,
-                                         display_model = disp_model,
-                                         tools = tools,
-                                         config = config,
-                                         context_files = config$context_files %||% character(),
-                                         skill_docs = docs
+                        cwd = cwd,
+                        session = disk_session$session,
+                        provider = turn_session$provider %||% provider,
+                        display_model = disp_model,
+                        tools = tools,
+                        config = config,
+                        context_files = config$context_files %||% character(),
+                        skill_docs = docs
                     ), "\n")
                 next
             }
             if (cmd == "/config") {
                 disp_model <- model %||% turn_session$model_map$cloud %||%
-                    "(default)"
+                "(default)"
                 cat(format_config_summary(
-                                          config = config,
-                                          provider = turn_session$provider %||% provider,
-                                          display_model = disp_model,
-                                          opts = list(port = config$port,
-                                                      tools = turn_session$tools_filter,
-                                                      dry_run = isTRUE(turn_session$config$dry_run))
+                        config = config,
+                        provider = turn_session$provider %||% provider,
+                        display_model = disp_model,
+                        opts = list(port = config$port,
+                                    tools = turn_session$tools_filter,
+                                    dry_run = isTRUE(turn_session$config$dry_run))
                     ), "\n")
                 next
             }
@@ -666,7 +673,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 } else {
                     1L
                 }
-                if (is.na(n)) n <- 1L
+                if (is.na(n)) {
+                    n <- 1L
+                }
                 outputs <- tool_buffer_list(disk_session$session)
                 if (length(outputs) == 0L) {
                     cat(sprintf("%sNo tool outputs yet.%s\n",
@@ -705,7 +714,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 for (i in seq_along(outputs)) {
                     entry <- outputs[[i]]
                     lines <- length(strsplit(entry$result %||% "", "\n",
-                                             fixed = TRUE)[[1]])
+                            fixed = TRUE)[[1]])
                     cat(sprintf("  %s[%d]%s %s%s%s (%d lines) @ %s\n",
                                 color$dim, i, color$reset,
                                 color$cyan, entry$name, color$reset,
@@ -716,7 +725,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/diff") {
-                ref <- if (length(parts) >= 2L) parts[2] else NULL
+                if (length(parts) >= 2L) {
+                    ref <- parts[2]
+                } else {
+                    ref <- NULL
+                }
                 material <- collect_git_diff(ref)
                 if (!isTRUE(material$ok)) {
                     cat(sprintf("%s%s%s\n", color$yellow, material$text,
@@ -729,7 +742,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/review") {
-                ref <- if (length(parts) >= 2L) parts[2] else NULL
+                if (length(parts) >= 2L) {
+                    ref <- parts[2]
+                } else {
+                    ref <- NULL
+                }
                 material <- collect_git_diff(ref)
                 if (!isTRUE(material$ok)) {
                     cat(sprintf("%s%s%s\n", color$yellow, material$text,
@@ -737,8 +754,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                     next
                 }
                 provider_check <- provider_status(
-                                                  turn_session$provider %||% provider,
-                                                  model
+                    turn_session$provider %||% provider,
+                    model
                 )
                 if (!isTRUE(provider_check$ok)) {
                     cat(sprintf("%sReview unavailable: %s%s\n",
@@ -749,9 +766,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 cat(sprintf("%sReviewing diff against %s...%s\n",
                             color$dim, material$target, color$reset))
                 review_result <- run_review(
-                                            turn_session$provider %||% provider,
-                                            model, material$target,
-                                            material$status, material$diff
+                    turn_session$provider %||% provider,
+                    model, material$target,
+                    material$status, material$diff
                 )
                 if (inherits(review_result, "error")) {
                     cat(sprintf("%sReview failed: %s%s\n",
@@ -890,7 +907,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             turn_session$history <- c(
                                       turn_session$history %||% list(),
                                       list(list(role = "user", content = prompt),
-                                           list(role = "assistant", content = marker))
+                    list(role = "assistant", content = marker))
             )
             transcript_append(disk_session$session, "assistant", marker)
             NULL
@@ -905,7 +922,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             turn_session$history <- c(
                                       turn_session$history %||% list(),
                                       list(list(role = "user", content = prompt),
-                                           list(role = "assistant", content = marker))
+                    list(role = "assistant", content = marker))
             )
             transcript_append(disk_session$session, "assistant", marker)
             NULL
@@ -919,8 +936,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         if (is.null(result)) {
             # Interrupt or error path. Still print the timing footer
             # so the user sees how long the aborted turn ran.
-            cat(turn_footer_line(turn_start, palette = color), "\n",
-                sep = "")
+            cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")
             next
         }
 
@@ -929,6 +945,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             cat(sprintf("%s[No response text]%s\n\n", color$dim, color$reset))
         } else {
             cat(reply, "\n\n")
+            last_assistant_response <- reply
         }
         cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")
         transcript_append(disk_session$session, "assistant", reply)
@@ -962,12 +979,8 @@ chat_approval_cb <- function(cwd = getwd()) {
         }
 
         persistent_label <- "Allow always for this session"
-        lines <- cli_approval_lines(
-                                    call,
-                                    decision,
-                                    cwd = cwd,
-                                    persistent_label = persistent_label
-        )
+        lines <- cli_approval_lines(call, decision, cwd = cwd,
+                                    persistent_label = persistent_label)
         cat(paste(lines, collapse = "\n"), "\n")
 
         ans <- read_prompt_input("Choice: ")
@@ -985,8 +998,8 @@ chat_approval_cb <- function(cwd = getwd()) {
         # we leave the approval block in scrollback and just append the
         # one-line summary below it.
         summary <- cli_user_replied_line(call, ans,
-                                         persistent_label = persistent_label,
-                                         cwd = cwd)
+            persistent_label = persistent_label,
+            cwd = cwd)
         cat(sprintf("%s\u25CF%s User replied:\n  %s\u23BF  %s%s\n\n",
                     color$cyan, color$reset,
                     color$dim, summary, color$reset))

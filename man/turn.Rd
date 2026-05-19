@@ -26,10 +26,13 @@ A list with \code{reply} (character) and \code{session} (the
 Sends \code{prompt} to the configured LLM with tool use enabled. Every
 tool call the LLM makes is routed through \code{\link{policy}} before
 being dispatched.
+}
+\details{
 Tool dispatch is pluggable via \code{tool_executor}. The default is an
 in-process dispatcher that calls the local skill registry — suitable
 for \code{chat()} and matrix adapters running in the same R process as
 their skills. Pass \code{\link{mcp_tool_executor}} (or any
 \code{function(name, args) -> MCP-format result}) to run tools in a
 separate process, which is how the CLI talks to \code{serve()}.
+
 }

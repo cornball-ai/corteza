@@ -397,8 +397,8 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                          cwd, timeout_seconds) {
         library(corteza)
         setwd(cwd)
-        archival_summarize <- utils::getFromNamespace(
-            "archival_summarize", "corteza")
+        archival_summarize <- utils::getFromNamespace("archival_summarize",
+            "corteza")
         transcript_append <- utils::getFromNamespace(
             "transcript_append", "corteza")
         summary <- tryCatch(
@@ -412,10 +412,10 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                      provider = provider, model = model)
         tryCatch(
                  transcript_append(
-                sess, "assistant",
-                paste0("[archival summary]\n\n", summary),
-                provider = "corteza", model = "archival",
-                agent_id = agent_id
+                                   sess, "assistant",
+                                   paste0("[archival summary]\n\n", summary),
+                                   provider = "corteza", model = "archival",
+                                   agent_id = agent_id
             ),
                  error = function(e) NULL
         )

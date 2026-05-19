@@ -24,8 +24,11 @@ Called from the CLI over `callr::r_session$run()`. Looks up the skill
 in the registry, runs it, and normalizes any dispatch-level failures
 as a `corteza_tool_error` condition. Tool-body failures that are
 already caught by `skill_run()` remain as `err()` envelopes.
+}
+\details{
 Exported (with `@keywords internal`) because it runs inside a
 `callr::r_session` child process, where `corteza:::` would otherwise
 trip the R CMD check "calls to the package's namespace" NOTE.
+
 }
 \keyword{internal}

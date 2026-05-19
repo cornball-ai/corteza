@@ -11,8 +11,7 @@
     utils::flush.console()
     bash_prompt <- .markup_prompt_for_readline(prompt_str)
 
-    script <- paste('out="$1"',
-                    'prompt="$2"',
+    script <- paste('out="$1"', 'prompt="$2"',
                     'IFS= read -r -e -p "$prompt" line || exit 1',
                     'printf "%s\\n" "$line" > "$out"',
                     'while IFS= read -r -t 0.01 next; do',
@@ -24,7 +23,7 @@
                                system2(
                                        "bash",
                                        c("-c", shQuote(script), "bash",
-                                         shQuote(path), shQuote(bash_prompt)),
+                shQuote(path), shQuote(bash_prompt)),
                                        stdout = "",
                                        stderr = ""
         )
@@ -64,8 +63,7 @@
 # (the text after `/paste`, or the line-with-trailing-backslash
 # stripped). `continuation_prompt` lets surfaces colorize differently;
 # the rest of the messaging is uniform.
-read_paste_block <- function(seed = NULL,
-                             continuation_prompt = "... ",
+read_paste_block <- function(seed = NULL, continuation_prompt = "... ",
                              header = "",
                              empty_message = "Empty paste, nothing sent.",
                              heredoc = FALSE) {
@@ -97,7 +95,9 @@ read_paste_block <- function(seed = NULL,
     #     gets included. `/end` and EOF still terminate explicitly.
     done <- FALSE
     repeat {
-        if (done) break
+        if (done) {
+            break
+        }
         ln <- read_prompt_input(continuation_prompt)
         if (length(ln) == 0L) {
             # EOF (Ctrl+D)
@@ -383,8 +383,16 @@ cli_call_access_lines <- function(call, cwd = NULL) {
     op <- classify_op(tool)
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())
-    path_str <- if (length(paths) > 0L) paths[[1L]] else ""
-    url_str <- if (length(urls) > 0L) urls[[1L]] else ""
+    if (length(paths) > 0L) {
+        path_str <- paths[[1L]]
+    } else {
+        path_str <- ""
+    }
+    if (length(urls) > 0L) {
+        url_str <- urls[[1L]]
+    } else {
+        url_str <- ""
+    }
 
     line <- if (tool %in% c("run_r", "run_r_script")) {
         "Run R code"
@@ -480,7 +488,7 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
                                      cwd = cwd, width = width - 6L)
     access <- cli_call_access_lines(call, cwd = cwd)
     warnings <- cli_call_noteworthy_warnings(call, cwd = cwd,
-                                             decision = decision)
+        decision = decision)
 
     # The Access line already names the path/URL. Skip detail lines
     # that duplicate that name so we don't show the path three times
@@ -489,12 +497,12 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
         path_in_access <- regmatches(
                                      access,
                                      regexpr("(?:Read from|Write to|Fetch|Send to|.* on)\\s+(.+)$",
-                                             access, perl = TRUE)
+                access, perl = TRUE)
         )
         if (length(path_in_access) > 0L) {
             access_path <- sub("^[A-Za-z ]+\\s+", "", path_in_access)
             details <- details[!grepl(sprintf("^Path:\\s*%s$",
-                                              regex_escape(access_path)),
+                        regex_escape(access_path)),
                                       details)]
         }
     }
@@ -560,8 +568,14 @@ cli_user_replied_line <- function(call, choice,
 
     target <- if (tool %in% c("bash", "cmd")) {
         cmd <- call$args$command %||% ""
-        if (nchar(cmd) > 40L) cmd <- paste0(substr(cmd, 1, 37), "...")
-        if (nzchar(cmd)) sprintf("`%s`", cmd) else "shell command"
+        if (nchar(cmd) > 40L) {
+            cmd <- paste0(substr(cmd, 1, 37), "...")
+        }
+        if (nzchar(cmd)) {
+            sprintf("`%s`", cmd)
+        } else {
+            "shell command"
+        }
     } else if (tool %in% c("run_r", "run_r_script")) {
         "R code"
     } else if (length(paths) > 0L) {
@@ -577,10 +591,7 @@ cli_user_replied_line <- function(call, choice,
     } else if (tool %in% c("bash", "cmd")) {
         "running"
     } else {
-        switch(op,
-               read = "reading",
-               write = "writing to",
-               exec = "running",
+        switch(op, read = "reading", write = "writing to", exec = "running",
                sprintf("using %s on", tool))
     }
 

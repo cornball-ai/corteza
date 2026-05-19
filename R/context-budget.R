@@ -19,24 +19,24 @@
 #' ship them.
 #' @keywords internal
 MODEL_CONTEXT_LIMITS <- list(
-    # Anthropic
-    "claude-sonnet-4-20250514" = 200000L,
-    "claude-opus-4-20250514"   = 200000L,
-    "claude-3-5-sonnet-20241022" = 200000L,
-    "claude-3-opus-20240229"   = 200000L,
-    "claude-3-haiku-20240307"  = 200000L,
-    # OpenAI
-    "gpt-4o" = 128000L,
-    "gpt-4o-mini" = 128000L,
-    "gpt-4-turbo" = 128000L,
-    "gpt-4" = 8192L,
-    "gpt-3.5-turbo" = 16385L,
-    # Ollama (varies by quantization)
-    "llama3.2" = 128000L,
-    "llama3.1" = 128000L,
-    "mistral" = 32000L,
-    "mixtral" = 32000L,
-    "qwen2.5" = 32000L
+                             # Anthropic
+                             "claude-sonnet-4-20250514" = 200000L,
+                             "claude-opus-4-20250514" = 200000L,
+                             "claude-3-5-sonnet-20241022" = 200000L,
+                             "claude-3-opus-20240229" = 200000L,
+                             "claude-3-haiku-20240307" = 200000L,
+                             # OpenAI
+                             "gpt-4o" = 128000L,
+                             "gpt-4o-mini" = 128000L,
+                             "gpt-4-turbo" = 128000L,
+                             "gpt-4" = 8192L,
+                             "gpt-3.5-turbo" = 16385L,
+                             # Ollama (varies by quantization)
+                             "llama3.2" = 128000L,
+                             "llama3.1" = 128000L,
+                             "mistral" = 32000L,
+                             "mixtral" = 32000L,
+                             "qwen2.5" = 32000L
 )
 
 #' Provider-specific default model name.
@@ -51,11 +51,8 @@ MODEL_CONTEXT_LIMITS <- list(
 #' @keywords internal
 #' @export
 default_provider_model <- function(provider) {
-    switch(provider %||% "",
-           anthropic = "claude-sonnet-4-20250514",
-           openai    = "gpt-4o",
-           moonshot  = "kimi-k2.6",
-           ollama    = "llama3.2",
+    switch(provider %||% "", anthropic = "claude-sonnet-4-20250514",
+           openai = "gpt-4o", moonshot = "kimi-k2.6", ollama = "llama3.2",
            NULL)
 }
 
@@ -158,10 +155,10 @@ message_text <- function(message) {
     if (is.list(content)) {
         if (length(content) > 0L && !is.null(content[[1]]$text)) {
             return(paste(vapply(
-                content,
-                function(block) as.character(block$text %||% ""),
-                character(1)
-            ), collapse = "\n"))
+                                content,
+                                function(block) as.character(block$text %||% ""),
+                                character(1)
+                    ), collapse = "\n"))
         }
         return(paste(utils::capture.output(str(content, max.level = 2L)),
                      collapse = "\n"))
@@ -204,8 +201,8 @@ estimate_tool_tokens <- function(tools) {
         return(0L)
     }
     tool_text <- tryCatch(
-        jsonlite::toJSON(tools, auto_unbox = TRUE, null = "null"),
-        error = function(e) ""
+                          jsonlite::toJSON(tools, auto_unbox = TRUE, null = "null"),
+                          error = function(e) ""
     )
     as.integer(estimate_text_tokens(tool_text) + length(tools) * 12L)
 }
@@ -221,7 +218,7 @@ estimate_tool_tokens <- function(tools) {
 #' @keywords internal
 #' @export
 estimate_live_context_tokens <- function(session, system_prompt = NULL,
-                                         tools = NULL) {
+    tools = NULL) {
     sys_tok <- estimate_text_tokens(system_prompt %||% "")
     tools_tok <- estimate_tool_tokens(tools)
     # CLI sessions store the live message list under $messages;
@@ -244,8 +241,8 @@ estimate_live_context_tokens <- function(session, system_prompt = NULL,
 #' @return Numeric percentage in `[0, +Inf)`.
 #' @keywords internal
 #' @export
-context_usage_pct <- function(session, model,
-                              system_prompt = NULL, tools = NULL) {
+context_usage_pct <- function(session, model, system_prompt = NULL,
+                              tools = NULL) {
     used <- estimate_live_context_tokens(session, system_prompt, tools)
     limit <- context_limit_for_model(model)
     if (is.null(limit) || limit <= 0L) {

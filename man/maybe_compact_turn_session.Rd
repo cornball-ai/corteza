@@ -20,7 +20,10 @@ Decision points:
 - Live token usage below threshold → skip.
 - No safe cut available (e.g. open tool_use) → skip.
 - Summarizer fails → log and leave history intact.
+}
+\details{
 On success, mutates `session$history` in place. Returns invisibly
 TRUE if compaction ran successfully, FALSE otherwise.
+
 }
 \keyword{internal}

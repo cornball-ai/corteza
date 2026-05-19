@@ -338,8 +338,7 @@ policy <- function(call, config = NULL) {
         if (identical(base$approval, "allow")) {
             return(list(model = base$model %||% "cloud",
                         approval = "ask",
-                        reason = sprintf("config: %s requires approval",
-                                         tool)))
+                        reason = sprintf("config: %s requires approval", tool)))
         }
         return(base)
     }

@@ -42,7 +42,10 @@ the target room, and writes credentials to
 mode 0600. Call once per host. Model, provider, tools_filter, and
 auto_approve_asks are defaults the poll loop uses unless overridden
 at call time.
+}
+\details{
 Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
 that path is still read for backward compatibility, but the next
 \code{matrix_configure()} call writes to the new location.
+
 }

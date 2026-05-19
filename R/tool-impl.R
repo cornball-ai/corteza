@@ -257,8 +257,7 @@ tool_write_file <- function(path, content, append = FALSE, create_dirs = TRUE) {
     # path produces an all-green diff, which is what we want.
     old_content <- ""
     if (file.exists(path) && !dir.exists(path)) {
-        old_content <- tryCatch(tool_read_text(path),
-                                error = function(e) "")
+        old_content <- tryCatch(tool_read_text(path), error = function(e) "")
     }
 
     write_error <- tryCatch({
@@ -270,13 +269,17 @@ tool_write_file <- function(path, content, append = FALSE, create_dirs = TRUE) {
     }
 
     summary <- sprintf("%s %d byte(s) to %s",
-                       if (append) "Appended" else "Wrote",
+        if (append) "Appended" else "Wrote",
                        nchar(content, type = "bytes"), path)
     # Append mode writes after existing content; the on-disk file now
     # has old_content + content. Reflect that in the displayed diff so
     # the user sees what was actually written, not a misleading
     # whole-file overwrite preview.
-    new_for_diff <- if (append) paste0(old_content, content) else content
+    if (append) {
+        new_for_diff <- paste0(old_content, content)
+    } else {
+        new_for_diff <- content
+    }
     diff <- compute_unified_diff(old_content, new_for_diff, path)
     ok_with_diff(summary, diff)
 }
@@ -353,11 +356,15 @@ tool_replace_in_file <- function(path, old_text, new_text, all = FALSE,
         return(err(paste("Write error:", write_error)))
     }
 
-    replacements <- if (replace_all) match_count else 1L
+    if (replace_all) {
+        replacements <- match_count
+    } else {
+        replacements <- 1L
+    }
     summary <- sprintf("Updated %s (%d replacement%s)",
                        path,
                        replacements,
-                       if (replacements == 1L) "" else "s")
+        if (replacements == 1L) "" else "s")
     diff <- compute_unified_diff(original, updated, path)
     ok_with_diff(summary, diff)
 }

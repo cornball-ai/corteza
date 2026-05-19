@@ -207,15 +207,15 @@ subagent_turn_prompt <- function(prompt) {
             role <- entry$role %||% "user"
             body <- archival_history_entry_to_text(entry)
             tryCatch(
-                transcript_append(disk_sess, role, body,
-                                  provider = disk_sess$provider,
-                                  model = disk_sess$model,
-                                  agent_id = agent_id),
-                error = function(e) {
-                    log_event("subagent_transcript_append_failed",
-                              subagent_id = sub_id,
-                              error = conditionMessage(e), level = "warn")
-                })
+                     transcript_append(disk_sess, role, body,
+                                       provider = disk_sess$provider,
+                                       model = disk_sess$model,
+                                       agent_id = agent_id),
+                     error = function(e) {
+                log_event("subagent_transcript_append_failed",
+                          subagent_id = sub_id,
+                          error = conditionMessage(e), level = "warn")
+            })
         }
     }
 
@@ -269,14 +269,14 @@ subagent_turn_prompt <- function(prompt) {
     # rewrites the in-memory history sent to the model on the next
     # query. Archive holders are skipped via the kind marker.
     tryCatch(
-        maybe_compact_turn_session(
-            .subagent_state$session, cfg,
-            kind = .subagent_state$kind),
-        error = function(e) {
-            log_event("subagent_compact_failed",
-                      reason = "unexpected_error",
-                      error = conditionMessage(e), level = "warn")
-        })
+             maybe_compact_turn_session(
+                                        .subagent_state$session, cfg,
+                                        kind = .subagent_state$kind),
+             error = function(e) {
+        log_event("subagent_compact_failed",
+                  reason = "unexpected_error",
+                  error = conditionMessage(e), level = "warn")
+    })
 
     list(reply = as.character(result$reply %||% ""),
          usage = result$usage %||% list())
@@ -500,35 +500,35 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
     store_update(session_key, list(status = "running"))
     seq <- next_subagent_seq()
     .subagent_registry[[id]] <- list(
-        id = id,
-        seq = seq,
-        session_key = session_key,
-        session = session,
-        task = task,
-        tools = tools,
-        model = spawn_model,
-        provider = spawn_provider,
-        started_at = Sys.time(),
-        timeout = Sys.time() + subcfg$timeout_minutes * 60,
-        depth = child_depth,
-        # Usage counters (accumulated across queries; cost is NA when
-        # the provider doesn't surface it).
-        cumulative_input_tokens = 0L,
-        cumulative_output_tokens = 0L,
-        cumulative_total_tokens = 0L,
-        cumulative_cost = NA_real_,
-        query_count = 0L
+                                     id = id,
+                                     seq = seq,
+                                     session_key = session_key,
+                                     session = session,
+                                     task = task,
+                                     tools = tools,
+                                     model = spawn_model,
+                                     provider = spawn_provider,
+                                     started_at = Sys.time(),
+                                     timeout = Sys.time() + subcfg$timeout_minutes * 60,
+                                     depth = child_depth,
+                                     # Usage counters (accumulated across queries; cost is NA when
+                                     # the provider doesn't surface it).
+                                     cumulative_input_tokens = 0L,
+                                     cumulative_output_tokens = 0L,
+                                     cumulative_total_tokens = 0L,
+                                     cumulative_cost = NA_real_,
+                                     query_count = 0L
     )
     # Initialize the durable transcript file. Disk space is cheap;
     # context is expensive -- the in-memory child history may later be
     # compacted, but the on-disk transcript is append-only and never
     # rewritten. Header writes are idempotent.
     tryCatch(
-        transcript_write_header(id, cwd, agent_id = paste0("subagent-", id)),
-        error = function(e) {
-            log_event("subagent_transcript_init_failed", subagent_id = id,
-                      error = conditionMessage(e), level = "warn")
-        })
+             transcript_write_header(id, cwd, agent_id = paste0("subagent-", id)),
+             error = function(e) {
+        log_event("subagent_transcript_init_failed", subagent_id = id,
+                  error = conditionMessage(e), level = "warn")
+    })
 
     log_event("subagent_spawn", subagent_id = id, seq = seq, task = task,
               depth = child_depth)
@@ -604,14 +604,13 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
     }
 
     turn_result <- tryCatch(
-        info$session$run(
+                            info$session$run(
             function(p) corteza::subagent_turn_prompt(p),
             list(p = prompt)
         ),
-        error = function(e) {
-            stop("Subagent query failed: ", conditionMessage(e),
-                 call. = FALSE)
-        })
+                            error = function(e) {
+        stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
+    })
     info <- subagent_accumulate_usage(info, turn_result$usage)
     .subagent_registry[[canonical]] <- info
     log_event("subagent_query", subagent_id = canonical,
@@ -707,14 +706,18 @@ subagent_accumulate_usage <- function(info, usage) {
         return(info)
     }
     add_int <- function(prev, new) {
-        if (is.null(new) || is.na(new)) prev else prev + as.integer(new)
+        if (is.null(new) || is.na(new)) {
+            prev
+        } else {
+            prev + as.integer(new)
+        }
     }
     info$cumulative_input_tokens <- add_int(info$cumulative_input_tokens %||% 0L,
-                                            usage$input_tokens)
+        usage$input_tokens)
     info$cumulative_output_tokens <- add_int(info$cumulative_output_tokens %||% 0L,
-                                             usage$output_tokens)
+        usage$output_tokens)
     info$cumulative_total_tokens <- add_int(info$cumulative_total_tokens %||% 0L,
-                                            usage$total_tokens)
+        usage$total_tokens)
     if (!is.null(usage$cost) && !is.na(usage$cost)) {
         prev <- info$cumulative_cost
         info$cumulative_cost <- if (is.na(prev)) {
@@ -739,35 +742,34 @@ subagent_live_token_count <- function(info) {
         return(list(tokens = NA_integer_, limit = NA_integer_))
     }
     result <- tryCatch(
-        info$session$run(function() {
-            subagent_state <- utils::getFromNamespace(
-                ".subagent_state", "corteza")
-            skills_as_api_tools <- utils::getFromNamespace(
-                "skills_as_api_tools", "corteza")
-            sess <- subagent_state$session
-            if (is.null(sess)) {
-                return(list(tokens = NA_integer_, limit = NA_integer_,
-                            model = NULL))
-            }
-            # Match the model the child actually runs with: explicit
-            # model_map$cloud first, otherwise the provider default.
-            # Without this fallback, child sessions spawned with the
-            # default model report `ctx ?` because there's no explicit
-            # model name to look up a limit for.
-            model <- sess$model_map$cloud %||%
-                corteza::default_provider_model(sess$provider)
-            tools <- tryCatch(skills_as_api_tools(sess$tools_filter),
-                              error = function(e) NULL)
-            list(
-                tokens = corteza::estimate_live_context_tokens(
-                    list(history = sess$history %||% list()),
-                    system_prompt = sess$system, tools = tools),
-                limit = if (is.null(model)) NA_integer_ else
-                    corteza::context_limit_for_model(model),
-                model = model)
-        }),
-        error = function(e) list(tokens = NA_integer_, limit = NA_integer_,
-                                 model = NULL))
+                       info$session$run(function() {
+        subagent_state <- utils::getFromNamespace(".subagent_state", "corteza")
+        skills_as_api_tools <- utils::getFromNamespace("skills_as_api_tools",
+            "corteza")
+        sess <- subagent_state$session
+        if (is.null(sess)) {
+            return(list(tokens = NA_integer_, limit = NA_integer_,
+                        model = NULL))
+        }
+        # Match the model the child actually runs with: explicit
+        # model_map$cloud first, otherwise the provider default.
+        # Without this fallback, child sessions spawned with the
+        # default model report `ctx ?` because there's no explicit
+        # model name to look up a limit for.
+        model <- sess$model_map$cloud %||%
+        corteza::default_provider_model(sess$provider)
+        tools <- tryCatch(skills_as_api_tools(sess$tools_filter),
+                          error = function(e) NULL)
+        list(
+             tokens = corteza::estimate_live_context_tokens(
+                list(history = sess$history %||% list()),
+                system_prompt = sess$system, tools = tools),
+             limit = if (is.null(model)) NA_integer_ else
+             corteza::context_limit_for_model(model),
+             model = model)
+    }),
+                       error = function(e) list(tokens = NA_integer_, limit = NA_integer_,
+            model = NULL))
     result
 }
 
@@ -786,38 +788,37 @@ subagent_list <- function() {
     out <- lapply(ids, function(id) {
         info <- .subagent_registry[[id]]
         live <- subagent_live_token_count(info)
-        age_seconds <- as.numeric(difftime(Sys.time(),
-                                           info$started_at,
-                                           units = "secs"))
+        age_seconds <- as.numeric(difftime(Sys.time(), info$started_at,
+                units = "secs"))
         # Display the actual model the child runs with -- explicit
         # info$model first, otherwise the resolved default for the
         # provider (live$model, which subagent_live_token_count
         # already computed inside the child). Falls back to provider
         # then "?" only if neither is known.
         resolved_model <- info$model %||% live$model %||%
-            default_provider_model(info$provider) %||%
-            info$provider %||% "?"
+        default_provider_model(info$provider) %||%
+        info$provider %||% "?"
         # `[[ ]]` for pending fields: list `$` prefix-matches, so
         # info$pending would silently return info$pending_started_at
         # whenever pending itself has been NULL-stripped.
         list(
-            id = info$id,
-            seq = info$seq,
-            task = info$task,
-            model = resolved_model,
-            started_at = info$started_at,
-            age_seconds = age_seconds,
-            time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
-                                                 units = "mins")),
-            live_tokens = live$tokens,
-            context_limit = live$limit,
-            cumulative_input_tokens = info$cumulative_input_tokens %||% 0L,
-            cumulative_output_tokens = info$cumulative_output_tokens %||% 0L,
-            cumulative_total_tokens = info$cumulative_total_tokens %||% 0L,
-            cumulative_cost = info$cumulative_cost %||% NA_real_,
-            query_count = info$query_count %||% 0L,
-            pending = info[["pending"]],
-            pending_started_at = info[["pending_started_at"]]
+             id = info$id,
+             seq = info$seq,
+             task = info$task,
+             model = resolved_model,
+             started_at = info$started_at,
+             age_seconds = age_seconds,
+             time_remaining = as.numeric(difftime(info$timeout, Sys.time(),
+                    units = "mins")),
+             live_tokens = live$tokens,
+             context_limit = live$limit,
+             cumulative_input_tokens = info$cumulative_input_tokens %||% 0L,
+             cumulative_output_tokens = info$cumulative_output_tokens %||% 0L,
+             cumulative_total_tokens = info$cumulative_total_tokens %||% 0L,
+             cumulative_cost = info$cumulative_cost %||% NA_real_,
+             query_count = info$query_count %||% 0L,
+             pending = info[["pending"]],
+             pending_started_at = info[["pending_started_at"]]
         )
     })
     # Sort by seq ascending so the user-visible numbering is stable.

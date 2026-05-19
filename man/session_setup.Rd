@@ -55,6 +55,8 @@ A session environment from \code{\link{new_session}}, with
 }
 \description{
 Performs pre-turn setup common to all channels:
+}
+\details{
 \enumerate{
 \item Loads project + global corteza config from \code{cwd}.
 \item Resolves provider, model, and verifies the required API
@@ -66,4 +68,5 @@ and \code{<cwd>/.corteza/skills}.
 \item Optionally builds the system prompt via \code{load_context(cwd)}.
 \item Returns a \code{new_session()} built from the above.
 }
+
 }

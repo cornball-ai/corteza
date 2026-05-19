@@ -17,7 +17,11 @@
         return(.diff_binary_cache$value)
     }
     bin <- Sys.which("diff")
-    .diff_binary_cache$value <- if (is.na(bin)) "" else unname(bin)
+    if (is.na(bin)) {
+        .diff_binary_cache$value <- ""
+    } else {
+        .diff_binary_cache$value <- unname(bin)
+    }
     .diff_binary_cache$value
 }
 
@@ -55,8 +59,7 @@
     } else if (removed == 0L) {
         sprintf("Added %s", pl(added, "line"))
     } else {
-        sprintf("Added %s, removed %s",
-                pl(added, "line"), pl(removed, "line"))
+        sprintf("Added %s, removed %s", pl(added, "line"), pl(removed, "line"))
     }
 }
 
@@ -94,8 +97,7 @@
 #'     \item \code{truncated}: logical TRUE when `lines` was clipped.
 #'   }
 #' @noRd
-compute_unified_diff <- function(old_text, new_text, path,
-                                 max_lines = 200L,
+compute_unified_diff <- function(old_text, new_text, path, max_lines = 200L,
                                  max_chars = 20000L) {
     old_text <- old_text %||% ""
     new_text <- new_text %||% ""
@@ -145,10 +147,10 @@ compute_unified_diff <- function(old_text, new_text, path,
     res <- suppressWarnings(system2(
                                     bin,
                                     args = c("-u",
-                                             "--label", shQuote(path),
-                                             "--label", shQuote(path),
-                                             shQuote(old_file),
-                                             shQuote(new_file)),
+                "--label", shQuote(path),
+                "--label", shQuote(path),
+                shQuote(old_file),
+                shQuote(new_file)),
                                     stdout = TRUE, stderr = TRUE
         ))
     # diff exits 0 (identical, handled above), 1 (differ), or 2 (error).
@@ -193,7 +195,11 @@ compute_unified_diff <- function(old_text, new_text, path,
         widths <- nchar(head, type = "bytes") + 1L
         running <- cumsum(widths)
         within <- which(running <= as.integer(max_chars))
-        keep_chars <- if (length(within) == 0L) 0L else max(within)
+        if (length(within) == 0L) {
+            keep_chars <- 0L
+        } else {
+            keep_chars <- max(within)
+        }
         if (keep_chars < length(head)) {
             head <- head[seq_len(keep_chars)]
         }
@@ -203,8 +209,8 @@ compute_unified_diff <- function(old_text, new_text, path,
     if (truncated) {
         dropped <- total - length(head)
         head <- c(head,
-                  sprintf("[diff truncated: %d more line%s]",
-                          dropped, if (dropped == 1L) "" else "s"))
+                  sprintf("[diff truncated: %d more line%s]", dropped,
+                if (dropped == 1L) "" else "s"))
     }
     list(lines = head, truncated = truncated)
 }
@@ -244,8 +250,7 @@ compute_unified_diff <- function(old_text, new_text, path,
         if (startsWith(ln, "@@")) {
             h <- .parse_hunk_header(ln)
             if (!is.null(h)) {
-                max_line <- max(max_line,
-                                h$old_start + h$old_count - 1L,
+                max_line <- max(max_line, h$old_start + h$old_count - 1L,
                                 h$new_start + h$new_count - 1L)
             }
         }
@@ -291,7 +296,11 @@ compute_unified_diff <- function(old_text, new_text, path,
             # human display.
             next
         }
-        body <- if (nchar(ln) >= 1L) substring(ln, 2L) else ""
+        if (nchar(ln) >= 1L) {
+            body <- substring(ln, 2L)
+        } else {
+            body <- ""
+        }
         prefix <- substring(ln, 1L, 1L)
         rendered <- if (identical(prefix, "+")) {
             new_no <- new_line
@@ -343,9 +352,8 @@ render_tool_diff <- function(diff, palette = ansi_colors(), indent = "  ") {
     }
     summary <- diff$summary %||% ""
     if (nzchar(summary)) {
-        cat(sprintf("%s%s\u23BF  %s%s\n",
-                    indent, palette$dim %||% "", summary,
-                    palette$reset %||% ""))
+        cat(sprintf("%s%s\u23BF  %s%s\n", indent, palette$dim %||% "",
+                    summary, palette$reset %||% ""))
     }
     if (isTRUE(diff$fallback) || length(diff$lines) == 0L) {
         return(invisible(TRUE))

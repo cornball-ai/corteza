@@ -90,8 +90,7 @@ compact_find_cut <- function(history, keep_recent_turns = 1L) {
     # until every tool_use in the prefix `history[1..cut]` has its
     # matching tool_result also in that prefix — i.e., no dangling
     # tool_use whose tool_result lives in the kept tail.
-    while (cut > 0L &&
-           compact_prefix_has_unmatched_tool_use(history, cut)) {
+    while (cut > 0L && compact_prefix_has_unmatched_tool_use(history, cut)) {
         cut <- cut - 1L
     }
     as.integer(cut)
@@ -129,11 +128,15 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
     prefix_uses <- character(0)
     for (i in seq_len(cut)) {
         c2 <- history[[i]]$content
-        if (!is.list(c2)) next
+        if (!is.list(c2)) {
+            next
+        }
         for (block in c2) {
             if (identical(block$type %||% "", "tool_use")) {
                 tid <- block$id %||% ""
-                if (nzchar(tid)) prefix_uses <- c(prefix_uses, tid)
+                if (nzchar(tid)) {
+                    prefix_uses <- c(prefix_uses, tid)
+                }
             }
         }
     }
@@ -144,11 +147,15 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
     prefix_results <- character(0)
     for (i in seq_len(cut)) {
         c2 <- history[[i]]$content
-        if (!is.list(c2)) next
+        if (!is.list(c2)) {
+            next
+        }
         for (block in c2) {
             if (identical(block$type %||% "", "tool_result")) {
                 tid <- block$tool_use_id %||% ""
-                if (nzchar(tid)) prefix_results <- c(prefix_results, tid)
+                if (nzchar(tid)) {
+                    prefix_results <- c(prefix_results, tid)
+                }
             }
         }
     }
@@ -158,16 +165,16 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 
 # Stripped-down summarization prompt — same shape the CLI uses.
 .compact_summary_prompt <- paste(
-    "Summarize this conversation concisely, preserving:",
-    "1. What was accomplished (completed tasks, files modified)",
-    "2. Current work in progress",
-    "3. Key decisions and constraints",
-    "4. Pending tasks or next steps",
-    "5. Any errors encountered and their resolution",
-    "",
-    "Be specific about file names, function names, and technical details.",
-    "Format as a structured summary the assistant can use to continue the work.",
-    sep = "\n"
+                                 "Summarize this conversation concisely, preserving:",
+                                 "1. What was accomplished (completed tasks, files modified)",
+                                 "2. Current work in progress",
+                                 "3. Key decisions and constraints",
+                                 "4. Pending tasks or next steps",
+                                 "5. Any errors encountered and their resolution",
+                                 "",
+                                 "Be specific about file names, function names, and technical details.",
+                                 "Format as a structured summary the assistant can use to continue the work.",
+                                 sep = "\n"
 )
 
 #' Summarize the prefix of a history slice via the LLM.
@@ -195,20 +202,20 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
     setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
     result <- tryCatch(
-        llm.api::chat(
-            prompt = prompt,
-            provider = provider,
-            model = model,
-            system = paste("You are a helpful assistant that creates",
-                           "concise conversation summaries."),
-            temperature = 0.3
+                       llm.api::chat(
+                                     prompt = prompt,
+                                     provider = provider,
+                                     model = model,
+                                     system = paste("You are a helpful assistant that creates",
+                "concise conversation summaries."),
+                                     temperature = 0.3
         ),
-        error = function(e) {
-            log_event("subagent_compact_failed",
-                      reason = "summarizer_error",
-                      error = conditionMessage(e), level = "warn")
-            NULL
-        }
+                       error = function(e) {
+        log_event("subagent_compact_failed",
+                  reason = "summarizer_error",
+                  error = conditionMessage(e), level = "warn")
+        NULL
+    }
     )
     if (is.null(result)) {
         return(NULL)
@@ -230,8 +237,8 @@ compact_rewrite_history <- function(history, cut, summary) {
     }
     kept <- history[(cut + 1L):length(history)]
     summary_entry <- list(
-        role = "assistant",
-        content = sprintf("[compacted history]\n\n%s", summary)
+                          role = "assistant",
+                          content = sprintf("[compacted history]\n\n%s", summary)
     )
     c(list(summary_entry), kept)
 }
@@ -271,14 +278,13 @@ maybe_compact_turn_session <- function(session, config, kind = NULL) {
     # subagent_live_token_count() so /agents, compaction, and the
     # next API call all reason about the same model identity.
     model <- session$model_map$cloud %||%
-        default_provider_model(session$provider)
+    default_provider_model(session$provider)
     # Estimate against the same tools turn() will send. turn()
     # resolves tools from session$tools_filter when tools is NULL,
     # so passing NULL here would undercount the live context for any
     # subagent with an active tool filter.
-    tools_for_estimate <- tryCatch(
-        skills_as_api_tools(session$tools_filter),
-        error = function(e) NULL)
+    tools_for_estimate <- tryCatch(skills_as_api_tools(session$tools_filter),
+                                   error = function(e) NULL)
     pct <- context_usage_pct(list(history = history), model = model,
                              system_prompt = session$system,
                              tools = tools_for_estimate)
@@ -294,9 +300,9 @@ maybe_compact_turn_session <- function(session, config, kind = NULL) {
     }
     slice <- history[seq_len(cut)]
     summary <- compact_summarize_slice(
-        slice, provider = session$provider %||% "anthropic",
-        model = model,
-        timeout_seconds = as.integer(cc$timeout_seconds %||% 60L))
+                                       slice, provider = session$provider %||% "anthropic",
+                                       model = model,
+                                       timeout_seconds = as.integer(cc$timeout_seconds %||% 60L))
     if (is.null(summary) || !nzchar(summary)) {
         return(invisible(FALSE))
     }
