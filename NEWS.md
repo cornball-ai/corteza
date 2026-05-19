@@ -1,3 +1,16 @@
+# corteza 0.6.6.13
+
+## chat() banner resolves provider default model
+
+* When `model` is NULL, `corteza::chat()`'s startup banner and
+  per-turn "Thinking with ..." line route through
+  `resolve_provider_model(provider, model)` instead of falling
+  straight to the literal "(provider default)" placeholder. With
+  `config$provider = "moonshot"` and no explicit `model`, the
+  banner now reads `kimi-k2.6 @ moonshot`, matching what the
+  terminal CLI already showed. Unknown providers still degrade to
+  the "(provider default)" string.
+
 # corteza 0.6.6.12
 
 ## Approval-prompt deny advertises the surface-appropriate

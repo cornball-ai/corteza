@@ -237,7 +237,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     on.exit(set_log_enabled(TRUE), add = TRUE)
 
     n_tools <- length(skills_as_api_tools(tools))
-    display_model <- model %||% "(provider default)"
+    # Resolve a placeholder NULL model to the provider's default name
+    # (e.g. moonshot -> kimi-k2.6) so the banner shows the actual
+    # model the agent is about to call, matching the CLI's display.
+    display_model <- resolve_provider_model(provider, model) %||%
+    "(provider default)"
     color <- ansi_colors()
     cat(sprintf(
                 "%scorteza chat%s | %s%s%s @ %s%s%s | %d tools | %s/help, /quit%s%s\n\n",
@@ -890,7 +894,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
         cat(sprintf("%s\u25cf%s Thinking with %s%s%s\n",
                     color$cyan, color$reset,
-                    color$bold, model %||% "(provider default)",
+                    color$bold,
+                    resolve_provider_model(provider, model) %||%
+                    "(provider default)",
                     color$reset))
         pre_turn_len <- length(turn_session$history %||% list())
         turn_start <- Sys.time()
