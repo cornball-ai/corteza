@@ -18,6 +18,14 @@
 #' the user sees error output too. Runs in the session cwd so it
 #' tracks what the LLM's tools see.
 #'
+#' This is a *user-local shortcut*, not an LLM tool. It runs in
+#' the main R process, bypassing `policy()` / `/permissions` /
+#' `/dryrun` -- the same way `/r <expr>` does. The premise: the
+#' user typing `! cmd` is itself the authorization, and a deny /
+#' approval prompt for output they explicitly asked to see would
+#' be noise. The staged output is still sent to the LLM normally
+#' on the next turn.
+#'
 #' Returns a list with:
 #'   $text   the on-screen string (full output)
 #'   $staged the version queued for the next LLM message (capped
@@ -75,6 +83,10 @@ withr_local_dir <- function(dir, expr) {
 #' an oversized printed result for `str()` of the same value, since
 #' a printed data frame or vector can easily be tens of thousands
 #' of tokens.
+#'
+#' Like `! <cmd>`, this is a user-local shortcut and bypasses
+#' `policy()` / `/permissions` / `/dryrun`. The user typing `/r`
+#' is the authorization.
 #'
 #' Returns a list with:
 #'   $text   the on-screen string
@@ -178,8 +190,8 @@ chat_help_text <- function() {
           "  /paste [text]                 Multi-line input. Collects every line verbatim until `/end` (or Ctrl+D).",
           "  /copy                         Copy the last assistant response to the system clipboard.",
           "  /tasks [clear]                Show (or clear) the current task list.",
-          "  /r <expr>                     Eval R expression locally; output staged for next prompt",
-          "  ! <cmd>                       Run a shell command locally; output staged for next prompt",
+          "  /r <expr>                     Eval R expression locally (skips policy/dryrun); output staged for next prompt",
+          "  ! <cmd>                       Run a shell command locally (skips policy/dryrun); output staged for next prompt",
           "",
           "Subagents:",
           "  /spawn <task>                 Spawn a subagent",

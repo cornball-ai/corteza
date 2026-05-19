@@ -110,8 +110,8 @@ Commands (in chat):
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
-  /r <expr>      Eval R expression locally; output staged for next prompt.
-  ! <cmd>        Run a shell command locally; output staged for next prompt.
+  /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
+  ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions
   /model <name>  Switch model
   /provider <p>  Switch provider
@@ -1342,8 +1342,8 @@ Commands:
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
-  /r <expr>      Eval R expression locally; output staged for next prompt.
-  ! <cmd>        Run a shell command locally; output staged for next prompt.
+  /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
+  ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
