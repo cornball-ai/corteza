@@ -90,6 +90,18 @@ expect_false(grepl("\033\\[1m", res))
 res <- render("## A **bold** heading", palette = ansi)
 expect_true(grepl("\033\\[1mbold\033\\[22m", res))
 
+# Heading style resumes after an inline reset (inline code's
+# bright_cyan ends with a full \033[0m). The trailing " API" must
+# still be styled with the H2 bold + bright_blue prefix.
+res <- render("## The `corteza::chat()` API", palette = ansi)
+# Find the "API" substring and confirm it's preceded by the heading
+# resume (bold + bright_blue), not stranded after a bare reset.
+expect_true(grepl("\033\\[0m\033\\[1m\033\\[94m API", res))
+
+# Same for an inline link inside a heading.
+res <- render("## See [docs](https://x) for setup", palette = ansi)
+expect_true(grepl("\033\\[0m\033\\[1m\033\\[94m for setup", res))
+
 # Blockquote
 res <- render("> quoted text", palette = ansi)
 expect_true(grepl("\033\\[2m\\|\033\\[0m quoted text", res))

@@ -22,11 +22,17 @@ md_bold <- function() {
     list(on = "\033[1m", off = "\033[22m")
 }
 
-#' Apply inline markdown transforms (bold, italic, inline code) to a
-#' single line of text. Inline code is masked first so its contents
-#' aren't re-interpreted by the bold/italic regex passes.
+#' Apply inline markdown transforms (bold, italic, inline code,
+#' links) to a single line of text. Inline code is masked first so
+#' its contents aren't re-interpreted by the bold/italic regex
+#' passes.
+#'
+#' `resume` is the ANSI prefix to re-apply after each inline reset,
+#' so styled spans (inline code, links, bold-off, italic-off) don't
+#' drop a surrounding context like a heading's bold + color. Pass
+#' the empty string (default) for plain body lines.
 #' @noRd
-render_md_inline <- function(text, palette) {
+render_md_inline <- function(text, palette, resume = "") {
     italic <- md_italic()
     bold <- md_bold()
 
@@ -40,8 +46,8 @@ render_md_inline <- function(text, palette) {
             len <- lens[j]
             inner <- substring(text, start + 1L, start + len - 2L)
             ph <- sprintf("\001I%d\001", j)
-            placeholders[[ph]] <- sprintf("%s%s%s", palette$bright_cyan,
-                inner, palette$reset)
+            placeholders[[ph]] <- sprintf("%s%s%s%s", palette$bright_cyan,
+                inner, palette$reset, resume)
             text <- paste0(
                            substring(text, 1L, start - 1L),
                            ph,
@@ -52,27 +58,30 @@ render_md_inline <- function(text, palette) {
 
     # Markdown links: [text](url) -> blue text, dim (url).
     text <- gsub("\\[([^]\n]+)\\]\\(([^)\n]+)\\)",
-                 sprintf("%s\\1%s %s(\\2)%s",
+                 sprintf("%s\\1%s %s(\\2)%s%s",
                          palette$bright_blue, palette$reset,
-                         palette$dim, palette$reset),
+                         palette$dim, palette$reset, resume),
                  text)
 
-    # Bold first (** has higher precedence than * for italic).
+    # Bold first (** has higher precedence than * for italic). The
+    # bold-off escape \033[22m only toggles bold, but if we're inside
+    # a bold heading we want to *stay* bold after the inline span --
+    # re-applying `resume` covers that.
     text <- gsub("\\*\\*([^*\n]+)\\*\\*",
-                 sprintf("%s\\1%s", bold$on, bold$off),
+                 sprintf("%s\\1%s%s", bold$on, bold$off, resume),
                  text, perl = TRUE)
 
     # Italic via *...*: only when the asterisks aren't adjacent to
     # other asterisks (would be bold) and aren't bare math like a*b.
     text <- gsub("(?<![*[:alnum:]])\\*([^*\n]+?)\\*(?![*[:alnum:]])",
-                 sprintf("%s\\1%s", italic$on, italic$off),
+                 sprintf("%s\\1%s%s", italic$on, italic$off, resume),
                  text, perl = TRUE)
 
     # Italic via _..._: only when the underscores are at word
     # boundaries, so `my_var_name` and snake_case identifiers don't
     # get italicized mid-token.
     text <- gsub("(?<![[:alnum:]_])_([^_\n]+?)_(?![[:alnum:]_])",
-                 sprintf("%s\\1%s", italic$on, italic$off),
+                 sprintf("%s\\1%s%s", italic$on, italic$off, resume),
                  text, perl = TRUE)
 
     # Restore inline code spans.
@@ -132,26 +141,30 @@ render_md_ansi <- function(text, palette = ansi_colors()) {
         # Headings - strip the leading `# ` markers and style the
         # body. Palette tracks the existing inst/bin/corteza
         # render_markdown(): H1 bright_magenta, H2 bright_blue,
-        # H3 bright_blue without bold.
+        # H3 bright_blue without bold. `resume` is passed into the
+        # inline renderer so any internal resets (inline code, links,
+        # bold/italic off) re-apply the heading style.
         if (grepl("^### ", ln)) {
             body <- sub("^### ", "", ln)
-            out[i] <- sprintf("%s%s%s", palette$bright_blue,
-                              render_md_inline(body, palette), palette$reset)
+            resume <- palette$bright_blue
+            out[i] <- sprintf("%s%s%s", resume,
+                              render_md_inline(body, palette, resume),
+                              palette$reset)
             next
         }
         if (grepl("^## ", ln)) {
             body <- sub("^## ", "", ln)
-            out[i] <- sprintf("%s%s%s%s",
-                              bold$on, palette$bright_blue,
-                              render_md_inline(body, palette),
+            resume <- paste0(bold$on, palette$bright_blue)
+            out[i] <- sprintf("%s%s%s", resume,
+                              render_md_inline(body, palette, resume),
                               palette$reset)
             next
         }
         if (grepl("^# ", ln)) {
             body <- sub("^# ", "", ln)
-            out[i] <- sprintf("%s%s%s%s",
-                              bold$on, palette$bright_magenta,
-                              render_md_inline(body, palette),
+            resume <- paste0(bold$on, palette$bright_magenta)
+            out[i] <- sprintf("%s%s%s", resume,
+                              render_md_inline(body, palette, resume),
                               palette$reset)
             next
         }
@@ -179,4 +192,3 @@ render_md_ansi <- function(text, palette = ansi_colors()) {
     }
     paste(out[!is.na(out)], collapse = "\n")
 }
-
