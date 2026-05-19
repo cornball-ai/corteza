@@ -944,7 +944,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         if (nchar(reply) == 0) {
             cat(sprintf("%s[No response text]%s\n\n", color$dim, color$reset))
         } else {
-            cat(reply, "\n\n")
+            cat(render_md_ansi(reply, palette = color), "\n\n")
             last_assistant_response <- reply
         }
         cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")

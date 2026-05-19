@@ -285,34 +285,8 @@ print_result <- function(text) {
   # Single line results shown inline with tool call
 }
 
-render_markdown <- function(text) {
-  # Bold: **text** or __text__ - bright white
-  text <- gsub("\\*\\*([^*]+)\\*\\*", paste0(color$bold, color$white, "\\1", color$reset), text)
-  text <- gsub("__([^_]+)__", paste0(color$bold, color$white, "\\1", color$reset), text)
-
-  # Italic: *text* or _text_ (but not inside words)
-  text <- gsub("(?<![\\w*])\\*([^*]+)\\*(?![\\w*])", paste0(color$dim, "\\1", color$reset), text, perl = TRUE)
-  text <- gsub("(?<![\\w_])_([^_]+)_(?![\\w_])", paste0(color$dim, "\\1", color$reset), text, perl = TRUE)
-
-  # Inline code: `code` - cyan
-  text <- gsub("`([^`]+)`", paste0(color$bright_cyan, "\\1", color$reset), text)
-
-  # Headers - colorful
-  text <- gsub("(?m)^### (.+)$", paste0(color$bright_blue, "\\1", color$reset), text, perl = TRUE)
-  text <- gsub("(?m)^## (.+)$", paste0(color$bold, color$bright_blue, "\\1", color$reset), text, perl = TRUE)
-  text <- gsub("(?m)^# (.+)$", paste0(color$bold, color$bright_magenta, "\\1", color$reset), text, perl = TRUE)
-
-  # Bullet points - green bullet
-  text <- gsub("(?m)^(\\s*)[-*] ", paste0("\\1", color$green, "•", color$reset, " "), text, perl = TRUE)
-
-  # Links: [text](url) - blue text, dim url
-  text <- gsub("\\[([^]]+)\\]\\(([^)]+)\\)", paste0(color$bright_blue, "\\1", color$reset, " ", color$dim, "(\\2)", color$reset), text)
-
-  text
-}
-
 print_response <- function(text) {
-  rendered <- render_markdown(text)
+  rendered <- corteza:::render_md_ansi(text, palette = color)
   cat(sprintf("\n%s%s\n", rendered, color$reset))
 }
 

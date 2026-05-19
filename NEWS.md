@@ -1,3 +1,20 @@
+# corteza 0.6.6.11
+
+## Markdown rendering for chat() responses
+
+* New `R/render-md-ansi.R` adds `render_md_ansi(text)` (internal):
+  strip markdown syntax markers and apply ANSI styling for terminal
+  display, leaving the raw markdown source intact when the output
+  isn't a TTY (NO_COLOR, piped to file) or when the user opts out
+  via `options(corteza.markdown = FALSE)`. Both `corteza::chat()`
+  and `inst/bin/corteza` now route assistant responses through it,
+  so the two surfaces stay in sync. Replaces the smaller bespoke
+  renderer that previously lived in `inst/bin/corteza`. Handles
+  H1/H2/H3 headings, `**bold**`, `*italic*` / `_italic_` (modern
+  terminals interpret as italic), `` `inline code` ``, fenced code
+  blocks (dim, 2-space indent), `- ` / `* ` bullets, `> blockquote`
+  lines, and `[text](url)` links.
+
 # corteza 0.6.7
 
 ## Deny aborts the whole turn
