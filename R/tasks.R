@@ -97,9 +97,39 @@ task_update_apply <- function(session, index, status) {
     tasks
 }
 
-#' Format the task list for the system-prompt addendum the LLM sees
-#' each turn. Plain text; the LLM doesn't see ANSI. Empty list ->
-#' empty string.
+#' Static "how to use task tools" addendum for the system prompt.
+#' Shown on every turn (even when the list is empty) so the LLM
+#' knows when to bring up the tools in the first place.
+#' @noRd
+.task_tool_addendum <- function() {
+    paste(
+          "",
+          "# Multi-step requests",
+          "",
+          paste("When the user gives you a request that takes more",
+                "than a couple of steps, work this way:"),
+          "",
+          paste("1. *Ask clarifying questions first.* Reply in plain",
+                "text with any constraints, scope, or assumptions you",
+                "want confirmed. Don't call any tools yet."),
+          paste("2. *Propose a plan.* Once the goal is clear, call",
+                "task_create with a numbered list of concrete steps.",
+                "corteza prints the plan and asks the user to approve",
+                "before any tool fires."),
+          paste("3. *Execute and track.* After approval, mark each",
+                "task in_progress when you start it and completed",
+                "when done via task_update. Keep at most one task",
+                "in_progress at a time. Use cancelled if the user",
+                "redirects mid-flow."),
+          "",
+          paste("Skip the task list entirely for one-shot questions",
+                "or single-step asks -- it's overkill there."),
+          sep = "\n"
+    )
+}
+
+#' Format the active task list for the system-prompt addendum the
+#' LLM sees each turn. Plain text; the LLM doesn't see ANSI.
 #' @noRd
 format_task_list_prompt <- function(tasks) {
     if (length(tasks) == 0L) {
@@ -110,34 +140,37 @@ format_task_list_prompt <- function(tasks) {
         marker <- .TASK_MARKER[[t$status]]
         sprintf("%d. [%s] %s", i, marker, t$text)
     }, character(1))
-    paste(c(
-            "",
-            "# Active tasks",
-            "",
-            lines,
-            "",
-            paste("Maintain this list. Mark a task in_progress when",
-                  "you start it, completed when done. Keep at most",
-                  "one task in_progress at a time. When the user",
-                  "gives you a multi-step request (3+ steps), call",
-                  "task_create at the start to track it.")
-        ),
-          collapse = "\n"
-    )
+    paste(c("", "# Active tasks", "", lines), collapse = "\n")
 }
 
-#' Compose the system prompt for this turn, including any task list.
-#' Returns `base_system` unchanged if there are no tasks.
+#' Compose the system prompt for this turn. Always appends the
+#' static "how to use task tools" addendum so the LLM knows to
+#' clarify-then-plan; also appends the active task list when one
+#' exists.
 #' @noRd
 task_compose_system <- function(base_system, tasks) {
-    if (length(tasks) == 0L) {
-        return(base_system)
-    }
-    addendum <- format_task_list_prompt(tasks)
-    if (is.null(base_system) || !nzchar(base_system)) {
-        return(addendum)
-    }
-    paste(base_system, addendum, sep = "\n")
+    parts <- c(if (!is.null(base_system) && nzchar(base_system)) base_system,
+               .task_tool_addendum(),
+        if (length(tasks) > 0L) format_task_list_prompt(tasks))
+    paste(parts, collapse = "\n")
+}
+
+#' Per-status ANSI color, used by both the full-list display and the
+#' single-line inline render emitted by task_update.
+#' @noRd
+.task_status_color <- function(status, palette) {
+    switch(status, pending = palette$dim,
+           in_progress = palette$bright_yellow, completed = palette$green,
+           cancelled = palette$dim, palette$reset)
+}
+
+#' Format one task as `  N. [m] text` with the per-status color
+#' prefix and reset suffix.
+#' @noRd
+.format_task_line <- function(i, task, palette) {
+    marker <- .TASK_MARKER[[task$status]]
+    col <- .task_status_color(task$status, palette)
+    sprintf("  %s%d. [%s] %s%s", col, i, marker, task$text, palette$reset)
 }
 
 #' Render a task list for terminal display. Empty list -> NULL so the
@@ -147,16 +180,8 @@ format_task_list_display <- function(tasks, palette = ansi_colors()) {
     if (length(tasks) == 0L) {
         return(NULL)
     }
-    color_for <- function(status) {
-        switch(status, pending = palette$dim,
-               in_progress = palette$bright_yellow, completed = palette$green,
-               cancelled = palette$dim, palette$reset)
-    }
     lines <- vapply(seq_along(tasks), function(i) {
-        t <- tasks[[i]]
-        marker <- .TASK_MARKER[[t$status]]
-        col <- color_for(t$status)
-        sprintf("  %s%d. [%s] %s%s", col, i, marker, t$text, palette$reset)
+        .format_task_line(i, tasks[[i]], palette)
     }, character(1))
     paste(c(sprintf("%sTasks:%s", palette$dim, palette$reset), lines),
           collapse = "\n")
@@ -199,22 +224,82 @@ tool_task_update <- function(index, status) {
     err("task_update reached its skill handler instead of the in-process intercept")
 }
 
+#' Marker text returned to the LLM when the user rejects a proposed
+#' plan at the task_create approval prompt. Kept as a separate
+#' helper so tests can match on it without duplicating the wording.
+#' @noRd
+.task_create_rejection_marker <- function() {
+    paste("[User rejected the proposed plan.",
+          "Stop, do not call any other tools,",
+          "and ask the user what they'd rather do.]")
+}
+
+#' Read y/n approval at the task_create prompt. Returns TRUE on
+#' yes (or empty Enter, since y is the default). Split out so tests
+#' can stub a non-interactive answer via
+#' `options(corteza.task_approve = "y" | "n")` instead of blocking
+#' on readline.
+#' @noRd
+.task_read_approval <- function() {
+    test_answer <- getOption("corteza.task_approve", NA_character_)
+    if (!is.na(test_answer)) {
+        ans <- test_answer
+    } else {
+        ans <- tryCatch(readline("Approve this plan? [y/n] "),
+                        error = function(e) "n")
+    }
+    tolower(trimws(ans)) %in% c("", "y", "yes")
+}
+
 #' Try to handle `name` as a task tool by mutating `session` directly.
 #' Returns a character result on hit, NULL when the tool isn't a task
 #' tool (caller falls through to normal dispatch).
+#'
+#' On task_create: print the proposed list, prompt y/n. On approval
+#' commit and return success; on rejection do not commit and return
+#' a marker that nudges the LLM to stop and check with the user.
+#' On task_update: mutate immediately and print one styled line for
+#' the changed task. No prompt -- bookkeeping should be fast.
 #' @noRd
 task_tool_intercept <- function(session, name, args) {
     if (!(name %in% c("task_create", "task_update"))) {
         return(NULL)
     }
+    palette <- ansi_colors()
     tryCatch({
         if (identical(name, "task_create")) {
-            new <- task_create_apply(session, args$tasks)
-            sprintf("Created %d task%s.", length(new),
-                if (length(new) == 1L) "" else "s")
+            input <- args$tasks
+            if (is.list(input)) {
+                input <- unlist(input, use.names = FALSE)
+            }
+            if (!is.character(input) || length(input) == 0L) {
+                stop("tasks must be a non-empty character vector",
+                     call. = FALSE)
+            }
+            proposed <- lapply(input, function(t) {
+                list(text = as.character(t), status = "pending")
+            })
+            cat("\n", palette$bold, "Proposed plan:",
+                palette$reset, "\n",
+                format_task_list_display(proposed, palette = palette),
+                "\n\n",
+                sep = "")
+            if (!.task_read_approval()) {
+                cat(palette$dim, "Plan rejected.",
+                    palette$reset, "\n", sep = "")
+                return(.task_create_rejection_marker())
+            }
+            session$tasks <- proposed
+            session$tasks_dirty <- TRUE
+            cat(palette$dim, "Plan approved.", palette$reset, "\n", sep = "")
+            sprintf("Plan approved. %d task%s tracked.",
+                    length(proposed),
+                if (length(proposed) == 1L) "" else "s")
         } else {
             new <- task_update_apply(session, args$index, args$status)
-            sprintf("Task %s -> %s.", args$index, args$status)
+            idx <- as.integer(args$index)
+            cat(.format_task_line(idx, new[[idx]], palette), "\n", sep = "")
+            sprintf("Task %d -> %s.", idx, new[[idx]]$status)
         }
     },
              error = function(e) sprintf("[task error: %s]", conditionMessage(e))

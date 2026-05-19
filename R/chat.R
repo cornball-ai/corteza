@@ -988,15 +988,13 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")
         transcript_append(disk_session$session, "assistant", reply)
 
-        # If the LLM touched the task list this turn, show the updated
-        # state and persist it to the disk session record.
+        # Sync task-list mutations the LLM made this turn back to the
+        # on-disk session record. The intercept prints inline as
+        # changes happen (proposed plan with y/n prompt for
+        # task_create, single status line for task_update), so there's
+        # no end-of-turn display here -- just persistence so a hard
+        # exit or crash doesn't lose them.
         if (isTRUE(turn_session$tasks_dirty)) {
-            rendered <- format_task_list_display(
-                turn_session$tasks %||% list(),
-                palette = color)
-            if (!is.null(rendered)) {
-                cat(rendered, "\n", sep = "")
-            }
             disk_session$session$tasks <- turn_session$tasks
             tryCatch(session_save(disk_session$session),
                      error = function(e) NULL)
@@ -1145,4 +1143,3 @@ chat_trace_observer <- function(session) {
         )
     }
 }
-

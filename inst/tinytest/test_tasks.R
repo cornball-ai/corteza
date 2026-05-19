@@ -68,20 +68,47 @@ expect_equal(s$tasks[[3]]$status, "cancelled")
 # Non-task tool names pass through (intercept returns NULL).
 expect_null(intercept(new_test_session(), "read_file", list(path = "x")))
 
-# task_create / task_update are caught.
-s <- new_test_session()
-res <- intercept(s, "task_create", list(tasks = c("x", "y")))
-expect_true(grepl("Created 2 task", res))
-expect_equal(length(s$tasks), 2L)
+# task_create prompts the user via readline. Tests stub that prompt
+# through options(corteza.task_approve = "y" | "n") so the intercept
+# never blocks. Capture stdout to keep the test output clean (we
+# verify presence of key strings via the returned result, not by
+# scraping the rendered display).
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    options(corteza.task_approve = "y")
+    on.exit(options(corteza.task_approve = NULL), add = TRUE)
 
-res <- intercept(s, "task_update", list(index = 1, status = "completed"))
-expect_true(grepl("Task 1 -> completed", res))
-expect_equal(s$tasks[[1]]$status, "completed")
+    s <- new_test_session()
+    res <- intercept(s, "task_create", list(tasks = c("x", "y")))
+    expect_true(grepl("Plan approved", res))
+    expect_equal(length(s$tasks), 2L)
 
-# Errors are returned as bracketed strings (so the LLM sees a
-# tool-result rather than crashing the turn).
-res <- intercept(s, "task_update", list(index = 99, status = "completed"))
-expect_true(grepl("\\[task error:", res))
+    res <- intercept(s, "task_update", list(index = 1, status = "completed"))
+    expect_true(grepl("Task 1 -> completed", res))
+    expect_equal(s$tasks[[1]]$status, "completed")
+
+    # Errors are returned as bracketed strings (so the LLM sees a
+    # tool-result rather than crashing the turn).
+    res <- intercept(s, "task_update", list(index = 99, status = "completed"))
+    expect_true(grepl("\\[task error:", res))
+})
+
+# task_create with rejection: tasks are NOT committed; LLM gets a
+# marker telling it to stop and ask the user.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    options(corteza.task_approve = "n")
+    on.exit(options(corteza.task_approve = NULL), add = TRUE)
+
+    s <- new_test_session()
+    res <- intercept(s, "task_create", list(tasks = c("x", "y")))
+    expect_true(grepl("User rejected the proposed plan", res, fixed = TRUE))
+    expect_true(grepl("ask the user what they'd rather do", res,
+                      fixed = TRUE))
+    # No mutation on rejection.
+    expect_equal(length(s$tasks), 0L)
+    expect_false(isTRUE(s$tasks_dirty))
+})
 
 # --- .make_tool_handler intercept ----------------------------------
 
@@ -89,21 +116,27 @@ expect_true(grepl("\\[task error:", res))
 # must never be called. This is the codex finding: the CLI's executor
 # dispatches to a callr worker, so any task-state mutation there would
 # strand the change in the wrong process.
-s <- new_test_session()
-s$channel <- "cli"
-s$approval_cb <- function(call, decision) TRUE
-s$config <- list()
-executor_called <- new.env(parent = emptyenv())
-executor_called$count <- 0L
-exec <- function(name, args) {
-    executor_called$count <- executor_called$count + 1L
-    "executor was called"
-}
-handler <- corteza:::.make_tool_handler(s, tool_executor = exec)
-res <- handler("task_create", list(tasks = c("a", "b")))
-expect_equal(executor_called$count, 0L)
-expect_true(grepl("Created 2 task", res))
-expect_equal(length(s$tasks), 2L)
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    options(corteza.task_approve = "y")
+    on.exit(options(corteza.task_approve = NULL), add = TRUE)
+
+    s <- new_test_session()
+    s$channel <- "cli"
+    s$approval_cb <- function(call, decision) TRUE
+    s$config <- list()
+    executor_called <- new.env(parent = emptyenv())
+    executor_called$count <- 0L
+    exec <- function(name, args) {
+        executor_called$count <- executor_called$count + 1L
+        "executor was called"
+    }
+    handler <- corteza:::.make_tool_handler(s, tool_executor = exec)
+    res <- handler("task_create", list(tasks = c("a", "b")))
+    expect_equal(executor_called$count, 0L)
+    expect_true(grepl("Plan approved", res))
+    expect_equal(length(s$tasks), 2L)
+})
 
 # (Testing that non-task tools still reach the executor would
 # require a full policy/approval scaffold; the executor_called$count
@@ -115,27 +148,35 @@ expect_equal(length(s$tasks), 2L)
 
 # A task_create call must not invoke approval_cb (no prompt) and
 # must not run policy() (which we'd see via a denial string).
-approval_calls <- new.env(parent = emptyenv())
-approval_calls$count <- 0L
-s <- new_test_session()
-s$channel <- "cli"
-s$approval_cb <- function(call, decision) {
-    approval_calls$count <- approval_calls$count + 1L
-    FALSE  # would deny if asked
-}
-s$config <- list()
-handler <- corteza:::.make_tool_handler(s, tool_executor = function(n, a) "x")
-res <- handler("task_update", list(index = 1, status = "in_progress"))
-# Index 1 of empty list errors -- but the *error message* is a
-# bracketed [task error: ...], not a policy denial.
-expect_true(grepl("task error", res))
-expect_equal(approval_calls$count, 0L)
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    options(corteza.task_approve = "y")
+    on.exit(options(corteza.task_approve = NULL), add = TRUE)
 
-# Now seed and try again -- still no approval prompt.
-intercept(s, "task_create", list(tasks = c("a", "b")))
-res <- handler("task_update", list(index = 1, status = "in_progress"))
-expect_true(grepl("Task 1 -> in_progress", res))
-expect_equal(approval_calls$count, 0L)
+    approval_calls <- new.env(parent = emptyenv())
+    approval_calls$count <- 0L
+    s <- new_test_session()
+    s$channel <- "cli"
+    s$approval_cb <- function(call, decision) {
+        approval_calls$count <- approval_calls$count + 1L
+        FALSE
+    }
+    s$config <- list()
+    handler <- corteza:::.make_tool_handler(s,
+        tool_executor = function(n, a) "x")
+    res <- handler("task_update", list(index = 1, status = "in_progress"))
+    # Index 1 of empty list errors -- but the *error message* is a
+    # bracketed [task error: ...], not a policy denial.
+    expect_true(grepl("task error", res))
+    expect_equal(approval_calls$count, 0L)
+
+    # Now seed and try again -- task_update never invokes approval_cb
+    # (only task_create gates with the readline prompt).
+    intercept(s, "task_create", list(tasks = c("a", "b")))
+    res <- handler("task_update", list(index = 1, status = "in_progress"))
+    expect_true(grepl("Task 1 -> in_progress", res))
+    expect_equal(approval_calls$count, 0L)
+})
 
 # --- prompt addendum -----------------------------------------------
 
@@ -149,14 +190,30 @@ expect_true(grepl("# Active tasks", out, fixed = TRUE))
 expect_true(grepl("1. [ ] first", out, fixed = TRUE))
 expect_true(grepl("2. [>] second", out, fixed = TRUE))
 expect_true(grepl("3. [x] third", out, fixed = TRUE))
-expect_true(grepl("Maintain this list", out, fixed = TRUE))
-expect_true(grepl("at most one task in_progress", out, fixed = TRUE))
+# The "how to use" instructions moved to .task_tool_addendum() so
+# the LLM sees them every turn (not just when an active list exists).
+# format_task_list_prompt() now renders only the list.
+expect_false(grepl("Maintain this list", out, fixed = TRUE))
 
-# compose() leaves base prompt unchanged when no tasks.
-expect_equal(compose("BASE", list()), "BASE")
-# compose() appends addendum when tasks exist.
+# compose() always appends the static "how to use task tools"
+# addendum so the LLM sees the clarify-then-plan flow on every
+# turn, regardless of whether there's an active list.
+empty_compose <- compose("BASE", list())
+expect_true(startsWith(empty_compose, "BASE\n"))
+expect_true(grepl("# Multi-step requests", empty_compose, fixed = TRUE))
+expect_true(grepl("Ask clarifying questions first", empty_compose,
+                  fixed = TRUE))
+expect_true(grepl("user will be asked to approve", empty_compose,
+                  fixed = TRUE) ||
+            grepl("asks the user to approve", empty_compose,
+                  fixed = TRUE))
+expect_false(grepl("# Active tasks", empty_compose, fixed = TRUE))
+
+# compose() with tasks appends both the static addendum and the
+# active-list block.
 res <- compose("BASE", tasks)
 expect_true(startsWith(res, "BASE\n"))
+expect_true(grepl("# Multi-step requests", res, fixed = TRUE))
 expect_true(grepl("# Active tasks", res, fixed = TRUE))
 
 # --- display -------------------------------------------------------

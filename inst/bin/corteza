@@ -1496,14 +1496,11 @@ Tool output:
       reply_text <- as.character(result$content %||% "")
       if (nzchar(reply_text)) last_assistant_response <- reply_text
 
-      # Sync any task-list mutations the LLM made this turn back to
-      # the persistent session record so they survive across CLI
-      # restarts and /resume.
+      # Sync task-list mutations to the persistent session record so
+      # they survive across CLI restarts and /resume. The intercept
+      # prints inline as changes happen, so no display here.
       if (isTRUE(turn_session$tasks_dirty)) {
         session$tasks <- turn_session$tasks
-        rendered <- corteza:::format_task_list_display(
-          turn_session$tasks %||% list(), palette = color)
-        if (!is.null(rendered)) cat(rendered, "\n", sep = "")
         turn_session$tasks_dirty <- FALSE
       }
 
