@@ -68,6 +68,40 @@ expect_equal(s$tasks[[3]]$status, "cancelled")
 # Non-task tool names pass through (intercept returns NULL).
 expect_null(intercept(new_test_session(), "read_file", list(path = "x")))
 
+# task_create with NO task_approval_cb installed and no test stub
+# defaults to DENY (codex caught that base readline() returns ""
+# immediately under non-interactive Rscript, which my old code
+# treated as auto-approval). The session must be left untouched.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    expect_true(is.na(getOption("corteza.task_approve", NA_character_)))
+
+    s <- new_test_session()  # no task_approval_cb installed
+    res <- intercept(s, "task_create", list(tasks = c("a", "b")))
+    expect_true(grepl("User rejected the proposed plan", res, fixed = TRUE))
+    expect_equal(length(s$tasks), 0L)
+})
+
+# task_create with a task_approval_cb that returns TRUE: commits.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    s <- new_test_session()
+    s$task_approval_cb <- function() TRUE
+    res <- intercept(s, "task_create", list(tasks = c("a")))
+    expect_true(grepl("Plan approved", res))
+    expect_equal(length(s$tasks), 1L)
+})
+
+# task_create with a task_approval_cb that errors: defaults to deny.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    s <- new_test_session()
+    s$task_approval_cb <- function() stop("nope")
+    res <- intercept(s, "task_create", list(tasks = c("a")))
+    expect_true(grepl("User rejected the proposed plan", res, fixed = TRUE))
+    expect_equal(length(s$tasks), 0L)
+})
+
 # task_create prompts the user via readline. Tests stub that prompt
 # through options(corteza.task_approve = "y" | "n") so the intercept
 # never blocks. Capture stdout to keep the test output clean (we

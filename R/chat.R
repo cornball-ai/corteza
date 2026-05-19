@@ -208,6 +208,13 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # Carry any persisted task list from the resumed session into the
     # live turn_session env so the next turn's prompt addendum sees it.
     turn_session$tasks <- disk_session$session$tasks %||% list()
+    # task_create routes the approval prompt through this cb so we
+    # use the R-console's blocking readline() and an empty Enter
+    # means "yes" (matching the rest of corteza's prompt UX).
+    turn_session$task_approval_cb <- function() {
+        ans <- readline("Approve this plan? [y/n] ")
+        tolower(trimws(ans)) %in% c("", "y", "yes")
+    }
 
     # Workspace setup (session-scoped, resumed from disk when appropriate)
     ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
@@ -971,6 +978,19 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             NULL
         }
         )
+        # Sync task-list mutations to the on-disk session record
+        # regardless of turn outcome. The intercept prints inline as
+        # changes happen, so there's no end-of-turn display here --
+        # but an approved plan should survive an aborted turn (codex
+        # finding: prior code only synced on success, so an interrupt
+        # right after approval threw away the just-approved plan).
+        if (isTRUE(turn_session$tasks_dirty)) {
+            disk_session$session$tasks <- turn_session$tasks
+            tryCatch(session_save(disk_session$session),
+                     error = function(e) NULL)
+            turn_session$tasks_dirty <- FALSE
+        }
+
         if (is.null(result)) {
             # Interrupt or error path. Still print the timing footer
             # so the user sees how long the aborted turn ran.
@@ -987,19 +1007,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")
         transcript_append(disk_session$session, "assistant", reply)
-
-        # Sync task-list mutations the LLM made this turn back to the
-        # on-disk session record. The intercept prints inline as
-        # changes happen (proposed plan with y/n prompt for
-        # task_create, single status line for task_update), so there's
-        # no end-of-turn display here -- just persistence so a hard
-        # exit or crash doesn't lose them.
-        if (isTRUE(turn_session$tasks_dirty)) {
-            disk_session$session$tasks <- turn_session$tasks
-            tryCatch(session_save(disk_session$session),
-                     error = function(e) NULL)
-            turn_session$tasks_dirty <- FALSE
-        }
 
         # Archival hook: opt-in via config$archival$enabled. Mutates
         # turn_session$history in place when triggers fire.

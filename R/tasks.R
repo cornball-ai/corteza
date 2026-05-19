@@ -234,21 +234,28 @@ tool_task_update <- function(index, status) {
           "and ask the user what they'd rather do.]")
 }
 
-#' Read y/n approval at the task_create prompt. Returns TRUE on
-#' yes (or empty Enter, since y is the default). Split out so tests
-#' can stub a non-interactive answer via
-#' `options(corteza.task_approve = "y" | "n")` instead of blocking
-#' on readline.
+#' Read y/n approval at the task_create prompt. Each surface
+#' installs its own reader on `session$task_approval_cb`: chat()
+#' uses base `readline()` (truly blocks for input in interactive R),
+#' the CLI uses its `cli_read_line()` helper (reads stdin correctly
+#' from a non-interactive `Rscript` launch). When no cb is
+#' configured (subagent, embedded use, non-interactive scripts) we
+#' default to *deny* -- silently auto-approving would let scripts
+#' run arbitrary plans without supervision (codex caught this with
+#' base `readline()`'s "" return).
+#'
+#' Tests stub via `options(corteza.task_approve = "y" | "n")`.
 #' @noRd
-.task_read_approval <- function() {
+.task_read_approval <- function(session) {
     test_answer <- getOption("corteza.task_approve", NA_character_)
     if (!is.na(test_answer)) {
-        ans <- test_answer
-    } else {
-        ans <- tryCatch(readline("Approve this plan? [y/n] "),
-                        error = function(e) "n")
+        return(tolower(trimws(test_answer)) %in% c("", "y", "yes"))
     }
-    tolower(trimws(ans)) %in% c("", "y", "yes")
+    cb <- session$task_approval_cb
+    if (!is.function(cb)) {
+        return(FALSE)
+    }
+    isTRUE(tryCatch(cb(), error = function(e) FALSE))
 }
 
 #' Try to handle `name` as a task tool by mutating `session` directly.
@@ -284,7 +291,7 @@ task_tool_intercept <- function(session, name, args) {
                 format_task_list_display(proposed, palette = palette),
                 "\n\n",
                 sep = "")
-            if (!.task_read_approval()) {
+            if (!.task_read_approval(session)) {
                 cat(palette$dim, "Plan rejected.",
                     palette$reset, "\n", sep = "")
                 return(.task_create_rejection_marker())

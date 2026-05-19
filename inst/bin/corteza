@@ -1404,6 +1404,14 @@ Tool output:
     # Carry the persistent task list into the per-turn env so the
     # LLM sees its prior commitments via task_compose_system().
     turn_session$tasks <- session$tasks %||% list()
+    # task_create's approval prompt routes through cli_read_line so
+    # stdin reads work under the non-interactive Rscript launch
+    # (base readline() returns "" immediately there, which would
+    # silently auto-approve every plan).
+    turn_session$task_approval_cb <- function() {
+        ans <- cli_read_line("Approve this plan? [y/n] ")
+        tolower(trimws(ans)) %in% c("", "y", "yes")
+    }
 
     cat(sprintf("● Thinking with %s\n", display_model))
     pre_turn_len <- length(turn_session$history %||% list())
@@ -1481,6 +1489,18 @@ Tool output:
       NULL
     })
 
+    # Sync task-list mutations to the persistent session record
+    # regardless of turn outcome (codex finding: prior code only
+    # synced on success, so an interrupt right after task_create
+    # approval threw away the just-approved plan). The handlers
+    # above already session_save() the marker; doing the tasks
+    # sync now means the next session_save() picks it up.
+    if (isTRUE(turn_session$tasks_dirty)) {
+      session$tasks <- turn_session$tasks
+      corteza:::session_save(session)
+      turn_session$tasks_dirty <- FALSE
+    }
+
     if (is.null(result)) {
       # Interrupt or error path. Print the timing footer too so the
       # user sees how long the aborted turn ran before the prompt
@@ -1495,14 +1515,6 @@ Tool output:
 
       reply_text <- as.character(result$content %||% "")
       if (nzchar(reply_text)) last_assistant_response <- reply_text
-
-      # Sync task-list mutations to the persistent session record so
-      # they survive across CLI restarts and /resume. The intercept
-      # prints inline as changes happen, so no display here.
-      if (isTRUE(turn_session$tasks_dirty)) {
-        session$tasks <- turn_session$tasks
-        turn_session$tasks_dirty <- FALSE
-      }
 
       session <- corteza:::session_add_message(session, "assistant", result$content)
       corteza:::transcript_append(session, "assistant", result$content)
