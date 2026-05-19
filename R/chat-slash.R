@@ -160,31 +160,98 @@ chat_clipboard_unavailable_hint <- function(ctx = chat_clipboard_context()) {
                  "Install the 'clipr' package, plus 'xclip' or 'wl-clipboard' on Linux."))
 }
 
-#' Handle the `/copy` slash command. Tries the system clipboard first;
-#' falls back to writing `/tmp/corteza_last_response.md` with a
-#' context-aware hint when the clipboard isn't reachable (RStudio
-#' Server, headless SSH, missing xclip, etc.).
+#' Emit an OSC 52 clipboard escape sequence so the user's *local*
+#' terminal emulator writes `text` into their *local* system clipboard.
+#' Works over SSH, screen, and tmux (when tmux passthrough is enabled).
+#' Cannot detect whether the terminal actually honored the escape, so
+#' callers should treat success as best-effort and pair with the file
+#' fallback.
+#'
+#' Returns TRUE if the escape was emitted, FALSE if the environment is
+#' clearly unsuitable (no /dev/tty, TERM is "dumb", text is too large,
+#' or non-Unix).
+#' @noRd
+chat_osc52_write <- function(text) {
+    if (.Platform$OS.type != "unix") {
+        return(FALSE)
+    }
+    term <- Sys.getenv("TERM")
+    if (!nzchar(term) || term == "dumb") {
+        return(FALSE)
+    }
+    raw <- charToRaw(enc2utf8(text))
+    # xterm and most terminals cap OSC 52 around 100k base64 chars; stay
+    # well under to avoid silent truncation.
+    if (length(raw) > 74000L) {
+        return(FALSE)
+    }
+    b64 <- jsonlite::base64_enc(raw)
+    esc <- paste0("\033]52;c;", b64, "\007")
+
+    # tmux only forwards OSC 52 when (a) wrapped in DCS-passthrough
+    # *and* (b) `set -g allow-passthrough on` is configured. (b) we
+    # cannot detect; emit the wrapped form anyway and let tmux drop
+    # it silently if disabled.
+    if (nzchar(Sys.getenv("TMUX"))) {
+        inner <- gsub("\033", "\033\033", esc, fixed = TRUE)
+        esc <- paste0("\033Ptmux;", inner, "\033\\")
+    }
+    tryCatch({
+        tty <- suppressWarnings(file("/dev/tty", "w"))
+        on.exit(close(tty), add = TRUE)
+        cat(esc, file = tty)
+        TRUE
+    },
+             error = function(e) FALSE,
+             warning = function(w) FALSE
+    )
+}
+
+#' Resolve the on-disk fallback path used by `/copy` when no clipboard
+#' transport works. On Unix, /tmp gives the user a stable, well-known
+#' location they can rsync / scp from another device; on Windows fall
+#' back to tempdir().
+#' @noRd
+chat_copy_fallback_path <- function() {
+    if (.Platform$OS.type == "unix") {
+        "/tmp/corteza_last_response.md"
+    } else {
+        file.path(tempdir(), "corteza_last_response.md")
+    }
+}
+
+#' Handle the `/copy` slash command. Tries the system clipboard first
+#' (clipr), then OSC 52 for terminals over SSH/tmux, then falls back to
+#' a `/tmp/corteza_last_response.md` file with a context-aware hint.
 #' @noRd
 chat_handle_copy <- function(text) {
     if (!nzchar(text)) {
         cat("Nothing to copy yet.\n")
         return(invisible())
     }
+    n <- nchar(text)
+
     if (chat_clipboard_write(text)) {
-        cat(sprintf("Copied last response (%d chars).\n", nchar(text)))
+        cat(sprintf("Copied last response (%d chars).\n", n))
         return(invisible())
     }
-    # /tmp on Unix gives the user a stable, well-known location they can
-    # rsync / scp from another device; on Windows fall back to tempdir().
-    path <- if (.Platform$OS.type == "unix") {
-        "/tmp/corteza_last_response.md"
-    } else {
-        file.path(tempdir(), "corteza_last_response.md")
+
+    ctx <- chat_clipboard_context()
+    # OSC 52 can't reach the browser-side clipboard of an RStudio
+    # Server *console* session, so don't bother trying there.
+    if (ctx != "rstudio_server" && chat_osc52_write(text)) {
+        path <- chat_copy_fallback_path()
+        writeLines(text, path)
+        cat(sprintf(
+                    "Sent OSC 52 clipboard escape (%d chars). If your terminal didn't capture it, the response is also at %s.\n",
+                    n, path))
+        return(invisible())
     }
+
+    path <- chat_copy_fallback_path()
     writeLines(text, path)
-    cat(chat_clipboard_unavailable_hint(), "\n",
-        sprintf("Wrote response to %s (%d chars).\n", path, nchar(text)),
-        sep = "")
+    cat(chat_clipboard_unavailable_hint(ctx), "\n",
+        sprintf("Wrote response to %s (%d chars).\n", path, n), sep = "")
     invisible()
 }
 
