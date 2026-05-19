@@ -19,7 +19,4 @@ Captures the pre-turn history length so that, if archival is enabled
 and this query qualifies, the child can recursively archive its own
 turn into a sub-subagent (capped by depth_cap).
 }
-\details{
-
-}
 \keyword{internal}

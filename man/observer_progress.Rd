@@ -14,6 +14,3 @@ Prints one line per tool call suitable for an interactive REPL:
 the call (file path, code snippet, search pattern) computed by
 \code{tool_hint()}.
 }
-\details{
-
-}

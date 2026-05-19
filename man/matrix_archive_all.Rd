@@ -23,6 +23,3 @@ Each session tracks an \code{ingested_through} watermark so repeated
 calls only write new turns. Silent no-op when \code{pensar} is not
 installed.
 }
-\details{
-
-}

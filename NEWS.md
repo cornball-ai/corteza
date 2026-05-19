@@ -1,14 +1,3 @@
-# corteza 0.6.6.10
-
-## /copy command in chat()
-
-* New `/copy` slash command copies the most recent assistant
-  response to the system clipboard via the optional `clipr`
-  package. Silent no-op until the first assistant reply lands;
-  prints a hint if `clipr` is not installed or the clipboard
-  isn't available (e.g., headless Linux without xclip /
-  wl-clipboard).
-
 # corteza 0.6.7
 
 ## Deny aborts the whole turn
@@ -21,6 +10,17 @@
   calls. The next turn now starts with a history marker that names
   the denied tool and tells the LLM to stop and ask the user what to
   do instead, rather than retrying or planning a workaround.
+
+# corteza 0.6.6.10
+
+## /copy command in chat()
+
+* New `/copy` slash command copies the most recent assistant
+  response to the system clipboard via the optional `clipr`
+  package. Silent no-op until the first assistant reply lands;
+  prints a hint if `clipr` is not installed or the clipboard
+  isn't available (e.g., headless Linux without xclip /
+  wl-clipboard).
 
 # corteza 0.6.6.9
 

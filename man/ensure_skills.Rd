@@ -14,7 +14,4 @@ Registers built-in skills if not already registered. Exported with
 separate from the callr worker) can register skills in its own
 namespace before calling `schema_from_registry()`.
 }
-\details{
-
-}
 \keyword{internal}

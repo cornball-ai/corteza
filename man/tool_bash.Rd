@@ -18,7 +18,4 @@ An MCP tool-result list.
 \description{
 Use background=true for long-running servers or processes.
 }
-\details{
-
-}
 \keyword{internal}

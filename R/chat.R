@@ -333,6 +333,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 attr(obs, "kind") <- "tool_buffer"
                 add_observer(turn_session, obs)
                 pending_r_context <- character(0)
+                last_assistant_response <- ""
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             color$dim, fresh$sessionId, color$reset))
                 next

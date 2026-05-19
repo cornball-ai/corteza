@@ -17,6 +17,3 @@ Returns a closure suitable for the \code{tool_executor} argument of
 \code{\link{turn}}. Each tool call is forwarded to the connected MCP
 server via \code{llm.api::mcp_call}.
 }
-\details{
-
-}

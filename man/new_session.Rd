@@ -44,9 +44,6 @@ Returns an environment with sensible defaults. Adapters set channel-
 specific fields (e.g. \code{approval_cb}, \code{tools_filter}) before
 calling \code{\link{turn}}.
 }
-\details{
-
-}
 \examples{
 # Build a stateless session for the CLI channel without making any
 # network calls. The returned environment carries history, the

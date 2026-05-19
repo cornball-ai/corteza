@@ -16,6 +16,3 @@ List with passed, failed, errors
 \description{
 Executes test_*.R files in a skill directory.
 }
-\details{
-
-}

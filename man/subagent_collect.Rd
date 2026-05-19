@@ -26,6 +26,3 @@ still running. Result is read exactly once: after a successful
 collect the pending slot is cleared, so the next async query can
 fire.
 }
-\details{
-
-}

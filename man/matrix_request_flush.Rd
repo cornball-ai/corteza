@@ -16,6 +16,3 @@ file. Safe to call from any process or scheduler — systemd, Task
 Scheduler, launchd, cron, or a separate R session — without needing
 to know the bot's PID or share its memory.
 }
-\details{
-
-}
