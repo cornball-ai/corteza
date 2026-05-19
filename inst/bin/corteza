@@ -108,6 +108,7 @@ Commands (in chat):
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /paste [text]  Multi-line. Collects every line verbatim until /end.
+  /copy          Copy the last assistant response to the system clipboard.
   /sessions      List sessions
   /model <name>  Switch model
   /provider <p>  Switch provider
@@ -793,6 +794,7 @@ run_agent <- function(opts) {
   }
 
   # REPL
+  last_assistant_response <- ""
   while (TRUE) {
     prompt <- cli_read_line(sprintf("%s> %s", color$green, color$reset))
 
@@ -847,7 +849,11 @@ run_agent <- function(opts) {
         session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
         session$tokens <- session_tokens
         corteza:::session_save(session)
+        last_assistant_response <- ""
         cat(sprintf("%sConversation cleared (transcript preserved).%s\n", color$dim, color$reset))
+        next
+      } else if (cmd == "/copy") {
+        corteza:::chat_handle_copy(last_assistant_response)
         next
       } else if (cmd == "/compact") {
         if (length(session$messages) < 2) {
@@ -1301,6 +1307,7 @@ Commands:
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /paste [text]  Multi-line. Collects every line verbatim until /end.
+  /copy          Copy the last assistant response to the system clipboard.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -1485,6 +1492,9 @@ Tool output:
       print_response(result$content)
       cat(corteza:::turn_footer_line(turn_start, palette = color), "\n",
           sep = "")
+
+      reply_text <- as.character(result$content %||% "")
+      if (nzchar(reply_text)) last_assistant_response <- reply_text
 
       session <- corteza:::session_add_message(session, "assistant", result$content)
       corteza:::transcript_append(session, "assistant", result$content)

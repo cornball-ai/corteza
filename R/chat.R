@@ -343,19 +343,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 next
             }
             if (cmd == "/copy") {
-                if (nchar(last_assistant_response) == 0L) {
-                    cat("Nothing to copy yet.\n")
-                } else if (!requireNamespace("clipr", quietly = TRUE)) {
-                    cat("/copy needs the 'clipr' package",
-                        "(install.packages(\"clipr\")).\n")
-                } else if (!clipr::clipr_available()) {
-                    cat("Clipboard not available.",
-                        "On headless Linux install 'xclip' or 'wl-clipboard'.\n")
-                } else {
-                    clipr::write_clip(last_assistant_response)
-                    cat(sprintf("Copied last response (%d chars).\n",
-                                nchar(last_assistant_response)))
-                }
+                chat_handle_copy(last_assistant_response)
                 next
             }
             if (cmd == "/tools") {

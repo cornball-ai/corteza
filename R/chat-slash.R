@@ -102,6 +102,92 @@ chat_help_text <- function() {
     )
 }
 
+#' Detect the runtime context the user is driving corteza from. Used by
+#' `/copy` to choose a context-appropriate clipboard-fallback message.
+#' Returns one of `"rstudio_server"`, `"rstudio_desktop"`, `"ssh"`, or
+#' `"other"`.
+#' @noRd
+chat_clipboard_context <- function() {
+    if (identical(Sys.getenv("RSTUDIO_PROGRAM_MODE"), "server")) {
+        return("rstudio_server")
+    }
+    if (identical(Sys.getenv("RSTUDIO"), "1")) {
+        return("rstudio_desktop")
+    }
+    if (nzchar(Sys.getenv("SSH_CONNECTION"))) {
+        return("ssh")
+    }
+    "other"
+}
+
+#' Try to write `text` to the system clipboard via clipr. Returns TRUE on
+#' success, FALSE if clipr is missing, the clipboard isn't reachable, or
+#' the write itself fails. Warnings from clipr's xclip/xsel probing are
+#' suppressed so they don't bleed into the chat output.
+#' @noRd
+chat_clipboard_write <- function(text) {
+    if (!requireNamespace("clipr", quietly = TRUE)) {
+        return(FALSE)
+    }
+    if (!suppressWarnings(clipr::clipr_available())) {
+        return(FALSE)
+    }
+    tryCatch({
+        suppressWarnings(clipr::write_clip(text))
+        TRUE
+    },
+             error = function(e) FALSE
+    )
+}
+
+#' Context-aware "clipboard not reachable" hint, used by `/copy` when the
+#' system clipboard isn't writable from the current runtime.
+#' @noRd
+chat_clipboard_unavailable_hint <- function(ctx = chat_clipboard_context()) {
+    switch(ctx,
+           rstudio_server = paste(
+                                  "RStudio Server can't reach your browser's clipboard from R.",
+                                  "Select the response in the console and Ctrl+C to copy manually."),
+           ssh = paste(
+                       "Headless SSH session; no clipboard reachable from this side.",
+                       "Select the response in your terminal to copy."),
+           rstudio_desktop = paste(
+                                   "Clipboard unavailable on this RStudio Desktop session.",
+                                   "Install 'xclip' (apt install xclip) or 'wl-clipboard'."),
+           # default / "other"
+           paste(
+                 "Clipboard not available.",
+                 "Install the 'clipr' package, plus 'xclip' or 'wl-clipboard' on Linux."))
+}
+
+#' Handle the `/copy` slash command. Tries the system clipboard first;
+#' falls back to writing `/tmp/corteza_last_response.md` with a
+#' context-aware hint when the clipboard isn't reachable (RStudio
+#' Server, headless SSH, missing xclip, etc.).
+#' @noRd
+chat_handle_copy <- function(text) {
+    if (!nzchar(text)) {
+        cat("Nothing to copy yet.\n")
+        return(invisible())
+    }
+    if (chat_clipboard_write(text)) {
+        cat(sprintf("Copied last response (%d chars).\n", nchar(text)))
+        return(invisible())
+    }
+    # /tmp on Unix gives the user a stable, well-known location they can
+    # rsync / scp from another device; on Windows fall back to tempdir().
+    path <- if (.Platform$OS.type == "unix") {
+        "/tmp/corteza_last_response.md"
+    } else {
+        file.path(tempdir(), "corteza_last_response.md")
+    }
+    writeLines(text, path)
+    cat(chat_clipboard_unavailable_hint(), "\n",
+        sprintf("Wrote response to %s (%d chars).\n", path, nchar(text)),
+        sep = "")
+    invisible()
+}
+
 #' Format the active tool list for /tools.
 #' @noRd
 chat_format_tools_list <- function(turn_session) {
