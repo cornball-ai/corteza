@@ -198,6 +198,26 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                                     plan_mode = isTRUE(session$plan_mode))
         )
 
+        # Task-tracker intercept. task_create / task_update mutate
+        # session metadata (the task list) rather than doing real
+        # work. They run in-process here so the mutation lands on the
+        # live `session` environment, not a CLI-worker copy. Bypass
+        # dry-run, policy, approval, and the normal observer chain;
+        # fire a `task_event` for displays that want it.
+        task_result <- task_tool_intercept(session, internal_name,
+            as.list(args))
+        if (!is.null(task_result)) {
+            .fire_observers(session, list(
+                    call = call,
+                    outcome = "task",
+                    result = task_result,
+                    success = TRUE,
+                    elapsed_ms = 0,
+                    turn_number = session$turn_number %||% 0L
+                ))
+            return(task_result)
+        }
+
         # Dry-run mode: short-circuit before policy/approval. A dry
         # run is a "show me what would happen" preview; prompting the
         # user to approve a *preview* would be incoherent, and a
@@ -462,6 +482,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
+    system <- task_compose_system(system, session$tasks %||% list())
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     response <- llm.api::agent(

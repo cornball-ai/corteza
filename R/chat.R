@@ -205,6 +205,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # Attach on-disk session metadata so observers can trace.
     turn_session$sessionId <- disk_session$sessionId
     turn_session$disk_session <- disk_session$session
+    # Carry any persisted task list from the resumed session into the
+    # live turn_session env so the next turn's prompt addendum sees it.
+    turn_session$tasks <- disk_session$session$tasks %||% list()
 
     # Workspace setup (session-scoped, resumed from disk when appropriate)
     ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
@@ -338,6 +341,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 add_observer(turn_session, obs)
                 pending_r_context <- character(0)
                 last_assistant_response <- ""
+                # /clear wipes the task list -- a new conversation
+                # has no carried-over commitments.
+                turn_session$tasks <- list()
+                turn_session$tasks_dirty <- TRUE
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             color$dim, fresh$sessionId, color$reset))
                 next
@@ -348,6 +355,24 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
             }
             if (cmd == "/copy") {
                 chat_handle_copy(last_assistant_response)
+                next
+            }
+            if (cmd == "/tasks") {
+                if (length(parts) >= 2L &&
+                    identical(tolower(parts[2]), "clear")) {
+                    turn_session$tasks <- list()
+                    turn_session$tasks_dirty <- TRUE
+                    cat("Task list cleared.\n")
+                    next
+                }
+                rendered <- format_task_list_display(
+                    turn_session$tasks %||% list(),
+                    palette = color)
+                if (is.null(rendered)) {
+                    cat("No tasks.\n")
+                } else {
+                    cat(rendered, "\n", sep = "")
+                }
                 next
             }
             if (cmd == "/tools") {
@@ -955,6 +980,21 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         cat(turn_footer_line(turn_start, palette = color), "\n", sep = "")
         transcript_append(disk_session$session, "assistant", reply)
+
+        # If the LLM touched the task list this turn, show the updated
+        # state and persist it to the disk session record.
+        if (isTRUE(turn_session$tasks_dirty)) {
+            rendered <- format_task_list_display(
+                turn_session$tasks %||% list(),
+                palette = color)
+            if (!is.null(rendered)) {
+                cat(rendered, "\n", sep = "")
+            }
+            disk_session$session$tasks <- turn_session$tasks
+            tryCatch(session_save(disk_session$session),
+                     error = function(e) NULL)
+            turn_session$tasks_dirty <- FALSE
+        }
 
         # Archival hook: opt-in via config$archival$enabled. Mutates
         # turn_session$history in place when triggers fire.

@@ -131,7 +131,7 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
                     model = model, cwd = normalizePath(cwd, mustWork = FALSE),
                     inputTokens = 0L, outputTokens = 0L, totalTokens = 0L,
                     compactionCount = 0L, memoryFlushCompactionCount = 0L,
-                    messages = list())
+                    tasks = list(), messages = list())
 
     # Write session header to transcript
     transcript_write_header(id, cwd, agent_id)
@@ -147,7 +147,8 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
                                    outputTokens = 0L,
                                    totalTokens = 0L,
                                    compactionCount = 0L,
-                                   memoryFlushCompactionCount = 0L
+                                   memoryFlushCompactionCount = 0L,
+                                   tasks = list()
         ), agent_id)
 
     session
@@ -170,7 +171,8 @@ session_save <- function(session, agent_id = DEFAULT_AGENT_ID) {
                                    outputTokens = session$outputTokens %||% 0L,
                                    totalTokens = session$totalTokens %||% 0L,
                                    compactionCount = session$compactionCount %||% 0L,
-                                   memoryFlushCompactionCount = session$memoryFlushCompactionCount %||% 0L
+                                   memoryFlushCompactionCount = session$memoryFlushCompactionCount %||% 0L,
+                                   tasks = session$tasks %||% list()
         ), agent_id)
 
     invisible(session_key)
@@ -210,6 +212,7 @@ session_load <- function(session_key, agent_id = DEFAULT_AGENT_ID,
                     totalTokens = entry$totalTokens %||% 0L,
                     compactionCount = entry$compactionCount %||% 0L,
                     memoryFlushCompactionCount = entry$memoryFlushCompactionCount %||% 0L,
+                    tasks = entry$tasks %||% list(),
                     messages = transcript_load(id, agent_id,
             from_compaction = from_compaction)
     )
