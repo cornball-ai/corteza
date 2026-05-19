@@ -1,3 +1,22 @@
+# corteza 0.6.6.15
+
+## `! <cmd>` shell-line in chat() and CLI
+
+* New `! <cmd>` prompt prefix runs a shell command locally (bash on
+  unix, cmd.exe on Windows), prints output, and stages it for the
+  next LLM message. Matches the Claude Code / codex `!` convention.
+  The space after `!` is required so prompts that legitimately
+  start with `!` aren't captured. Output is capped at 4000
+  characters in the staged version (with a truncation note); the
+  on-screen output is full.
+* `/r <expr>` is now available in the CLI too -- previously chat()
+  only. Same staging behavior: visible result prints inline, gets
+  queued for the next LLM message, with an oversized printed
+  result swapped for `str()` of the value.
+* Shared helpers `run_bang_shell()` and `run_r_eval()` live in
+  `R/chat-slash.R` so both surfaces use one source of truth for
+  the local-eval + cap logic.
+
 # corteza 0.6.6.14
 
 ## Persistent task list the LLM maintains across turns

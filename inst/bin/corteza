@@ -110,6 +110,8 @@ Commands (in chat):
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
+  /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
+  ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions
   /model <name>  Switch model
   /provider <p>  Switch provider
@@ -774,6 +776,9 @@ run_agent <- function(opts) {
 
   # REPL
   last_assistant_response <- ""
+  # Output from `! <cmd>` lines is queued here and prepended to the
+  # next real user message, so the LLM sees what the user ran.
+  pending_local_context <- character(0)
   while (TRUE) {
     prompt <- cli_read_line(sprintf("%s> %s", color$green, color$reset))
 
@@ -805,6 +810,23 @@ run_agent <- function(opts) {
       }
     }
 
+    # `! <cmd>` runs a shell command locally, prints output, and
+    # stages it for the next user message so the LLM sees what was
+    # run. The space after `!` keeps prompts that legitimately start
+    # with `!` from being captured.
+    if (!from_paste && startsWith(prompt, "! ")) {
+      cmd <- sub("^!\\s+", "", prompt)
+      shell_out <- corteza:::run_bang_shell(cmd, cwd = cwd)
+      if (nchar(shell_out$text) > 0L) {
+        cat(shell_out$text, "\n", sep = "")
+      }
+      pending_local_context <- c(
+        pending_local_context,
+        sprintf("[!] %s\n%s", cmd, shell_out$staged)
+      )
+      next
+    }
+
     # Handle commands
     if (!from_paste && startsWith(prompt, "/")) {
       cmd_parts <- strsplit(prompt, "\\s+")[[1]]
@@ -834,6 +856,21 @@ run_agent <- function(opts) {
         next
       } else if (cmd == "/copy") {
         corteza:::chat_handle_copy(last_assistant_response)
+        next
+      } else if (cmd == "/r") {
+        code <- trimws(sub("^/r\\s+", "", prompt))
+        if (!nzchar(code)) {
+          cat("Usage: /r <expr>\n")
+          next
+        }
+        r_out <- corteza:::run_r_eval(code)
+        if (nchar(r_out$text) > 0L) {
+          cat(r_out$text, "\n", sep = "")
+        }
+        pending_local_context <- c(
+          pending_local_context,
+          sprintf("[/r] %s\n%s", code, r_out$staged)
+        )
         next
       } else if (cmd == "/tasks") {
         if (length(cmd_parts) >= 2L &&
@@ -1305,6 +1342,8 @@ Commands:
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
+  /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
+  ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
   /model <name>  Switch model
@@ -1354,6 +1393,13 @@ Tool output:
       }
       list(role = m$role, content = text)
     })
+
+    # Drain any queued `! <cmd>` output into the next user message
+    # so the LLM sees what the user ran.
+    if (length(pending_local_context) > 0L) {
+      prompt <- paste(c(pending_local_context, prompt), collapse = "\n\n")
+      pending_local_context <- character(0)
+    }
 
     # Add user message to session (in-memory) and transcript (disk)
     session <- corteza:::session_add_message(session, "user", prompt)

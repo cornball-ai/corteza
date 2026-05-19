@@ -884,43 +884,30 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         if (!from_paste && startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
-            r_env <- new.env(parent = emptyenv())
-            result_lines <- tryCatch(
-                                     capture.output({
-                r_env$r <- withVisible(eval(parse(text = code),
-                        envir = .GlobalEnv))
-                if (r_env$r$visible) print(r_env$r$value)
-            }),
-                                     error = function(e) {
-                r_env$r <- NULL
-                paste("Error:", e$message)
-            }
-            )
-            result_text <- paste(result_lines, collapse = "\n")
-            # Show the output immediately so the user can react.
-            if (nchar(result_text) > 0) {
-                cat(result_text, "\n", sep = "")
-            }
-            # Stage for the next send so the LLM has the same context --
-            # but a printed data frame or big vector can easily be tens
-            # of thousands of tokens, so cap the staged text and fall
-            # back to str() for the oversize case.
-            staged <- if (nchar(result_text) > 4000L && !is.null(r_env$r)) {
-                str_lines <- tryCatch(
-                                      capture.output(utils::str(r_env$r$value)),
-                                      error = function(e) paste("Error:", e$message)
-                )
-                sprintf(
-                        "(%d chars of output truncated; showing str())\n%s",
-                        nchar(result_text),
-                        paste(str_lines, collapse = "\n")
-                )
-            } else {
-                result_text
+            r_out <- run_r_eval(code)
+            if (nchar(r_out$text) > 0L) {
+                cat(r_out$text, "\n", sep = "")
             }
             pending_r_context <- c(
                                    pending_r_context,
-                                   sprintf("[/r] %s\n%s", code, staged)
+                                   sprintf("[/r] %s\n%s", code, r_out$staged)
+            )
+            next
+        }
+        # `! <cmd>` runs a shell command locally, prints output, and
+        # stages it for the next LLM message (same buffer as /r so the
+        # staged context the LLM sees is uniform). The space after `!`
+        # disambiguates from prompts that legitimately start with `!`
+        # (emphasis, markdown headings in some flavors, etc.).
+        if (!from_paste && startsWith(sp, "! ")) {
+            cmd <- sub("^!\\s+", "", sp)
+            shell_out <- run_bang_shell(cmd, cwd = cwd)
+            if (nchar(shell_out$text) > 0L) {
+                cat(shell_out$text, "\n", sep = "")
+            }
+            pending_r_context <- c(
+                                   pending_r_context,
+                                   sprintf("[!] %s\n%s", cmd, shell_out$staged)
             )
             next
         }
