@@ -6,7 +6,7 @@
 tool_task_create(tasks)
 }
 \arguments{
-\item{tasks}{(array of string) One task description per element.
+\item{tasks}{(character vector) One task description per element.
 Order matters; task_update references tasks by 1-based index.}
 }
 \value{

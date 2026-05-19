@@ -171,7 +171,7 @@ format_task_list_display <- function(tasks, palette = ansi_colors()) {
 #' when you start it, `completed` when done, `cancelled` if the
 #' user redirects.
 #'
-#' @param tasks (array of string) One task description per element.
+#' @param tasks (character vector) One task description per element.
 #'   Order matters; task_update references tasks by 1-based index.
 #' @return Confirmation string.
 #' @keywords internal
@@ -187,7 +187,7 @@ tool_task_create <- function(tasks) {
 #' Update one task's status in the current session task list.
 #'
 #' @param index (integer) 1-based position of the task to update.
-#' @param status (string) New status. One of `pending`,
+#' @param status (character) New status. One of `pending`,
 #'   `in_progress`, `completed`, `cancelled`. Promoting a task to
 #'   `in_progress` automatically demotes any other `in_progress`
 #'   task to `pending`, so there is at most one active task at a
@@ -220,4 +220,3 @@ task_tool_intercept <- function(session, name, args) {
              error = function(e) sprintf("[task error: %s]", conditionMessage(e))
     )
 }
-

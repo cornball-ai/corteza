@@ -361,7 +361,14 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                 if (length(parts) >= 2L &&
                     identical(tolower(parts[2]), "clear")) {
                     turn_session$tasks <- list()
-                    turn_session$tasks_dirty <- TRUE
+                    turn_session$tasks_dirty <- FALSE
+                    # Persist immediately. If the user clears and
+                    # exits before another assistant turn, the
+                    # post-turn dirty-flag sync would never fire and
+                    # the clear would be lost.
+                    disk_session$session$tasks <- list()
+                    tryCatch(session_save(disk_session$session),
+                             error = function(e) NULL)
                     cat("Task list cleared.\n")
                     next
                 }

@@ -8,7 +8,7 @@ tool_task_update(index, status)
 \arguments{
 \item{index}{(integer) 1-based position of the task to update.}
 
-\item{status}{(string) New status. One of `pending`,
+\item{status}{(character) New status. One of `pending`,
 `in_progress`, `completed`, `cancelled`. Promoting a task to
 `in_progress` automatically demotes any other `in_progress`
 task to `pending`, so there is at most one active task at a
