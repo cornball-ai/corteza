@@ -140,26 +140,6 @@ chat_clipboard_write <- function(text) {
     )
 }
 
-#' Context-aware "clipboard not reachable" hint, used by `/copy` when the
-#' system clipboard isn't writable from the current runtime.
-#' @noRd
-chat_clipboard_unavailable_hint <- function(ctx = chat_clipboard_context()) {
-    switch(ctx,
-           rstudio_server = paste(
-                                  "RStudio Server can't reach your browser's clipboard from R.",
-                                  "Select the response in the console and Ctrl+C to copy manually."),
-           ssh = paste(
-                       "Headless SSH session; no clipboard reachable from this side.",
-                       "Select the response in your terminal to copy."),
-           rstudio_desktop = paste(
-                                   "Clipboard unavailable on this RStudio Desktop session.",
-                                   "Install 'xclip' (apt install xclip) or 'wl-clipboard'."),
-           # default / "other"
-           paste(
-                 "Clipboard not available.",
-                 "Install the 'clipr' package, plus 'xclip' or 'wl-clipboard' on Linux."))
-}
-
 #' Emit an OSC 52 clipboard escape sequence so the user's *local*
 #' terminal emulator writes `text` into their *local* system clipboard.
 #' Works over SSH, screen, and tmux (when tmux passthrough is enabled).
@@ -207,51 +187,49 @@ chat_osc52_write <- function(text) {
     )
 }
 
-#' Resolve the on-disk fallback path used by `/copy` when no clipboard
-#' transport works. On Unix, /tmp gives the user a stable, well-known
-#' location they can rsync / scp from another device; on Windows fall
-#' back to tempdir().
+#' Resolve the on-disk file path used by `/copy`. On Unix this is
+#' /tmp/corteza_response.md, a stable well-known location the user
+#' can scp / rsync from another device. On Windows we fall back to
+#' tempdir() since /tmp isn't standard.
 #' @noRd
 chat_copy_fallback_path <- function() {
     if (.Platform$OS.type == "unix") {
-        "/tmp/corteza_last_response.md"
+        "/tmp/corteza_response.md"
     } else {
-        file.path(tempdir(), "corteza_last_response.md")
+        file.path(tempdir(), "corteza_response.md")
     }
 }
 
-#' Handle the `/copy` slash command. Tries the system clipboard first
-#' (clipr), then OSC 52 for terminals over SSH/tmux, then falls back to
-#' a `/tmp/corteza_last_response.md` file with a context-aware hint.
+#' Handle the `/copy` slash command. Always writes the response to a
+#' file so the user has a recoverable copy; additionally attempts the
+#' system clipboard (clipr) and, when that's unreachable, an OSC 52
+#' terminal escape. Prints one terse status line.
 #' @noRd
 chat_handle_copy <- function(text) {
     if (!nzchar(text)) {
-        cat("Nothing to copy yet.\n")
+        cat("Nothing to copy.\n")
         return(invisible())
     }
     n <- nchar(text)
-
-    if (chat_clipboard_write(text)) {
-        cat(sprintf("Copied last response (%d chars).\n", n))
-        return(invisible())
-    }
-
-    ctx <- chat_clipboard_context()
-    # OSC 52 can't reach the browser-side clipboard of an RStudio
-    # Server *console* session, so don't bother trying there.
-    if (ctx != "rstudio_server" && chat_osc52_write(text)) {
-        path <- chat_copy_fallback_path()
-        writeLines(text, path)
-        cat(sprintf(
-                    "Sent OSC 52 clipboard escape (%d chars). If your terminal didn't capture it, the response is also at %s.\n",
-                    n, path))
-        return(invisible())
-    }
-
     path <- chat_copy_fallback_path()
     writeLines(text, path)
-    cat(chat_clipboard_unavailable_hint(ctx), "\n",
-        sprintf("Wrote response to %s (%d chars).\n", path, n), sep = "")
+
+    # On RStudio Server console, neither clipr (xclip) nor OSC 52 can
+    # reach the browser-side clipboard, and clipr's xclip probing
+    # leaks warnings through suppressWarnings() under RStudio Server.
+    # Skip both transports there and go straight to the file.
+    ctx <- chat_clipboard_context()
+    clipped <- if (ctx == "rstudio_server") {
+        FALSE
+    } else {
+        chat_clipboard_write(text) || chat_osc52_write(text)
+    }
+
+    if (clipped) {
+        cat(sprintf("Copied (%d chars) to clipboard | Saved to %s\n", n, path))
+    } else {
+        cat(sprintf("Saved (%d chars) to %s\n", n, path))
+    }
     invisible()
 }
 
