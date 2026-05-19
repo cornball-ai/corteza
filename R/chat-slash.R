@@ -4,6 +4,110 @@
 # CLI commands so chat() users don't have to drop down to the binary
 # to spawn / query / kill subagents.
 
+#' Output cap for staged local-eval results (`!` and `/r`). Above this
+#' size the staged version replaces the raw output with a truncation
+#' note so the LLM doesn't get flooded by a single `find /` or `cat
+#' big.csv`. The on-screen output stays full -- only the staged
+#' version is truncated.
+#' @noRd
+.LOCAL_EVAL_STAGE_CAP <- 4000L
+
+#' Run a `! <cmd>` shell line locally. Uses bash on unix and
+#' `cmd /c` on Windows -- the same split the corteza `bash` tool
+#' uses for cross-OS consistency. stderr is folded into stdout so
+#' the user sees error output too. Runs in the session cwd so it
+#' tracks what the LLM's tools see.
+#'
+#' Returns a list with:
+#'   $text   the on-screen string (full output)
+#'   $staged the version queued for the next LLM message (capped
+#'           at `.LOCAL_EVAL_STAGE_CAP`)
+#' @noRd
+run_bang_shell <- function(cmd, cwd = getwd()) {
+    is_unix <- .Platform$OS.type == "unix"
+    # system2 with stdout = TRUE pastes args with spaces and does not
+    # shell-quote, so a `-c "seq 1 5"` invocation has to be built as
+    # `-c <shQuote("seq 1 5")>` or the shell sees four tokens.
+    args <- if (is_unix) {
+        c("-c", shQuote(cmd))
+    } else {
+        c("/c", shQuote(cmd, type = "cmd"))
+    }
+    shell_bin <- if (is_unix) {
+        "bash"
+    } else {
+        Sys.getenv("COMSPEC", "cmd.exe")
+    }
+    raw <- tryCatch(
+                    withr_local_dir(cwd, {
+        suppressWarnings(system2(shell_bin, args,
+                                 stdout = TRUE, stderr = TRUE))
+    }),
+                    error = function(e) paste("Error:", conditionMessage(e))
+    )
+    text <- paste(as.character(raw), collapse = "\n")
+    if (!nzchar(text)) {
+        text <- ""
+    }
+    staged <- if (nchar(text) > .LOCAL_EVAL_STAGE_CAP) {
+        sprintf("(%d chars of output truncated; showing first %d)\n%s",
+                nchar(text), .LOCAL_EVAL_STAGE_CAP,
+                substr(text, 1L, .LOCAL_EVAL_STAGE_CAP))
+    } else {
+        text
+    }
+    list(text = text, staged = staged)
+}
+
+#' setwd() inside a function and restore on exit. Tiny base-R
+#' equivalent of withr::with_dir to avoid a Suggests entry just for
+#' `! <cmd>`.
+#' @noRd
+withr_local_dir <- function(dir, expr) {
+    old <- setwd(dir)
+    on.exit(setwd(old), add = TRUE)
+    force(expr)
+}
+
+#' Eval an R expression locally for `/r <expr>`. Mirrors
+#' `run_bang_shell`'s shape so both local-eval flows share a
+#' return type. The staged version for the next LLM message swaps
+#' an oversized printed result for `str()` of the same value, since
+#' a printed data frame or vector can easily be tens of thousands
+#' of tokens.
+#'
+#' Returns a list with:
+#'   $text   the on-screen string
+#'   $staged the version queued for the next LLM message
+#' @noRd
+run_r_eval <- function(code) {
+    r_env <- new.env(parent = emptyenv())
+    result_lines <- tryCatch(
+                             utils::capture.output({
+        r_env$r <- withVisible(eval(parse(text = code), envir = .GlobalEnv))
+        if (r_env$r$visible) {
+            print(r_env$r$value)
+        }
+    }),
+                             error = function(e) {
+        r_env$r <- NULL
+        paste("Error:", conditionMessage(e))
+    }
+    )
+    text <- paste(result_lines, collapse = "\n")
+    staged <- if (nchar(text) > .LOCAL_EVAL_STAGE_CAP && !is.null(r_env$r)) {
+        str_lines <- tryCatch(
+                              utils::capture.output(utils::str(r_env$r$value)),
+                              error = function(e) paste("Error:", conditionMessage(e))
+        )
+        sprintf("(%d chars of output truncated; showing str())\n%s",
+                nchar(text), paste(str_lines, collapse = "\n"))
+    } else {
+        text
+    }
+    list(text = text, staged = staged)
+}
+
 #' Pull `--flag <value>` pairs out of a /spawn argument string.
 #'
 #' Mirrors the parser used by the inst/bin/corteza CLI's `/spawn`
@@ -75,6 +179,7 @@ chat_help_text <- function() {
           "  /copy                         Copy the last assistant response to the system clipboard.",
           "  /tasks [clear]                Show (or clear) the current task list.",
           "  /r <expr>                     Eval R expression locally; output staged for next prompt",
+          "  ! <cmd>                       Run a shell command locally; output staged for next prompt",
           "",
           "Subagents:",
           "  /spawn <task>                 Spawn a subagent",
@@ -250,4 +355,3 @@ chat_format_tools_list <- function(turn_session) {
     }
     paste(c(lines, ""), collapse = "\n")
 }
-
