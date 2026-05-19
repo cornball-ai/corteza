@@ -104,12 +104,21 @@ res <- render("- top\n  - nested", palette = ansi)
 expect_true(grepl("^  \033\\[32m•\033\\[0m nested$",
                   strsplit(res, "\n")[[1]][2]))
 
-# Fenced code block - lines inside don't get inline-transformed.
+# Fenced code block - fence lines are hidden, body is dim+indented,
+# inline regex is bypassed inside the block.
 src <- "```r\nx <- **not bold**\n```"
 res <- render(src, palette = ansi)
-expect_true(grepl("\033\\[2m```r\033\\[0m", res))
+expect_false(grepl("```", res))
 expect_true(grepl("  \033\\[2mx <- \\*\\*not bold\\*\\*\033\\[0m", res))
-expect_true(grepl("\033\\[2m```\033\\[0m", res))
+# A single-line body should be the only line in the output.
+expect_equal(length(strsplit(res, "\n", fixed = TRUE)[[1]]), 1L)
+
+# Surrounding blank lines and language tag are handled cleanly.
+src <- "before\n\n```bash\necho hello\n```\n\nafter"
+res <- render(src, palette = ansi)
+expect_false(grepl("```", res))
+expect_false(grepl("bash", res))
+expect_true(grepl("  \033\\[2mecho hello\033\\[0m", res))
 
 # --- Edge cases ---
 
@@ -143,3 +152,4 @@ expect_true(grepl("\033\\[3mitalic\033\\[23m", res))
 expect_true(grepl("\033\\[32m•\033\\[0m bullet", res))
 expect_true(grepl("\\|\033\\[0m a quote", res))
 expect_true(grepl("raw code", res))
+expect_false(grepl("```", res))

@@ -116,10 +116,13 @@ render_md_ansi <- function(text, palette = ansi_colors()) {
 
     for (i in seq_along(lines)) {
         ln <- lines[i]
-        # Fenced code block boundaries.
+        # Fenced code block boundaries: hide the fence line itself
+        # (matching the look of glow / Claude Code) and indent the
+        # body. NA marks the line for removal so the surrounding
+        # blank lines collapse naturally.
         if (grepl("^```", ln)) {
             in_code <- !in_code
-            out[i] <- sprintf("%s%s%s", palette$dim, ln, palette$reset)
+            out[i] <- NA_character_
             next
         }
         if (in_code) {
@@ -174,6 +177,6 @@ render_md_ansi <- function(text, palette = ansi_colors()) {
         }
         out[i] <- render_md_inline(ln, palette)
     }
-    paste(out, collapse = "\n")
+    paste(out[!is.na(out)], collapse = "\n")
 }
 
