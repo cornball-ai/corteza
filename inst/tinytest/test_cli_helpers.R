@@ -84,6 +84,15 @@ expect_identical(corteza:::resolve_provider_model("moonshot", "kimi-k2.6"),
 # Anthropic default falls back via default_provider_model.
 expect_identical(corteza:::resolve_provider_model("anthropic"),
                  "claude-sonnet-4-20250514")
+# Moonshot default falls back via default_provider_model. This is the
+# path chat()'s banner now hits when model is NULL so the displayed
+# name matches the CLI (kimi-k2.6 @ moonshot, not the old
+# "(provider default) @ moonshot" placeholder).
+expect_identical(corteza:::resolve_provider_model("moonshot"),
+                 "kimi-k2.6")
+# Unknown provider: NULL passes through so chat() can keep its
+# "(provider default)" fallback for the display string.
+expect_null(corteza:::resolve_provider_model("nonesuch"))
 
 # preferred_chat_temperature: moonshot forces 1.
 expect_equal(corteza:::preferred_chat_temperature("moonshot", 0.2), 1)
