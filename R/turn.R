@@ -480,9 +480,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         tools <- skills_as_api_tools(session$tools_filter)
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
+    tools <- .task_filter_tools(tools, session$channel)
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
-    system <- task_compose_system(system, session$tasks %||% list())
+    system <- task_compose_system(system, session$tasks %||% list(),
+                                  channel = session$channel)
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     response <- llm.api::agent(
@@ -508,4 +510,3 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
          raw = response
     )
 }
-

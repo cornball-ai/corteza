@@ -143,12 +143,44 @@ format_task_list_prompt <- function(tasks) {
     paste(c("", "# Active tasks", "", lines), collapse = "\n")
 }
 
-#' Compose the system prompt for this turn. Always appends the
-#' static "how to use task tools" addendum so the LLM knows to
-#' clarify-then-plan; also appends the active task list when one
-#' exists.
+#' Channels where the task tools are exposed to the LLM. Matrix is
+#' excluded: the channel is asynchronous, with no readline /
+#' cli_read_line equivalent for the approval prompt, so every
+#' task_create would hit the default-deny and stall the
+#' conversation. (A future async approval flow -- e.g. react with
+#' check/x in the room -- could re-enable this.) Subagent / embedded
+#' uses default to off; opt them in by setting an explicit channel.
 #' @noRd
-task_compose_system <- function(base_system, tasks) {
+.TASK_SUPPORTED_CHANNELS <- c("cli", "console")
+
+.task_channel_supports_tasks <- function(channel) {
+    !is.null(channel) && (channel %in% .TASK_SUPPORTED_CHANNELS)
+}
+
+#' Strip task_create / task_update from the tool list on channels
+#' that don't support the approval flow, so the LLM never sees them
+#' in its tool payload.
+#' @noRd
+.task_filter_tools <- function(tools, channel) {
+    if (.task_channel_supports_tasks(channel)) {
+        return(tools)
+    }
+    is_task <- vapply(tools, function(t) {
+        identical(t$name %||% "", "task_create") ||
+        identical(t$name %||% "", "task_update")
+    }, logical(1))
+    tools[!is_task]
+}
+
+#' Compose the system prompt for this turn. Appends the static "how
+#' to use task tools" addendum and any active task list only on
+#' channels that actually expose the task tools, so Matrix sessions
+#' aren't told to call tools that aren't there.
+#' @noRd
+task_compose_system <- function(base_system, tasks, channel = NULL) {
+    if (!.task_channel_supports_tasks(channel)) {
+        return(base_system)
+    }
     parts <- c(if (!is.null(base_system) && nzchar(base_system)) base_system,
                .task_tool_addendum(),
         if (length(tasks) > 0L) format_task_list_prompt(tasks))
@@ -271,6 +303,13 @@ tool_task_update <- function(index, status) {
 task_tool_intercept <- function(session, name, args) {
     if (!(name %in% c("task_create", "task_update"))) {
         return(NULL)
+    }
+    # Belt-and-suspenders: if a Matrix or other unsupported channel
+    # somehow has the tools advertised, refuse instead of triggering
+    # default-deny and a confused-looking rejection marker.
+    if (!.task_channel_supports_tasks(session$channel)) {
+        return(sprintf("[task error: %s is not available on the '%s' channel]",
+                       name, session$channel %||% "<unknown>"))
     }
     palette <- ansi_colors()
     tryCatch({

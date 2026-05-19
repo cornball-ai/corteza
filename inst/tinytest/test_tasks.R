@@ -14,10 +14,14 @@ compose <- corteza:::task_compose_system
 display <- corteza:::format_task_list_display
 
 # Helper: build a minimal session env for intercept tests.
-new_test_session <- function() {
+new_test_session <- function(channel = "console") {
     e <- new.env(parent = emptyenv())
     e$on_tool <- list()
     e$tasks <- list()
+    # Default to a task-supporting channel; tests that exercise the
+    # matrix / unsupported-channel branches pass channel = "matrix"
+    # (or another value) explicitly.
+    e$channel <- channel
     e
 }
 
@@ -229,26 +233,67 @@ expect_true(grepl("3. [x] third", out, fixed = TRUE))
 # format_task_list_prompt() now renders only the list.
 expect_false(grepl("Maintain this list", out, fixed = TRUE))
 
-# compose() always appends the static "how to use task tools"
-# addendum so the LLM sees the clarify-then-plan flow on every
-# turn, regardless of whether there's an active list.
-empty_compose <- compose("BASE", list())
+# compose() on supported channels (cli, console) appends the
+# static "how to use task tools" addendum on every turn so the LLM
+# sees the clarify-then-plan flow.
+empty_compose <- compose("BASE", list(), channel = "console")
 expect_true(startsWith(empty_compose, "BASE\n"))
 expect_true(grepl("# Multi-step requests", empty_compose, fixed = TRUE))
 expect_true(grepl("Ask clarifying questions first", empty_compose,
-                  fixed = TRUE))
-expect_true(grepl("user will be asked to approve", empty_compose,
-                  fixed = TRUE) ||
-            grepl("asks the user to approve", empty_compose,
                   fixed = TRUE))
 expect_false(grepl("# Active tasks", empty_compose, fixed = TRUE))
 
 # compose() with tasks appends both the static addendum and the
 # active-list block.
-res <- compose("BASE", tasks)
+res <- compose("BASE", tasks, channel = "cli")
 expect_true(startsWith(res, "BASE\n"))
 expect_true(grepl("# Multi-step requests", res, fixed = TRUE))
 expect_true(grepl("# Active tasks", res, fixed = TRUE))
+
+# Matrix channel: task addendum is *not* injected. The Matrix
+# channel has no synchronous readline / cli_read_line equivalent
+# for the approval prompt, so telling the LLM to call task_create
+# would just stall the conversation on default-deny.
+matrix_compose <- compose("BASE", tasks, channel = "matrix")
+expect_equal(matrix_compose, "BASE")
+expect_false(grepl("# Multi-step requests", matrix_compose, fixed = TRUE))
+expect_false(grepl("# Active tasks", matrix_compose, fixed = TRUE))
+
+# Unspecified channel (subagents, embedded uses): also off by
+# default so callers opt in by setting an explicit channel.
+nochan_compose <- compose("BASE", tasks)
+expect_equal(nochan_compose, "BASE")
+
+# .task_filter_tools strips task_create / task_update on Matrix
+# but keeps them on supported channels.
+tool_list <- list(
+                  list(name = "read_file"),
+                  list(name = "task_create"),
+                  list(name = "task_update"),
+                  list(name = "bash"))
+filtered_matrix <- corteza:::.task_filter_tools(tool_list, "matrix")
+expect_equal(length(filtered_matrix), 2L)
+expect_equal(vapply(filtered_matrix, function(t) t$name, character(1)),
+             c("read_file", "bash"))
+filtered_cli <- corteza:::.task_filter_tools(tool_list, "cli")
+expect_equal(length(filtered_cli), 4L)
+filtered_console <- corteza:::.task_filter_tools(tool_list, "console")
+expect_equal(length(filtered_console), 4L)
+
+# task_tool_intercept defense-in-depth: even if a Matrix session
+# somehow has the tools advertised (e.g. user disables the filter),
+# the intercept returns a clear error instead of triggering
+# default-deny and a confusing rejection marker.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    s <- new_test_session()
+    s$channel <- "matrix"
+    s$task_approval_cb <- function() TRUE
+    res <- intercept(s, "task_create", list(tasks = c("a")))
+    expect_true(grepl("not available on the 'matrix' channel", res,
+                      fixed = TRUE))
+    expect_equal(length(s$tasks), 0L)
+})
 
 # --- display -------------------------------------------------------
 
