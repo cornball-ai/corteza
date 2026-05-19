@@ -37,4 +37,7 @@ from the parent's `preset` or explicit `tools` argument to
 [subagent_spawn()]). There is no way to grant additional capability
 mid-run.
 }
+\details{
+
+}
 \keyword{internal}

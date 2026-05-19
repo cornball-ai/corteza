@@ -17,7 +17,10 @@ List of tool definitions.
 Returns the full tool definition list the CLI needs to build its LLM
 API `tools` payload. Ensures built-in skills and user skills are
 loaded before listing.
+}
+\details{
 Exported (with `@keywords internal`) for the same reason as
 `worker_dispatch()`.
+
 }
 \keyword{internal}

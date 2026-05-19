@@ -20,4 +20,7 @@ An MCP tool-result list.
 \description{
 Creates parent directories by default.
 }
+\details{
+
+}
 \keyword{internal}

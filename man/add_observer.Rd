@@ -16,6 +16,8 @@ The session, invisibly.
 \description{
 Observers run after every tool call (run, denied, or declined). They
 receive a single \code{event} list with fields:
+}
+\details{
 \itemize{
 \item \code{call} — the call list passed to \code{policy()}.
 \item \code{decision} — the policy decision for the call.
@@ -27,5 +29,7 @@ tool error.
 \item \code{elapsed_ms} — wall time including policy overhead.
 \item \code{turn_number} — the session's tool-call counter.
 }
+
 Errors raised inside an observer are swallowed.
+
 }

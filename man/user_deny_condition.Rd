@@ -22,4 +22,7 @@ approval_cb in [.make_tool_handler()] does not swallow it. The
 machinery fall through cleanly if a surface forgets to register a
 `corteza_user_deny` handler.
 }
+\details{
+
+}
 \keyword{internal}

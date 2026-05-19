@@ -33,6 +33,9 @@ The session object (invisibly).
 Run a conversational agent inside your R session. Tools execute as direct
 function calls, no MCP server needed.
 }
+\details{
+
+}
 \examples{
 if (interactive()) {
     # Start chatting with defaults from config

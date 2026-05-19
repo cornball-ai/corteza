@@ -16,6 +16,9 @@ TRUE if removed, FALSE if not found, invisibly.
 \description{
 Remove the \code{corteza} command-line tool.
 }
+\details{
+
+}
 \examples{
 \dontrun{
 uninstall_cli()

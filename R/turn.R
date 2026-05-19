@@ -210,7 +210,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             raw <- tryCatch(
                             tool_executor(internal_name, as.list(args)),
                             error = function(e) err(paste("Tool error:",
-                                                          conditionMessage(e)))
+                        conditionMessage(e)))
             )
             return(.flatten_mcp_result(raw))
         }
@@ -293,8 +293,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
-        outcome_text("ran", .flatten_mcp_result(raw), success,
-                     diff = raw$diff)
+        outcome_text("ran", .flatten_mcp_result(raw), success, diff = raw$diff)
     }
 }
 

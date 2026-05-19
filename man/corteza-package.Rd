@@ -3,11 +3,9 @@
 \name{corteza-package}
 \alias{corteza}
 \alias{corteza-package}
-\title{corteza: AI Agent Runtime in R}
-\description{
-corteza: AI Agent Runtime in R
-}
-\author{
-\strong{Maintainer}: Troy Hernandez \email{troy@cornball.ai}
-}
+\title{\packageTitle{corteza}}
+\description{\packageDescription{corteza}}
+\section{Package Content}{\packageIndices{corteza}}
+\author{\packageAuthor{corteza}}
+\section{Maintainer}{\packageMaintainer{corteza}}
 \keyword{internal}

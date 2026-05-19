@@ -24,4 +24,7 @@ Use for parallel work or tasks requiring focused attention. Parent
 session is read from `ctx$session`, which the skill handler injects
 from the invoking context; not from LLM-provided args.
 }
+\details{
+
+}
 \keyword{internal}

@@ -16,6 +16,8 @@ keep verbatim (a turn starts at a user message).}
 Returns the number of entries that can safely be summarized
 (entries `1..cut`). Entries `cut+1..end` are preserved verbatim.
 Returns 0 when no safe cut is available.
+}
+\details{
 Strategy: start from the maximum cut that leaves `keep_recent_turns`
 user-prompt boundaries intact, then walk back as needed so the cut
 doesn't land between a tool_use and the tool_result that satisfies

@@ -18,4 +18,7 @@ result values (data frames, matrices, long vectors, objects over
 summary plus a short `.h_NNN` handle the LLM can reference in a
 later `run_r` call or inspect with `read_handle`.
 }
+\details{
+
+}
 \keyword{internal}

@@ -15,7 +15,10 @@ Invisible TRUE on success.
 Called once after the callr session starts. Sets up cwd, loads the
 package, registers skills. Separate from worker_dispatch so session
 init is explicit and inspectable.
+}
+\details{
 Exported (with `@keywords internal`) for the same reason as
 `worker_dispatch()`.
+
 }
 \keyword{internal}

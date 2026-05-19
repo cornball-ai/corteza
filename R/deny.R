@@ -29,12 +29,15 @@
 #'   `c("corteza_user_deny", "interrupt", "condition")`.
 #' @keywords internal
 user_deny_condition <- function(tool = "?") {
-    tool_str <- if (length(tool) && nzchar(tool)) as.character(tool)[1] else "?"
+    if (length(tool) && nzchar(tool)) {
+        tool_str <- as.character(tool)[1]
+    } else {
+        tool_str <- "?"
+    }
     structure(
-        class = c("corteza_user_deny", "interrupt", "condition"),
-        list(message = sprintf("User denied tool use: %s", tool_str),
-             tool = tool_str,
-             call = NULL)
+              class = c("corteza_user_deny", "interrupt", "condition"),
+              list(message = sprintf("User denied tool use: %s", tool_str),
+                   tool = tool_str, call = NULL)
     )
 }
 
@@ -48,8 +51,9 @@ user_deny_condition <- function(tool = "?") {
 #' @keywords internal
 user_deny_marker <- function(tool = "?") {
     sprintf(
-        paste0("[User denied tool use: %s. Stop and ask the user what ",
-               "to do instead -- do not retry or plan a workaround.]"),
+            paste0("[User denied tool use: %s. Stop and ask the user what ",
+                   "to do instead -- do not retry or plan a workaround.]"),
         if (length(tool) && nzchar(tool)) as.character(tool)[1] else "?"
     )
 }
+

@@ -55,11 +55,8 @@ capture_command <- function(command, args = character()) {
         structure(paste("Error:", e$message), status = 1L)
     }
     )
-    list(
-         lines = output,
-         text = paste(output, collapse = "\n"),
-         status = attr(output, "status") %||% 0L
-    )
+    list(lines = output, text = paste(output, collapse = "\n"),
+         status = attr(output, "status") %||% 0L)
 }
 
 #' Cap an arbitrary text blob at `max_lines` lines and `max_chars`
@@ -101,12 +98,15 @@ collect_git_diff <- function(ref = NULL) {
     }
 
     target <- trimws(ref %||% "")
-    target <- if (nchar(target) > 0L) target else "HEAD"
+    if (nchar(target) > 0L) {
+        target <- target
+    } else {
+        target <- "HEAD"
+    }
 
     status <- capture_command("git", c("status", "--short"))
     diff <- capture_command("git",
-                            c("diff", "--no-ext-diff", "--find-renames",
-                              "--unified=3", target))
+                            c("diff", "--no-ext-diff", "--find-renames", "--unified=3", target))
 
     if (diff$status != 0L) {
         return(list(ok = FALSE, text = diff$text))
@@ -116,23 +116,22 @@ collect_git_diff <- function(ref = NULL) {
             return(list(
                         ok = FALSE,
                         text = paste0(
-                "No tracked diff against ", target,
-                ". Untracked or ignored files may still be present.\n\n",
-                truncate_output(status$text, max_lines = 50L,
-                                max_chars = 4000L)
-            )
+                                      "No tracked diff against ", target,
+                                      ". Untracked or ignored files may still be present.\n\n",
+                                      truncate_output(status$text, max_lines = 50L,
+                            max_chars = 4000L)
+                    )
                 ))
         }
         return(list(ok = FALSE, text = paste("No git diff against",
-                                             target, ".")))
+                    target, ".")))
     }
 
     list(ok = TRUE,
          target = target,
          status = truncate_output(status$text, max_lines = 80L,
                                   max_chars = 6000L),
-         diff = truncate_output(diff$text, max_lines = 500L,
-                                max_chars = 70000L))
+         diff = truncate_output(diff$text, max_lines = 500L, max_chars = 70000L))
 }
 
 # ---- Provider / model availability checks -----------------------------
@@ -141,10 +140,8 @@ collect_git_diff <- function(ref = NULL) {
 #' variable. Used by /doctor and /status to flag missing keys.
 #' @noRd
 provider_env_var <- function(provider) {
-    switch(provider,
-           anthropic = "ANTHROPIC_API_KEY",
-           openai = "OPENAI_API_KEY",
-           paste0(toupper(provider), "_API_KEY"))
+    switch(provider, anthropic = "ANTHROPIC_API_KEY",
+           openai = "OPENAI_API_KEY", paste0(toupper(provider), "_API_KEY"))
 }
 
 #' Quick reachability check for the configured provider.
@@ -184,38 +181,38 @@ provider_status <- function(provider, model = NULL) {
 #' total, context-limit ceiling, etc.) so this function is trivially
 #' unit-testable without hitting any state.
 #' @noRd
-format_status_summary <- function(session, provider, display_model, tools, opts,
-                                  config, session_tokens, context_limit,
-                                  context_files, skill_docs) {
+format_status_summary <- function(session, provider, display_model, tools,
+                                  opts, config, session_tokens,
+                                  context_limit, context_files, skill_docs) {
     memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
-                       isTRUE(config$memory_flush_enabled)) {
+        isTRUE(config$memory_flush_enabled)) {
         "legacy corteza memory enabled"
     } else {
         "legacy corteza memory disabled"
     }
     paste(
-        c(
+          c(
             sprintf("Session: %s", session$sessionKey %||% "(unnamed)"),
             sprintf("Model: %s @ %s", display_model %||% "(default)",
                     provider %||% "(default)"),
             sprintf("Tools: %d | Dry-run: %s",
                     length(tools %||% list()),
-                    if (isTRUE(opts$dry_run)) "on" else "off"),
+                if (isTRUE(opts$dry_run)) "on" else "off"),
             sprintf("Context: %d project file(s) | %d skill doc(s) | %s",
                     length(context_files %||% character()),
                     length(skill_docs %||% character()), memory_mode),
             sprintf("Legacy memory tools: %s",
-                    if (isTRUE(config$legacy_memory_tools_enabled)) {
-                        "visible"
-                    } else {
-                        "hidden"
-                    }),
+                if (isTRUE(config$legacy_memory_tools_enabled)) {
+                    "visible"
+                } else {
+                    "hidden"
+                }),
             sprintf("Live context: %s / %s tokens",
                     format_tokens(session_tokens %||% 0L),
                     format_tokens(context_limit %||% 0L)),
             sprintf("Approval mode: %s", config$approval_mode %||% "ask")
         ),
-        collapse = "\n"
+          collapse = "\n"
     )
 }
 
@@ -224,48 +221,47 @@ format_status_summary <- function(session, provider, display_model, tools, opts,
 #' @noRd
 format_config_summary <- function(config, provider, display_model, opts) {
     paste(
-        c(
+          c(
             "Runtime config",
             sprintf("provider: %s", provider %||% "(default)"),
             sprintf("model: %s", display_model %||% "(default)"),
             sprintf("port: %s",
-                    if (is.null(opts$port)) "(n/a)" else as.character(opts$port)),
+                if (is.null(opts$port)) "(n/a)" else as.character(opts$port)),
             sprintf("tools: %s",
-                    if (is.null(opts$tools)) {
-                        "all"
-                    } else {
-                        paste(opts$tools, collapse = ", ")
-                    }),
+                if (is.null(opts$tools)) {
+                    "all"
+                } else {
+                    paste(opts$tools, collapse = ", ")
+                }),
             sprintf("context files: %s",
-                    if (length(config$context_files) > 0L) {
-                        paste(config$context_files, collapse = ", ")
-                    } else {
-                        "(none)"
-                    }),
+                if (length(config$context_files) > 0L) {
+                    paste(config$context_files, collapse = ", ")
+                } else {
+                    "(none)"
+                }),
             sprintf("daily memory logs: %s",
-                    if (isTRUE(config$context_include_memory_logs)) {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }),
+                if (isTRUE(config$context_include_memory_logs)) {
+                    "enabled"
+                } else {
+                    "disabled"
+                }),
             sprintf("compaction memory flush: %s",
-                    if (isTRUE(config$memory_flush_enabled)) {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }),
+                if (isTRUE(config$memory_flush_enabled)) {
+                    "enabled"
+                } else {
+                    "disabled"
+                }),
             sprintf("legacy memory tools: %s",
-                    if (isTRUE(config$legacy_memory_tools_enabled)) {
-                        "visible"
-                    } else {
-                        "hidden"
-                    }),
+                if (isTRUE(config$legacy_memory_tools_enabled)) {
+                    "visible"
+                } else {
+                    "hidden"
+                }),
             sprintf("approval mode: %s", config$approval_mode %||% "ask"),
             sprintf("dangerous tools: %s",
-                    paste(config$dangerous_tools %||% character(),
-                          collapse = ", "))
+                    paste(config$dangerous_tools %||% character(), collapse = ", "))
         ),
-        collapse = "\n"
+          collapse = "\n"
     )
 }
 
@@ -276,8 +272,8 @@ format_config_summary <- function(config, provider, display_model, opts) {
 #' For tests, the `provider_check_fn` / `git_check_fn` args let
 #' callers swap in stubs that don't hit the network or shell out.
 #' @noRd
-format_doctor_report <- function(cwd, session, provider, display_model, tools,
-                                 config, context_files, skill_docs,
+format_doctor_report <- function(cwd, session, provider, display_model,
+                                 tools, config, context_files, skill_docs,
                                  provider_check_fn = provider_status,
                                  git_check_fn = in_git_repo) {
     provider_check <- provider_check_fn(
@@ -287,56 +283,55 @@ format_doctor_report <- function(cwd, session, provider, display_model, tools,
     approvals_path <- file.path(cwd, ".corteza", "approvals.json")
 
     paste(
-        c(
+          c(
             "corteza doctor",
             sprintf("cwd: %s", cwd),
             sprintf("session: %s", session$sessionKey %||% "(unnamed)"),
             sprintf("provider: %s (%s)",
                     provider %||% "(default)",
-                    if (isTRUE(provider_check$ok)) {
-                        provider_check$message
-                    } else {
-                        paste("check failed:", provider_check$message)
-                    }),
+                if (isTRUE(provider_check$ok)) {
+                    provider_check$message
+                } else {
+                    paste("check failed:", provider_check$message)
+                }),
             sprintf("model: %s", display_model %||% "(default)"),
-            sprintf("worker: connected (%d tools)",
-                    length(tools %||% list())),
+            sprintf("worker: connected (%d tools)", length(tools %||% list())),
             sprintf("git: %s",
-                    if (isTRUE(git_check_fn())) {
-                        "repository detected"
-                    } else {
-                        "not a git repository"
-                    }),
+                if (isTRUE(git_check_fn())) {
+                    "repository detected"
+                } else {
+                    "not a git repository"
+                }),
             sprintf("context files: %d",
                     length(context_files %||% character())),
             sprintf("skill docs: %d", length(skill_docs %||% character())),
             sprintf("daily memory logs: %s",
-                    if (isTRUE(config$context_include_memory_logs)) {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }),
+                if (isTRUE(config$context_include_memory_logs)) {
+                    "enabled"
+                } else {
+                    "disabled"
+                }),
             sprintf("compaction memory flush: %s",
-                    if (isTRUE(config$memory_flush_enabled)) {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }),
+                if (isTRUE(config$memory_flush_enabled)) {
+                    "enabled"
+                } else {
+                    "disabled"
+                }),
             sprintf("legacy memory tools: %s",
-                    if (isTRUE(config$legacy_memory_tools_enabled)) {
-                        "visible"
-                    } else {
-                        "hidden"
-                    }),
+                if (isTRUE(config$legacy_memory_tools_enabled)) {
+                    "visible"
+                } else {
+                    "hidden"
+                }),
             sprintf("approval mode: %s", config$approval_mode %||% "ask"),
             sprintf("project approvals: %s",
-                    if (file.exists(approvals_path)) {
-                        approvals_path
-                    } else {
-                        "none"
-                    })
+                if (file.exists(approvals_path)) {
+                    approvals_path
+                } else {
+                    "none"
+                })
         ),
-        collapse = "\n"
+          collapse = "\n"
     )
 }
 
@@ -377,9 +372,9 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text,
                 provider = provider,
                 model = resolve_provider_model(provider, model),
                 system = paste(
-            "You are performing code review on local changes.",
-            "Findings must come first and should prioritize correctness over style."
-        ),
+                               "You are performing code review on local changes.",
+                               "Findings must come first and should prioritize correctness over style."
+            ),
                 temperature = preferred_chat_temperature(provider, 0.1)
         )
     }, error = function(e) e)
@@ -413,14 +408,13 @@ Format as a structured summary the assistant can use to continue the work.
 #'
 #' For tests, `chat_fn` can be stubbed to avoid the network round-trip.
 #' @noRd
-do_compact <- function(session, provider, model,
-                       chat_fn = llm.api::chat,
+do_compact <- function(session, provider, model, chat_fn = llm.api::chat,
                        emit = function(...) cat(...)) {
     emit("Auto-compacting conversation...\n")
 
     conv_text <- vapply(session$messages %||% list(), function(m) {
         text <- if (is.list(m$content) && length(m$content) > 0L &&
-                    !is.null(m$content[[1L]]$text)) {
+                        !is.null(m$content[[1L]]$text)) {
             m$content[[1L]]$text
         } else {
             m$content
@@ -456,3 +450,4 @@ do_compact <- function(session, provider, model,
 
     list(summary = summary, tokens = new_tokens)
 }
+

@@ -42,8 +42,7 @@ tool_buffer_add <- function(session, name, args, result) {
         return(invisible(NULL))
     }
     rec <- .tool_buffer_record(sid)
-    entry <- list(name = name, args = args, result = result,
-                  time = Sys.time())
+    entry <- list(name = name, args = args, result = result, time = Sys.time())
     rec$outputs <- c(list(entry), rec$outputs)
     if (length(rec$outputs) > rec$max) {
         rec$outputs <- rec$outputs[seq_len(rec$max)]
@@ -113,9 +112,9 @@ tool_buffer_observer <- function(session) {
         if (!isTRUE(event$success)) {
             return(invisible())
         }
-        tool_buffer_add(session,
-                        name = event$call$tool %||% "",
+        tool_buffer_add(session, name = event$call$tool %||% "",
                         args = event$call$args %||% list(),
                         result = event$result %||% "")
     }
 }
+

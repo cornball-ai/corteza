@@ -19,4 +19,7 @@ The LLM's only window onto large stashed objects. Supports a few
 common ops: `str` (structure), `head` (first six rows / elements),
 `summary` (R's summary()), `print` (full print of the object).
 }
+\details{
+
+}
 \keyword{internal}

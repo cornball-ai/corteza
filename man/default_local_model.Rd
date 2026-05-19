@@ -15,6 +15,9 @@ is currently installed in the local Ollama server. Returns NULL if
 Ollama is unreachable or none of the candidates are installed.
 Cached per R process.
 }
+\details{
+
+}
 \examples{
 # NULL when Ollama isn't running locally; a model name otherwise.
 model <- default_local_model()

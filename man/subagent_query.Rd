@@ -29,8 +29,11 @@ Sends a prompt to a running subagent. Inside the child it runs
 through [turn()] with the child's persistent turn session: the LLM
 replies, any tool calls it makes resolve against the child's
 in-process skill registry, and history accumulates across queries.
+}
+\details{
 With `wait = FALSE` the call returns immediately after firing the
 prompt; the parent collects the reply later with [subagent_collect()].
 A subagent can only carry one in-flight async query at a time:
 firing a second one while the first is pending raises an error.
+
 }

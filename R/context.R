@@ -187,8 +187,8 @@ load_saber_briefing <- function(cwd) {
         # restart. capture.output() handles any stdout cat() too.
         utils::capture.output(
                               text <- suppressMessages(
-                    saber::briefing(project = project, scan_dir = scan_dir)
-                )
+                saber::briefing(project = project, scan_dir = scan_dir)
+            )
         )
         if (is.null(text) || nchar(trimws(text)) == 0L) {
             NULL

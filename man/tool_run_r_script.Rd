@@ -17,4 +17,7 @@ An MCP tool-result list.
 Use for scripts that modify packages, run tests, or need isolation
 from the server.
 }
+\details{
+
+}
 \keyword{internal}

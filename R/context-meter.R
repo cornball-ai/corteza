@@ -10,8 +10,8 @@
 #' breakdown the rest of the CLI uses (normal / warn / high / crit).
 #' Returns the ANSI start sequence; pair with `palette$reset`.
 #' @noRd
-.context_pct_color <- function(pct, palette,
-                               warn_pct = 75, high_pct = 90, crit_pct = 95) {
+.context_pct_color <- function(pct, palette, warn_pct = 75, high_pct = 90,
+                               crit_pct = 95) {
     if (pct >= crit_pct) {
         palette$bright_red %||% ""
     } else if (pct >= high_pct) {
@@ -31,13 +31,10 @@
 #' renderer.
 #' @noRd
 .context_segment_color <- function(label, palette) {
-    switch(label %||% "",
-           system = palette$bright_blue %||% "",
+    switch(label %||% "", system = palette$bright_blue %||% "",
            tools = palette$bright_magenta %||% "",
-           history = palette$cyan %||% "",
-           messages = palette$cyan %||% "",
-           memory = palette$yellow %||% "",
-           skills = palette$green %||% "",
+           history = palette$cyan %||% "", messages = palette$cyan %||% "",
+           memory = palette$yellow %||% "", skills = palette$green %||% "",
            palette$white %||% "")
 }
 
@@ -63,10 +60,8 @@
 #'   `[ ]` brackets).
 #' @noRd
 .context_meter_bar <- function(breakdown, limit, compact_pct = 90,
-                               width = 50L,
-                               palette = ansi_colors(),
-                               warn_pct = 75, high_pct = 90,
-                               crit_pct = 95) {
+                               width = 50L, palette = ansi_colors(),
+                               warn_pct = 75, high_pct = 90, crit_pct = 95) {
     width <- as.integer(width)
     if (is.null(limit) || limit <= 0L) {
         limit <- 1L
@@ -85,7 +80,11 @@
         }, integer(1L))
     }
     total_used <- sum(tokens)
-    pct <- if (total_used > 0L) total_used / limit * 100 else 0
+    if (total_used > 0L) {
+        pct <- total_used / limit * 100
+    } else {
+        pct <- 0
+    }
     compact_cell <- as.integer(round(compact_pct / 100 * width))
     compact_cell <- max(1L, min(width, compact_cell))
 
@@ -116,19 +115,24 @@
     pos <- 1L
     for (i in seq_along(seg_cells)) {
         n <- seg_cells[i]
-        if (n <= 0L) next
+        if (n <= 0L) {
+            next
+        }
         col <- .context_segment_color(labels[i], palette)
         end <- min(width, pos + n - 1L)
         for (k in seq.int(pos, end)) {
             cells[k] <- sprintf("%s\u2588%s", col, palette$reset %||% "")
         }
         pos <- end + 1L
-        if (pos > width) break
+        if (pos > width) {
+            break
+        }
     }
     if (pos <= width) {
         for (k in seq.int(pos, width)) {
             cells[k] <- if (k == compact_cell) {
-                sprintf("%s\u2502%s", palette$dim %||% "", palette$reset %||% "")
+                sprintf("%s\u2502%s", palette$dim %||% "",
+                        palette$reset %||% "")
             } else {
                 sprintf("%s.%s", empty_color, palette$reset %||% "")
             }
@@ -146,15 +150,18 @@
 .context_breakdown_row <- function(label, tokens, used,
                                    palette = ansi_colors()) {
     tok_str <- format_tokens(tokens)
-    pct <- if (used > 0L) tokens / used * 100 else 0
+    if (used > 0L) {
+        pct <- tokens / used * 100
+    } else {
+        pct <- 0
+    }
     pct_str <- if (pct >= 1) {
         sprintf("%d%%", as.integer(round(pct)))
     } else {
         ""
     }
-    sprintf("  %-8s %6s  %s%s%s",
-            label, tok_str,
-            palette$dim %||% "", pct_str, palette$reset %||% "")
+    sprintf("  %-8s %6s  %s%s%s", label, tok_str, palette$dim %||% "",
+            pct_str, palette$reset %||% "")
 }
 
 #' Render the full /context block.
@@ -172,17 +179,18 @@
 #' @param bar_width Bar width in cells (default 50).
 #' @return Character scalar (multi-line, no trailing newline).
 #' @noRd
-format_context_block <- function(used, limit, breakdown,
-                                 compact_pct = 90,
-                                 warn_pct = 75, high_pct = 90,
-                                 crit_pct = 95,
+format_context_block <- function(used, limit, breakdown, compact_pct = 90,
+                                 warn_pct = 75, high_pct = 90, crit_pct = 95,
                                  files = character(0L),
-                                 palette = ansi_colors(),
-                                 bar_width = 50L,
+                                 palette = ansi_colors(), bar_width = 50L,
                                  status_info = NULL) {
     used <- as.integer(round(used %||% 0))
     limit <- as.integer(round(limit %||% 0))
-    pct <- if (limit > 0L) used / limit * 100 else 0
+    if (limit > 0L) {
+        pct <- used / limit * 100
+    } else {
+        pct <- 0
+    }
 
     # Optional Codex-style status header above the bar: corteza
     # version, model, directory, session id. Each field a `label:
@@ -196,15 +204,14 @@ format_context_block <- function(used, limit, breakdown,
         label_width <- max(nchar(paste0(names(status_info), ":")))
         for (lbl in names(status_info)) {
             val <- status_info[[lbl]]
-            if (is.null(val) || identical(val, "")) val <- "(unset)"
+            if (is.null(val) || identical(val, "")) {
+                val <- "(unset)"
+            }
             status_lines <- c(
                               status_lines,
-                              sprintf("%s%-*s%s  %s%s%s",
-                                      palette$dim %||% "", label_width,
-                                      paste0(lbl, ":"),
-                                      palette$reset %||% "",
-                                      palette$bold %||% "", val,
-                                      palette$reset %||% "")
+                              sprintf("%s%-*s%s  %s%s%s", palette$dim %||% "", label_width,
+                                      paste0(lbl, ":"), palette$reset %||% "",
+                                      palette$bold %||% "", val, palette$reset %||% "")
             )
         }
         status_lines <- c(status_lines, "")
@@ -217,7 +224,7 @@ format_context_block <- function(used, limit, breakdown,
                           format_tokens(used), format_tokens(limit),
                           as.integer(round(pct)))
     right_plain <- sprintf("compact %d%%", as.integer(compact_pct))
-    total_width <- bar_width + 2L  # match the bar's visible width incl. [ ]
+    total_width <- bar_width + 2L # match the bar's visible width incl. [ ]
     pad <- max(1L, total_width - nchar(left_plain) - nchar(right_plain))
     header <- paste0(
                      palette$bold %||% "", left_plain, palette$reset %||% "",
@@ -239,13 +246,12 @@ format_context_block <- function(used, limit, breakdown,
             vapply(breakdown, function(b) as.integer(b$tokens %||% 0L),
                    integer(1L))
         } else {
-            vapply(breakdown, function(v) as.integer(v %||% 0L),
-                   integer(1L))
+            vapply(breakdown, function(v) as.integer(v %||% 0L), integer(1L))
         }
         for (i in seq_along(breakdown)) {
             rows <- c(rows,
                       .context_breakdown_row(labels[i], tokens[i], used,
-                                             palette = palette))
+                    palette = palette))
         }
     }
 
@@ -253,13 +259,13 @@ format_context_block <- function(used, limit, breakdown,
         c(sprintf("%sContext files (%d):%s",
                   palette$bold %||% "", length(files),
                   palette$reset %||% ""),
-          vapply(files, function(f) sprintf("  %s", f), character(1L),
-                 USE.NAMES = FALSE))
+            vapply(files, function(f) sprintf("  %s", f), character(1L),
+                   USE.NAMES = FALSE))
     } else {
         sprintf("%sNo context files loaded.%s",
                 palette$dim %||% "", palette$reset %||% "")
     }
 
-    paste(c(status_lines, header, bar, rows, "", files_block),
-          collapse = "\n")
+    paste(c(status_lines, header, bar, rows, "", files_block), collapse = "\n")
 }
+
