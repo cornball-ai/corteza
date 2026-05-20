@@ -1,3 +1,33 @@
+# corteza 0.6.6.20
+
+## Codex review for #110 + #111
+
+* **Handle staleness (medium).** `handle_eval_env()` used to skip
+  reassignment when the `.h_NNN` symbol already existed in
+  globalenv, so rebinding a handle id in the store left the old
+  globalenv copy in place (codex repro'd: `tool_run_r('.h_001')`
+  returned the previous snapshot after the store was rewritten).
+  Now `handle_eval_env()` assigns unconditionally and removes
+  globalenv bindings the package previously created that are no
+  longer in the store, via a new `.handle_managed` registry.
+  `clear_handles()` also sweeps the managed bindings out of
+  globalenv.
+* **Session-name collisions across agents (medium/low).**
+  `session_id()` ignored its caller's agent and only collision-
+  checked the default agent's transcript dir. With the
+  docker-style ~6000-name pool, a non-main agent could mint a
+  name that already existed in its own store and silently reuse
+  the transcript. `session_id()` now takes `agent_id`, threads
+  it to `.session_name_exists()`, and the collision check now
+  consults both the transcript file *and* the in-store metadata
+  for that agent.
+* **Untitled buffers in the RStudio addin (low).** Unsaved
+  source-editor buffers return empty `ctx$path`, so
+  `tools::file_ext()` returned `""` and the addin routed the
+  line as "other" -- inside chat() that meant the LLM saw raw
+  R code instead of a `/r ...` invocation. Untitled buffers are
+  now treated as R, matching RStudio's built-in assumption.
+
 # corteza 0.6.6.19
 
 ## RStudio addin: route Ctrl+Enter to /r or ! when chat() is active

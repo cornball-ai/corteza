@@ -36,6 +36,15 @@
 #' @noRd
 .corteza_route <- function(code, ext, in_chat) {
     ext <- tolower(as.character(ext))
+    # Unsaved buffers come back with empty $path so ext is "" --
+    # treat them as R, matching RStudio's built-in assumption for
+    # untitled documents (codex 2026-05-20: previously the addin
+    # routed unsaved buffers as "other", meaning Ctrl+Enter from
+    # an unsaved R script inside chat() sent the line as a raw
+    # LLM prompt instead of /r ...).
+    if (!nzchar(ext)) {
+        ext <- "r"
+    }
     console <- function(text) list(target = "console", text = text)
     terminal <- function(text) list(target = "terminal", text = text)
     if (isTRUE(in_chat)) {
@@ -157,8 +166,7 @@
         # instead of dragging it to the console after each
         # Ctrl+Enter -- matches RStudio's built-in execute-line
         # behavior.
-        rstudioapi::sendToConsole(route$text, execute = TRUE,
-                                  focus = FALSE)
+        rstudioapi::sendToConsole(route$text, execute = TRUE, focus = FALSE)
     }
 
     if (isTRUE(advance_cursor)) {

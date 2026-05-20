@@ -25,6 +25,18 @@ on.exit({
 id <- corteza:::session_id()
 expect_true(grepl("^[a-z]+_[a-z]+$", id))
 
+# session_id() takes an agent_id so collision-checking targets the
+# right store (codex 2026-05-20). Previously the function ignored
+# agent_id and always checked the main agent's transcript dir, so
+# a non-main agent could mint a name that already existed in its
+# own store and silently reuse the transcript.
+expect_true("agent_id" %in% names(formals(corteza:::session_id)))
+# Generating against a never-used agent succeeds and returns the
+# docker-style format.
+nonce_agent <- paste0("test_agent_", as.integer(Sys.time()))
+nonce_id <- corteza:::session_id(agent_id = nonce_agent)
+expect_true(grepl("^[a-z]+_[a-z]+$", nonce_id))
+
 # Test session_new creates proper structure
 cwd <- getwd()
 session <- corteza:::session_new("ollama", "llama3.2", cwd, agent_id = test_agent_id)
