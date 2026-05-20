@@ -9,6 +9,34 @@ expect_true(grepl("2", result$content[[1]]$text))
 result <- corteza:::tool_run_r(code = "stop('test error')")
 expect_true(grepl("Error", result$content[[1]]$text))
 
+# Regression: `<-` assignments must persist in globalenv across
+# tool_run_r() calls. PR #36 (Phase 5 of CLI/worker split, Apr 2026)
+# silently broke this by evaluating in a child env, contradicting
+# the tool's docstring ("Execute R code in the session's global
+# environment"). Reported May 2026.
+local({
+    var_name <- "._corteza_persist_test"
+    on.exit(suppressWarnings(rm(list = var_name, envir = globalenv())),
+            add = TRUE)
+    suppressWarnings(rm(list = var_name, envir = globalenv()))
+
+    corteza:::tool_run_r(code = sprintf("%s <- 42", var_name))
+    expect_true(exists(var_name, envir = globalenv(), inherits = FALSE))
+    expect_equal(get(var_name, envir = globalenv()), 42)
+
+    # Second call reads what the first call wrote.
+    result <- corteza:::tool_run_r(code = sprintf("%s + 1", var_name))
+    expect_true(grepl("43", result$content[[1]]$text))
+
+    # Assignment via `=` also persists.
+    other <- "._corteza_persist_test_eq"
+    on.exit(suppressWarnings(rm(list = other, envir = globalenv())),
+            add = TRUE)
+    suppressWarnings(rm(list = other, envir = globalenv()))
+    corteza:::tool_run_r(code = sprintf("%s = 7", other))
+    expect_true(exists(other, envir = globalenv(), inherits = FALSE))
+})
+
 # Test run_r_script: fresh-subprocess execution via callr::rscript().
 # Smoke test was missing entirely before; the prior implementation called
 # system2("r", c("-f", tmp)) which failed everywhere ("-f" is not a valid

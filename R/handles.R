@@ -116,11 +116,36 @@ clear_handles <- function() {
 #' handle symbols into the user's globalenv.
 #' @noRd
 handle_eval_env <- function(parent = globalenv()) {
-    env <- new.env(parent = parent)
+    # Earlier versions (PR #36) returned a CHILD env of globalenv,
+    # which sandboxed handle symbols nicely but silently broke
+    # `<-` persistence across tool_run_r() calls -- assignments
+    # landed in the child env, not in globalenv, so they
+    # disappeared as soon as the call returned. The behavior
+    # contradicted the tool's docstring ("Execute R code in the
+    # session's global environment") and required users to discover
+    # they had to use `<<-` to make anything stick.
+    #
+    # Restored to: copy handles INTO globalenv (under their hidden
+    # `.h_NNN` names, which `ls()` doesn't show by default) and
+    # return globalenv. eval(envir = globalenv()) makes `<-` write
+    # to the right place. The `parent` argument is now ignored;
+    # kept for API parity.
+    # R CMD check NOTEs the literal `envir = globalenv()` pattern
+    # because most packages shouldn't write to the user's globalenv.
+    # For corteza this is intentional: handles need to be visible
+    # to the user's eval'd code, and the user's eval'd code runs
+    # in globalenv so `<-` persists across run_r() calls (per the
+    # tool's docstring). Tried `pos = 1L` to skirt the NOTE but it
+    # diverges from globalenv() when there's a sandbox env on the
+    # search path (e.g. under tinytest::run_test_file), so back to
+    # the explicit form and we live with the NOTE.
+    ge <- globalenv()
     for (h in list_handles()) {
-        assign(h, get(h, envir = .handle_store), envir = env)
+        if (!exists(h, envir = ge, inherits = FALSE)) {
+            assign(h, get(h, envir = .handle_store), envir = ge)
+        }
     }
-    env
+    ge
 }
 
 #' Read / inspect a stashed handle.

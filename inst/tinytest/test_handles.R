@@ -61,13 +61,22 @@ expect_true(grepl("stored as \\.h_\\d+", text))
 expect_true(grepl("'data.frame'", text, fixed = TRUE))
 expect_equal(length(corteza:::list_handles()), 1L)
 
-# Invisible assignments don't trigger a handle.
+# Invisible assignments persist in globalenv. run_r evaluates in
+# globalenv (PR <fix> 2026-05-20) so `<-` matches the tool's
+# docstring; the earlier child-env behavior silently dropped
+# assignments. The handle stash should still be empty since `NULL`
+# produced no visible large result. Cleanup is inline (on.exit at
+# tinytest top-level fires immediately after the expression that
+# registered it, so it would nuke the variable before the
+# assertion below could see it).
 corteza:::clear_handles()
+suppressWarnings(rm("x_internal_assign", envir = globalenv()))
 res <- corteza:::call_tool("run_r",
                            list(code = "x_internal_assign <- 1:1000; NULL"))
 expect_false(isTRUE(res$isError))
-# Assignment happens in eval_env, so globalenv doesn't get polluted.
-expect_false("x_internal_assign" %in% ls(globalenv()))
+expect_true("x_internal_assign" %in% ls(globalenv()))
+expect_equal(length(corteza:::list_handles()), 0L)
+suppressWarnings(rm("x_internal_assign", envir = globalenv()))
 
 # --- Handle visible in subsequent run_r --------------------------------
 
