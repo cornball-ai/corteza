@@ -76,6 +76,35 @@ withr_local_dir <- function(dir, expr) {
     force(expr)
 }
 
+#' Is `code` a syntactically complete R expression?
+#'
+#' Returns TRUE when `parse(text = code)` succeeds, or when it
+#' fails with a real syntax error (not worth waiting for more
+#' input). Returns FALSE only when the parser ran out of tokens
+#' mid-expression -- the caller can then read another line and
+#' retry.
+#'
+#' Two distinct "incomplete" parser signals are honored: the
+#' usual "unexpected end of input" (open paren / brace / op
+#' waiting for a right-hand side) and "unexpected INCOMPLETE_STRING"
+#' (a quoted string with no closing quote).
+#'
+#' Used by `corteza::chat()`'s `/r` handler to mimic R's normal
+#' "+" continuation prompt: an RStudio addin Ctrl+Enter on a
+#' multi-line `lm(y ~ x,\n   data = df)` arrives as two separate
+#' readline cycles; the first is incomplete so we wait for the
+#' second before evaluating.
+#' @noRd
+.r_expr_complete <- function(code) {
+    err <- tryCatch(parse(text = code), error = identity)
+    if (!inherits(err, "error")) {
+        return(TRUE)
+    }
+    msg <- conditionMessage(err)
+    !(grepl("end of input", msg, fixed = TRUE) ||
+        grepl("INCOMPLETE_STRING", msg, fixed = TRUE))
+}
+
 #' Eval an R expression locally for `/r <expr>`. Mirrors
 #' `run_bang_shell`'s shape so both local-eval flows share a
 #' return type. The staged version for the next LLM message swaps

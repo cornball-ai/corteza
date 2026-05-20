@@ -1,3 +1,25 @@
+# corteza 0.6.7
+
+Patch release batching the 0.6.6.1 through 0.6.6.20 dev cycles plus
+the out-of-band "Deny aborts the whole turn" change. Per-PR detail
+is preserved in the dev-marker sections below.
+
+## RStudio addin: multi-line statements
+
+* `corteza_execute_in_chat()` / `_retain()` now expand the current
+  line to the full top-level R statement before sending, matching
+  RStudio's built-in Ctrl+Enter behavior. Before, hitting Ctrl+Enter
+  on the first line of `lm(y ~ x,\n   data = df)` sent only the
+  unclosed first line -- annoying outside `chat()`, and broken
+  inside `chat()` where `/r lm(y ~ x,` failed to parse. Buffer is
+  parsed with `keep.source = TRUE`; falls back to single-line when
+  the buffer has a syntax error elsewhere or the cursor sits on a
+  blank / comment line outside any expression.
+* `chat()` and the CLI `/r` handlers now read continuation lines
+  with a `+` prompt until the expression parses, mirroring R's
+  built-in REPL continuation. Capped at 100 continuation lines to
+  keep a stuck parse from blocking the REPL.
+
 # corteza 0.6.6.20
 
 ## Codex review for #110 + #111

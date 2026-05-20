@@ -79,3 +79,40 @@ expect_equal(next_row(c("a <- 1", "b <- 2 # tail", "c"), 2L), 2L)
 
 # No more code lines below -> past-end sentinel (n+1).
 expect_equal(next_row(c("a <- 1", "# c1", "# c2"), 2L), 4L)
+
+# --- .corteza_statement_range: full multi-line expression --------
+
+stmt <- corteza:::.corteza_statement_range
+
+# Single-line top-level expression -> just that line.
+expect_equal(stmt(c("x <- 1", "y <- 2"), 1L), c(1L, 1L))
+expect_equal(stmt(c("x <- 1", "y <- 2"), 2L), c(2L, 2L))
+
+# Multi-line expression: cursor on first line -> full range.
+buf <- c("x <- 1",
+         "lm(y ~ x,",
+         "   data = df)",
+         "z <- 2")
+expect_equal(stmt(buf, 2L), c(2L, 3L))
+# Cursor on the continuation line -> still full range.
+expect_equal(stmt(buf, 3L), c(2L, 3L))
+# Cursor on neighboring single-line stmts -> just those lines.
+expect_equal(stmt(buf, 1L), c(1L, 1L))
+expect_equal(stmt(buf, 4L), c(4L, 4L))
+
+# Comment line outside any expression -> single-line fallback.
+buf2 <- c("x <- 1", "# a comment", "y <- 2")
+expect_equal(stmt(buf2, 2L), c(2L, 2L))
+
+# Blank line inside an expression is part of the expression.
+buf3 <- c("foo(",
+          "",
+          "  a = 1)")
+expect_equal(stmt(buf3, 2L), c(1L, 3L))
+
+# Unparseable buffer -> single-line fallback.
+expect_equal(stmt(c("not valid R %%%"), 1L), c(1L, 1L))
+
+# Out-of-range line -> single-line fallback (the caller handles).
+expect_equal(stmt(c("x <- 1"), 0L), c(0L, 0L))
+expect_equal(stmt(c("x <- 1"), 5L), c(5L, 5L))

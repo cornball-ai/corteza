@@ -883,6 +883,20 @@ run_agent <- function(opts) {
           cat("Usage: /r <expr>\n")
           next
         }
+        # RStudio's Ctrl+Enter on a multi-line statement (or a user
+        # typing one manually) arrives one readline at a time. Read
+        # continuation lines until the expression parses, capped to
+        # keep a runaway loop from blocking the REPL.
+        cont_cap <- 100L
+        while (!corteza:::.r_expr_complete(code) && cont_cap > 0L) {
+          more <- tryCatch(cli_read_line("+ "),
+                           error = function(e) character())
+          if (length(more) == 0L || is.na(more[1L])) {
+            break
+          }
+          code <- paste(code, more[1L], sep = "\n")
+          cont_cap <- cont_cap - 1L
+        }
         r_out <- corteza:::run_r_eval(code)
         if (nchar(r_out$text) > 0L) {
           cat(r_out$text, "\n", sep = "")
