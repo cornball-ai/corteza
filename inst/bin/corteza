@@ -252,13 +252,25 @@ cli_worker_close <- function(worker) {
 # duplicate is gone; both surfaces now share one decision.
 color <- corteza:::ansi_colors()
 
-print_banner <- function(session_id = NULL) {
-  cat(sprintf("\n%s corteza%s", color$cyan, color$reset))
-  if (!is.null(session_id)) {
-    cat(sprintf(" %s[%s]%s", color$dim, session_id, color$reset))
-  }
-  cat("\n")
-  cat(sprintf("%sType /help for commands, /quit to exit%s\n\n", color$dim, color$reset))
+print_banner <- function(session_id = NULL, model = NULL,
+                         provider = NULL, tools_count = 0L) {
+  # No leading newline -- the blank line above the banner comes
+  # from the trailing "\n\n" on the "Connected." line. Trailing
+  # "\n\n" after session leaves a blank line before the prompt.
+  cat(corteza:::corteza_startup_banner(
+        version = as.character(utils::packageVersion("corteza")),
+        model = model %||% "(no model)",
+        provider = provider %||% "(no provider)",
+        tools_count = as.integer(tools_count),
+        palette = color
+      ),
+      "\n\n",
+      if (!is.null(session_id)) {
+        sprintf("  %ssession %s%s\n", color$dim, session_id, color$reset)
+      } else {
+        ""
+      },
+      "\n", sep = "")
 }
 
 print_tool <- function(name, args) {
@@ -558,14 +570,19 @@ run_agent <- function(opts) {
     }
   }
 
-  print_banner(session$sessionKey)
+  # Banner is deferred until after provider / model / tool count are
+  # resolved (below) so it can show them. The session id is the only
+  # piece available here; everything else comes after the worker
+  # handshake.
 
   # Propagate --trace to the option cli_worker_call reads.
   if (isTRUE(opts$trace)) options(corteza.trace = TRUE)
 
   # Start the CLI worker (callr::r_session) and initialize corteza
-  # inside it.
-  cat(sprintf("%sStarting worker...%s\n", color$dim, color$reset))
+  # inside it. No newline -- the "Connected." message below appends
+  # to this line so the user sees one combined startup line instead
+  # of two stacked ones.
+  cat(sprintf("%sStarting worker... %s", color$dim, color$reset))
 
   if (!cli_worker_start(opts$port, opts$tools)) {
     cat(sprintf("%sError: Could not start worker%s\n", color$bright_magenta, color$reset))
@@ -743,7 +760,10 @@ run_agent <- function(opts) {
   # Display model
   display_model <- corteza:::resolve_provider_model(provider, model)
 
-  cat(sprintf("%s%s @ %s%s\n", color$dim, display_model, provider, color$reset))
+  print_banner(session_id = session$sessionKey,
+               model = display_model,
+               provider = provider,
+               tools_count = length(tools))
 
   # Track estimated live context, not cumulative billed API usage.
   session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)

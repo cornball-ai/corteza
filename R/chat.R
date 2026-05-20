@@ -253,20 +253,23 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     display_model <- resolve_provider_model(provider, model) %||%
     "(provider default)"
     color <- ansi_colors()
-    cat(sprintf(
-                "%scorteza chat%s | %s%s%s @ %s%s%s | %d tools | %s/help, /quit%s%s\n\n",
-                color$cyan, color$reset,
-                color$bold, display_model, color$reset,
-                color$bold, provider, color$reset,
-                n_tools,
-                color$dim, color$reset,
-            if (resumed_count > 0L) {
-                sprintf(" %s| resumed (%d msgs)%s",
-                        color$dim, resumed_count, color$reset)
-            } else {
-                ""
-            }
-        ))
+    session_line <- if (resumed_count > 0L) {
+        sprintf("  %ssession %s  \u00b7  resumed (%d msgs)%s\n",
+                color$dim, disk_session$sessionId, resumed_count,
+                color$reset)
+    } else {
+        sprintf("  %ssession %s%s\n",
+                color$dim, disk_session$sessionId, color$reset)
+    }
+    cat(corteza_startup_banner(
+                               version = as.character(utils::packageVersion("corteza")),
+                               model = display_model,
+                               provider = provider
+        ),
+        "\n\n",
+        session_line,
+        "\n",
+        sep = "")
 
     # /r evals are buffered here and prepended to the next real user
     # message, so the LLM sees what the user evaluated locally.
