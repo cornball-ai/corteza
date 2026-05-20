@@ -1,0 +1,9 @@
+Name: Execute in corteza::chat()
+Description: Send the current line or selection to the console, advancing the cursor afterwards. When corteza::chat() is the active REPL, auto-prefixes /r for .R files and ! for .sh files so the line is locally evaluated rather than sent to the LLM. Bind to Ctrl+Enter to replace RStudio's default execute-line behavior.
+Binding: corteza_execute_in_chat
+Interactive: false
+
+Name: Execute in corteza::chat() (retain cursor)
+Description: Same as the execute-and-advance addin, but the editor cursor stays in place after sending. Bind to Alt+Enter to replace RStudio's default retain-cursor execute.
+Binding: corteza_execute_in_chat_retain
+Interactive: false

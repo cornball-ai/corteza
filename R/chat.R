@@ -174,6 +174,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         stop("chat() requires an interactive R session", call. = FALSE)
     }
 
+    # Signal that chat() is the active console REPL so the RStudio
+    # addin (corteza_execute_in_chat()) knows to auto-prefix /r or !
+    # when sending lines from a script editor. Cleared on exit.
+    options(corteza.chat_active = TRUE)
+    on.exit(options(corteza.chat_active = NULL), add = TRUE)
+
     max_turns <- as.integer(
                             max_turns %||% getOption("corteza.max_turns") %||% 50L
     )
