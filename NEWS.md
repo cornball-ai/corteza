@@ -212,8 +212,6 @@ Alt+Enter) to the two corteza addins. Override the built-in
   blocks (dim, 2-space indent), `- ` / `* ` bullets, `> blockquote`
   lines, and `[text](url)` links.
 
-# corteza 0.6.7
-
 ## Deny aborts the whole turn
 
 * Picking "3. Deny" at the tool-approval prompt now aborts the
