@@ -450,3 +450,4 @@ do_compact <- function(session, provider, model, chat_fn = llm.api::chat,
 
     list(summary = summary, tokens = new_tokens)
 }
+

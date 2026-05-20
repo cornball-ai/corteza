@@ -192,3 +192,4 @@ render_md_ansi <- function(text, palette = ansi_colors()) {
     }
     paste(out[!is.na(out)], collapse = "\n")
 }
+
