@@ -37,6 +37,30 @@ nonce_agent <- paste0("test_agent_", as.integer(Sys.time()))
 nonce_id <- corteza:::session_id(agent_id = nonce_agent)
 expect_true(grepl("^[a-z]+_[a-z]+$", nonce_id))
 
+# Deterministic collision probe (codex 2026-05-20): plant a
+# transcript in agent A's sessions dir and confirm
+# .session_name_exists() reports it occupied for A but free for B.
+# Guards the regression where session_id() hardcoded the default
+# agent, so a non-main agent could mint a name already taken in its
+# own store. Random sampling makes session_id() itself awkward to
+# probe deterministically; the helper it calls is the real load
+# bearer.
+probe_stamp <- paste0(as.integer(Sys.time()), "_", sample(100:999, 1))
+agent_probe_a <- paste0("probe_a_", probe_stamp)
+agent_probe_b <- paste0("probe_b_", probe_stamp)
+dir.create(corteza:::sessions_dir(agent_probe_a),
+           recursive = TRUE, showWarnings = FALSE)
+writeLines("{}",
+           file.path(corteza:::sessions_dir(agent_probe_a),
+                     "occupied_name.jsonl"))
+expect_true(corteza:::.session_name_exists("occupied_name",
+                                           agent_id = agent_probe_a))
+expect_false(corteza:::.session_name_exists("occupied_name",
+                                            agent_id = agent_probe_b))
+# Inline cleanup -- top-level on.exit fires too early in tinytest.
+unlink(dirname(corteza:::sessions_dir(agent_probe_a)), recursive = TRUE)
+unlink(dirname(corteza:::sessions_dir(agent_probe_b)), recursive = TRUE)
+
 # Test session_new creates proper structure
 cwd <- getwd()
 session <- corteza:::session_new("ollama", "llama3.2", cwd, agent_id = test_agent_id)
