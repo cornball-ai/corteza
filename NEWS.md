@@ -1,3 +1,20 @@
+# corteza 0.6.6.18
+
+## Fix: tool_run_r now actually persists `<-` assignments
+
+* `tool_run_r()` was advertised as "Execute R code in the session's
+  global environment", but PR #36 (Phase 5 of CLI/worker split,
+  2026-04-21) silently changed it to evaluate in a fresh child env
+  of globalenv. Ordinary `<-` and `=` assignments landed in the
+  child env and disappeared when the call returned; only `<<-`
+  walked up the scope chain and persisted. Reported 2026-05-20.
+* `handle_eval_env()` now copies handles INTO globalenv (under
+  their hidden `.h_NNN` names that `ls()` filters out by default)
+  and returns globalenv itself. `tool_run_r()` evals in globalenv,
+  so `<-` writes the the right place and survives between calls.
+* Regression tests in `test_tool_impl.R` and `test_handles.R`
+  exercise multi-call persistence with both `<-` and `=`.
+
 # corteza 0.6.6.17
 
 ## Brain-corn brick banner + docker-style session names

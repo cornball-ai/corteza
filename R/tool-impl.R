@@ -465,9 +465,11 @@ tool_run_r <- function(code) {
         outcome$printed
     }
 
-    # Auto-capture new globalenv bindings into the workspace. Variables
-    # assigned inside eval_env don't leak to globalenv, so this only
-    # fires when the user explicitly uses `<<-` or `assign()`.
+    # Auto-capture new globalenv bindings into the workspace. As of
+    # the handle_eval_env() fix that restored eval in globalenv,
+    # ordinary `<-` assignments land here, so any new visible name
+    # gets captured. Hidden names (`.foo`, `.h_NNN`) are excluded by
+    # default ls() rules.
     new_names <- setdiff(ls(globalenv()), before)
     origin <- list(tool = "run_r", args = list(code = code))
     for (nm in new_names) {
