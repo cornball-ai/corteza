@@ -14,6 +14,13 @@
 #' @noRd
 .handle_store <- new.env(parent = emptyenv())
 
+#' Registry of handle names this package has copied into the user's
+#' globalenv. Used by `handle_eval_env()` to remove stale handle
+#' bindings (handles that were in globalenv on a previous call but
+#' have since been cleared or rebound in the handle store).
+#' @noRd
+.handle_managed <- new.env(parent = emptyenv())
+
 #' Mint the next handle id for the current session.
 #' @noRd
 .next_handle_id <- function() {
@@ -100,10 +107,20 @@ list_handles <- function() {
     ls(.handle_store, all.names = TRUE)
 }
 
-#' Drop all handles from the worker-local store (for tests).
+#' Drop all handles from the worker-local store (for tests). Also
+#' removes any `.h_NNN` bindings the package previously copied into
+#' globalenv so a subsequent `tool_run_r()` doesn't see stale
+#' handle symbols.
 #' @noRd
 clear_handles <- function() {
     rm(list = ls(.handle_store, all.names = TRUE), envir = .handle_store)
+    ge <- globalenv()
+    for (h in ls(.handle_managed, all.names = TRUE)) {
+        if (exists(h, envir = ge, inherits = FALSE)) {
+            rm(list = h, envir = ge)
+        }
+    }
+    rm(list = ls(.handle_managed, all.names = TRUE), envir = .handle_managed)
     invisible(NULL)
 }
 
@@ -139,11 +156,31 @@ handle_eval_env <- function(parent = globalenv()) {
     # diverges from globalenv() when there's a sandbox env on the
     # search path (e.g. under tinytest::run_test_file), so back to
     # the explicit form and we live with the NOTE.
+    #
+    # Codex caught a staleness bug here (2026-05-20): the original
+    # version skipped reassignment when the handle name already
+    # existed in globalenv. Reusing a handle id (.h_001 rebound in
+    # the store to a different value) left the old globalenv copy
+    # in place, so tool_run_r('.h_001') returned the previous
+    # snapshot. Fix: assign unconditionally so the globalenv copy
+    # always reflects the current store, and remove globalenv
+    # bindings the package previously created that are no longer
+    # in the store.
     ge <- globalenv()
-    for (h in list_handles()) {
-        if (!exists(h, envir = ge, inherits = FALSE)) {
-            assign(h, get(h, envir = .handle_store), envir = ge)
+    current <- list_handles()
+    previously_managed <- ls(.handle_managed, all.names = TRUE)
+    stale <- setdiff(previously_managed, current)
+    for (h in stale) {
+        # Only remove if the binding still exists; user code might
+        # have rm()'d it already, in which case rm() would error.
+        if (exists(h, envir = ge, inherits = FALSE)) {
+            rm(list = h, envir = ge)
         }
+        rm(list = h, envir = .handle_managed)
+    }
+    for (h in current) {
+        assign(h, get(h, envir = .handle_store), envir = ge)
+        assign(h, TRUE, envir = .handle_managed)
     }
     ge
 }

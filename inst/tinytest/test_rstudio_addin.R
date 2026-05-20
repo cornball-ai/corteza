@@ -24,8 +24,12 @@ expect_equal(route("ls -la", "SH", TRUE)$text, "! ls -la")
 # Other extensions -> plain on console (becomes LLM input in chat).
 expect_equal(route("hi", "py", TRUE),
              list(target = "console", text = "hi"))
-expect_equal(route("hi", "", TRUE),
-             list(target = "console", text = "hi"))
+# Empty extension (unsaved buffer) -> treat as R, prepend /r.
+# Codex caught this 2026-05-20: previously routed unsaved buffers
+# as "other", so Ctrl+Enter in chat() sent the line as raw LLM
+# input instead of /r-evaluated R.
+expect_equal(route("1 + 1", "", TRUE),
+             list(target = "console", text = "/r 1 + 1"))
 
 # --- in_chat = FALSE: addin behaves like default execute-line ----
 
@@ -37,6 +41,10 @@ expect_equal(route("1 + 1", "R", FALSE)$text, "1 + 1")
 # Other extensions -> plain on console.
 expect_equal(route("hi", "py", FALSE),
              list(target = "console", text = "hi"))
+# Empty extension outside chat -> also defaults to R (RStudio's
+# built-in Ctrl+Enter does the same on untitled buffers).
+expect_equal(route("1 + 1", "", FALSE),
+             list(target = "console", text = "1 + 1"))
 
 # Shell script with no chat -> Terminal pane (not console). This
 # is where shell lines actually belong; sending to console would

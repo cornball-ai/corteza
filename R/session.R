@@ -88,16 +88,20 @@ sessions_store_path <- function(agent_id = DEFAULT_AGENT_ID) {
 #'
 #' Collisions across the lifetime of a project are possible (the
 #' wordlist is ~100 x ~60 = ~6000 names). If a collision is
-#' detected against an existing session in the same agent, retry
-#' up to 10 times before falling back to appending a 4-char hex
-#' suffix.
+#' detected against an existing session in the **target agent's**
+#' store, retry up to 10 times before falling back to appending a
+#' 4-char hex suffix.
+#' @param agent_id Agent whose store to check for collisions
+#'   (codex 2026-05-20: previously hardcoded to the default agent,
+#'   so a non-main agent could reuse an existing session's
+#'   transcript silently).
 #' @return Character string.
 #' @noRd
-session_id <- function() {
+session_id <- function(agent_id = DEFAULT_AGENT_ID) {
     for (attempt in seq_len(10L)) {
         nm <- paste0(sample(.SESSION_ADJECTIVES, 1L), "_",
                      sample(.SESSION_SURNAMES, 1L))
-        if (!.session_name_exists(nm)) {
+        if (!.session_name_exists(nm, agent_id = agent_id)) {
             return(nm)
         }
     }
@@ -109,12 +113,20 @@ session_id <- function() {
 }
 
 #' Probe whether a session with this id already has a transcript or
-#' store entry. Used by `session_id()` to avoid collisions across
-#' the small wordlist.
+#' store entry in the given agent. Checks both the on-disk
+#' transcript path and the in-store metadata so a session living
+#' under either path still counts as occupied.
 #' @noRd
 .session_name_exists <- function(nm, agent_id = DEFAULT_AGENT_ID) {
     transcript <- file.path(sessions_dir(agent_id), paste0(nm, ".jsonl"))
-    file.exists(transcript)
+    if (file.exists(transcript)) {
+        return(TRUE)
+    }
+    store <- tryCatch(store_load(agent_id), error = function(e) list())
+    if (length(store) == 0L) {
+        return(FALSE)
+    }
+    nm %in% vapply(store, function(s) s$sessionId %||% "", character(1))
 }
 
 #' Get path to session transcript file
@@ -169,7 +181,8 @@ store_update <- function(session_key, updates, agent_id = DEFAULT_AGENT_ID) {
     store <- store_load(agent_id)
 
     if (is.null(store[[session_key]])) {
-        store[[session_key]] <- list(sessionId = updates$sessionId %||% session_id())
+        store[[session_key]] <- list(sessionId = updates$sessionId %||%
+                                     session_id(agent_id = agent_id))
     }
 
     # Merge updates
@@ -195,7 +208,7 @@ store_update <- function(session_key, updates, agent_id = DEFAULT_AGENT_ID) {
 #' @noRd
 session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
                         session_key = NULL, agent_id = DEFAULT_AGENT_ID) {
-    id <- session_id()
+    id <- session_id(agent_id = agent_id)
     now <- as.numeric(Sys.time()) * 1000
     session_key <- session_key %||% paste0("corteza:", id)
 
