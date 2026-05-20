@@ -123,7 +123,7 @@ expect_true(grepl("$0.0153", out_cost, fixed = TRUE))
 # turn() will use, so /agents shows a real model name and a real
 # context window.
 expect_equal(corteza::default_provider_model("anthropic"),
-             "claude-sonnet-4-20250514")
+             "claude-sonnet-4-6")
 expect_equal(corteza::default_provider_model("openai"), "gpt-4o")
 expect_equal(corteza::default_provider_model("moonshot"), "kimi-k2.6")
 expect_equal(corteza::default_provider_model("ollama"), "llama3.2")

@@ -6,7 +6,7 @@ library(tinytest)
 status <- corteza:::format_status_summary(
                                           session = list(sessionKey = "abc123"),
                                           provider = "anthropic",
-                                          display_model = "claude-sonnet-4-20250514",
+                                          display_model = "claude-sonnet-4-6",
                                           tools = list(list(name = "read_file"),
                                                        list(name = "write_file")),
                                           opts = list(dry_run = FALSE),
@@ -44,7 +44,7 @@ doctor <- corteza:::format_doctor_report(
                                          cwd = "/tmp/proj",
                                          session = list(sessionKey = "k1", model = "x"),
                                          provider = "anthropic",
-                                         display_model = "claude-sonnet-4-20250514",
+                                         display_model = "claude-sonnet-4-6",
                                          tools = list(list(name = "read_file")),
                                          config = list(approval_mode = "ask"),
                                          context_files = character(),
@@ -83,7 +83,7 @@ expect_identical(corteza:::resolve_provider_model("moonshot", "kimi-k2.6"),
                  "kimi-k2.6")
 # Anthropic default falls back via default_provider_model.
 expect_identical(corteza:::resolve_provider_model("anthropic"),
-                 "claude-sonnet-4-20250514")
+                 "claude-sonnet-4-6")
 # Moonshot default falls back via default_provider_model. This is the
 # path chat()'s banner now hits when model is NULL so the displayed
 # name matches the CLI (kimi-k2.6 @ moonshot, not the old
@@ -130,7 +130,7 @@ expect_identical(out$content, "No findings.")
 expect_true(grepl("Git diff target: HEAD", captured$prompt, fixed = TRUE))
 expect_true(grepl(" M R/foo.R", captured$prompt, fixed = TRUE))
 expect_true(grepl("diff body", captured$prompt, fixed = TRUE))
-expect_identical(captured$model, "claude-sonnet-4-20250514")
+expect_identical(captured$model, "claude-sonnet-4-6")
 
 # do_compact with a stubbed chat_fn proves it assembles the summary
 # prompt and returns the structured result without hitting the

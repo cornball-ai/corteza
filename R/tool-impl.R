@@ -631,14 +631,21 @@ tool_shell_impl <- function(args, shell_name) {
                           cmd = c("/c", cmd)
     )
 
-    result <- tryCatch({
-        out <- system2(shell_exe, exe_args_fg, stdout = TRUE,
-                       stderr = TRUE, timeout = timeout)
-        paste(out, collapse = "\n")
+    tryCatch({
+        out <- suppressWarnings(
+            system2(shell_exe, exe_args_fg, stdout = TRUE,
+                    stderr = TRUE, timeout = timeout)
+        )
+        status <- attr(out, "status") %||% 0L
+        text <- paste(out, collapse = "\n")
+        if (!is.null(status) && status != 0L) {
+            err(sprintf("[exit status %d]\n%s", status, text))
+        } else {
+            ok(text)
+        }
     }, error = function(e) {
-        paste("Error:", e$message)
+        err(paste("Error:", e$message))
     })
-    ok(result)
 }
 
 # Background process registry ----

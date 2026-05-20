@@ -143,23 +143,23 @@ skills_as_api_tools <- function(filter = NULL) {
 #' Anthropic/OpenAI require tool names to match [a-zA-Z0-9_-].
 #' Converts "::" to "__" for the API.
 #'
-#' @param name Internal tool name (e.g. "base::readLines")
-#' @return API-safe name (e.g. "base__readLines")
+#' @param name Internal tool name (e.g. "base::read.csv")
+#' @return API-safe name (e.g. "base__read_dot_csv")
 #' @noRd
 sanitize_tool_name <- function(name) {
     name <- gsub("::", "__", name, fixed = TRUE)
-    gsub(".", "-", name, fixed = TRUE)
+    gsub(".", "_dot_", name, fixed = TRUE)
 }
 
 #' Restore internal tool name from API-safe name
 #'
-#' Reverses sanitize_tool_name. Dot becomes "-", "::" becomes "__".
+#' Reverses sanitize_tool_name. "_dot_" becomes ".", "__" becomes "::".
 #'
-#' @param name API-safe name (e.g. "base__list-files")
-#' @return Internal name (e.g. "base::list.files")
+#' @param name API-safe name (e.g. "base__read_dot_csv")
+#' @return Internal name (e.g. "base::read.csv")
 #' @noRd
 unsanitize_tool_name <- function(name) {
     name <- gsub("__", "::", name, fixed = TRUE)
-    gsub("-", ".", name, fixed = TRUE)
+    gsub("_dot_", ".", name, fixed = TRUE)
 }
 
