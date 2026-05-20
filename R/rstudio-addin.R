@@ -7,30 +7,106 @@
 # Setup: bind Ctrl+Enter to "Execute in corteza::chat()" in
 #   Tools -> Modify Keyboard Shortcuts -> Addins.
 
-#' Prefix to prepend when sending a line from a script editor to
-#' the console. Empty string when no prefix should be added.
-#'
+#' Compute where and how to send one line of source-editor code.
 #' Pure logic factored out for testability; the RStudio addin
-#' wrapper handles the rstudioapi calls.
-#' @param ext File extension (lowercase, without dot). Pass
-#'   `""` for untitled buffers.
-#' @param in_chat Logical. TRUE if `chat()` is currently active
-#'   (i.e. `getOption("corteza.chat_active")` is set).
-#' @return Character scalar; `""` for no prefix, `"/r "` for R
-#'   files, `"! "` for shell files.
+#' wrapper handles the rstudioapi side.
+#'
+#' Routing matrix:
+#'
+#' | ext       | in_chat | target   | text                |
+#' |-----------|---------|----------|---------------------|
+#' | r / R     | TRUE    | console  | `/r <code>`         |
+#' | r / R     | FALSE   | console  | `<code>` (R eval)   |
+#' | sh / bash | TRUE    | console  | `! <code>`          |
+#' | sh / bash | FALSE   | terminal | `<code>`            |
+#' | other     | either  | console  | `<code>`            |
+#'
+#' Shell scripts outside chat() route to RStudio's Terminal pane
+#' (where they actually belong) instead of being wrapped in
+#' `system()` and sent to the R console. Inside chat(), the
+#' `! <code>` form goes through chat()'s slash-prefix dispatch
+#' so the LLM gets the staged output.
+#'
+#' @param code The raw line / selection text.
+#' @param ext File extension (lowercase or mixed; we tolower).
+#' @param in_chat Logical. TRUE if `chat()` is the active REPL.
+#' @return A list with two elements:
+#'   * `target`: `"console"` or `"terminal"`
+#'   * `text`: the string to send to that target
 #' @noRd
-.corteza_prefix_for <- function(ext, in_chat) {
-    if (!isTRUE(in_chat)) {
-        return("")
-    }
+.corteza_route <- function(code, ext, in_chat) {
     ext <- tolower(as.character(ext))
-    if (identical(ext, "r")) {
-        return("/r ")
+    console <- function(text) list(target = "console", text = text)
+    terminal <- function(text) list(target = "terminal", text = text)
+    if (isTRUE(in_chat)) {
+        if (identical(ext, "r")) {
+            return(console(paste0("/r ", code)))
+        }
+        if (ext %in% c("sh", "bash")) {
+            return(console(paste0("! ", code)))
+        }
+        return(console(code))
     }
-    if (identical(ext, "sh") || identical(ext, "bash")) {
-        return("! ")
+    # chat() not active.
+    if (ext %in% c("sh", "bash")) {
+        return(terminal(code))
     }
-    ""
+    console(code)
+}
+
+#' Send `code` to RStudio's Terminal pane. Reuses the currently
+#' visible terminal when there is one; otherwise grabs the first
+#' terminal in the list, or creates a new one. Returns invisibly.
+#' @noRd
+.corteza_send_to_terminal <- function(code) {
+    if (!requireNamespace("rstudioapi", quietly = TRUE) ||
+        !rstudioapi::isAvailable()) {
+        message("Sending to RStudio Terminal requires RStudio.")
+        return(invisible())
+    }
+    target_id <- tryCatch(rstudioapi::terminalVisible(),
+                          error = function(e) NULL)
+    if (is.null(target_id)) {
+        terms <- tryCatch(rstudioapi::terminalList(),
+                          error = function(e) character(0L))
+        target_id <- if (length(terms) > 0L) {
+            terms[[1L]]
+        } else {
+            tryCatch(rstudioapi::terminalCreate(show = TRUE),
+                     error = function(e) NULL)
+        }
+    }
+    if (is.null(target_id)) {
+        message("Could not open an RStudio Terminal; line not sent.")
+        return(invisible())
+    }
+    # Trailing newline so the terminal executes the line.
+    rstudioapi::terminalSend(target_id, paste0(code, "\n"))
+    invisible()
+}
+
+#' Find the next executable line in `contents` at or after `start`.
+#' Skips blank lines and full-line comments (after stripping leading
+#' whitespace), matching RStudio's built-in Ctrl+Enter behavior.
+#' Returns `length(contents) + 1L` if no more code lines exist
+#' below.
+#' @noRd
+.next_code_row <- function(contents, start) {
+    n <- length(contents)
+    if (start > n) {
+        return(n + 1L)
+    }
+    for (i in seq.int(start, n)) {
+        line <- trimws(contents[i])
+        if (!nzchar(line)) {
+            next
+        }
+        if (substr(line, 1L, 1L) == "#") {
+            next
+        }
+        return(i)
+    }
+    n + 1L
 }
 
 #' Shared implementation. The two exported addins differ only in
@@ -72,16 +148,35 @@
 
     in_chat <- isTRUE(getOption("corteza.chat_active", FALSE))
     ext <- tools::file_ext(ctx$path %||% "")
-    prefix <- .corteza_prefix_for(ext, in_chat)
+    route <- .corteza_route(code, ext, in_chat)
 
-    rstudioapi::sendToConsole(paste0(prefix, code), execute = TRUE)
+    if (identical(route$target, "terminal")) {
+        .corteza_send_to_terminal(route$text)
+    } else {
+        # focus = FALSE keeps the cursor in the source editor
+        # instead of dragging it to the console after each
+        # Ctrl+Enter -- matches RStudio's built-in execute-line
+        # behavior.
+        rstudioapi::sendToConsole(route$text, execute = TRUE,
+                                  focus = FALSE)
+    }
 
-    if (isTRUE(advance_cursor) && line_num < length(ctx$contents)) {
-        tryCatch(rstudioapi::setCursorPosition(
-                rstudioapi::document_position(line_num + 1L, 1L)
-            ),
-                 error = function(e) NULL
-        )
+    if (isTRUE(advance_cursor)) {
+        # Skip past blank lines and comments when advancing, so
+        # Ctrl+Enter lands on the next executable line -- same as
+        # RStudio's built-in. Pass id = ctx$id so the cursor moves
+        # in the *source* editor (sendToConsole left focus there
+        # via focus = FALSE, but the active-document concept is
+        # separate; explicit id is the safe path).
+        next_row <- .next_code_row(ctx$contents, line_num + 1L)
+        if (next_row <= length(ctx$contents)) {
+            tryCatch(rstudioapi::setCursorPosition(
+                    rstudioapi::document_position(next_row, 1L),
+                    id = ctx$id
+                ),
+                     error = function(e) NULL
+            )
+        }
     }
     invisible()
 }
