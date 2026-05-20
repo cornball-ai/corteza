@@ -1,3 +1,27 @@
+# corteza 0.6.6.19
+
+## RStudio addin: route Ctrl+Enter to /r or ! when chat() is active
+
+* New addin `corteza_execute_in_chat()` (plus
+  `corteza_execute_in_chat_retain()` for Alt+Enter) reads the
+  current line / selection from RStudio's source editor and sends
+  it to the console, auto-prefixing `/r ` for `.R` files and
+  `! ` for `.sh` / `.bash` files when `corteza::chat()` is the
+  active REPL. When `chat()` is not running, no prefix is added --
+  the addin is a superset of RStudio's default execute-line
+  behavior, so binding it to Ctrl+Enter doesn't break normal R
+  scripting outside chat.
+* `chat()` now sets `options(corteza.chat_active = TRUE)` on entry
+  and clears it on exit; the addin reads this flag to decide
+  whether to prefix.
+* `rstudioapi` added to Suggests. Addin file lives at
+  `inst/rstudio/addins.dcf` so RStudio picks it up after install.
+
+**Setup:** in RStudio, open Tools -> Modify Keyboard Shortcuts,
+pick "Addins" in the dropdown, and bind Ctrl+Enter (and optionally
+Alt+Enter) to the two corteza addins. Override the built-in
+"Run current line/selection" mappings.
+
 # corteza 0.6.6.18
 
 ## Fix: tool_run_r now actually persists `<-` assignments
