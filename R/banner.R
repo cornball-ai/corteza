@@ -104,3 +104,4 @@ corteza_startup_banner <- function(version, model, provider, ...) {
     )
     paste(lines, collapse = "\n")
 }
+

@@ -23,3 +23,11 @@ Each session tracks an \code{ingested_through} watermark so repeated
 calls only write new turns. Silent no-op when \code{pensar} is not
 installed.
 }
+\examples{
+\dontrun{
+# Requires a running Matrix session registry and the optional
+# pensar package for the actual archive step.
+reg <- new.env(parent = emptyenv())
+matrix_archive_all(reg)
+}
+}

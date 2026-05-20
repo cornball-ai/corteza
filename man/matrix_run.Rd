@@ -26,3 +26,10 @@ Creates one session up front and reuses it across polls so conversation
 history accumulates within the process lifetime. Intended as the entry
 point for a systemd user unit.
 }
+\examples{
+\dontrun{
+# Run the Matrix bot loop -- typically launched by a systemd unit
+# rather than from an interactive R session.
+matrix_run()
+}
+}

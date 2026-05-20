@@ -49,3 +49,15 @@ that path is still read for backward compatibility, but the next
 \code{matrix_configure()} call writes to the new location.
 
 }
+\examples{
+\dontrun{
+# Requires a real Matrix server and bot credentials. Configuration
+# is written under tools::R_user_dir("corteza", "config").
+matrix_configure(
+    server = "https://matrix.example.org",
+    user = "bot",
+    password = "secret",
+    room = "!roomid:example.org"
+)
+}
+}

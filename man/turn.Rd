@@ -36,3 +36,12 @@ their skills. Pass \code{\link{mcp_tool_executor}} (or any
 separate process, which is how the CLI talks to \code{serve()}.
 
 }
+\examples{
+\dontrun{
+# Requires ANTHROPIC_API_KEY (or the configured provider's key) and
+# a network connection to the LLM.
+s <- new_session(provider = "anthropic")
+out <- turn("Say hello", s)
+out$reply
+}
+}

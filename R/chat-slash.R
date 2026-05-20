@@ -76,6 +76,35 @@ withr_local_dir <- function(dir, expr) {
     force(expr)
 }
 
+#' Is `code` a syntactically complete R expression?
+#'
+#' Returns TRUE when `parse(text = code)` succeeds, or when it
+#' fails with a real syntax error (not worth waiting for more
+#' input). Returns FALSE only when the parser ran out of tokens
+#' mid-expression -- the caller can then read another line and
+#' retry.
+#'
+#' Two distinct "incomplete" parser signals are honored: the
+#' usual "unexpected end of input" (open paren / brace / op
+#' waiting for a right-hand side) and "unexpected INCOMPLETE_STRING"
+#' (a quoted string with no closing quote).
+#'
+#' Used by `corteza::chat()`'s `/r` handler to mimic R's normal
+#' "+" continuation prompt: an RStudio addin Ctrl+Enter on a
+#' multi-line `lm(y ~ x,\n   data = df)` arrives as two separate
+#' readline cycles; the first is incomplete so we wait for the
+#' second before evaluating.
+#' @noRd
+.r_expr_complete <- function(code) {
+    err <- tryCatch(parse(text = code), error = identity)
+    if (!inherits(err, "error")) {
+        return(TRUE)
+    }
+    msg <- conditionMessage(err)
+    !(grepl("end of input", msg, fixed = TRUE) ||
+        grepl("INCOMPLETE_STRING", msg, fixed = TRUE))
+}
+
 #' Eval an R expression locally for `/r <expr>`. Mirrors
 #' `run_bang_shell`'s shape so both local-eval flows share a
 #' return type. The staged version for the next LLM message swaps
@@ -304,17 +333,14 @@ chat_osc52_write <- function(text) {
     )
 }
 
-#' Resolve the on-disk file path used by `/copy`. On Unix this is
-#' /tmp/corteza_response.md, a stable well-known location the user
-#' can scp / rsync from another device. On Windows we fall back to
-#' tempdir() since /tmp isn't standard.
+#' Resolve the on-disk file path used by `/copy`. Lives under
+#' `tools::R_user_dir("corteza", "cache")` so the path is stable
+#' across sessions (the user can scp / rsync from another device) and
+#' CRAN-clean (no writes under the user's home filespace by package
+#' default).
 #' @noRd
 chat_copy_fallback_path <- function() {
-    if (.Platform$OS.type == "unix") {
-        "/tmp/corteza_response.md"
-    } else {
-        file.path(tempdir(), "corteza_response.md")
-    }
+    file.path(corteza_cache_dir(), "last-response.md")
 }
 
 #' Handle the `/copy` slash command. Always writes the response to a
@@ -329,6 +355,7 @@ chat_handle_copy <- function(text) {
     }
     n <- nchar(text)
     path <- chat_copy_fallback_path()
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     writeLines(text, path)
 
     # On RStudio Server console, neither clipr (xclip) nor OSC 52 can
@@ -366,3 +393,4 @@ chat_format_tools_list <- function(turn_session) {
     }
     paste(c(lines, ""), collapse = "\n")
 }
+

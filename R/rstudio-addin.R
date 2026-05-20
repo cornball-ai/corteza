@@ -94,6 +94,48 @@
     invisible()
 }
 
+#' Resolve the R-statement line range that contains `line_num`.
+#'
+#' Mirrors RStudio's built-in Ctrl+Enter behavior: when the cursor
+#' sits inside a multi-line top-level expression (e.g. an `lm()`
+#' call wrapped across three lines), the whole expression executes,
+#' not just the cursor's line. Implementation parses the buffer
+#' with `keep.source = TRUE` and walks the `srcref` attribute for
+#' the expression covering `line_num`.
+#'
+#' Falls back to `c(line_num, line_num)` when:
+#'   * the buffer can't be parsed (syntax error elsewhere);
+#'   * the cursor is on a blank / comment line outside any
+#'     expression.
+#'
+#' Only used for R buffers -- shell scripts route through the
+#' terminal pane line-by-line.
+#' @return Integer pair `c(start_line, end_line)`.
+#' @noRd
+.corteza_statement_range <- function(contents, line_num) {
+    if (line_num < 1L || line_num > length(contents)) {
+        return(c(line_num, line_num))
+    }
+    text <- paste(contents, collapse = "\n")
+    parsed <- tryCatch(parse(text = text, keep.source = TRUE),
+                       error = function(e) NULL)
+    if (is.null(parsed) || length(parsed) == 0L) {
+        return(c(line_num, line_num))
+    }
+    srcrefs <- attr(parsed, "srcref")
+    if (is.null(srcrefs)) {
+        return(c(line_num, line_num))
+    }
+    for (sr in srcrefs) {
+        l1 <- sr[1L]
+        l2 <- sr[3L]
+        if (l1 <= line_num && line_num <= l2) {
+            return(c(l1, l2))
+        }
+    }
+    c(line_num, line_num)
+}
+
 #' Find the next executable line in `contents` at or after `start`.
 #' Skips blank lines and full-line comments (after stripping leading
 #' whitespace), matching RStudio's built-in Ctrl+Enter behavior.
@@ -137,10 +179,20 @@
     }
 
     # Selection text takes priority. Empty selection (cursor only)
-    # falls back to the current line, matching RStudio's default
-    # Ctrl+Enter behavior.
+    # falls back to the current statement, matching RStudio's
+    # default Ctrl+Enter behavior of executing the whole multi-line
+    # expression when the cursor sits inside one. R-only -- shell
+    # / unknown extensions still route line-by-line.
     sel <- ctx$selection[[1L]]
     had_selection <- nzchar(sel$text)
+    ext <- tolower(tools::file_ext(ctx$path %||% ""))
+    # Unsaved buffers come back with empty $path. Match the
+    # ext-fallback in .corteza_route() so unsaved-R-script behavior
+    # stays consistent.
+    if (!nzchar(ext)) {
+        ext <- "r"
+    }
+    is_r <- identical(ext, "r")
     if (had_selection) {
         code <- sel$text
         line_num <- sel$range$end[1L]
@@ -149,14 +201,20 @@
         if (line_num < 1L || line_num > length(ctx$contents)) {
             return(invisible())
         }
-        code <- ctx$contents[line_num]
+        if (is_r) {
+            range <- .corteza_statement_range(ctx$contents, line_num)
+            code <- paste(ctx$contents[range[1L]:range[2L]], collapse = "\n")
+            # Cursor advance lands after the statement's last line.
+            line_num <- range[2L]
+        } else {
+            code <- ctx$contents[line_num]
+        }
     }
     if (!nzchar(trimws(code))) {
         return(invisible())
     }
 
     in_chat <- isTRUE(getOption("corteza.chat_active", FALSE))
-    ext <- tools::file_ext(ctx$path %||% "")
     route <- .corteza_route(code, ext, in_chat)
 
     if (identical(route$target, "terminal")) {

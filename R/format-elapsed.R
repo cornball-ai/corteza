@@ -91,3 +91,4 @@ turn_footer_line <- function(start, end = Sys.time(),
     line <- paste0(body, strrep("\u2500", pad_n))
     sprintf("%s%s%s", palette$dim %||% "", line, palette$reset %||% "")
 }
+

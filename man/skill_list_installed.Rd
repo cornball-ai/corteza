@@ -14,3 +14,11 @@ Data frame with skill info
 \description{
 List installed skills
 }
+\examples{
+# List skills from an empty tempdir; returns a zero-row data frame
+# with the documented columns.
+empty <- file.path(tempdir(), "empty_skills")
+dir.create(empty, showWarnings = FALSE)
+skill_list_installed(skill_dir = empty)
+unlink(empty, recursive = TRUE)
+}

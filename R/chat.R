@@ -893,6 +893,21 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         }
         if (!from_paste && startsWith(trimws(prompt), "/r ")) {
             code <- sub("^/r\\s+", "", trimws(prompt))
+            # RStudio's Ctrl+Enter on a multi-line statement (or a
+            # user typing one manually) arrives one readline at a
+            # time. Mirror R's "+" continuation prompt: read more
+            # lines until the expression parses, or we hit a hard
+            # cap to keep a runaway loop from blocking the REPL.
+            cont_cap <- 100L
+            while (!.r_expr_complete(code) && cont_cap > 0L) {
+                more <- tryCatch(read_prompt_input("+ "),
+                                 error = function(e) character())
+                if (length(more) == 0L || is.na(more[1L])) {
+                    break
+                }
+                code <- paste(code, more[1L], sep = "\n")
+                cont_cap <- cont_cap - 1L
+            }
             r_out <- run_r_eval(code)
             if (nchar(r_out$text) > 0L) {
                 cat(r_out$text, "\n", sep = "")
@@ -1146,3 +1161,4 @@ chat_trace_observer <- function(session) {
         )
     }
 }
+

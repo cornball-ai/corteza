@@ -722,3 +722,4 @@ format_trace <- function(trace, show_args = FALSE) {
 sessions_dir_local <- function(cwd = getwd()) {
     file.path(cwd, ".corteza", "sessions")
 }
+

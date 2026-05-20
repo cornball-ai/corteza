@@ -56,3 +56,4 @@ user_deny_marker <- function(tool = "?") {
         if (length(tool) && nzchar(tool)) as.character(tool)[1] else "?"
     )
 }
+

@@ -268,3 +268,4 @@ format_context_block <- function(used, limit, breakdown, compact_pct = 90,
 
     paste(c(status_lines, header, bar, rows, "", files_block), collapse = "\n")
 }
+

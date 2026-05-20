@@ -26,3 +26,12 @@ still running. Result is read exactly once: after a successful
 collect the pending slot is cleared, so the next async query can
 fire.
 }
+\examples{
+\dontrun{
+id <- subagent_spawn("background research")
+subagent_query(id, "what's in DESCRIPTION?", wait = FALSE)
+# ... do other work ...
+subagent_collect(id, wait = TRUE, timeout = 30)
+subagent_kill(id)
+}
+}

@@ -378,6 +378,18 @@ subagent_session_key <- function(parent_key) {
 #'   nested-spawning control and session-key derivation.
 #' @param config Config list.
 #' @return Subagent ID (character).
+#' @examples
+#' \donttest{
+#' if (interactive()) {
+#'     # Spawns a callr::r_session child loaded with corteza; the
+#'     # registry is in-memory and dies with the parent R session, so
+#'     # we wrap in interactive() to keep R CMD check from leaving
+#'     # children behind.
+#'     id <- subagent_spawn("look up the package version",
+#'                          preset = "minimal")
+#'     subagent_kill(id)
+#' }
+#' }
 #' @importFrom callr r_session
 #' @export
 subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
@@ -559,6 +571,13 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #'   hard timeouts are future work).
 #' @return Reply text (character) when `wait = TRUE`. Canonical id
 #'   (character, invisibly) when `wait = FALSE`.
+#' @examples
+#' \dontrun{
+#' # Requires LLM credentials in the child's environment.
+#' id <- subagent_spawn("read R/skill.R and summarize", preset = "minimal")
+#' subagent_query(id, "what does this file do?", wait = TRUE)
+#' subagent_kill(id)
+#' }
 #' @export
 subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
     canonical <- resolve_subagent_id(id)
@@ -634,6 +653,14 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
 #'   timeout the child is left running; caller may collect again later
 #'   or kill explicitly.
 #' @return Reply text (character) when ready; NULL when still running.
+#' @examples
+#' \dontrun{
+#' id <- subagent_spawn("background research")
+#' subagent_query(id, "what's in DESCRIPTION?", wait = FALSE)
+#' # ... do other work ...
+#' subagent_collect(id, wait = TRUE, timeout = 30)
+#' subagent_kill(id)
+#' }
 #' @export
 subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     canonical <- resolve_subagent_id(id)
@@ -674,6 +701,10 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
 #' Kill a subagent.
 #' @param id Subagent identifier (UUID, prefix, or sequence number).
 #' @return Invisible TRUE if killed, FALSE if not found.
+#' @examples
+#' # Unknown id is a silent no-op (returns FALSE), so this is safe to
+#' # run during R CMD check without a live subagent.
+#' subagent_kill("no-such-id")
 #' @export
 subagent_kill <- function(id) {
     canonical <- tryCatch(resolve_subagent_id(id), error = function(e) NULL)
@@ -779,6 +810,9 @@ subagent_live_token_count <- function(info) {
 #' time_remaining/pending plus model/age/cumulative usage and a
 #' best-effort live token count for idle agents (`NA` for busy).
 #' @return List of subagent info objects.
+#' @examples
+#' # Empty when no subagent has been spawned yet -- safe to call any time.
+#' subagent_list()
 #' @export
 subagent_list <- function() {
     ids <- ls(.subagent_registry)

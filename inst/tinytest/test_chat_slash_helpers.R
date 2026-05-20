@@ -37,3 +37,27 @@ expect_true(grepl("/help", help_text))
 expect_true(grepl("/quit", help_text))
 expect_true(grepl("--preset", help_text))
 expect_true(grepl("--tools", help_text))
+
+# 6. .r_expr_complete: tells incomplete expressions apart from
+#    syntax errors and complete code, so chat()'s /r handler can
+#    decide whether to read another continuation line.
+complete <- corteza:::.r_expr_complete
+
+# Plain complete expression.
+expect_true(complete("1 + 1"))
+# Multi-line complete expression (function call across newlines).
+expect_true(complete("lm(y ~ x,\n   data = df)"))
+# Empty string parses to a length-0 expression list -- treated as
+# complete (nothing to wait for).
+expect_true(complete(""))
+
+# Incomplete: unclosed paren.
+expect_false(complete("lm(y ~ x,"))
+# Incomplete: unclosed string.
+expect_false(complete("paste('hi"))
+# Incomplete: trailing operator waiting for rhs.
+expect_false(complete("1 +"))
+
+# Real syntax error (not "end of input") -> treat as complete so
+# run_r_eval prints the error rather than hanging on more input.
+expect_true(complete("1 ++ 1)"))

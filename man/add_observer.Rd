@@ -33,3 +33,12 @@ tool error.
 Errors raised inside an observer are swallowed.
 
 }
+\examples{
+s <- new_session(provider = "anthropic")
+add_observer(s, function(event) {
+    # An observer is just a function of one argument; record the
+    # outcome for inspection.
+    message(event$outcome)
+})
+length(s$on_tool)
+}

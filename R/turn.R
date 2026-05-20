@@ -345,6 +345,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 #' @param conn An open MCP connection (from \code{llm.api::mcp_connect}).
 #' @return A function with signature \code{function(name, args)} that
 #'   returns an MCP-format result list.
+#' @examples
+#' \dontrun{
+#' # Needs an open MCP connection to a running corteza::serve().
+#' conn <- llm.api::mcp_connect("tcp://localhost:7850")
+#' executor <- mcp_tool_executor(conn)
+#' s <- new_session(provider = "anthropic")
+#' turn("Hello", s, tool_executor = executor)
+#' }
 #' @export
 mcp_tool_executor <- function(conn) {
     force(conn)
@@ -376,6 +384,14 @@ mcp_tool_executor <- function(conn) {
 #' @param observer A function of one argument (the event list).
 #'
 #' @return The session, invisibly.
+#' @examples
+#' s <- new_session(provider = "anthropic")
+#' add_observer(s, function(event) {
+#'     # An observer is just a function of one argument; record the
+#'     # outcome for inspection.
+#'     message(event$outcome)
+#' })
+#' length(s$on_tool)
 #' @export
 add_observer <- function(session, observer) {
     stopifnot(is.environment(session), is.function(observer))
@@ -391,6 +407,10 @@ add_observer <- function(session, observer) {
 #' \code{tool_hint()}.
 #'
 #' @return A function to pass to \code{\link{add_observer}}.
+#' @examples
+#' obs <- observer_progress()
+#' s <- new_session(provider = "anthropic")
+#' add_observer(s, obs)
 #' @export
 observer_progress <- function() {
     function(event) {
@@ -471,6 +491,14 @@ observer_progress <- function() {
 #'
 #' @return A list with \code{reply} (character) and \code{session} (the
 #'   updated session environment; also mutated in place).
+#' @examples
+#' \dontrun{
+#' # Requires ANTHROPIC_API_KEY (or the configured provider's key) and
+#' # a network connection to the LLM.
+#' s <- new_session(provider = "anthropic")
+#' out <- turn("Say hello", s)
+#' out$reply
+#' }
 #' @export
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     stopifnot(is.environment(session))
@@ -510,3 +538,4 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
          raw = response
     )
 }
+
