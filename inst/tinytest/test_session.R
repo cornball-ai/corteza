@@ -19,9 +19,11 @@ on.exit({
     }
 }, add = TRUE)
 
-# Test session_id generates UUID format
+# session_id() now generates docker-style adjective_surname names
+# (e.g. "boring_wozniak") instead of UUIDs. The format is two
+# lowercase tokens joined by an underscore.
 id <- corteza:::session_id()
-expect_true(grepl("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", id))
+expect_true(grepl("^[a-z]+_[a-z]+$", id))
 
 # Test session_new creates proper structure
 cwd <- getwd()

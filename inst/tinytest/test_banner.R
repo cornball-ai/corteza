@@ -45,31 +45,24 @@ expect_equal(length(strsplit(out, "\n", fixed = TRUE)[[1]]), 9L)
 # --- truncation --------------------------------------------------
 
 # A long model name is truncated rather than blowing out the row.
-out <- banner(version = "0.0.0", model = strrep("X", 30L),
-              provider = "p", tools_count = 1L, palette = off)
-# Truncation cap on model is 10; long name becomes "XXXXXXX..." (7 X + "...").
-expect_true(grepl(paste0(strrep("X", 7L), "..."), out, fixed = TRUE))
-expect_false(grepl(strrep("X", 11L), out, fixed = TRUE))
+out <- banner(version = "0.0.0", model = strrep("X", 30L), provider = "p")
+# Truncation cap on model is 9 (right-padded slot); long name becomes
+# "XXXXXX..." (6 X + "..." = 9 chars).
+expect_true(grepl(paste0(strrep("X", 6L), "..."), out, fixed = TRUE))
+expect_false(grepl(strrep("X", 10L), out, fixed = TRUE))
 
 # --- no-ANSI fallback --------------------------------------------
 
-# When the palette has no ANSI, Y characters render as '*' (a
-# placeholder so the silhouette is still visually distinct in plain
-# text). Confirms the no-color branch fires.
-out <- banner(version = "0.0.0", model = "m", provider = "p",
-              tools_count = 1L, palette = off)
+# Banner uses the yellow-square emoji (U+1F7E8) as kernels. No ANSI
+# escapes -- the emoji is its own color, supported across modern
+# terminals. Confirm the emoji appears and Y placeholders are gone.
+out <- banner(version = "0.0.0", model = "m", provider = "p")
 expect_false(grepl("\033", out, fixed = TRUE))
-expect_true(grepl("*", out, fixed = TRUE))
-
-# --- ANSI on -----------------------------------------------------
-
-out <- banner(version = "0.0.0", model = "m", provider = "p",
-              tools_count = 1L, palette = ansi)
-# Color escape (256-color index 220) appears.
-expect_true(grepl("\033\\[38;5;220m", out))
-# Reset escape appears.
-expect_true(grepl("\033\\[0m", out))
-# Block character appears (the Y -> block conversion).
-expect_true(grepl("█", out))
-# No literal 'Y' left in the colored output.
+expect_true(grepl("\U0001F7E8", out, fixed = TRUE))
 expect_false(grepl("Y", out, fixed = TRUE))
+
+# Banner is the same regardless of palette argument (palette is now
+# ignored; kept for backward-compat with old callers).
+out2 <- banner(version = "0.0.0", model = "m", provider = "p",
+               palette = ansi)
+expect_equal(out, out2)
