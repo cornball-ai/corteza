@@ -48,8 +48,7 @@ run_bang_shell <- function(cmd, cwd = getwd()) {
     }
     raw <- tryCatch(
                     withr_local_dir(cwd, {
-        suppressWarnings(system2(shell_bin, args,
-                                 stdout = TRUE, stderr = TRUE))
+        suppressWarnings(system2(shell_bin, args, stdout = TRUE, stderr = TRUE))
     }),
                     error = function(e) paste("Error:", conditionMessage(e))
     )

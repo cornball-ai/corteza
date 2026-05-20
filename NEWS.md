@@ -1,3 +1,52 @@
+# corteza 0.6.6.17
+
+## Brain-corn brick banner + docker-style session names
+
+* Banner kernels are now actual yellow-square emoji (`U+1F7E8`)
+  laid out in a brick pattern: adjacent rows offset by an odd
+  number of cells so the kernels stagger like masonry instead of
+  stacking in straight columns. No ANSI escapes -- the emoji is
+  its own colour, supported across every modern terminal.
+* Model name is now right-padded to 9 chars, provider
+  left-padded to 8 chars, so row-5 width stays constant
+  regardless of name length. Without this, swapping
+  `kimi-k2.6` for `gpt-4o` shifted the right edge and broke the
+  brick offset.
+* Version display drops the 4th-component dev marker:
+  `0.6.6.17` -> `v0.6.6`.
+* Tool count moved out of the banner -- the brain stays cleaner
+  with just the model/provider labels.
+* Session names are now docker-style `adjective_surname`
+  (e.g. `boring_wozniak`) instead of UUIDs. Wordlists are the
+  Docker moby/moby adjectives plus ~60 scientist surnames.
+  Collisions retry up to 10 times before falling back to a hex
+  suffix.
+
+## CLI startup layout
+
+* "Starting worker..." and "Connected. N tools available." now
+  print on one combined line instead of two stacked lines.
+* The blank line that previously sat between the worker line and
+  the banner is gone; the banner appears one line below the
+  startup line, with a single blank between them.
+* `corteza::chat()` now prints a `session adjective_surname`
+  line below the banner, matching the CLI's layout.
+
+# corteza 0.6.6.16
+
+## Brain-corn startup banner
+
+* `chat()` and the `~/bin/corteza` CLI now open with a gold
+  brain-corn silhouette rendered in 256-color ANSI, with the
+  corteza version, active model, provider, tool count, and
+  `/help` / `/quit` hints embedded directly inside the kernels.
+  Replaces the prior single-line `corteza chat | model @ provider`
+  header. Uses 256-color index 220 (gold) for compatibility with
+  terminals that don't advertise true-color via `COLORTERM`.
+* New internal `corteza_startup_banner()` in `R/banner.R` --
+  template-driven, so future tweaks to the silhouette only touch
+  one constant.
+
 # corteza 0.6.6.15
 
 ## `! <cmd>` shell-line in chat() and CLI

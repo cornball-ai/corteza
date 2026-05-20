@@ -30,18 +30,91 @@ sessions_store_path <- function(agent_id = DEFAULT_AGENT_ID) {
     file.path(sessions_dir(agent_id), "sessions.json")
 }
 
-#' Generate a new session ID (UUID format like openclaw)
-#' @return Character string UUID
+#' Adjectives + surnames for human-readable session names, in the
+#' docker-container style ("boring_wozniak", "elated_turing").
+#' Adjectives lifted from Docker's own moby/moby names-generator
+#' wordlist; surnames are scientists / mathematicians /
+#' computer-scientists who are uncontroversial enough to use as
+#' identifiers.
+#' @noRd
+.SESSION_ADJECTIVES <- c("admiring", "adoring", "affectionate", "agitated",
+                         "amazing", "angry", "awesome", "blissful", "bold",
+                         "boring", "brave", "busy", "charming", "clever",
+                         "cool", "compassionate", "competent",
+                         "condescending", "confident", "cranky", "crazy",
+                         "dazzling", "determined", "distracted", "dreamy",
+                         "eager", "ecstatic", "elastic", "elated",
+                         "elegant", "eloquent", "epic", "exciting",
+                         "fervent", "festive", "flamboyant", "focused",
+                         "friendly", "frosty", "funny", "gallant",
+                         "gifted", "goofy", "gracious", "great", "happy",
+                         "hardcore", "heuristic", "hopeful", "hungry",
+                         "infallible", "inspiring", "intelligent",
+                         "interesting", "jolly", "jovial", "keen", "kind",
+                         "laughing", "loving", "lucid", "magical",
+                         "mystifying", "modest", "musing", "naughty",
+                         "nervous", "nice", "nifty", "nostalgic",
+                         "objective", "optimistic", "peaceful", "pedantic",
+                         "pensive", "practical", "priceless", "quirky",
+                         "quizzical", "recursing", "relaxed", "reverent",
+                         "romantic", "serene", "sharp", "silly", "sleepy",
+                         "stoic", "strange", "stupefied", "suspicious",
+                         "sweet", "tender", "thirsty", "trusting",
+                         "unruffled", "upbeat", "vibrant", "vigilant",
+                         "vigorous", "wizardly", "wonderful", "youthful",
+                         "zealous")
+
+.SESSION_SURNAMES <- c("turing", "wozniak", "knuth", "ritchie",
+                       "kernighan", "torvalds", "lovelace", "hopper",
+                       "shannon", "dijkstra", "tesla", "edison", "newton",
+                       "darwin", "einstein", "curie", "feynman", "hawking",
+                       "galileo", "kepler", "neumann", "lamarr", "boole",
+                       "babbage", "godel", "church", "fermat", "euler",
+                       "gauss", "ramanujan", "noether", "hilbert",
+                       "lagrange", "laplace", "poincare", "fourier",
+                       "leibniz", "pascal", "fermi", "bohr", "planck",
+                       "schrodinger", "heisenberg", "mendel", "watson",
+                       "crick", "franklin", "lovelace", "hamilton", "wing",
+                       "liskov", "perlis", "stallman", "stroustrup",
+                       "matsumoto", "vanrossum", "hejlsberg", "engelbart",
+                       "mccarthy", "minsky", "papert", "djikstra",
+                       "iverson")
+
+#' Generate a new session ID in docker-container style
+#' (`adjective_surname`, e.g. `boring_wozniak`). Replaces an older
+#' UUID v4 generator. The names are used as both the in-memory
+#' sessionId and the on-disk filename root, so they stay short
+#' and filesystem-safe.
+#'
+#' Collisions across the lifetime of a project are possible (the
+#' wordlist is ~100 x ~60 = ~6000 names). If a collision is
+#' detected against an existing session in the same agent, retry
+#' up to 10 times before falling back to appending a 4-char hex
+#' suffix.
+#' @return Character string.
 #' @noRd
 session_id <- function() {
-    # Generate UUID v4
+    for (attempt in seq_len(10L)) {
+        nm <- paste0(sample(.SESSION_ADJECTIVES, 1L), "_",
+                     sample(.SESSION_SURNAMES, 1L))
+        if (!.session_name_exists(nm)) {
+            return(nm)
+        }
+    }
+    # Fallback: append a hex suffix to disambiguate.
     hex <- c(0:9, letters[1:6])
-    paste0(paste0(sample(hex, 8, replace = TRUE), collapse = ""), "-",
-           paste0(sample(hex, 4, replace = TRUE), collapse = ""), "-", "4",
-           paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
-           sample(c("8", "9", "a", "b"), 1),
-           paste0(sample(hex, 3, replace = TRUE), collapse = ""), "-",
-           paste0(sample(hex, 12, replace = TRUE), collapse = ""))
+    paste0(sample(.SESSION_ADJECTIVES, 1L), "_",
+           sample(.SESSION_SURNAMES, 1L), "_",
+           paste0(sample(hex, 4L, replace = TRUE), collapse = ""))
+}
+
+#' Probe whether a session with this id already has a transcript or
+#' store entry. Used by `session_id()` to avoid collisions across
+#' the small wordlist.
+#' @noRd
+.session_name_exists <- function(nm, agent_id = DEFAULT_AGENT_ID) {
+    transcript <- file.path(sessions_dir(agent_id), paste0(nm, ".jsonl"))
+    file.exists(transcript)
 }
 
 #' Get path to session transcript file
