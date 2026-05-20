@@ -17,3 +17,12 @@ Returns a closure suitable for the \code{tool_executor} argument of
 \code{\link{turn}}. Each tool call is forwarded to the connected MCP
 server via \code{llm.api::mcp_call}.
 }
+\examples{
+\dontrun{
+# Needs an open MCP connection to a running corteza::serve().
+conn <- llm.api::mcp_connect("tcp://localhost:7850")
+executor <- mcp_tool_executor(conn)
+s <- new_session(provider = "anthropic")
+turn("Hello", s, tool_executor = executor)
+}
+}

@@ -70,3 +70,11 @@ and \code{<cwd>/.corteza/skills}.
 }
 
 }
+\examples{
+\dontrun{
+# Requires the relevant provider API key in the environment.
+s <- session_setup("cli", provider = "anthropic",
+                   load_project_context = FALSE)
+s$model
+}
+}

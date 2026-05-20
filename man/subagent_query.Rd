@@ -37,3 +37,11 @@ A subagent can only carry one in-flight async query at a time:
 firing a second one while the first is pending raises an error.
 
 }
+\examples{
+\dontrun{
+# Requires LLM credentials in the child's environment.
+id <- subagent_spawn("read R/skill.R and summarize", preset = "minimal")
+subagent_query(id, "what does this file do?", wait = TRUE)
+subagent_kill(id)
+}
+}

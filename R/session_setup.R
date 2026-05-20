@@ -52,6 +52,13 @@
 #'
 #' @return A session environment from \code{\link{new_session}}, with
 #'   an extra \code{cwd} field set.
+#' @examples
+#' \dontrun{
+#' # Requires the relevant provider API key in the environment.
+#' s <- session_setup("cli", provider = "anthropic",
+#'                    load_project_context = FALSE)
+#' s$model
+#' }
 #' @export
 session_setup <- function(channel = c("cli", "console", "matrix"),
                           cwd = getwd(), provider = NULL, model = NULL,

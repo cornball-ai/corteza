@@ -19,3 +19,23 @@ Installed skill name
 \description{
 Install a skill from a path or URL
 }
+\examples{
+# Install into a throwaway directory rather than the user's
+# R_user_dir, so this example doesn't mutate state.
+src <- file.path(tempdir(), "demo_skill")
+dir.create(src, showWarnings = FALSE)
+writeLines(c(
+               "---",
+               "name: demo",
+               "description: A demo skill",
+               "---",
+               "Demo body."
+            ),
+           file.path(src, "SKILL.md"))
+
+dest <- file.path(tempdir(), "skills_lib")
+skill_install(src, target_dir = dest)
+
+unlink(src, recursive = TRUE)
+unlink(dest, recursive = TRUE)
+}

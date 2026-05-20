@@ -695,6 +695,25 @@ validate_skill_package <- function(path) {
 #'   \code{tools::R_user_dir("corteza", "data")/skills}.
 #' @param force Overwrite if exists
 #' @return Installed skill name
+#' @examples
+#' # Install into a throwaway directory rather than the user's
+#' # R_user_dir, so this example doesn't mutate state.
+#' src <- file.path(tempdir(), "demo_skill")
+#' dir.create(src, showWarnings = FALSE)
+#' writeLines(c(
+#'                "---",
+#'                "name: demo",
+#'                "description: A demo skill",
+#'                "---",
+#'                "Demo body."
+#'             ),
+#'            file.path(src, "SKILL.md"))
+#'
+#' dest <- file.path(tempdir(), "skills_lib")
+#' skill_install(src, target_dir = dest)
+#'
+#' unlink(src, recursive = TRUE)
+#' unlink(dest, recursive = TRUE)
 #' @export
 skill_install <- function(source, target_dir = NULL, force = FALSE) {
     if (is.null(target_dir)) {
@@ -768,6 +787,20 @@ skill_install <- function(source, target_dir = NULL, force = FALSE) {
 #' @param name Skill name
 #' @param skill_dir Skills directory
 #' @return Invisible TRUE on success
+#' @examples
+#' # Install a demo skill into a tempdir, then remove it. The
+#' # installed name is the source directory's basename.
+#' src <- file.path(tempdir(), "demo_skill")
+#' dir.create(src, showWarnings = FALSE)
+#' writeLines(c("---", "name: demo_skill",
+#'              "description: A demo skill", "---"),
+#'            file.path(src, "SKILL.md"))
+#' dest <- file.path(tempdir(), "skills_lib")
+#' name <- skill_install(src, target_dir = dest)
+#' skill_remove(name, skill_dir = dest)
+#'
+#' unlink(src, recursive = TRUE)
+#' unlink(dest, recursive = TRUE)
 #' @export
 skill_remove <- function(name, skill_dir = NULL) {
     if (is.null(skill_dir)) {
@@ -799,6 +832,13 @@ skill_remove <- function(name, skill_dir = NULL) {
 #'
 #' @param skill_dir Skills directory
 #' @return Data frame with skill info
+#' @examples
+#' # List skills from an empty tempdir; returns a zero-row data frame
+#' # with the documented columns.
+#' empty <- file.path(tempdir(), "empty_skills")
+#' dir.create(empty, showWarnings = FALSE)
+#' skill_list_installed(skill_dir = empty)
+#' unlink(empty, recursive = TRUE)
 #' @export
 skill_list_installed <- function(skill_dir = NULL) {
     if (is.null(skill_dir)) {
@@ -866,6 +906,13 @@ skill_list_installed <- function(skill_dir = NULL) {
 #' @param path Path to skill directory
 #' @param verbose Print test output
 #' @return List with passed, failed, errors
+#' @examples
+#' # A skill directory with no test_*.R files returns a zero-result
+#' # summary rather than erroring.
+#' p <- file.path(tempdir(), "skill_no_tests")
+#' dir.create(p, showWarnings = FALSE)
+#' skill_test(p, verbose = FALSE)
+#' unlink(p, recursive = TRUE)
 #' @export
 skill_test <- function(path, verbose = TRUE) {
     path <- path.expand(path)

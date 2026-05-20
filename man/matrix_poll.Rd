@@ -39,3 +39,9 @@ by \code{matrix_new_session_registry()} so a long-running
 in different rooms don't cross-contaminate).
 
 }
+\examples{
+\dontrun{
+# Single poll cycle against the configured Matrix homeserver.
+matrix_poll(timeout = 5000L)
+}
+}

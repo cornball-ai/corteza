@@ -95,6 +95,17 @@ matrix_mx_session <- function(cfg) {
 #'   declined until the thumbs-up reaction protocol lands.
 #'
 #' @return The saved configuration, invisibly.
+#' @examples
+#' \dontrun{
+#' # Requires a real Matrix server and bot credentials. Configuration
+#' # is written under tools::R_user_dir("corteza", "config").
+#' matrix_configure(
+#'     server = "https://matrix.example.org",
+#'     user = "bot",
+#'     password = "secret",
+#'     room = "!roomid:example.org"
+#' )
+#' }
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
                              provider = c("anthropic", "openai", "moonshot", "ollama"),
@@ -124,6 +135,11 @@ matrix_configure <- function(server, user, password, room, model = NULL,
 #' @param msgtype Character. Matrix msgtype, default "m.text".
 #'
 #' @return The event ID of the sent message.
+#' @examples
+#' \dontrun{
+#' # Requires matrix_configure() to have run.
+#' matrix_send("hello from corteza")
+#' }
 #' @export
 matrix_send <- function(text, room_id = NULL, msgtype = "m.text") {
     matrix_require_mx()
@@ -246,6 +262,13 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
 #'   NULL, the room ID is used as the source identifier.
 #'
 #' @return Integer count of rooms ingested, invisibly.
+#' @examples
+#' \dontrun{
+#' # Requires a running Matrix session registry and the optional
+#' # pensar package for the actual archive step.
+#' reg <- new.env(parent = emptyenv())
+#' matrix_archive_all(reg)
+#' }
 #' @export
 matrix_archive_all <- function(sessions, mx_sess = NULL) {
     if (!is.environment(sessions)) {
@@ -753,6 +776,11 @@ matrix_accept_invites <- function(mx_sess, invites) {
 #'   keyed by room_id, or NULL to build fresh sessions each call.
 #'
 #' @return An integer count of messages replied to, invisibly.
+#' @examples
+#' \dontrun{
+#' # Single poll cycle against the configured Matrix homeserver.
+#' matrix_poll(timeout = 5000L)
+#' }
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                         tools_filter = NULL, timeout = 0L, sessions = NULL) {
@@ -1005,6 +1033,12 @@ matrix_run_turn_in_cwd <- function(prompt, session) {
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
+#' @examples
+#' \dontrun{
+#' # Run the Matrix bot loop -- typically launched by a systemd unit
+#' # rather than from an interactive R session.
+#' matrix_run()
+#' }
 #' @export
 matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
                        provider = NULL, tools_filter = NULL) {
@@ -1091,6 +1125,16 @@ matrix_signal_dir <- function() {
 #' to know the bot's PID or share its memory.
 #'
 #' @return The signal file path, invisibly.
+#' @examples
+#' # Writes a sentinel file under CORTEZA_STATE_DIR (or the package's
+#' # R_user_dir data path). Redirect to a tempdir for the example so
+#' # we don't touch persistent state.
+#' old <- Sys.getenv("CORTEZA_STATE_DIR")
+#' Sys.setenv(CORTEZA_STATE_DIR = file.path(tempdir(), "state"))
+#' sig <- matrix_request_flush()
+#' file.exists(sig)
+#' unlink(Sys.getenv("CORTEZA_STATE_DIR"), recursive = TRUE)
+#' Sys.setenv(CORTEZA_STATE_DIR = old)
 #' @export
 matrix_request_flush <- function() {
     dir <- matrix_signal_dir()

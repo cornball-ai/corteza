@@ -19,3 +19,9 @@ The event ID of the sent message.
 \description{
 Send a message to a Matrix room
 }
+\examples{
+\dontrun{
+# Requires matrix_configure() to have run.
+matrix_send("hello from corteza")
+}
+}

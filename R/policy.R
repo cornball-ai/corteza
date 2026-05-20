@@ -252,6 +252,12 @@ default_policy <- function(call) {
 #'
 #' @return A decision list with fields \code{model}, \code{approval},
 #'   \code{reason}.
+#' @examples
+#' # A bare-environment read_file call resolves under the default
+#' # built-in policy without needing any session config.
+#' decision <- policy(list(name = "read_file",
+#'                         arguments = list(path = "DESCRIPTION")))
+#' decision$approval
 #' @export
 policy <- function(call, config = NULL) {
     if (is.null(call$paths)) {

@@ -36,3 +36,10 @@ their session's config through here so the \code{/permissions}
 contract advertised by both surfaces is enforced consistently.
 
 }
+\examples{
+# A bare-environment read_file call resolves under the default
+# built-in policy without needing any session config.
+decision <- policy(list(name = "read_file",
+                        arguments = list(path = "DESCRIPTION")))
+decision$approval
+}

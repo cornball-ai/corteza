@@ -14,3 +14,8 @@ Invisible TRUE if killed, FALSE if not found.
 \description{
 Kill a subagent.
 }
+\examples{
+# Unknown id is a silent no-op (returns FALSE), so this is safe to
+# run during R CMD check without a live subagent.
+subagent_kill("no-such-id")
+}

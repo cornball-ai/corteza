@@ -47,3 +47,16 @@ otherwise the child should report that it is blocked rather than
 retry.
 
 }
+\examples{
+\donttest{
+if (interactive()) {
+    # Spawns a callr::r_session child loaded with corteza; the
+    # registry is in-memory and dies with the parent R session, so
+    # we wrap in interactive() to keep R CMD check from leaving
+    # children behind.
+    id <- subagent_spawn("look up the package version",
+                         preset = "minimal")
+    subagent_kill(id)
+}
+}
+}
