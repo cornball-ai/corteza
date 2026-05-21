@@ -305,3 +305,84 @@ local({
     # The `\` survives because /paste mode doesn't strip continuation.
     expect_identical(out, "export PATH=foo\\")
 })
+
+# .console_deny_label ----
+# Regression: PR #103 hardcoded "Deny (Esc)" for chat()'s approval
+# prompt. That's correct in RStudio (Esc raises an interrupt) but
+# wrong in a plain terminal where Esc is a raw \033 byte and only
+# Ctrl+C raises SIGINT. The label must follow the actual key.
+
+# Explicit argument path -- no env-var juggling.
+expect_equal(corteza:::.console_deny_label(rstudio = TRUE), "Deny (Esc)")
+expect_equal(corteza:::.console_deny_label(rstudio = FALSE), "Deny (Ctrl+C)")
+
+# Env-var detection path.
+local({
+    old <- Sys.getenv("RSTUDIO", unset = NA)
+    on.exit({
+        if (is.na(old)) {
+            Sys.unsetenv("RSTUDIO")
+        } else {
+            Sys.setenv(RSTUDIO = old)
+        }
+    }, add = TRUE)
+
+    Sys.setenv(RSTUDIO = "1")
+    expect_equal(corteza:::.console_deny_label(), "Deny (Esc)")
+
+    Sys.setenv(RSTUDIO = "0")
+    expect_equal(corteza:::.console_deny_label(), "Deny (Ctrl+C)")
+
+    Sys.unsetenv("RSTUDIO")
+    expect_equal(corteza:::.console_deny_label(), "Deny (Ctrl+C)")
+})
+
+# .handle_bash_prompt_status ----
+# Regression: PR #49 wired the approval prompt to bash's `read -e -p`
+# via .read_prompt_via_bash. When bash is killed by SIGINT (Ctrl+C
+# at the prompt) it exits 130; before this fix the function returned
+# character() and the caller defaulted empty -> "1" (Approve), so
+# Ctrl+C silently approved the pending tool call. Status 130 must
+# now raise an R-level interrupt so the surrounding
+# tryCatch(interrupt = ...) handlers in inst/bin/corteza and
+# R/chat.R catch it the same as a real terminal Ctrl+C.
+
+# Status 130 -> interrupt condition. tryCatch's interrupt handler
+# matches by class, and our stop() carries class c("interrupt",
+# "condition").
+caught_interrupt <- FALSE
+tryCatch(
+    corteza:::.handle_bash_prompt_status(130L, ""),
+    interrupt = function(c) caught_interrupt <<- TRUE
+)
+expect_true(caught_interrupt)
+
+# Non-zero non-130 status (read failure that isn't SIGINT) returns
+# empty -- caller behavior unchanged for genuine read errors.
+expect_identical(corteza:::.handle_bash_prompt_status(1L, ""), character())
+
+# Status 0 with a missing tempfile path returns empty (defensive
+# guard for the case where bash succeeded but the output file
+# vanished).
+expect_identical(
+    corteza:::.handle_bash_prompt_status(0L, tempfile("nonexistent-")),
+    character()
+)
+
+# Status 0 with a valid tempfile reads its lines back.
+local({
+    tmp <- tempfile("bash-prompt-status-")
+    writeLines(c("first line", "second line"), tmp)
+    on.exit(unlink(tmp), add = TRUE)
+    expect_identical(corteza:::.handle_bash_prompt_status(0L, tmp),
+                     c("first line", "second line"))
+})
+
+# NULL status is treated as success (system2 returns NULL when stdout
+# = "" was requested and the child exited cleanly).
+local({
+    tmp <- tempfile("bash-prompt-null-")
+    writeLines("ok", tmp)
+    on.exit(unlink(tmp), add = TRUE)
+    expect_identical(corteza:::.handle_bash_prompt_status(NULL, tmp), "ok")
+})
