@@ -1,6 +1,23 @@
 .prompt_input_state <- new.env(parent = emptyenv())
 .prompt_input_state$stdin_con <- NULL
 
+# Deny-key label for the R-console approval prompt.
+#
+# corteza::chat() runs in any R console -- RStudio or a plain terminal.
+# RStudio captures Esc and translates it to an R-level interrupt; a
+# terminal does not (Esc is a raw \033 byte and only Ctrl+C raises
+# SIGINT). Show the label that actually works in the current console.
+#
+# The `rstudio` argument is exposed so tests can pin behavior without
+# touching Sys.setenv()/unsetenv() on each call.
+.console_deny_label <- function(rstudio = identical(Sys.getenv("RSTUDIO"), "1")) {
+    if (isTRUE(rstudio)) {
+        "Deny (Esc)"
+    } else {
+        "Deny (Ctrl+C)"
+    }
+}
+
 .read_prompt_via_bash <- function(prompt_str = "> ") {
     # Hand the prompt to bash's `read -e -p` instead of cat()ing it
     # ourselves. Readline now owns the cursor position, so a Backspace
@@ -28,6 +45,28 @@
                                        stderr = ""
         )
     )
+    .handle_bash_prompt_status(status, path)
+}
+
+# Post-system2 dispatch for .read_prompt_via_bash. Extracted so the
+# SIGINT path can be tested without spawning a real bash subprocess.
+#
+# - status 130 (bash killed by SIGINT, the Ctrl+C path) re-raises as
+#   an R interrupt condition. The surrounding tryCatch(interrupt = ...)
+#   in inst/bin/corteza and R/chat.R catches it the same way it would
+#   a real terminal Ctrl+C, so the turn aborts instead of returning
+#   empty to a caller that would default to "1" (Approve).
+# - Any other non-zero status (read failure) returns empty.
+# - status 0 with a missing tempfile returns empty.
+# - status 0 with a present tempfile returns its lines.
+.handle_bash_prompt_status <- function(status, path) {
+    if (!is.null(status) && status == 130L) {
+        stop(structure(
+                       class = c("interrupt", "condition"),
+                       list(message = "Interrupted via Ctrl+C at input prompt",
+                            call = sys.call())
+            ))
+    }
     if (!is.null(status) && status != 0L) {
         return(character())
     }
