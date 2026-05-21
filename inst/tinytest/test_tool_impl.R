@@ -64,6 +64,21 @@ if (.Platform$OS.type == "windows" && !file.exists(corteza:::.find_bash_exe())) 
 expect_false(isTRUE(result$isError))
 expect_true(grepl("hello", result$content[[1]]$text))
 
+# Regression: the shell tool must return err() (isError = TRUE) when
+# the child process exits non-zero, so the LLM can detect command
+# failure. tool_shell_impl previously ignored attr(out, "status") and
+# always wrapped output in ok(), silently swallowing failures.
+local({
+    fail_result <- if (.Platform$OS.type == "windows" &&
+                       !file.exists(corteza:::.find_bash_exe())) {
+        corteza:::tool_cmd(command = "exit 42")
+    } else {
+        corteza:::tool_bash(command = "exit 42")
+    }
+    expect_true(isTRUE(fail_result$isError))
+    expect_true(grepl("exit status 42", fail_result$content[[1]]$text))
+})
+
 # Test grep_files
 tmp_dir <- tempfile("grep_test")
 dir.create(tmp_dir)

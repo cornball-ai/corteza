@@ -19,7 +19,11 @@
 #' ship them.
 #' @keywords internal
 MODEL_CONTEXT_LIMITS <- list(
-                             # Anthropic
+                             # Anthropic — short-form IDs (claude-<family>-<minor>)
+                             "claude-opus-4-7" = 200000L,
+                             "claude-sonnet-4-6" = 200000L,
+                             "claude-haiku-4-5" = 200000L,
+                             # Anthropic — date-stamped IDs
                              "claude-sonnet-4-20250514" = 200000L,
                              "claude-opus-4-20250514" = 200000L,
                              "claude-3-5-sonnet-20241022" = 200000L,
@@ -51,7 +55,7 @@ MODEL_CONTEXT_LIMITS <- list(
 #' @keywords internal
 #' @export
 default_provider_model <- function(provider) {
-    switch(provider %||% "", anthropic = "claude-sonnet-4-20250514",
+    switch(provider %||% "", anthropic = "claude-sonnet-4-6",
            openai = "gpt-4o", moonshot = "kimi-k2.6", ollama = "llama3.2",
            NULL)
 }

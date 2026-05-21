@@ -29,7 +29,7 @@ Imports:
     codetools,
     curl,
     jsonlite,
-    llm.api,
+    llm.api (>= 0.1.3),
     printify,
     processx,
     saber

@@ -318,8 +318,13 @@ session_list <- function(agent_id = DEFAULT_AGENT_ID, n = 20) {
         return(list())
     }
 
+    # Only list user sessions (keys starting with "corteza:"); subagent
+    # entries share the same store but have "agent:...:subagent:" keys and
+    # are not meaningful to the user in the --list / /sessions surface.
+    user_keys <- Filter(function(k) startsWith(k, "corteza:"), names(store))
+
     # Convert to list and sort by updatedAt
-    sessions <- lapply(names(store), function(key) {
+    sessions <- lapply(user_keys, function(key) {
         entry <- store[[key]]
         entry$sessionKey <- key
         entry$messages <- transcript_count(entry$sessionId, agent_id)

@@ -58,3 +58,56 @@ expect_true("search" %in% names(cats))
 expect_true("grep_files" %in% cats$search)
 expect_true("git" %in% names(cats))
 expect_true("git_status" %in% cats$git)
+
+# sanitize_tool_name / unsanitize_tool_name ----
+# Anthropic and OpenAI tool names must match [a-zA-Z0-9_-]. Internal
+# names can include "::" (package qualifier) and "." (R function names
+# like read.csv). Encoding: "::" -> "__", "." -> "_dot_". Hyphens are
+# valid in both internal and API names and pass through unchanged.
+
+# Regression: round-trip must be lossless and injective even when the
+# internal name contains a literal hyphen. An earlier encoding used
+# "-" as the escape for ".", which collapsed "a.b" and "a-b" to the
+# same API form and silently misrouted any user-registered skill whose
+# name contained a hyphen.
+
+# Hyphens pass through unchanged.
+expect_equal(corteza:::sanitize_tool_name("pkg::some-tool"),
+             "pkg__some-tool")
+expect_equal(corteza:::unsanitize_tool_name("pkg__some-tool"),
+             "pkg::some-tool")
+
+# Dots encode as _dot_.
+expect_equal(corteza:::sanitize_tool_name("base::read.csv"),
+             "base__read_dot_csv")
+expect_equal(corteza:::unsanitize_tool_name("base__read_dot_csv"),
+             "base::read.csv")
+
+# Names with both '.' and '-' round-trip with neither collapsing into
+# the other.
+expect_equal(corteza:::sanitize_tool_name("pkg::weird.name-here"),
+             "pkg__weird_dot_name-here")
+expect_equal(corteza:::unsanitize_tool_name("pkg__weird_dot_name-here"),
+             "pkg::weird.name-here")
+
+# Round-trip is identity across a range of realistic name shapes. Note
+# that the encoding scheme is safe for any internal name that does not
+# itself contain the literal substring "_dot_"; that's not a realistic
+# R function name pattern but is worth knowing.
+for (name in c("base::readLines",
+               "base::read.csv",
+               "pkg::some-tool",
+               "pkg::weird.name-here",
+               "single_word")) {
+    expect_equal(corteza:::unsanitize_tool_name(
+                     corteza:::sanitize_tool_name(name)),
+                 name)
+}
+
+# Sanitized form matches the API-allowed character set.
+for (name in c("base::read.csv",
+               "pkg::some-tool",
+               "pkg::weird.name-here")) {
+    sanitized <- corteza:::sanitize_tool_name(name)
+    expect_true(grepl("^[a-zA-Z0-9_-]+$", sanitized))
+}

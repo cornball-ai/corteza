@@ -150,6 +150,32 @@ empty_agent <- paste0("empty_", sample(10000:99999, 1))
 empty_sessions <- corteza:::session_list(empty_agent)
 expect_equal(length(empty_sessions), 0)
 
+# Regression: session_list() must filter out internal subagent
+# entries. The flat JSON store is shared with subagent metadata
+# (keys formatted "agent:main:subagent:<id>" per R/subagent.R), but
+# only user-created sessions ("corteza:<id>") are meaningful in the
+# --list / /sessions surface.
+local({
+    store <- corteza:::store_load(test_agent_id)
+    store[["agent:main:subagent:fake_planner"]] <- list(
+        sessionId = "fake-planner-id",
+        provider  = "ollama",
+        model     = "x",
+        updatedAt = as.numeric(Sys.time())
+    )
+    corteza:::store_save(store, test_agent_id)
+    on.exit({
+        st <- corteza:::store_load(test_agent_id)
+        st[["agent:main:subagent:fake_planner"]] <- NULL
+        corteza:::store_save(st, test_agent_id)
+    }, add = TRUE)
+
+    listed <- corteza:::session_list(test_agent_id)
+    keys <- vapply(listed, function(s) s$sessionKey, character(1))
+    expect_true(all(startsWith(keys, "corteza:")))
+    expect_false("agent:main:subagent:fake_planner" %in% keys)
+})
+
 # Test session_latest with no sessions
 no_latest <- corteza:::session_latest(empty_agent)
 expect_null(no_latest)
