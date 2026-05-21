@@ -1048,12 +1048,9 @@ chat_approval_cb <- function(cwd = getwd()) {
         }
 
         persistent_label <- "Allow always for this session"
-        # chat() runs in the R console / RStudio, where Esc interrupts
-        # the turn -- same outcome as picking Deny. Surface the
-        # shortcut so users don't have to type "3" + Enter.
         lines <- cli_approval_lines(call, decision, cwd = cwd,
                                     persistent_label = persistent_label,
-                                    deny_label = "Deny (Esc)")
+                                    deny_label = .console_deny_label())
         cat(paste(lines, collapse = "\n"), "\n")
 
         ans <- read_prompt_input("Choice: ")
