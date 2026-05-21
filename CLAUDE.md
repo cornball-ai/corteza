@@ -103,28 +103,39 @@ Key fields: `provider`, `port` (default 7850), `context_warn_pct` /
 `context_high_pct` / `context_crit_pct` / `context_compact_pct`,
 `context_files`, `approval_mode`, `dangerous_tools`, `permissions`.
 
-## Tool isolation: `run_r` is stateless
+## Tool execution model: `run_r` vs `run_r_script`
 
-`run_r` runs every call in a fresh R process via `callr::rscript()`
-(see `R/tool-impl.R`). Variables do **not** persist across calls.
+`run_r` is **stateful**. `tool_run_r` calls
+`eval(parse(text = code), envir = handle_eval_env(parent = globalenv()))`,
+so `<-` and `=` assignments land in `globalenv()` and persist across
+calls. The workspace auto-capture explicitly depends on this. Use
+`run_r` for incremental exploration where intermediate results need to
+carry forward.
+
+`run_r_script` is **stateless**: each call runs in a fresh R
+subprocess via `callr::rscript()` (see `R/tool-impl.R`). Variables do
+**not** persist across calls. Use `run_r_script` for clean-slate runs:
+reproducible test execution, isolation from a polluted `globalenv`,
+or commands you don't want leaking state into the live session.
 
 ```r
-# Call 1
-x <- 1
-# Call 2
-x  # Error: object 'x' not found
+# run_r — stateful
+run_r("x <- 1")
+run_r("x")           # 1
+
+# run_r_script — stateless
+run_r_script("x <- 1")
+run_r_script("x")    # Error: object 'x' not found
 ```
 
 Implications:
 
-- Build the full computation in one `run_r` block, or stash
-  intermediate results to disk yourself.
-- Large outputs are captured as handles (e.g. `.h_001`) for the agent
-  to reference later; those are read-only snapshots, not workspace
-  state.
-- Same isolation rationale applies to subagents: each
-  `subagent_spawn()` opens a private `callr::r_session` so child work
-  can't leak into the parent's R session.
+- Large outputs from either tool are captured as handles (e.g.
+  `.h_001`) for the agent to reference later; those are read-only
+  snapshots, not workspace state.
+- Same isolation rationale as `run_r_script` applies to subagents:
+  each `subagent_spawn()` opens a private `callr::r_session` so child
+  work can't leak into the parent's R session.
 
 ## Subagent registry is in-memory only
 
