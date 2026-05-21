@@ -632,9 +632,19 @@ tool_shell_impl <- function(args, shell_name) {
     )
 
     tryCatch({
-        out <- suppressWarnings(
-            system2(shell_exe, exe_args_fg, stdout = TRUE,
-                    stderr = TRUE, timeout = timeout)
+        # system2() emits "running command '...' had status N" when the
+        # child exits non-zero; we surface that status structurally via
+        # err()/ok() below, so muffle only that specific warning class
+        # and let any other system2 warning (encoding, locale, etc.)
+        # propagate.
+        out <- withCallingHandlers(
+                                   system2(shell_exe, exe_args_fg, stdout = TRUE,
+                stderr = TRUE, timeout = timeout),
+                                   warning = function(w) {
+            if (grepl("had status \\d+", conditionMessage(w))) {
+                invokeRestart("muffleWarning")
+            }
+        }
         )
         status <- attr(out, "status") %||% 0L
         text <- paste(out, collapse = "\n")
