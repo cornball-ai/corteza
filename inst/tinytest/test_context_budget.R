@@ -28,6 +28,14 @@ expect_equal(corteza::format_tokens(2000000L), "2.0M")
 expect_equal(corteza::context_limit_for_model("gpt-4o"), 128000L)
 expect_equal(corteza::context_limit_for_model("claude-sonnet-4-20250514"),
              200000L)
+# Regression: short-form Claude 4 IDs must resolve to 200K, not the
+# 128K unknown-model fallback. "claude-sonnet-4-6" is not a prefix of
+# any date-stamped key (e.g. "claude-sonnet-4-20250514"), so without
+# explicit short-form entries it would hit the default and trigger
+# premature compaction.
+expect_equal(corteza::context_limit_for_model("claude-opus-4-7"), 200000L)
+expect_equal(corteza::context_limit_for_model("claude-sonnet-4-6"), 200000L)
+expect_equal(corteza::context_limit_for_model("claude-haiku-4-5"), 200000L)
 # Prefix match works either direction (shorter caller, shorter table key).
 expect_equal(corteza::context_limit_for_model("gpt-4o-mini-2024-07-18"),
              128000L)
