@@ -954,32 +954,28 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                            turn(prompt, turn_session),
                            corteza_user_deny = function(c) {
             # User picked "3. Deny" at the approval prompt. Abort the
-            # whole turn (not just this tool call) and seed the next
-            # turn's history with a marker that names the denied tool
-            # so the LLM stops and asks the user what to do instead.
+            # whole turn so the LLM doesn't cascade through more tool
+            # calls. apply_exit_marker repairs any tool_use blocks
+            # that landed in turn_session$history during this turn
+            # (via the history_callback in turn()) so they don't 400
+            # the next API call on dangling tool_use_id.
             cat(sprintf("\n%sDenied -- aborting turn.%s\n",
                         color$yellow, color$reset))
             marker <- user_deny_marker(c$tool %||% "?")
-            turn_session$history <- c(
-                                      turn_session$history %||% list(),
-                                      list(list(role = "user", content = prompt),
-                    list(role = "assistant", content = marker))
-            )
+            apply_exit_marker(turn_session, prompt, pre_turn_len, marker,
+                              placeholder = "[Denied by user before execution]")
             transcript_append(disk_session$session, "assistant", marker)
             NULL
         },
                            interrupt = function(c) {
+            # Ctrl+C in terminal R, Esc in RStudio. Same handling:
+            # apply_exit_marker repairs any unfinished tool_use
+            # blocks in turn_session$history (preserving completed
+            # tool calls that the history_callback already mirrored
+            # into the session env) and appends the interrupt marker.
             cat(sprintf("\n%sInterrupted.%s\n", color$yellow, color$reset))
-            # turn() didn't return, so its history update never landed.
-            # Stitch the user prompt and an interruption marker into
-            # turn_session$history so the next turn's LLM call sees
-            # this exchange was aborted instead of silently dropping it.
             marker <- "[Interrupted by user before completing.]"
-            turn_session$history <- c(
-                                      turn_session$history %||% list(),
-                                      list(list(role = "user", content = prompt),
-                    list(role = "assistant", content = marker))
-            )
+            apply_exit_marker(turn_session, prompt, pre_turn_len, marker)
             transcript_append(disk_session$session, "assistant", marker)
             NULL
         },

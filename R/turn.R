@@ -515,17 +515,35 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
                                   channel = session$channel)
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
-    response <- llm.api::agent(
-                               prompt = prompt,
-                               tools = tools,
-                               tool_handler = tool_handler,
-                               system = system,
-                               model = .resolve_model(session),
-                               provider = session$provider,
-                               max_turns = session$max_turns,
-                               verbose = session$verbose,
-                               history = session$history
+    # Pass a history_callback to llm.api so session$history mirrors
+    # intermediate state continuously: after each assistant message
+    # and after each tool_result lands, the callback overwrites
+    # session$history with the in-progress snapshot. session is an
+    # environment (see new_session()), so the mutation is visible to
+    # the caller (chat() / CLI) even if llm.api::agent() throws an
+    # interrupt mid-flight. Without this, an interrupt would lose
+    # every tool call completed in the current batch.
+    #
+    # Conditional on llm.api supporting history_callback. Don't bump
+    # the Imports min-version yet -- the shim keeps corteza usable on
+    # the older llm.api on CRAN until the new release lands there.
+    agent_args <- list(
+                       prompt = prompt,
+                       tools = tools,
+                       tool_handler = tool_handler,
+                       system = system,
+                       model = .resolve_model(session),
+                       provider = session$provider,
+                       max_turns = session$max_turns,
+                       verbose = session$verbose,
+                       history = session$history
     )
+    if ("history_callback" %in% names(formals(llm.api::agent))) {
+        agent_args$history_callback <- function(history) {
+            session$history <- history
+        }
+    }
+    response <- do.call(llm.api::agent, agent_args)
 
     if (!is.null(response$history)) {
         session$history <- response$history
