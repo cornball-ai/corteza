@@ -1,3 +1,40 @@
+# corteza 0.6.7.1
+
+## Interrupt / denial preserves context across the exit
+
+Hitting Ctrl+C (CLI) or Esc (RStudio chat) after a multi-tool turn
+no longer loses the tool calls that completed before the interrupt.
+Previously the next turn / next CLI invocation saw the original
+user prompt, an interrupt marker, and nothing else.
+
+* `Imports: llm.api (>= 0.1.3.1)` so `agent()` exposes the
+  `history_callback` parameter. `R/turn.R` uses it to mirror the
+  in-progress provider-native history into the live session env as
+  each assistant message and each tool result lands. With the
+  callback wired, `turn_session$history` reflects the latest snapshot
+  even when an interrupt unwinds the turn mid-flight.
+* New helper `repair_interrupted_tool_history()` (with the
+  surrounding `apply_exit_marker()`) synthesizes provider-correct
+  tool_result blocks for any tool_use issued during the current
+  turn that never got matching results. Wired into chat()'s
+  `interrupt` and `corteza_user_deny` condition handlers. Anthropic's
+  "every tool_use needs a tool_result" requirement no longer 400s
+  the next chat() API call after an interrupted multi-tool turn.
+* New helper `dump_completed_tools_summary()` walks the per-turn
+  history slice and appends a text summary of completed tool calls
+  to the persistent flat-text `session$messages` before the
+  interrupt / denial marker. Wired into both CLI exit handlers
+  (`inst/bin/corteza`). The next CLI turn's `api_history` rebuild
+  now carries the work the LLM accomplished before the interrupt
+  ("[ran tool_name(...) -> result]" entries instead of nothing).
+* Two-layer `on.exit` guard around the archival ownership transfer.
+  An inner guard inside `archival_archive_turn()` kills the holder
+  subagent if anything between spawn and the explicit
+  `transferred <- TRUE` unwinds; an outer guard in
+  `maybe_archive_turn()` covers the parent-history-collapse window.
+  Either failure cleans the orphan instead of leaving it sitting in
+  `.subagent_registry` with no parent reference.
+
 # corteza 0.6.7
 
 Patch release batching the 0.6.6.1 through 0.6.6.20 dev cycles plus
