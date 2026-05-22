@@ -1516,11 +1516,16 @@ Tool output:
       )
     }, corteza_user_deny = function(c) {
       # User picked "3. Deny". Abort the whole turn so the LLM doesn't
-      # cascade through more tool calls. Seed history with a marker that
-      # names the denied tool so the next turn's LLM call asks the user
-      # what to do instead of retrying.
+      # cascade through more tool calls. Before writing the deny marker,
+      # dump any tool calls that already completed in this turn into the
+      # persistent session as a text summary -- session$messages is
+      # stored flat, so without this the next CLI turn's api_history
+      # would have no record of work the LLM had done up to the denial.
       cat(sprintf("\n%sDenied -- aborting turn.%s\n",
                   color$yellow, color$reset))
+      session <<- corteza:::dump_completed_tools_summary(
+                                                         turn_session, session, pre_turn_len
+      )
       marker <- corteza:::user_deny_marker(c$tool %||% "?")
       session <<- corteza:::session_add_message(session, "assistant", marker)
       corteza:::transcript_append(session, "assistant", marker)
@@ -1555,10 +1560,18 @@ Tool output:
           }
         }
       }
-      # Record the interruption against the persistent session so the
-      # next turn's api_history shows an assistant placeholder where
-      # the aborted reply would have been. The user message was
-      # already saved before turn() ran.
+      # Before writing the interrupt marker, dump any tool calls that
+      # already completed in this turn into the persistent session as
+      # a text summary. session$messages is stored flat (tool_use /
+      # tool_result blocks don't round-trip through disk), so without
+      # this the next CLI turn's api_history rebuild would have no
+      # record of work that completed before the user hit Ctrl+C.
+      # turn_session$history was being mirrored continuously by the
+      # history_callback in turn(), so it carries the latest snapshot
+      # even though turn() never returned.
+      session <<- corteza:::dump_completed_tools_summary(
+                                                         turn_session, session, pre_turn_len
+      )
       marker <- "[Interrupted by user before completing.]"
       session <<- corteza:::session_add_message(session, "assistant", marker)
       corteza:::transcript_append(session, "assistant", marker)
