@@ -253,7 +253,7 @@ inst/
 └── tinytest/          # Tests (1300+ asserts)
 
 vignettes/
-├── configuration.Rmd
-├── retroactive-extraction.Rmd
-└── skills.Rmd
+├── configuration.md
+├── retroactive-extraction.md
+└── skills.md
 ```
