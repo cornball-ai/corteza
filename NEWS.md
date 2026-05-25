@@ -1,3 +1,17 @@
+# corteza 0.6.7.1
+
+## Base-R cleanups from a redundancy audit
+
+* `skill_install()` clones GitHub repos via `processx::run()`
+  (already an import) instead of `system2()`, with a nonzero git
+  exit surfaced as a clear error. The clone is extracted into an
+  internal `git_clone()` helper so its status handling is
+  unit-testable against a local repository, no network required.
+* `find_break_point()` (text chunking) replaces two backward
+  character-scan loops with a two-tier regex: last newline, else
+  last whitespace (tabs included). Behavior preserved; added
+  regression tests for newline-beats-later-space and tab handling.
+
 # corteza 0.6.7
 
 Patch release batching the 0.6.6.1 through 0.6.6.20 dev cycles plus
