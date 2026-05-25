@@ -24,6 +24,10 @@ load_context <- function(cwd = getwd()) {
                               "You are an AI assistant with access to tools for working with R and the file system.",
                               "Use the bash tool to run shell commands. Below is context about the current project",
                               "and available skills.",
+                              "run_r and subagents may return a .h_NNN handle instead of inlining a large result;",
+                              "reference it by name when present, and don't re-read it. To get a structured value",
+                              "back from a subagent, give it run_r (the 'work' preset), have it leave the result",
+                              "bound to a name, and pass that name as query_subagent's return_name.",
                               sep = "\n"
         ))
 

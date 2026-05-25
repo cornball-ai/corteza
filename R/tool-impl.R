@@ -1058,12 +1058,18 @@ tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
 #' @param wait (logical) If TRUE (default), block until the child
 #'   replies and return the reply. If FALSE, fire the prompt and
 #'   return immediately; caller collects via `collect_subagent`.
+#' @param return_name (string) Optional name or `.h_NNN` handle for a
+#'   value the subagent should hand back. Tell the subagent to leave
+#'   its result bound under this name (it needs `run_r`); the value is
+#'   returned as a handle you can reference in a later `run_r`, instead
+#'   of being inlined into the reply text.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_query_subagent <- function(id, prompt, wait = TRUE) {
+tool_query_subagent <- function(id, prompt, wait = TRUE, return_name = NULL) {
     tryCatch({
-        result <- subagent_query(id, prompt, wait = wait)
+        result <- subagent_query(id, prompt, wait = wait,
+                                 return_name = return_name)
         if (isTRUE(wait)) {
             ok(result)
         } else {

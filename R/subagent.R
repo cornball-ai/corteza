@@ -170,6 +170,59 @@ subagent_seed_history <- function(history) {
     invisible(TRUE)
 }
 
+#' Validate a subagent return name.
+#'
+#' Accepts a single syntactic R name or a `.h_NNN` handle id, and
+#' rejects anything else (`x$y`, `a b`, ...) so a malformed request
+#' fails clearly instead of silently resolving to nothing.
+#' @noRd
+.valid_return_name <- function(x) {
+    is.character(x) && length(x) == 1L && nzchar(x) &&
+    identical(make.names(x), x)
+}
+
+#' Resolve a return name inside the child process.
+#'
+#' Handle store first, then a top-level globalenv binding. A single
+#' name only, no expression evaluation.
+#' @return list(found = logical, value = resolved object or NULL)
+#' @noRd
+.resolve_return_value <- function(name) {
+    if (name %in% list_handles()) {
+        return(list(found = TRUE, value = get_handle(name)))
+    }
+    if (exists(name, envir = globalenv(), inherits = FALSE)) {
+        return(list(found = TRUE,
+                    value = get(name, envir = globalenv(), inherits = FALSE)))
+    }
+    list(found = FALSE, value = NULL)
+}
+
+#' Format a subagent turn result for the parent.
+#'
+#' When the child resolved a value (`final_found`), stash it in the
+#' parent's handle store and append a `summary` + `[stored as .h_NNN]`
+#' block, mirroring `tool_run_r()`. The flag, not `is.null(final)`,
+#' gates this so a legitimately NULL result still returns a handle. A
+#' `final_note` (bad or missing return name) is appended as plain text.
+#' Runs parent-side, so `with_handle()` mints the handle in the parent
+#' store where later `run_r` calls see it.
+#' @noRd
+.format_subagent_reply <- function(res) {
+    reply <- as.character(res$reply %||% "")
+    if (isTRUE(res$final_found)) {
+        stashed <- with_handle(res$final)
+        block <- sprintf("%s\n\n[stored as %s]", stashed$summary,
+                         stashed$handle)
+        return(paste(c(reply[nzchar(reply)], block), collapse = "\n\n"))
+    }
+    if (!is.null(res$final_note)) {
+        return(paste(c(reply[nzchar(reply)], res$final_note),
+                     collapse = "\n\n"))
+    }
+    reply
+}
+
 #' Forward a prompt to the child-side turn session.
 #'
 #' Captures the pre-turn history length so that, if archival is enabled
@@ -177,13 +230,19 @@ subagent_seed_history <- function(history) {
 #' turn into a sub-subagent (capped by depth_cap).
 #'
 #' @param prompt User prompt (character).
-#' @return A list with `$reply` (character, the LLM reply text) and
+#' @param return_name Optional single name or `.h_NNN` handle. When
+#'   set, after the turn the child resolves it (handle store, then
+#'   globalenv) and ships the value back as `$final` so the parent can
+#'   stash it by handle. A bad or unresolved name yields `$final_note`.
+#' @return A list with `$reply` (character, the LLM reply text),
 #'   `$usage` (list with `input_tokens`, `output_tokens`, `total_tokens`,
-#'   and optionally `cost` -- provider-dependent). Callers extract the
+#'   and optionally `cost` -- provider-dependent), and, when
+#'   `return_name` is set, `$final` (the resolved value) or
+#'   `$final_note` (why nothing was returned). Callers extract the
 #'   reply and accumulate usage into the parent-side registry.
 #' @keywords internal
 #' @export
-subagent_turn_prompt <- function(prompt) {
+subagent_turn_prompt <- function(prompt, return_name = NULL) {
     if (is.null(.subagent_state$session)) {
         stop("Subagent turn session not initialized", call. = FALSE)
     }
@@ -278,8 +337,33 @@ subagent_turn_prompt <- function(prompt) {
                   error = conditionMessage(e), level = "warn")
     })
 
+    # Resolve an optional return value to ship back as a handle. Done
+    # child-side so the object travels by callr serialization, never
+    # through tool-call arguments or the transcript.
+    final <- NULL
+    final_found <- FALSE
+    final_note <- NULL
+    if (!is.null(return_name)) {
+        if (!.valid_return_name(return_name)) {
+            final_note <- sprintf(
+                                  "return_name '%s' is not a simple name or .h_NNN handle; no value returned.",
+                                  as.character(return_name)[1])
+        } else {
+            resolved <- .resolve_return_value(return_name)
+            if (resolved$found) {
+                final <- resolved$value
+                final_found <- TRUE
+            } else {
+                final_note <- sprintf(
+                                      "return_name '%s' not found in the subagent session; no value returned.",
+                                      return_name)
+            }
+        }
+    }
+
     list(reply = as.character(result$reply %||% ""),
-         usage = result$usage %||% list())
+         usage = result$usage %||% list(),
+         final = final, final_found = final_found, final_note = final_note)
 }
 
 SUBAGENT_DEFAULTS <- list(
@@ -569,7 +653,15 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #'   [subagent_collect()].
 #' @param timeout Timeout in seconds (currently advisory; callr-level
 #'   hard timeouts are future work).
-#' @return Reply text (character) when `wait = TRUE`. Canonical id
+#' @param return_name Optional single name or `.h_NNN` handle for a
+#'   value the child should hand back. When set, the child must have
+#'   left the result bound under that name (e.g. via `run_r`); the
+#'   resolved value is stashed in the parent handle store and the reply
+#'   gains a `[stored as .h_NNN]` block referencing it. Requires a
+#'   subagent with `run_r` (the `work` preset). For `wait = FALSE` the
+#'   name is captured now and applied when collected.
+#' @return Reply text (character) when `wait = TRUE`, with a handle
+#'   block appended when `return_name` resolved. Canonical id
 #'   (character, invisibly) when `wait = FALSE`.
 #' @examples
 #' \dontrun{
@@ -579,7 +671,8 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #' subagent_kill(id)
 #' }
 #' @export
-subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
+subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
+                           return_name = NULL) {
     canonical <- resolve_subagent_id(id)
     if (is.null(canonical)) {
         stop("Subagent not found: ", id, call. = FALSE)
@@ -606,8 +699,8 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
     if (!isTRUE(wait)) {
         tryCatch(
                  info$session$call(
-                                   function(p) corteza::subagent_turn_prompt(p),
-                                   list(p = prompt)
+                                   function(p, rn) corteza::subagent_turn_prompt(p, rn),
+                                   list(p = prompt, rn = return_name)
             ),
                  error = function(e) {
             stop("Subagent query failed to start: ",
@@ -624,8 +717,8 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
 
     turn_result <- tryCatch(
                             info$session$run(
-            function(p) corteza::subagent_turn_prompt(p),
-            list(p = prompt)
+            function(p, rn) corteza::subagent_turn_prompt(p, rn),
+            list(p = prompt, rn = return_name)
         ),
                             error = function(e) {
         stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
@@ -634,7 +727,7 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L) {
     .subagent_registry[[canonical]] <- info
     log_event("subagent_query", subagent_id = canonical,
               prompt_length = nchar(prompt))
-    as.character(turn_result$reply %||% "")
+    .format_subagent_reply(turn_result)
 }
 
 #' Collect the result of a previously-fired async subagent query.
@@ -695,7 +788,7 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
              call. = FALSE)
     }
     log_event("subagent_collect", subagent_id = canonical)
-    as.character(msg$result$reply %||% "")
+    .format_subagent_reply(msg$result)
 }
 
 #' Kill a subagent.
