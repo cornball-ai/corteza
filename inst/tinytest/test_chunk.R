@@ -65,3 +65,10 @@ expect_equal(corteza:::find_break_point("hello\nworld"), 6)  # Position of \n
 expect_equal(corteza:::find_break_point("hello world"), 6)   # Position of space
 expect_equal(corteza:::find_break_point("helloworld"), -1)   # No break point
 
+# A newline is preferred over a later space (tier order, not position)
+expect_equal(corteza:::find_break_point("a\nb c"), 2)
+# The last newline wins when several are present
+expect_equal(corteza:::find_break_point("a\nb\nc"), 4)
+# A tab counts as whitespace when no newline is present
+expect_equal(corteza:::find_break_point("ab\tcd"), 3)
+
