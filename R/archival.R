@@ -491,6 +491,26 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
         return(NULL)
     }
     subagent_id <- spawn_attempt
+
+    # From here on the holder is registered in .subagent_registry but
+    # the caller (maybe_archive_turn) hasn't yet rewired parent
+    # history to reference it. An interrupt anywhere in the seed /
+    # persist / summarize plumbing below would unwind before
+    # maybe_archive_turn's own on.exit guard ever installed, leaving
+    # the holder live with no owner -- a silent memory + disk leak.
+    # Guard it here too; release only at the explicit success
+    # returns (transferred <- TRUE before each).
+    transferred <- FALSE
+    on.exit({
+        if (!isTRUE(transferred)) {
+            try(subagent_kill(subagent_id), silent = TRUE)
+            log_event("archival_orphan_cleaned",
+                      subagent_id = subagent_id,
+                      phase = "archive_internal",
+                      level = "warn")
+        }
+    }, add = TRUE)
+
     info <- .subagent_registry[[subagent_id]]
     if (is.null(info)) {
         log_event("archival_failed", phase = "registry_lookup", level = "warn")
@@ -563,6 +583,9 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
                               timeout_seconds = timeout_secs)
         log_event("archival_succeeded_async", subagent_id = subagent_id,
                   depth = depth, slice_len = length(history_slice))
+        # Hand the holder back to maybe_archive_turn intact; its
+        # own on.exit guard owns the parent-history-collapse window.
+        transferred <- TRUE
         return(list(summary = placeholder, subagent_id = subagent_id))
     }
 
@@ -590,6 +613,9 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
 
     log_event("archival_succeeded", subagent_id = subagent_id,
               depth = depth, slice_len = length(history_slice))
+    # Hand the holder back to maybe_archive_turn intact; its own
+    # on.exit guard owns the parent-history-collapse window.
+    transferred <- TRUE
     list(summary = summary, subagent_id = subagent_id)
 }
 
@@ -690,6 +716,23 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
         return(invisible())
     }
 
+    # archival_archive_turn returned a holder, but the parent doesn't
+    # reference it yet (the synthetic assistant block hasn't replaced
+    # the slice in turn_session$history). If anything interrupts
+    # between here and the history collapse below, the holder is left
+    # in .subagent_registry with no parent reference -- a silent leak.
+    # Track the transfer and kill the orphan on any non-completion
+    # exit path.
+    transferred <- FALSE
+    on.exit({
+        if (!isTRUE(transferred) && !is.null(archived$subagent_id)) {
+            try(subagent_kill(archived$subagent_id), silent = TRUE)
+            log_event("archival_orphan_cleaned",
+                      subagent_id = archived$subagent_id,
+                      level = "warn")
+        }
+    }, add = TRUE)
+
     if (depth == 0L && interactive()) {
         info <- .subagent_registry[[archived$subagent_id]]
         handle <- if (!is.null(info$seq)) {
@@ -719,6 +762,10 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
             archived$subagent_id, archived$summary)
     )
     turn_session$history <- c(keep, list(user_msg), list(archived_assistant))
+    # Ownership transferred: parent history now references the holder.
+    # The on.exit guard above sees this flag set and lets the holder
+    # live.
+    transferred <- TRUE
 
     # Refresh system prompt so the new subagent shows up in the live
     # listing on the next turn. load_context reads the registry fresh.
