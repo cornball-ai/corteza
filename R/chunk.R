@@ -166,18 +166,17 @@ find_break_point <- function(text) {
         return(-1L)
     }
 
-    # Scan backwards for newline first
-    for (i in n:1) {
-        if (substr(text, i, i) == "\n") {
-            return(i)
-        }
+    # Prefer the last newline, then the last whitespace (tabs included).
+    # gregexpr() returns -1 in the first slot when there's no match, so
+    # guard on that before taking max().
+    newlines <- gregexpr("\n", text, fixed = TRUE)[[1]]
+    if (newlines[1L] != -1L) {
+        return(max(newlines))
     }
 
-    # Then whitespace
-    for (i in n:1) {
-        if (grepl("\\s", substr(text, i, i))) {
-            return(i)
-        }
+    spaces <- gregexpr("[[:space:]]", text)[[1]]
+    if (spaces[1L] != -1L) {
+        return(max(spaces))
     }
 
     -1L
