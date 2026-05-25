@@ -688,6 +688,29 @@ validate_skill_package <- function(path) {
     list(valid = length(errors) == 0, errors = errors)
 }
 
+#' Shallow-clone a git repository into `dest`.
+#'
+#' Wraps `processx::run()` with `error_on_status = FALSE` so a nonzero
+#' git exit surfaces as a clear corteza error (with the captured
+#' output) instead of processx's default throw. Extracted from
+#' `skill_install()` so the status handling can be unit-tested against
+#' a local repository, no network required.
+#'
+#' @param url Repository URL or local path to clone.
+#' @param dest Destination directory (must not already exist).
+#' @return `dest`, invisibly, on success; errors otherwise.
+#' @noRd
+git_clone <- function(url, dest) {
+    res <- processx::run("git", c("clone", "--depth", "1", url, dest),
+                         error_on_status = FALSE)
+    if (res$status != 0L || !dir.exists(dest)) {
+        stop("Failed to clone repository: ",
+             paste(c(res$stdout, res$stderr), collapse = "\n"),
+             call. = FALSE)
+    }
+    invisible(dest)
+}
+
 #' Install a skill from a path or URL
 #'
 #' @param source Path to skill directory or URL
@@ -727,14 +750,7 @@ skill_install <- function(source, target_dir = NULL, force = FALSE) {
         # For GitHub URLs, try git clone
         if (grepl("github.com", source)) {
             temp_dir <- tempfile("skill_")
-            result <- system2("git",
-                              c("clone", "--depth", "1", source, temp_dir),
-                              stdout = TRUE, stderr = TRUE)
-            if (!dir.exists(temp_dir)) {
-                stop("Failed to clone repository: ", paste(result,
-                        collapse = "\n"),
-                     call. = FALSE)
-            }
+            git_clone(source, temp_dir)
             source <- temp_dir
         } else {
             stop("URL installation only supported for GitHub repositories",

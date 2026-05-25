@@ -1,4 +1,4 @@
-# corteza 0.6.7.1
+# corteza 0.6.7.3
 
 ## Interrupt / denial preserves context across the exit
 
@@ -7,7 +7,7 @@ no longer loses the tool calls that completed before the interrupt.
 Previously the next turn / next CLI invocation saw the original
 user prompt, an interrupt marker, and nothing else.
 
-* `Imports: llm.api (>= 0.1.3.1)` so `agent()` exposes the
+* `Imports: llm.api (>= 0.1.4)` so `agent()` exposes the
   `history_callback` parameter. `R/turn.R` uses it to mirror the
   in-progress provider-native history into the live session env as
   each assistant message and each tool result lands. With the
@@ -34,6 +34,38 @@ user prompt, an interrupt marker, and nothing else.
   `maybe_archive_turn()` covers the parent-history-collapse window.
   Either failure cleans the orphan instead of leaving it sitting in
   `.subagent_registry` with no parent reference.
+
+# corteza 0.6.7.2
+
+## Subagents can return a value by handle
+
+* `subagent_query()` / the `query_subagent` tool gain a `return_name`
+  argument. When set to a name (or `.h_NNN` handle) the child left its
+  result bound under, the child resolves it after the turn and ships
+  the value back; the parent stashes it in the handle store and
+  appends a `[stored as .h_NNN]` block to the reply. A large
+  structured result is then referenced by name in a later `run_r`
+  instead of being inlined into the parent's context, mirroring how
+  `run_r` already returns large values. The async (`wait = FALSE`)
+  path captures the name at query time and applies it on collect.
+* The name is validated as a single syntactic name or handle and
+  resolved (handle store, then globalenv) without evaluating
+  expressions; an unresolved or malformed name yields a clear note
+  rather than silently dropping the value.
+
+# corteza 0.6.7.1
+
+## Base-R cleanups from a redundancy audit
+
+* `skill_install()` clones GitHub repos via `processx::run()`
+  (already an import) instead of `system2()`, with a nonzero git
+  exit surfaced as a clear error. The clone is extracted into an
+  internal `git_clone()` helper so its status handling is
+  unit-testable against a local repository, no network required.
+* `find_break_point()` (text chunking) replaces two backward
+  character-scan loops with a two-tier regex: last newline, else
+  last whitespace (tabs included). Behavior preserved; added
+  regression tests for newline-beats-later-space and tab handling.
 
 # corteza 0.6.7
 
