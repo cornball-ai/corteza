@@ -38,20 +38,31 @@ corteza:::clear_handles()
 # .format_subagent_reply: a returned value is stashed and announced
 corteza:::clear_handles()
 out1 <- corteza:::.format_subagent_reply(
-    list(reply = "done", final = data.frame(y = 1:5), final_note = NULL))
+    list(reply = "done", final = data.frame(y = 1:5), final_found = TRUE,
+         final_note = NULL))
 expect_true(grepl("[stored as .h_", out1, fixed = TRUE))
 expect_true(grepl("done", out1, fixed = TRUE))
 expect_equal(length(corteza:::list_handles()), 1L)  # minted in parent store
 corteza:::clear_handles()
 
+# .format_subagent_reply: a NULL result is still a result (final_found
+# gates this, not is.null(final)), so it mints a handle too
+corteza:::clear_handles()
+out_null <- corteza:::.format_subagent_reply(
+    list(reply = "empty", final = NULL, final_found = TRUE, final_note = NULL))
+expect_true(grepl("[stored as .h_", out_null, fixed = TRUE))
+expect_equal(length(corteza:::list_handles()), 1L)
+corteza:::clear_handles()
+
 # .format_subagent_reply: a final_note is appended as plain text
 out2 <- corteza:::.format_subagent_reply(
-    list(reply = "tried", final = NULL,
+    list(reply = "tried", final = NULL, final_found = FALSE,
          final_note = "return_name 'out' not found in the subagent session; no value returned."))
 expect_true(grepl("not found", out2, fixed = TRUE))
 expect_true(grepl("tried", out2, fixed = TRUE))
 
 # .format_subagent_reply: plain reply passes through untouched
 out3 <- corteza:::.format_subagent_reply(
-    list(reply = "just text", final = NULL, final_note = NULL))
+    list(reply = "just text", final = NULL, final_found = FALSE,
+         final_note = NULL))
 expect_equal(out3, "just text")

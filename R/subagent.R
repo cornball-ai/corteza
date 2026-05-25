@@ -200,15 +200,17 @@ subagent_seed_history <- function(history) {
 
 #' Format a subagent turn result for the parent.
 #'
-#' When the child returned a value (`final`), stash it in the parent's
-#' handle store and append a `summary` + `[stored as .h_NNN]` block,
-#' mirroring `tool_run_r()`. A `final_note` (bad or missing return
-#' name) is appended as plain text. Runs parent-side, so `with_handle()`
-#' mints the handle in the parent store where later `run_r` calls see it.
+#' When the child resolved a value (`final_found`), stash it in the
+#' parent's handle store and append a `summary` + `[stored as .h_NNN]`
+#' block, mirroring `tool_run_r()`. The flag, not `is.null(final)`,
+#' gates this so a legitimately NULL result still returns a handle. A
+#' `final_note` (bad or missing return name) is appended as plain text.
+#' Runs parent-side, so `with_handle()` mints the handle in the parent
+#' store where later `run_r` calls see it.
 #' @noRd
 .format_subagent_reply <- function(res) {
     reply <- as.character(res$reply %||% "")
-    if (!is.null(res$final)) {
+    if (isTRUE(res$final_found)) {
         stashed <- with_handle(res$final)
         block <- sprintf("%s\n\n[stored as %s]", stashed$summary,
                          stashed$handle)
@@ -339,6 +341,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL) {
     # child-side so the object travels by callr serialization, never
     # through tool-call arguments or the transcript.
     final <- NULL
+    final_found <- FALSE
     final_note <- NULL
     if (!is.null(return_name)) {
         if (!.valid_return_name(return_name)) {
@@ -349,6 +352,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL) {
             resolved <- .resolve_return_value(return_name)
             if (resolved$found) {
                 final <- resolved$value
+                final_found <- TRUE
             } else {
                 final_note <- sprintf(
                                       "return_name '%s' not found in the subagent session; no value returned.",
@@ -359,7 +363,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL) {
 
     list(reply = as.character(result$reply %||% ""),
          usage = result$usage %||% list(),
-         final = final, final_note = final_note)
+         final = final, final_found = final_found, final_note = final_note)
 }
 
 SUBAGENT_DEFAULTS <- list(
