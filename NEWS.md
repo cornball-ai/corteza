@@ -1,3 +1,21 @@
+# corteza 0.6.7.2
+
+## Subagents can return a value by handle
+
+* `subagent_query()` / the `query_subagent` tool gain a `return_name`
+  argument. When set to a name (or `.h_NNN` handle) the child left its
+  result bound under, the child resolves it after the turn and ships
+  the value back; the parent stashes it in the handle store and
+  appends a `[stored as .h_NNN]` block to the reply. A large
+  structured result is then referenced by name in a later `run_r`
+  instead of being inlined into the parent's context, mirroring how
+  `run_r` already returns large values. The async (`wait = FALSE`)
+  path captures the name at query time and applies it on collect.
+* The name is validated as a single syntactic name or handle and
+  resolved (handle store, then globalenv) without evaluating
+  expressions; an unresolved or malformed name yields a clear note
+  rather than silently dropping the value.
+
 # corteza 0.6.7.1
 
 ## Base-R cleanups from a redundancy audit
