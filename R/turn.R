@@ -524,9 +524,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # interrupt mid-flight. Without this, an interrupt would lose
     # every tool call completed in the current batch.
     #
-    # Conditional on llm.api supporting history_callback. Don't bump
-    # the Imports min-version yet -- the shim keeps corteza usable on
-    # the older llm.api on CRAN until the new release lands there.
+    # history_callback arrived in llm.api 0.1.4 (now the Imports
+    # minimum). The formals() check below is cheap defense for the
+    # rare case of running against an older build.
     agent_args <- list(
                        prompt = prompt,
                        tools = tools,
