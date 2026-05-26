@@ -25,7 +25,7 @@
 # - history: current message list (may end mid-batch)
 # - provider: one of "anthropic" | "openai" | "moonshot" | "ollama"
 # - marker: assistant text message describing why the turn stopped
-#   (e.g. "[Interrupted by user before completing.]")
+#   (e.g. user_interrupt_marker() or user_deny_marker())
 # - prompt: the user prompt that started this turn. Used only when
 #   the turn never made any progress (no history_callback fired
 #   before the exit), so the prompt that llm.api appended internally
@@ -195,3 +195,4 @@ apply_exit_marker <- function(session, prompt, pre_turn_len, marker,
         pre_turn_len = pre_turn_len, placeholder = placeholder)
     invisible(session)
 }
+

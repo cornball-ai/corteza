@@ -23,6 +23,14 @@ expect_true(grepl("write_file", mk))
 expect_true(grepl("Stop", mk))
 expect_true(grepl("ask", mk))
 
+# The interrupt marker carries the SAME "stop and ask the user"
+# directive as the deny marker, so Ctrl+C/Esc and an explicit deny
+# leave the LLM with the same next-turn instruction (issue #104).
+im <- corteza:::user_interrupt_marker()
+expect_true(grepl("Interrupted by user", im, fixed = TRUE))
+expect_true(grepl(corteza:::.user_abort_directive, im, fixed = TRUE))
+expect_true(grepl(corteza:::.user_abort_directive, mk, fixed = TRUE))
+
 # Critical: a defensive tryCatch(error = ...) around the approval_cb
 # MUST NOT swallow the deny. This is the bug we're fixing -- the
 # old approval_cb returned FALSE for option "3", which then got fed
