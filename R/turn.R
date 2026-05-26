@@ -322,16 +322,15 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # cloud (or local) default. A future PR can switch mid-turn.
 #
 # When the session's cloud model is unset AND no corteza.model option
-# is set, we fill in a provider-specific default that's newer than
-# llm.api's built-in defaults. (llm.api 0.1.1's moonshot default is
-# 'kimi-k2', which Moonshot has renamed to 'kimi-k2.6'.) The override
-# only fires when the caller hasn't picked a model themselves.
+# is set, fall back to the provider default from llm.api's canonical
+# table (via default_provider_model()), so corteza tracks llm.api
+# rather than carrying its own model picks.
 .resolve_model <- function(session) {
     explicit <- session$model_map$cloud %||% getOption("corteza.model", NULL)
     if (!is.null(explicit) && nzchar(explicit)) {
         return(explicit)
     }
-    switch(session$provider %||% "anthropic", moonshot = "kimi-k2.6", NULL)
+    default_provider_model(session$provider %||% "anthropic")
 }
 
 # ---- Public entry point ----

@@ -254,8 +254,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 
     n_tools <- length(skills_as_api_tools(tools))
     # Resolve a placeholder NULL model to the provider's default name
-    # (e.g. moonshot -> kimi-k2.6) so the banner shows the actual
-    # model the agent is about to call, matching the CLI's display.
+    # (from llm.api's table) so the banner shows the actual model the
+    # agent is about to call, matching the CLI's display.
     display_model <- resolve_provider_model(provider, model) %||%
     "(provider default)"
     color <- ansi_colors()

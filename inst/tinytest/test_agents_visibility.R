@@ -119,19 +119,16 @@ expect_true(grepl("$0.0153", out_cost, fixed = TRUE))
 # Regression for the case where a subagent spawned with the provider
 # default model (no explicit model_map$cloud) used to display the
 # provider name as the model and "ctx ?" because the limit lookup
-# had no key. The helper now resolves the same default the CLI and
-# turn() will use, so /agents shows a real model name and a real
-# context window.
-expect_equal(corteza::default_provider_model("anthropic"),
-             "claude-sonnet-4-6")
-expect_equal(corteza::default_provider_model("openai"), "gpt-4o")
-expect_equal(corteza::default_provider_model("moonshot"), "kimi-k2.6")
-expect_equal(corteza::default_provider_model("ollama"), "llama3.2")
+# had no key. The helper now delegates to llm.api's canonical table,
+# so /agents shows a real model name and a real context window.
+# Assert non-NULL + a context-limit entry rather than specific model
+# strings, so the test tracks llm.api's picks without churn.
+for (p in c("anthropic", "openai", "moonshot", "ollama")) {
+    m <- corteza::default_provider_model(p)
+    expect_true(is.character(m) && nzchar(m))
+    expect_true(corteza::context_limit_for_model(m) > 0L)
+}
+# Unknown / empty / NULL providers resolve to NULL (llm.api errors
+# there; default_provider_model maps that to NULL).
 expect_null(corteza::default_provider_model("unknown-provider"))
 expect_null(corteza::default_provider_model(NULL))
-
-# Resolved default models all have a context-limit entry.
-expect_true(corteza::context_limit_for_model(
-    corteza::default_provider_model("anthropic")) > 0L)
-expect_true(corteza::context_limit_for_model(
-    corteza::default_provider_model("moonshot")) > 0L)
