@@ -828,14 +828,20 @@ subagent_kill <- function(id) {
     if (is.null(info)) {
         return(invisible(FALSE))
     }
-    # Preserve this agent's spend before the entry disappears, so the
-    # process-run total (and the MCP spend cap) keep counting it.
-    subagent_retire_spend(info)
-    store_update(info$session_key, list(
-                                        status = "completed",
-                                        completedAt = as.numeric(Sys.time()) * 1000
-        ))
+    # Best-effort external side effects first. These run before the
+    # spend is retired so that nothing here can throw between retiring
+    # the spend and removing the entry -- otherwise the agent would be
+    # counted twice (live registry + retired) by subagent_spend_total().
+    tryCatch(
+             store_update(info$session_key, list(status = "completed",
+                completedAt = as.numeric(Sys.time()) * 1000)),
+             error = function(e) NULL)
     tryCatch(info$session$close(), error = function(e) NULL)
+    # Retire spend and drop the entry together: subagent_retire_spend()
+    # is pure in-memory arithmetic and rm() of an existing binding does
+    # not throw, so the agent moves from live to retired atomically and
+    # is counted exactly once.
+    subagent_retire_spend(info)
     rm(list = canonical, envir = .subagent_registry)
     log_event("subagent_kill", subagent_id = canonical)
     invisible(TRUE)

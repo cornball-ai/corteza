@@ -199,3 +199,31 @@ info2 <- corteza:::subagent_accumulate_usage(
     info2, list(input_tokens = 0L, output_tokens = 0L, total_tokens = 0L))
 expect_false(info2$cost_missing)
 expect_equal(info2$query_count, 1L)        # still counted as a query
+
+# subagent_kill moves an agent from live to retired atomically: it is
+# counted exactly once afterwards (not zero, not twice). Redirect the
+# data dir so store_update's bookkeeping write lands in temp.
+reset_sub_spend()
+old_data <- Sys.getenv("R_USER_DATA_DIR", unset = NA)
+tmp_data <- file.path(tempdir(), "spend_kill_data")
+Sys.setenv(R_USER_DATA_DIR = tmp_data)
+reg[["kill-once"]] <- list(
+    id = "kill-once", seq = 9L, session_key = "agent:main:subagent:ko",
+    session = NULL, cumulative_input_tokens = 200L,
+    cumulative_output_tokens = 100L, cumulative_total_tokens = 300L,
+    cumulative_cost = 0.05, cost_missing = FALSE, query_count = 4L)
+# Live: counted via the registry.
+expect_equal(corteza:::subagent_spend_total()$n_agents, 1L)
+expect_true(corteza:::subagent_kill("kill-once"))
+expect_equal(length(ls(reg)), 0L)                  # entry dropped
+tot <- corteza:::subagent_spend_total()
+expect_equal(tot$n_agents, 1L)                     # retired, counted once
+expect_equal(tot$cost, 0.05)                       # not doubled to 0.10
+expect_equal(tot$total_tokens, 300L)
+if (is.na(old_data)) {
+    Sys.unsetenv("R_USER_DATA_DIR")
+} else {
+    Sys.setenv(R_USER_DATA_DIR = old_data)
+}
+unlink(tmp_data, recursive = TRUE)
+reset_sub_spend()
