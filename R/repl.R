@@ -911,27 +911,35 @@ run_repl_loop <- function(ctx) {
             # away. Tolerate NULL/errors -- a flush failure must not
             # block compaction.
             flush_ran <- FALSE
+            flush_interrupted <- FALSE
             if (isTRUE(ctx$config$memory_flush_enabled)) {
                 cat(sprintf("%sFlushing memories before compaction...%s\n",
                             ctx$palette$dim, ctx$palette$reset))
-                flush_ran <- !is.null(tryCatch(run_memory_flush(ctx),
-                        error = function(e) NULL,
-                        interrupt = function(c) {
-                    cat("\n^C\n")
-                    NULL
-                }))
+                fr <- .repl_interruptible(
+                    tryCatch(run_memory_flush(ctx), error = function(e) NULL),
+                    ctx$palette)
+                if (inherits(fr, "repl_interrupted")) {
+                    flush_interrupted <- TRUE
+                } else {
+                    flush_ran <- !is.null(fr)
+                }
             }
-            comp <- tryCatch(
-                             do_compact(list(messages = ctx$session$history),
-                                        ctx$session$provider,
-                                        ctx$session$model_map$cloud),
-                             error = function(e) NULL,
-                             interrupt = function(c) {
-                cat("\n^C\n")
+            # An interrupt during the pre-flush skips compaction entirely
+            # rather than firing off another blocking network call.
+            comp <- if (flush_interrupted) {
                 NULL
+            } else {
+                .repl_interruptible(
+                                    tryCatch(
+                        do_compact(
+                                   list(messages = ctx$session$history),
+                                   ctx$session$provider,
+                                   ctx$session$model_map$cloud),
+                        error = function(e) NULL),
+                                    ctx$palette)
             }
-            )
-            if (!is.null(comp) && nzchar(comp$summary)) {
+            if (!inherits(comp, "repl_interrupted") && !is.null(comp) &&
+                nzchar(comp$summary)) {
                 ctx$session$history <- list(
                     list(role = "assistant", content = comp$summary)
                 )

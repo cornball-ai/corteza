@@ -33,13 +33,16 @@
 #' @noRd
 run_bang_shell <- function(cmd, cwd = getwd()) {
     is_unix <- .Platform$OS.type == "unix"
-    # system2 with stdout = TRUE pastes args with spaces and does not
-    # shell-quote, so a `-c "seq 1 5"` invocation has to be built as
-    # `-c <shQuote("seq 1 5")>` or the shell sees four tokens.
+    # processx passes each arg literally (no shell word-splitting), so
+    # the command goes through as a single `-c` arg, unquoted. Unlike
+    # system2(stdout = TRUE) -- a blocking C call R can't interrupt --
+    # processx::run() polls and is interruptible: Ctrl+C terminates the
+    # child (cleanup_tree kills descendants) and raises an interrupt the
+    # caller's handler returns to the prompt on.
     args <- if (is_unix) {
-        c("-c", shQuote(cmd))
+        c("-c", cmd)
     } else {
-        c("/c", shQuote(cmd, type = "cmd"))
+        c("/c", cmd)
     }
     shell_bin <- if (is_unix) {
         "bash"
@@ -47,12 +50,13 @@ run_bang_shell <- function(cmd, cwd = getwd()) {
         Sys.getenv("COMSPEC", "cmd.exe")
     }
     raw <- tryCatch(
-                    withr_local_dir(cwd, {
-        suppressWarnings(system2(shell_bin, args, stdout = TRUE, stderr = TRUE))
-    }),
+                    processx::run(shell_bin, args, wd = cwd, error_on_status = FALSE,
+                                  stderr_to_stdout = TRUE, cleanup_tree = TRUE)$stdout,
                     error = function(e) paste("Error:", conditionMessage(e))
     )
-    text <- paste(as.character(raw), collapse = "\n")
+    # processx returns stdout as one string with a trailing newline;
+    # strip trailing newlines to match the old line-vector join.
+    text <- sub("\n+$", "", as.character(raw))
     if (!nzchar(text)) {
         text <- ""
     }
@@ -452,4 +456,3 @@ chat_format_tools_list <- function(turn_session) {
     }
     paste(c(lines, ""), collapse = "\n")
 }
-
