@@ -305,6 +305,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         fresh <- session_new(provider, model, cwd)
         list(session = fresh, sessionId = fresh$sessionId, resumed = FALSE)
     }
+    ctx$handle_copy <- chat_handle_copy
+    ctx$format_tools <- chat_format_tools_list
+    ctx$turn_fn <- turn
     run_repl_loop(ctx)
 
     invisible(disk_session$session)

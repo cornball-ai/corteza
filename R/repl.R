@@ -11,7 +11,8 @@
 #     pending_r_context, last_assistant_response, provider, model
 #   Read state: config, cwd, ws_enabled, session (the turn_session env)
 #   Hooks: read_input(prompt_str), palette (color list),
-#     render_reply(text), help_text(), new_session_fn()
+#     render_reply(text), help_text(), new_session_fn(),
+#     handle_copy(text), format_tools(session), turn_fn(prompt, session)
 #
 # @noRd
 run_repl_loop <- function(ctx) {
@@ -99,7 +100,7 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/copy") {
-                chat_handle_copy(ctx$last_assistant_response)
+                ctx$handle_copy(ctx$last_assistant_response)
                 next
             }
             if (cmd == "/tasks") {
@@ -128,7 +129,7 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/tools") {
-                cat(chat_format_tools_list(ctx$session))
+                cat(ctx$format_tools(ctx$session))
                 next
             }
             if (cmd == "/model") {
@@ -680,7 +681,7 @@ run_repl_loop <- function(ctx) {
         pre_turn_len <- length(ctx$session$history %||% list())
         turn_start <- Sys.time()
         result <- tryCatch(
-                           turn(prompt, ctx$session),
+                           ctx$turn_fn(prompt, ctx$session),
                            corteza_user_deny = function(c) {
             # User picked "3. Deny" at the approval prompt. Abort the
             # whole turn so the LLM doesn't cascade through more tool
