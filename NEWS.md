@@ -2,14 +2,19 @@
 
 ## /spent: approximate session cost
 
-`/spent` (alias `/cost`) reports the approximate USD spent on the
-current run's main-agent turns, in both `chat()` and the CLI. Each
-turn accumulates the `cost` scalar that llm.api 0.1.4 returns, plus
-token counts, onto the session. When a model is absent from llm.api's
-price snapshot its cost is unknown, so the total is shown as a floor
-rather than a precise figure. Scope is the current process run's main
-conversation; subagent spend and resumed prior-run spend are not
-included.
+`/spent` (alias `/cost`) reports the approximate USD spent this process
+run, in both `chat()` and the CLI. Each turn accumulates the `cost`
+scalar that llm.api 0.1.4 returns, plus token counts. When a model is
+absent from llm.api's price snapshot its cost is unknown, so totals are
+shown as a floor rather than a precise figure.
+
+Spend is process-lifetime: `/clear` no longer zeroes the tally, it
+closes the current conversation and opens a new one, so `/spent`
+itemizes each conversation between clears with a grand total. Subagent
+spend is rolled up as a separate process-level line that keeps counting
+an agent after it is killed (subagents survive `/clear`, so they are
+not split across conversations). Resumed prior-run spend is not loaded
+from disk.
 
 # corteza 0.6.7.4
 

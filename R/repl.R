@@ -142,8 +142,10 @@ run_repl_loop <- function(ctx) {
                 # has no carried-over commitments.
                 ctx$session$tasks <- list()
                 ctx$session$tasks_dirty <- TRUE
-                # A fresh conversation starts spend at zero.
-                reset_session_spend(ctx$session)
+                # Spend is process-lifetime: close the current
+                # conversation segment and open a fresh one so /spent
+                # itemizes each conversation between clears.
+                spend_open_segment(ctx$session)
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             ctx$palette$dim, fresh$sessionId, ctx$palette$reset))
                 next
@@ -973,3 +975,4 @@ run_repl_loop <- function(ctx) {
 
     invisible(NULL)
 }
+

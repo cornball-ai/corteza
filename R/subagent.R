@@ -14,6 +14,24 @@
 #' @noRd
 .subagent_registry <- new.env(parent = emptyenv())
 
+#' Retired-subagent spend accumulator (package-level environment).
+#'
+#' A killed subagent's registry entry is removed, so its cumulative
+#' usage would vanish from any live sum. Before [subagent_kill()] drops
+#' an entry it rolls the entry's totals in here, so [subagent_spend_total()]
+#' (and therefore `/spent` and the MCP spend cap) keep counting it for
+#' the life of the process. Like the registry it is process-level and
+#' never reset -- spend is reported per run.
+#' @noRd
+.subagent_spend_retired <- new.env(parent = emptyenv())
+.subagent_spend_retired$cost <- 0
+.subagent_spend_retired$input_tokens <- 0L
+.subagent_spend_retired$output_tokens <- 0L
+.subagent_spend_retired$total_tokens <- 0L
+.subagent_spend_retired$query_count <- 0L
+.subagent_spend_retired$n_agents <- 0L
+.subagent_spend_retired$cost_missing <- FALSE
+
 #' Per-process monotonic counter for short subagent ids.
 #'
 #' Subagents are short-lived and never outlive the parent process, so a
@@ -612,6 +630,9 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                      cumulative_output_tokens = 0L,
                                      cumulative_total_tokens = 0L,
                                      cumulative_cost = NA_real_,
+                                     # TRUE once any query returns tokens but no
+                                     # cost, so the spend rollup reads as a floor.
+                                     cost_missing = FALSE,
                                      query_count = 0L
     )
     # Initialize the durable transcript file. Disk space is cheap;
@@ -807,6 +828,9 @@ subagent_kill <- function(id) {
     if (is.null(info)) {
         return(invisible(FALSE))
     }
+    # Preserve this agent's spend before the entry disappears, so the
+    # process-run total (and the MCP spend cap) keep counting it.
+    subagent_retire_spend(info)
     store_update(info$session_key, list(
                                         status = "completed",
                                         completedAt = as.numeric(Sys.time()) * 1000
@@ -848,9 +872,88 @@ subagent_accumulate_usage <- function(info, usage) {
         } else {
             prev + as.numeric(usage$cost)
         }
+    } else {
+        # A query with tokens but no cost (cost-blind provider) makes
+        # the running cost a floor, not a precise figure.
+        info$cost_missing <- TRUE
     }
     info$query_count <- (info$query_count %||% 0L) + 1L
     info
+}
+
+#' Roll a dying subagent's spend into the retired accumulator.
+#'
+#' Called by [subagent_kill()] before the registry entry is removed so
+#' the agent's cost is not lost to the process-run total. Idempotent
+#' only in the sense that it is called exactly once per kill.
+#' @param info A registry entry list.
+#' @return Invisible TRUE.
+#' @noRd
+subagent_retire_spend <- function(info) {
+    r <- .subagent_spend_retired
+    r$input_tokens <- r$input_tokens + (info$cumulative_input_tokens %||% 0L)
+    r$output_tokens <- r$output_tokens + (info$cumulative_output_tokens %||% 0L)
+    r$total_tokens <- r$total_tokens + (info$cumulative_total_tokens %||% 0L)
+    r$query_count <- r$query_count + (info$query_count %||% 0L)
+    r$n_agents <- r$n_agents + 1L
+    cc <- info$cumulative_cost
+    if (is.null(cc) || is.na(cc)) {
+        if ((info$cumulative_total_tokens %||% 0L) > 0L) {
+            r$cost_missing <- TRUE
+        }
+    } else {
+        r$cost <- r$cost + as.numeric(cc)
+    }
+    if (isTRUE(info$cost_missing)) {
+        r$cost_missing <- TRUE
+    }
+    invisible(TRUE)
+}
+
+#' Process-run subagent spend total (live registry + retired).
+#'
+#' Sums the cumulative usage of every live subagent plus the spend of
+#' those already killed (the retired accumulator). Reads only the
+#' in-process registry -- no callr round-trips -- so it is cheap enough
+#' for `/spent` and the per-spawn MCP cap check. Cost is a floor when
+#' any contributor lacked a price (`cost_missing`).
+#' @return list(cost, input_tokens, output_tokens, total_tokens,
+#'   query_count, n_agents, cost_missing).
+#' @noRd
+subagent_spend_total <- function() {
+    acc <- list(cost = 0, input_tokens = 0L, output_tokens = 0L,
+                total_tokens = 0L, query_count = 0L, n_agents = 0L,
+                cost_missing = FALSE)
+    for (id in ls(.subagent_registry)) {
+        e <- .subagent_registry[[id]]
+        acc$input_tokens <- acc$input_tokens + (e$cumulative_input_tokens %||% 0L)
+        acc$output_tokens <- acc$output_tokens + (e$cumulative_output_tokens %||% 0L)
+        acc$total_tokens <- acc$total_tokens + (e$cumulative_total_tokens %||% 0L)
+        acc$query_count <- acc$query_count + (e$query_count %||% 0L)
+        acc$n_agents <- acc$n_agents + 1L
+        cc <- e$cumulative_cost
+        if (is.null(cc) || is.na(cc)) {
+            if ((e$cumulative_total_tokens %||% 0L) > 0L) {
+                acc$cost_missing <- TRUE
+            }
+        } else {
+            acc$cost <- acc$cost + as.numeric(cc)
+        }
+        if (isTRUE(e$cost_missing)) {
+            acc$cost_missing <- TRUE
+        }
+    }
+    r <- .subagent_spend_retired
+    acc$input_tokens <- acc$input_tokens + r$input_tokens
+    acc$output_tokens <- acc$output_tokens + r$output_tokens
+    acc$total_tokens <- acc$total_tokens + r$total_tokens
+    acc$query_count <- acc$query_count + r$query_count
+    acc$n_agents <- acc$n_agents + r$n_agents
+    acc$cost <- acc$cost + r$cost
+    if (isTRUE(r$cost_missing)) {
+        acc$cost_missing <- TRUE
+    }
+    acc
 }
 
 #' Best-effort live context-token count for an idle subagent.
