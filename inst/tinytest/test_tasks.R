@@ -151,9 +151,9 @@ local({
 # --- .make_tool_handler intercept ----------------------------------
 
 # When .make_tool_handler is asked to run a task tool, the tool_executor
-# must never be called. This is the codex finding: the CLI's executor
-# dispatches to a callr worker, so any task-state mutation there would
-# strand the change in the wrong process.
+# must never be called. Skill handlers run in the main process, so the
+# intercept mutates the live session directly; routing through an
+# executor would strand the task-state change in the wrong place.
 local({
     sink(tempfile()); on.exit(sink(NULL), add = TRUE)
     options(corteza.task_approve = "y")

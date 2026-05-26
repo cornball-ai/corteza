@@ -109,11 +109,11 @@ The LLM uses normal tool selection to decide between
 
 Holder subagents (the ones the archival runtime creates) carry
 `tools = character(0)`: they hold transcript context for
-`query_subagent`, nothing more. Worker subagents spawned via
+`query_subagent`, nothing more. Subagents spawned via
 `spawn_subagent(task)` inherit only the tools the parent grants at
 spawn time. There is no interactive approval channel back to the
 parent or user, and no way to grant capability mid-run — the child's
-`approval_cb` denies by default. If a worker may need shell, write, or
+`approval_cb` denies by default. If a child may need shell, write, or
 network capability, pick a preset or explicit tool list that includes
 it when calling `spawn_subagent()`; otherwise the child should report
 that it is blocked rather than retry.

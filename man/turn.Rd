@@ -28,12 +28,13 @@ tool call the LLM makes is routed through \code{\link{policy}} before
 being dispatched.
 }
 \details{
-Tool dispatch is pluggable via \code{tool_executor}. The default is an
-in-process dispatcher that calls the local skill registry — suitable
-for \code{chat()} and matrix adapters running in the same R process as
-their skills. Pass \code{\link{mcp_tool_executor}} (or any
-\code{function(name, args) -> MCP-format result}) to run tools in a
-separate process, which is how the CLI talks to \code{serve()}.
+Tool dispatch is pluggable via \code{tool_executor}, but the CLI and
+\code{chat()} both leave it NULL: tools run in-process through the
+default \code{call_skill} dispatcher against the local skill registry.
+\code{serve()} is a separate MCP server for external clients only; it
+is not part of the CLI's tool path. Pass an explicit
+\code{function(name, args) -> list} executor only when dispatching
+tools somewhere other than the in-process registry.
 
 }
 \examples{
