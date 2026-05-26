@@ -1,3 +1,14 @@
+# corteza 0.6.7.8
+
+## Interrupt marker matches the deny marker's directive
+
+A turn interrupted with Ctrl+C / Esc now leaves the same "stop and ask
+the user what to do instead" instruction in history as an explicit
+deny, so the LLM checks in on the next turn rather than quietly
+continuing. Previously the interrupt marker was terser than the deny
+marker even though the approval prompt's Esc/Ctrl+C hint routes through
+the interrupt path.
+
 # corteza 0.6.7.7
 
 ## Provider default models come from llm.api
