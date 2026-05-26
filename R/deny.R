@@ -41,6 +41,14 @@ user_deny_condition <- function(tool = "?") {
     )
 }
 
+# Shared directive for the user-abort markers (deny, interrupt). Kept in
+# one place so both paths give the LLM the same "stop and check in"
+# instruction on the next turn instead of one being more directive than
+# the other.
+.user_abort_directive <- paste0(
+                                "Stop and ask the user what to do instead -- do not retry or plan ",
+                                "a workaround.")
+
 #' History marker written when a turn is aborted by a user deny.
 #'
 #' Format chosen so the LLM, reading the marker on the next turn, knows
@@ -50,10 +58,21 @@ user_deny_condition <- function(tool = "?") {
 #' @return Character scalar.
 #' @keywords internal
 user_deny_marker <- function(tool = "?") {
-    sprintf(
-            paste0("[User denied tool use: %s. Stop and ask the user what ",
-                   "to do instead -- do not retry or plan a workaround.]"),
-        if (length(tool) && nzchar(tool)) as.character(tool)[1] else "?"
-    )
+    sprintf("[User denied tool use: %s. %s]",
+        if (length(tool) && nzchar(tool)) as.character(tool)[1] else "?",
+            .user_abort_directive)
+}
+
+#' History marker written when a turn is interrupted (Ctrl+C / Esc).
+#'
+#' Carries the same "stop and ask the user" directive as
+#' [user_deny_marker()] so an interrupt and a deny leave the LLM with
+#' the same next-turn instruction -- matching the (Esc)/(Ctrl+C) hint on
+#' the approval prompt, which converges on this interrupt path.
+#' @return Character scalar.
+#' @keywords internal
+user_interrupt_marker <- function() {
+    sprintf("[Interrupted by user before completing. %s]",
+            .user_abort_directive)
 }
 

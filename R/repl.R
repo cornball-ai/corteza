@@ -854,7 +854,7 @@ run_repl_loop <- function(ctx) {
             # tool calls that the history_callback already mirrored
             # into the session env) and appends the interrupt marker.
             cat(sprintf("\n%sInterrupted.%s\n", ctx$palette$yellow, ctx$palette$reset))
-            marker <- "[Interrupted by user before completing.]"
+            marker <- user_interrupt_marker()
             apply_exit_marker(ctx$session, prompt, pre_turn_len, marker)
             transcript_append(ctx$disk_session$session, "assistant", marker)
             NULL
