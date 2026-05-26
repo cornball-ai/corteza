@@ -8,6 +8,16 @@
 #' @param tools Character vector of tools or categories to enable. Categories:
 #'   file, code, r, data, web, git, chat. Use "core" for file+code+git,
 #'   "all" for everything (default).
+#' @param expose_subagents Whether MCP clients may call the subagent
+#'   tools (`spawn_subagent`, `query_subagent`, `collect_subagent`,
+#'   `list_subagents`, `kill_subagent`). `NULL` (default) defers to the
+#'   `subagents$expose_over_mcp` config flag (itself FALSE by default);
+#'   `TRUE`/`FALSE` overrides it. Off by default because a spawned
+#'   subagent runs its own agent loop and spends autonomously on the
+#'   host's LLM credentials -- an unattended MCP client could otherwise
+#'   trigger unbounded cost the client never sees. When on, cumulative
+#'   subagent spend is capped by `subagents$mcp_spend_cap_usd`
+#'   (default $5.00).
 #'
 #' @details
 #' The server supports two transport modes:
@@ -46,7 +56,8 @@
 #' # Specific categories
 #' serve(port = 7850, tools = c("file", "git"))
 #' }
-serve <- function(port = NULL, cwd = NULL, tools = NULL) {
+serve <- function(port = NULL, cwd = NULL, tools = NULL,
+                  expose_subagents = NULL) {
     # Set working directory if specified, restoring on exit so we don't
     # leave the caller's session pointed somewhere unexpected.
     if (!is.null(cwd) && dir.exists(cwd)) {
@@ -72,6 +83,22 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL) {
 
     # Set tool filter option
     options(corteza.tools = tools)
+
+    # Resolve subagent-over-MCP exposure: explicit arg wins, else the
+    # config flag (default FALSE). The MCP handler reads these options to
+    # gate tools/list and tools/call (mcp_subagent_guard()).
+    expose <- if (is.null(expose_subagents)) {
+        isTRUE(config$subagents$expose_over_mcp)
+    } else {
+        isTRUE(expose_subagents)
+    }
+    options(corteza.mcp_expose_subagents = expose)
+    options(corteza.mcp_subagent_cap_usd = config$subagents$mcp_spend_cap_usd)
+    options(corteza.mcp_subagent_cap_tokens = config$subagents$mcp_spend_cap_tokens)
+    if (expose) {
+        cap <- config$subagents$mcp_spend_cap_usd %||% 5
+        log_event("mcp_subagents_exposed", cap_usd = cap, level = "warn")
+    }
 
     # Run appropriate transport
     if (!is.null(port)) {

@@ -187,6 +187,21 @@ load_config <- function(cwd = getwd()) {
     if (is.null(sub$allow_nested)) {
         sub$allow_nested <- FALSE
     }
+    # MCP exposure is opt-in: serve() must not hand subagent tools to an
+    # (often unattended) MCP client by default, since a spawned child
+    # spends autonomously on the host's credentials. See serve().
+    if (is.null(sub$expose_over_mcp)) {
+        sub$expose_over_mcp <- FALSE
+    }
+    # When exposure is on, cap cumulative subagent spend over MCP. USD
+    # cap default $5.00; <= 0 disables it. Token cap (for cost-blind
+    # providers) is off unless set.
+    if (is.null(sub$mcp_spend_cap_usd)) {
+        sub$mcp_spend_cap_usd <- 5.00
+    }
+    if (is.null(sub$mcp_spend_cap_tokens)) {
+        sub$mcp_spend_cap_tokens <- NA_integer_
+    }
     if (is.null(sub$default_tools)) {
         sub$default_tools <- c("base::readLines", "base::writeLines",
                                "bash", "grep_files")

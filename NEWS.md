@@ -1,3 +1,21 @@
+# corteza 0.6.7.6
+
+## MCP subagent exposure is opt-in, with a spend cap
+
+`serve()` no longer hands the subagent tools (`spawn_subagent`,
+`query_subagent`, `collect_subagent`, `list_subagents`, `kill_subagent`)
+to MCP clients by default. A spawned subagent runs its own agent loop
+and spends autonomously on the host's LLM credentials, so an unattended
+MCP client could otherwise trigger unbounded cost it never sees.
+
+Enable with `subagents.expose_over_mcp` (config, default FALSE) or
+`serve(expose_subagents = TRUE)`. When enabled, cumulative subagent
+spend over MCP is capped: `spawn_subagent`/`query_subagent` are refused
+once spend crosses `subagents.mcp_spend_cap_usd` (default $5.00; `<= 0`
+disables) or an optional `subagents.mcp_spend_cap_tokens` for providers
+that don't report cost. The cap reads the same meter as `/spent`; the
+in-process `chat()`/CLI loop is unaffected.
+
 # corteza 0.6.7.5
 
 ## /spent: approximate session cost
