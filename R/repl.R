@@ -142,6 +142,8 @@ run_repl_loop <- function(ctx) {
                 # has no carried-over commitments.
                 ctx$session$tasks <- list()
                 ctx$session$tasks_dirty <- TRUE
+                # A fresh conversation starts spend at zero.
+                reset_session_spend(ctx$session)
                 cat(sprintf("%sCleared. New session: %s%s\n\n",
                             ctx$palette$dim, fresh$sessionId, ctx$palette$reset))
                 next
@@ -420,6 +422,10 @@ run_repl_loop <- function(ctx) {
                 cat(sprintf("%sPlan mode enabled.%s\n", ctx$palette$dim, ctx$palette$reset))
                 prompt <- rest
                 # Fall through to normal prompt handling below.
+            }
+            if (cmd %in% c("/spent", "/cost")) {
+                cat(format_spend(ctx$session, palette = ctx$palette), "\n", sep = "")
+                next
             }
             if (cmd %in% c("/context", "/status")) {
                 files <- ctx$config$context_files %||% character(0)
@@ -876,6 +882,11 @@ run_repl_loop <- function(ctx) {
                            max_turns_hit = isTRUE(grepl("Max turns", reply)),
                            depth = 0L
         )
+
+        # Accumulate this turn's spend into the session tally (both
+        # surfaces share ctx$session, persistent across the loop).
+        # Main-agent turns only; subagent spend is out of scope.
+        session_accumulate_spend(ctx$session, result$usage)
 
         # Post-turn context accounting (both chat() and the CLI go
         # through here). Mirror the /context handler's math against the

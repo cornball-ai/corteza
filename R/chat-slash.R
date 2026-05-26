@@ -265,6 +265,7 @@ chat_help_text <- function() {
           "  /model <name>                 Switch model",
           "  /provider <name>              Switch provider (anthropic, openai, moonshot, ollama)",
           "  /context, /status             Session + context meter (model, dir, tokens by component)",
+          "  /spent, /cost                 Approximate USD spent this run (main-agent turns)",
           "  /doctor                       Diagnostics: provider/git/context health",
           "  /config                       Active runtime configuration",
           "  /diff [ref]                   Colored git diff against HEAD or a ref",
