@@ -1215,8 +1215,8 @@ register_builtin_skills <- function() {
 
     # Task tracker: schema only -- the real handlers live in
     # task_tool_intercept() called from .make_tool_handler(), so they
-    # mutate the main-process session env (the registered stubs would
-    # mutate a worker-process copy under the CLI's callr dispatch).
+    # mutate the live session env directly (a registered stub handler
+    # only ever sees ctx = list(), not the session).
     register_skill_from_fn("task_create", tool_task_create)
     register_skill_from_fn("task_update", tool_task_update)
 

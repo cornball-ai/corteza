@@ -13,8 +13,8 @@ List of tool definitions.
 }
 \description{
 Returns a list of tool definitions in the shape Anthropic's chat
-completion API expects (name, description, input_schema). Used by
-the CLI to avoid round-tripping schemas through the worker.
+completion API expects (name, description, input_schema). Built
+in-process from the shared registry.
 }
 \details{
 Exported with `@keywords internal`: the CLI calls this directly, but

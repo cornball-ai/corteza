@@ -10,8 +10,8 @@ Invisible character vector of skill names.
 }
 \description{
 Registers built-in skills if not already registered. Exported with
-`@keywords internal` so the CLI (which runs in its own R process,
-separate from the callr worker) can register skills in its own
-namespace before calling `schema_from_registry()`.
+`@keywords internal` so a subagent's `callr::r_session` child can
+register skills in its own namespace (via `worker_init()`) before
+dispatching tools.
 }
 \keyword{internal}

@@ -1,11 +1,10 @@
 # Subagent system.
 #
 # Each subagent is a private `callr::r_session` with corteza loaded
-# inside it. Same "we own both ends" reasoning as the CLI/worker
-# split: there's no external client to target, so there's nothing to
-# gain from running an MCP server inside the child. We keep a session
-# handle in .subagent_registry, drive the agent loop via session$run(),
-# and close it on kill.
+# inside it. We own both ends, so there's no external client to target
+# and nothing to gain from running an MCP server inside the child: the
+# parent drives the child's agent loop directly via session$run(). We
+# keep a session handle in .subagent_registry and close it on kill.
 #
 # Each child owns a persistent turn-session. subagent_query forwards
 # a prompt through that session; history accumulates across queries,

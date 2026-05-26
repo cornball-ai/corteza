@@ -201,7 +201,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # Task-tracker intercept. task_create / task_update mutate
         # session metadata (the task list) rather than doing real
         # work. They run in-process here so the mutation lands on the
-        # live `session` environment, not a CLI-worker copy. Bypass
+        # live `session` environment, not a detached copy. Bypass
         # dry-run, policy, approval, and the normal observer chain;
         # fire a `task_event` for displays that want it.
         task_result <- task_tool_intercept(session, internal_name,

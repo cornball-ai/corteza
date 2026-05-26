@@ -27,10 +27,11 @@ run for win-devel and win-release.
 
 Highlights, with the full per-PR detail in NEWS.md:
 
-- **CLI / worker split.** The shell CLI now drives a private
-  `callr::r_session` for tool dispatch (no internal MCP). `serve()`
-  remains a spec-compliant MCP server for external clients. Same
-  tool registry, shared via `R/registry.R`.
+- **Unified in-process runtime.** The shell CLI and `chat()` share one
+  read-eval-print loop (`run_repl_loop()`) in a single R process and
+  execute tools in-process; there is no CLI worker subprocess or
+  internal MCP transport. `serve()` remains a spec-compliant MCP server
+  for external clients. Same tool registry, shared via `R/registry.R`.
 - **Derived tool schemas.** Tool definitions are derived at runtime
   from `formals()` and the package's `.Rd` files. Replaced 20+
   hand-written `skill_spec()` blocks with one-line registrations.
@@ -80,16 +81,15 @@ Three audiences for console output, each handled separately:
    information messages and cannot be suppressed without breaking
    the MCP transport.
 
-### Worker cwd
+### Subagent session cwd
 
 `worker_init()` runs in a private `callr::r_session` subprocess
-(separate R session, separate process), called once when the
-worker starts. Its job is to set the worker's `cwd` for the
-lifetime of the subprocess so every subsequent `worker_dispatch()`
-inherits it. Wrapping that `setwd()` in `on.exit(setwd(oldwd))`
-would *immediately* undo what the function exists to do -- the
-worker would then dispatch every tool from the wrong directory.
-The user's main R session is never touched.
+(separate R session, separate process) when a subagent child session
+starts. Its job is to set that child's `cwd` for the lifetime of the
+subprocess so every tool the subagent runs inherits it. Wrapping that
+`setwd()` in `on.exit(setwd(oldwd))` would *immediately* undo what the
+function exists to do -- the subagent would then run every tool from
+the wrong directory. The user's main R session is never touched.
 
 ### Tool evaluation in `.GlobalEnv`
 
@@ -213,9 +213,9 @@ an Rtools shell).
 
 ### Architecture note for reviewers
 
-The shell CLI (`corteza`) spawns a private `callr::r_session` for
-tool execution, rather than an MCP subprocess. CLI users pay a
-one-time ~250ms callr worker warm-up but then each tool call is a
-direct R-native dispatch (~11ms) through `worker_dispatch()`. The
-MCP surface in `serve()` is independent and continues to exist for
-external clients (Claude Desktop, VS Code, mcptools, etc.).
+The shell CLI (`corteza`) and `chat()` share one read-eval-print loop
+(`run_repl_loop()`) and execute tools in-process, in a single R
+session -- no CLI worker subprocess and no internal MCP transport.
+The MCP surface in `serve()` is independent and continues to exist for
+external clients (Claude Desktop, VS Code, mcptools, etc.). The only
+child R process is the per-subagent `callr::r_session`.

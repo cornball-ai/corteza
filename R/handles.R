@@ -2,15 +2,15 @@
 #
 # A printed data.frame can blow thousands of tokens through the LLM's
 # context on a single `run_r` call. Instead of returning the printed
-# value, we stash the real object in a worker-local store and hand the
+# value, we stash the real object in a process-local store and hand the
 # LLM back a `summary + handle` pair. Later tool calls can reference
-# the handle by its name (a short `.h_NNN` symbol) — the worker
+# the handle by its name (a short `.h_NNN` symbol) and the store
 # substitutes the real object at eval time.
 #
-# Handles live for the life of the worker session. A fresh
-# `callr::r_session` starts with an empty store.
+# Handles live for the life of the R process. The store is per-process:
+# a subagent's `callr::r_session` child has its own, starting empty.
 
-#' Worker-local handle store.
+#' Process-local handle store.
 #' @noRd
 .handle_store <- new.env(parent = emptyenv())
 
@@ -107,7 +107,7 @@ list_handles <- function() {
     ls(.handle_store, all.names = TRUE)
 }
 
-#' Drop all handles from the worker-local store (for tests). Also
+#' Drop all handles from the process-local store (for tests). Also
 #' removes any `.h_NNN` bindings the package previously copied into
 #' globalenv so a subsequent `tool_run_r()` doesn't see stale
 #' handle symbols.

@@ -2,13 +2,11 @@
 #
 # Single source of truth consumed by:
 #   - chat()  (in-process calls)
+#   - CLI     (in-process calls; same shared run_repl_loop as chat())
 #   - serve() (external MCP surface)
-#   - CLI     (private worker, currently MCP-over-stdio, will swap to
-#              callr::r_session in Phase 2)
 #
 # Entries are created via skill_spec() in R/skill.R and registered here.
-# Both chat() and serve() read from .skill_registry directly; the CLI
-# will read from here once the transport moves off MCP.
+# All three read from .skill_registry directly.
 
 #' Tool registry (package-level environment).
 #' @noRd

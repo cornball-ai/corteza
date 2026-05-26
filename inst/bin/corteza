@@ -540,7 +540,7 @@ run_agent <- function(opts) {
     cat("\n")
   }
 
-  # `tools` already built above, right after the worker connected.
+  # `tools` already built in-process above via schema_from_registry().
 
   # CLI tool-progress observer. Tools now run IN-PROCESS via
   # corteza::turn()'s default call_skill dispatcher (no tool_executor,

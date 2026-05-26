@@ -38,19 +38,19 @@ All three user-facing surfaces share `turn()` as the single entry point
 ```
 CLI (inst/bin/corteza)
   │  approval_cb = readline prompt
-  │  tool_executor = mcp_tool_executor(conn)  <- socket to serve()
+  │  tool_executor = NULL  <- in-process call_skill
   v
-turn(prompt, session)  <- R/turn.R (shared)
+run_repl_loop(ctx) -> turn(prompt, session)  <- R/repl.R, R/turn.R (shared)
   │  policy(call, config)  <- R/policy.R
-  │  tool_handler dispatches to tool_executor
+  │  tool_handler dispatches in-process
   v
-serve() / call_skill()  <- R/serve.R / R/skill.R
+call_skill()  <- R/skill.R
 
 chat()  (corteza::chat(), R/chat.R)
   │  approval_cb = readline prompt
   │  tool_executor = NULL  <- in-process call_skill
   v
-turn(prompt, session)
+run_repl_loop(ctx) -> turn(prompt, session)  <- same shared loop
 
 matrix adapter  (R/matrix.R)
   │  mx.api long-poll, tool_executor = NULL (in-process)
@@ -58,10 +58,12 @@ matrix adapter  (R/matrix.R)
 turn(prompt, session)
 ```
 
-**CLI uses MCP-over-socket**: `inst/bin/corteza` starts a `serve(port)`
-worker and connects via `mcp_tool_executor`. Tools execute in the
-worker's R process, not the CLI process. `chat()` and the matrix adapter
-run tools in-process.
+**CLI and chat() share one in-process loop**: both build a `ctx` and call
+`run_repl_loop()` (`R/repl.R`) in a single R process; tools run in-process
+via `call_skill`. There is no CLI worker subprocess and no internal MCP
+transport. `serve()` (`R/serve.R`) is a separate, spec-compliant MCP
+server for external clients only. Subagents are the one place a child R
+process is still used (`callr::r_session`, initialized via `worker_init()`).
 
 **Tool registry** (`R/registry.R`): `.skill_registry` is the single
 source of truth. `ensure_skills()` / `register_builtin_skills()`

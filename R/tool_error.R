@@ -1,9 +1,12 @@
-# Boundary-normalized error condition for tool dispatch.
+# Normalized error condition for tool dispatch.
 #
-# When a tool fails inside the CLI worker session, we want the CLI side
-# to see a specific condition class rather than whatever R-level error
-# the tool body happened to raise. That lets the CLI format tool errors
-# uniformly for the LLM without string-matching message text.
+# Lets a caller see a specific condition class rather than whatever
+# R-level error the tool body happened to raise, so tool errors can be
+# formatted uniformly for the LLM without string-matching message text.
+#
+# NOTE: `make_tool_error` lost its only caller (`worker_dispatch`) when
+# the CLI worker transport was removed. It and its tests are retained
+# for now but are candidates for deletion.
 #
 # skill_run() / call_tool() already convert most tool failures into
 # `err()` envelopes (list(isError = TRUE, content = ...)), so this class
