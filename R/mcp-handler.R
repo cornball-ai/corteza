@@ -1,6 +1,72 @@
 # MCP JSON-RPC Handler
 # Handles MCP protocol requests and dispatches to tools
 
+#' Tools the MCP server advertises.
+#'
+#' `get_tools()` filtered by the configured `corteza.tools`, minus the
+#' subagent category unless subagent exposure is opted in
+#' (`corteza.mcp_expose_subagents`). This keeps `spawn_subagent` and the
+#' rest out of an (often unattended) MCP client's reach by default; the
+#' in-process chat()/CLI loop does not go through here, so local
+#' subagents are unaffected.
+#' @noRd
+mcp_visible_tools <- function() {
+    tools <- get_tools(getOption("corteza.tools"))
+    if (!isTRUE(getOption("corteza.mcp_expose_subagents", FALSE))) {
+        sub <- .builtin_categories$subagent
+        tools <- Filter(function(t) !t$name %in% sub, tools)
+    }
+    tools
+}
+
+#' Gate an MCP tools/call against subagent policy.
+#'
+#' Returns NULL when the call may proceed, or an `err()` result to send
+#' back instead. Non-subagent tools always pass. Subagent tools are
+#' refused unless exposure is opted in; when exposed, the
+#' spend-incurring ones (spawn/query) are refused once cumulative
+#' subagent spend crosses the configured cap. The cap reads
+#' `subagent_spend_total()` -- the same meter `/spent` shows -- so a
+#' server restart (which clears the registry + retired accumulator) is
+#' the way to reset it.
+#' @noRd
+mcp_subagent_guard <- function(name) {
+    sub <- .builtin_categories$subagent
+    if (!name %in% sub) {
+        return(NULL)
+    }
+    if (!isTRUE(getOption("corteza.mcp_expose_subagents", FALSE))) {
+        return(err(sprintf(paste0(
+                                  "Tool '%s' is not exposed over MCP. Subagents run their own ",
+                                  "agent loop and spend autonomously on the host's credentials; ",
+                                  "enable with subagents.expose_over_mcp=true or ",
+                                  "serve(expose_subagents=TRUE)."), name)))
+    }
+    # spawn and query are the spend-incurring calls (spawn starts a
+    # child; query runs its loop). list/collect/kill never start new
+    # spend, so they are allowed up to and past the cap.
+    if (name %in% c("spawn_subagent", "query_subagent")) {
+        total <- subagent_spend_total()
+        cap_usd <- getOption("corteza.mcp_subagent_cap_usd", NULL)
+        if (!is.null(cap_usd) && !is.na(cap_usd) && cap_usd > 0 &&
+            (total$cost %||% 0) >= cap_usd) {
+            return(err(sprintf(paste0(
+                                      "MCP subagent spend cap reached (~$%.4f >= $%.2f); '%s' ",
+                                      "refused. Raise subagents.mcp_spend_cap_usd or restart ",
+                                      "the server."), total$cost %||% 0, cap_usd, name)))
+        }
+        cap_tok <- getOption("corteza.mcp_subagent_cap_tokens", NULL)
+        if (!is.null(cap_tok) && !is.na(cap_tok) && cap_tok > 0 &&
+            (total$total_tokens %||% 0L) >= cap_tok) {
+            return(err(sprintf(paste0(
+                                      "MCP subagent token cap reached (%d >= %d); '%s' refused. ",
+                                      "Raise subagents.mcp_spend_cap_tokens or restart the server."),
+                               total$total_tokens %||% 0L, as.integer(cap_tok), name)))
+        }
+    }
+    NULL
+}
+
 #' Handle an MCP JSON-RPC request
 #' @param req Parsed JSON-RPC request
 #' @return JSON-RPC response or NULL for notifications
@@ -21,9 +87,16 @@ handle_request <- function(req) {
 
                "notifications/initialized" = NULL, # No response for notifications
 
-               "tools/list" = list(tools = get_tools(getOption("corteza.tools"))),
+               "tools/list" = list(tools = mcp_visible_tools()),
 
-               "tools/call" = call_tool(params$name, params$arguments),
+               "tools/call" = {
+            blocked <- mcp_subagent_guard(params$name)
+            if (is.null(blocked)) {
+                call_tool(params$name, params$arguments)
+            } else {
+                blocked
+            }
+        },
 
                # Default: method not found
                list(.error = list(code = -32601,

@@ -25,6 +25,11 @@ expect_true("write_file" %in% config$dangerous_tools)
 expect_equal(config$port, 7850L)
 expect_true(grepl("Pre-compaction memory flush", config$memory_flush_prompt))
 
+# Subagent MCP-exposure defaults: opt-in off, USD cap $5, token cap unset.
+expect_false(isTRUE(config$subagents$expose_over_mcp))
+expect_equal(config$subagents$mcp_spend_cap_usd, 5.00)
+expect_true(is.na(config$subagents$mcp_spend_cap_tokens))
+
 # Test project config is loaded
 dir.create(file.path(testdir, ".corteza"), showWarnings = FALSE)
 writeLines('{"provider": "ollama", "model": "llama3.2"}',

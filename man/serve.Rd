@@ -3,7 +3,7 @@
 \alias{serve}
 \title{Start MCP Server}
 \usage{
-serve(port = NULL, cwd = NULL, tools = NULL)
+serve(port = NULL, cwd = NULL, tools = NULL, expose_subagents = NULL)
 }
 \arguments{
 \item{port}{Port number for socket transport. If NULL, uses stdio transport.}
@@ -13,6 +13,17 @@ serve(port = NULL, cwd = NULL, tools = NULL)
 \item{tools}{Character vector of tools or categories to enable. Categories:
 file, code, r, data, web, git, chat. Use "core" for file+code+git,
 "all" for everything (default).}
+
+\item{expose_subagents}{Whether MCP clients may call the subagent
+tools (`spawn_subagent`, `query_subagent`, `collect_subagent`,
+`list_subagents`, `kill_subagent`). `NULL` (default) defers to the
+`subagents$expose_over_mcp` config flag (itself FALSE by default);
+`TRUE`/`FALSE` overrides it. Off by default because a spawned
+subagent runs its own agent loop and spends autonomously on the
+host's LLM credentials -- an unattended MCP client could otherwise
+trigger unbounded cost the client never sees. When on, cumulative
+subagent spend is capped by `subagents$mcp_spend_cap_usd`
+(default $5.00).}
 }
 \value{
 NULL (runs until interrupted or client disconnects)
