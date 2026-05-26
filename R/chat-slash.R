@@ -33,13 +33,16 @@
 #' @noRd
 run_bang_shell <- function(cmd, cwd = getwd()) {
     is_unix <- .Platform$OS.type == "unix"
-    # system2 with stdout = TRUE pastes args with spaces and does not
-    # shell-quote, so a `-c "seq 1 5"` invocation has to be built as
-    # `-c <shQuote("seq 1 5")>` or the shell sees four tokens.
+    # processx passes each arg literally (no shell word-splitting), so
+    # the command goes through as a single `-c` arg, unquoted. Unlike
+    # system2(stdout = TRUE) -- a blocking C call R can't interrupt --
+    # processx::run() polls and is interruptible: Ctrl+C terminates the
+    # child (cleanup_tree kills descendants) and raises an interrupt the
+    # caller's handler returns to the prompt on.
     args <- if (is_unix) {
-        c("-c", shQuote(cmd))
+        c("-c", cmd)
     } else {
-        c("/c", shQuote(cmd, type = "cmd"))
+        c("/c", cmd)
     }
     shell_bin <- if (is_unix) {
         "bash"
@@ -47,12 +50,13 @@ run_bang_shell <- function(cmd, cwd = getwd()) {
         Sys.getenv("COMSPEC", "cmd.exe")
     }
     raw <- tryCatch(
-                    withr_local_dir(cwd, {
-        suppressWarnings(system2(shell_bin, args, stdout = TRUE, stderr = TRUE))
-    }),
+                    processx::run(shell_bin, args, wd = cwd, error_on_status = FALSE,
+                                  stderr_to_stdout = TRUE, cleanup_tree = TRUE)$stdout,
                     error = function(e) paste("Error:", conditionMessage(e))
     )
-    text <- paste(as.character(raw), collapse = "\n")
+    # processx returns stdout as one string with a trailing newline;
+    # strip trailing newlines to match the old line-vector join.
+    text <- sub("\n+$", "", as.character(raw))
     if (!nzchar(text)) {
         text <- ""
     }
@@ -186,6 +190,64 @@ parse_spawn_flags <- function(text) {
     list(task = trimws(text), model = model, preset = preset, tools = tools)
 }
 
+#' Run a manual memory flush as one in-process agent turn.
+#'
+#' Shared by the `/flush` slash command in `run_repl_loop()` for both
+#' the chat() and CLI surfaces. The flush is just another agent turn:
+#' same provider, model, system prompt, tools, and approval gate, but
+#' pointed at the configured `memory_flush_prompt` with the current
+#' conversation history as context. Routing through `turn()` (not raw
+#' `agent()`) keeps the policy + approval path consistent, so a flush
+#' that decides to call `write_file` still respects `config$permissions`.
+#'
+#' Tools execute IN-PROCESS via `turn()`'s default `call_skill`
+#' dispatcher (no `tool_executor`), so any subagents the flush spawns
+#' land in the one shared `.subagent_registry`.
+#'
+#' @param ctx The REPL context env (see `run_repl_loop()`). Reads
+#'   `ctx$session` (live turn session, for system prompt / provider /
+#'   model / tools_filter / history), `ctx$config`, and `ctx$cwd`.
+#' @return A list with `content` (the flush reply text) and `history`
+#'   (the flush session's history), or NULL when the flush was denied
+#'   or errored. Errors and denials are reported via `message()`.
+#' @noRd
+run_memory_flush <- function(ctx) {
+    session <- ctx$session
+    config <- ctx$config
+    flush_prompt <- config$memory_flush_prompt
+    flush_history <- session$history %||% list()
+
+    flush_session <- new_session(
+                                 channel = session$channel %||% "cli",
+                                 provider = session$provider %||% ctx$provider,
+                                 model_map = list(
+            cloud = resolve_provider_model(session$provider %||% ctx$provider,
+                session$model_map$cloud %||% ctx$model),
+            local = default_local_model()
+        ),
+                                 system = session$system,
+                                 history = flush_history,
+                                 approval_cb = session$approval_cb,
+                                 tools_filter = session$tools_filter,
+                                 max_turns = 20L
+    )
+    flush_session$config <- config
+    flush_session$cwd <- ctx$cwd
+    flush_session$dry_run <- isTRUE(session$dry_run) ||
+    isTRUE(config$dry_run)
+
+    tryCatch({
+        r <- turn(prompt = flush_prompt, session = flush_session)
+        list(content = r$reply, history = flush_session$history)
+    }, corteza_user_deny = function(c) {
+        message("Memory flush denied -- skipping.")
+        NULL
+    }, error = function(e) {
+        message(sprintf("Flush failed: %s", e$message))
+        NULL
+    })
+}
+
 #' Slash-command help text for `chat()`.
 #'
 #' Mirrors the inst/bin/corteza CLI surface. A handful of CLI commands
@@ -215,6 +277,7 @@ chat_help_text <- function() {
           "  /dryrun                       Toggle dry-run mode (preview tools)",
           "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
           "  /compact                      Summarize conversation to free context",
+          "  /flush                        Write durable memories from the conversation",
           "  /paste [text]                 Multi-line input. Collects every line verbatim until `/end` (or Ctrl+D).",
           "  /copy                         Copy the last assistant response to the system clipboard.",
           "  /tasks [clear]                Show (or clear) the current task list.",
@@ -393,4 +456,3 @@ chat_format_tools_list <- function(turn_session) {
     }
     paste(c(lines, ""), collapse = "\n")
 }
-

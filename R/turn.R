@@ -201,7 +201,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # Task-tracker intercept. task_create / task_update mutate
         # session metadata (the task list) rather than doing real
         # work. They run in-process here so the mutation lands on the
-        # live `session` environment, not a CLI-worker copy. Bypass
+        # live `session` environment, not a detached copy. Bypass
         # dry-run, policy, approval, and the normal observer chain;
         # fire a `task_event` for displays that want it.
         task_result <- task_tool_intercept(session, internal_name,
@@ -473,12 +473,13 @@ observer_progress <- function() {
 #' tool call the LLM makes is routed through \code{\link{policy}} before
 #' being dispatched.
 #'
-#' Tool dispatch is pluggable via \code{tool_executor}. The default is an
-#' in-process dispatcher that calls the local skill registry — suitable
-#' for \code{chat()} and matrix adapters running in the same R process as
-#' their skills. Pass \code{\link{mcp_tool_executor}} (or any
-#' \code{function(name, args) -> MCP-format result}) to run tools in a
-#' separate process, which is how the CLI talks to \code{serve()}.
+#' Tool dispatch is pluggable via \code{tool_executor}, but the CLI and
+#' \code{chat()} both leave it NULL: tools run in-process through the
+#' default \code{call_skill} dispatcher against the local skill registry.
+#' \code{serve()} is a separate MCP server for external clients only; it
+#' is not part of the CLI's tool path. Pass an explicit
+#' \code{function(name, args) -> list} executor only when dispatching
+#' tools somewhere other than the in-process registry.
 #'
 #' @param prompt Character. User prompt.
 #' @param session A session environment created by \code{\link{new_session}}.

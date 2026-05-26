@@ -69,9 +69,8 @@
 #' caller that no diff display is warranted). When `diff` isn't on PATH,
 #' returns a fallback payload describing the size of the change without
 #' the per-line content. Large diffs are truncated to keep the payload
-#' bounded -- both for serialization across the callr worker boundary
-#' and for chat scrollback hygiene -- but the `summary` counts always
-#' reflect the full diff.
+#' bounded for display and chat scrollback hygiene, but the `summary`
+#' counts always reflect the full diff.
 #'
 #' @param old_text Character scalar, prior file contents. Empty string
 #'   means "new file".

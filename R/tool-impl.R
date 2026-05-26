@@ -624,35 +624,33 @@ tool_shell_impl <- function(args, shell_name) {
                 )))
     }
 
-    # Windows cmd.exe does not need shQuote and doesn't understand -c.
-    exe_args_fg <- switch(
-                          shell_name,
-                          bash = c("-c", shQuote(cmd)),
-                          cmd = c("/c", cmd)
-    )
-
+    # Foreground uses the same args as background now: processx passes
+    # each arg literally (no shell word-splitting), so the command goes
+    # through as a single unquoted `-c` arg. (system2 needed shQuote
+    # because it pastes args; processx does not.)
     tryCatch({
-        # system2() emits "running command '...' had status N" when the
-        # child exits non-zero; we surface that status structurally via
-        # err()/ok() below, so muffle only that specific warning class
-        # and let any other system2 warning (encoding, locale, etc.)
-        # propagate.
-        out <- withCallingHandlers(
-                                   system2(shell_exe, exe_args_fg, stdout = TRUE,
-                stderr = TRUE, timeout = timeout),
-                                   warning = function(w) {
-            if (grepl("had status \\d+", conditionMessage(w))) {
-                invokeRestart("muffleWarning")
-            }
-        }
-        )
-        status <- attr(out, "status") %||% 0L
-        text <- paste(out, collapse = "\n")
+        # processx::run() instead of system2(stdout = TRUE): the latter
+        # is a blocking C call R can't interrupt, so Ctrl+C during a
+        # foreground tool (e.g. `bash sleep 30`) halted the whole REPL.
+        # processx polls and is interruptible -- the interrupt propagates
+        # to the turn's handler in run_repl_loop, which returns to the
+        # prompt. cleanup_tree kills the child's descendants; status is
+        # surfaced structurally via err()/ok() rather than a warning.
+        res <- processx::run(shell_exe, exe_args,
+                             error_on_status = FALSE,
+                             stderr_to_stdout = TRUE,
+                             timeout = timeout,
+                             cleanup_tree = TRUE)
+        status <- res$status %||% 0L
+        text <- res$stdout %||% ""
         if (!is.null(status) && status != 0L) {
             err(sprintf("[exit status %d]\n%s", status, text))
         } else {
             ok(text)
         }
+    }, system_command_timeout_error = function(e) {
+        partial <- tryCatch(e$stdout %||% "", error = function(e2) "")
+        err(sprintf("[timed out after %ss]\n%s", timeout, partial))
     }, error = function(e) {
         err(paste("Error:", e$message))
     })
@@ -1217,8 +1215,8 @@ register_builtin_skills <- function() {
 
     # Task tracker: schema only -- the real handlers live in
     # task_tool_intercept() called from .make_tool_handler(), so they
-    # mutate the main-process session env (the registered stubs would
-    # mutate a worker-process copy under the CLI's callr dispatch).
+    # mutate the live session env directly (a registered stub handler
+    # only ever sees ctx = list(), not the session).
     register_skill_from_fn("task_create", tool_task_create)
     register_skill_from_fn("task_update", tool_task_update)
 
@@ -1251,4 +1249,3 @@ call_tool <- function(name, args, ctx = list(), timeout = 30L,
     # Fallback: unknown tool
     err(paste("Unknown tool:", name))
 }
-

@@ -316,10 +316,9 @@ register_skill_from_fn <- function(tool_name, fn, available = NULL) {
 # LLM-API schema generation from the shared tool registry.
 #
 # The CLI builds the `tools` parameter for the Anthropic / OpenAI /
-# Moonshot chat APIs by calling schema_from_registry() in its own
-# process. The callr worker is not involved: nothing about schema
-# production travels over the worker pipe, and the tool-definition
-# shape lives in one place.
+# Moonshot chat APIs by calling schema_from_registry() in-process, the
+# same registry chat() and serve() use. The tool-definition shape lives
+# in one place.
 #
 # chat() and serve() have their own tool-list paths (they need slightly
 # different shapes — inputSchema vs input_schema, MCP protocol framing
@@ -336,8 +335,8 @@ register_skill_from_fn <- function(tool_name, fn, available = NULL) {
 #' Build the LLM API `tools` payload from the tool registry.
 #'
 #' Returns a list of tool definitions in the shape Anthropic's chat
-#' completion API expects (name, description, input_schema). Used by
-#' the CLI to avoid round-tripping schemas through the worker.
+#' completion API expects (name, description, input_schema). Built
+#' in-process from the shared registry.
 #'
 #' Exported with `@keywords internal`: the CLI calls this directly, but
 #' it is not part of the public user-facing API.

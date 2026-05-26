@@ -518,7 +518,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
     }
     # Holders aren't doing active work -- they hold state for later
     # query_subagent calls. The default 30-minute subagent timeout was
-    # designed for tool-using workers where a stuck child shouldn't
+    # designed for tool-using subagents where a stuck child shouldn't
     # linger. Override it here so holders live as long as the parent
     # process. (One year is "effectively unlimited" given subagents
     # die with the CLI anyway.)

@@ -1,3 +1,30 @@
+# corteza 0.6.7.4
+
+## CLI and chat() share one in-process REPL loop
+
+The CLI no longer runs tools in a separate `callr` worker. `chat()` and
+the CLI now drive one shared loop (`run_repl_loop`) in a single R
+process, executing tools in-process via `corteza::turn()`.
+
+* **One subagent registry.** Model-driven and slash-driven subagents
+  previously lived in separate registries (worker vs main process) and
+  were mutually invisible in CLI mode. They now share one
+  `.subagent_registry` per session: a model-spawned subagent shows up in
+  `/agents`, and a `/spawn`-ed one is reachable by `query_subagent`.
+* **One command set.** Both surfaces run the same slash commands; `/flush`
+  moved into the shared loop. Per-surface differences (rendering, help
+  text, input reader) ride through injected hooks, not forked logic.
+* `chat()` gains the per-turn context meter and auto-compaction the CLI
+  already had.
+* The local-eval ops (`/r`, `!`) and the foreground `bash` tool moved off
+  blocking `system2()` onto interruptible `processx::run()`, so an
+  interrupt returns to the prompt instead of killing the session.
+* Removed the CLI worker transport and its four exports
+  (`worker_dispatch`, `worker_tool_list`, `cli_worker_spawn`,
+  `cli_worker_drain_events`). `worker_init()` stays exported: subagents
+  call it across the `callr::r_session` boundary to set cwd and register
+  skills.
+
 # corteza 0.6.7.3
 
 ## Interrupt / denial preserves context across the exit

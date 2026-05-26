@@ -3,12 +3,11 @@
 # research-and-propose flow; this one tracks ongoing progress.
 #
 # Architecture note. The task tools (task_create, task_update) are
-# *not* dispatched through the normal skill executor. chat() runs
-# skill handlers with ctx = list() in the main process; inst/bin/corteza
-# dispatches via a callr worker subprocess. Either path would leave a
-# normal handler unable to mutate the live session. The fix: intercept
-# task_create / task_update inside .make_tool_handler() before any
-# executor call, mutating the main-process session env directly.
+# *not* dispatched through the normal skill executor. Skill handlers run
+# with ctx = list() and can't reach the live session env, so a normal
+# handler couldn't mutate the task list. The fix: intercept task_create /
+# task_update inside .make_tool_handler() before the handler runs,
+# mutating the (in-process) session env directly.
 # Skill registration is still required so the API tool list advertises
 # them to the LLM, but the registered handler is a stub the intercept
 # bypasses.
@@ -237,7 +236,7 @@ tool_task_create <- function(tasks) {
     # The real implementation runs in .make_tool_handler() via
     # task_tool_intercept(); reaching this body means the intercept
     # was bypassed, which is a corteza bug worth surfacing rather
-    # than silently mutating a worker-process session.
+    # than silently mutating a detached session copy.
     err("task_create reached its skill handler instead of the in-process intercept")
 }
 
