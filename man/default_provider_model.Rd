@@ -13,9 +13,10 @@ Model name (character) or NULL.
 }
 \description{
 Resolves the actual model a subagent (or chat session) will run
-with when no explicit \code{model} is set. Mirrors the defaults
-the CLI script picks at startup so /agents, compaction, and the
-CLI all show the same model identity. Returns NULL for unknown
-providers (lets llm.api fall back to its own default).
+with when no explicit \code{model} is set, so /agents, compaction,
+and the CLI all show the same model identity. Delegates to
+\code{llm.api::provider_default_model()} -- the canonical table --
+rather than keeping a parallel one that drifts. Returns NULL for an
+unknown or empty provider (llm.api errors there; we map it to NULL).
 }
 \keyword{internal}

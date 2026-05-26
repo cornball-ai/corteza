@@ -46,18 +46,18 @@ MODEL_CONTEXT_LIMITS <- list(
 #' Provider-specific default model name.
 #'
 #' Resolves the actual model a subagent (or chat session) will run
-#' with when no explicit \code{model} is set. Mirrors the defaults
-#' the CLI script picks at startup so /agents, compaction, and the
-#' CLI all show the same model identity. Returns NULL for unknown
-#' providers (lets llm.api fall back to its own default).
+#' with when no explicit \code{model} is set, so /agents, compaction,
+#' and the CLI all show the same model identity. Delegates to
+#' \code{llm.api::provider_default_model()} -- the canonical table --
+#' rather than keeping a parallel one that drifts. Returns NULL for an
+#' unknown or empty provider (llm.api errors there; we map it to NULL).
 #' @param provider Provider name.
 #' @return Model name (character) or NULL.
 #' @keywords internal
 #' @export
 default_provider_model <- function(provider) {
-    switch(provider %||% "", anthropic = "claude-sonnet-4-6",
-           openai = "gpt-4o", moonshot = "kimi-k2.6", ollama = "llama3.2",
-           NULL)
+    tryCatch(llm.api::provider_default_model(provider %||% ""),
+             error = function(e) NULL)
 }
 
 #' Look up the context window for a given model.

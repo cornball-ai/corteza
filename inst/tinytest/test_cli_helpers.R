@@ -81,15 +81,14 @@ expect_identical(corteza:::resolve_provider_model("moonshot", "kimi-k2"),
                  "kimi-k2.6")
 expect_identical(corteza:::resolve_provider_model("moonshot", "kimi-k2.6"),
                  "kimi-k2.6")
-# Anthropic default falls back via default_provider_model.
+# A NULL model falls back via default_provider_model (which delegates
+# to llm.api's table). Assert it tracks that, not a pinned string, so
+# the test survives llm.api's model updates.
 expect_identical(corteza:::resolve_provider_model("anthropic"),
-                 "claude-sonnet-4-6")
-# Moonshot default falls back via default_provider_model. This is the
-# path chat()'s banner now hits when model is NULL so the displayed
-# name matches the CLI (kimi-k2.6 @ moonshot, not the old
-# "(provider default) @ moonshot" placeholder).
+                 corteza::default_provider_model("anthropic"))
 expect_identical(corteza:::resolve_provider_model("moonshot"),
-                 "kimi-k2.6")
+                 corteza::default_provider_model("moonshot"))
+expect_true(nzchar(corteza:::resolve_provider_model("moonshot")))
 # Unknown provider: NULL passes through so chat() can keep its
 # "(provider default)" fallback for the display string.
 expect_null(corteza:::resolve_provider_model("nonesuch"))
