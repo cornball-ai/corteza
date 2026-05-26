@@ -142,8 +142,32 @@ run_repl_loop <- function(ctx) {
                 # has no carried-over commitments.
                 ctx$session$tasks <- list()
                 ctx$session$tasks_dirty <- TRUE
-                cat(sprintf("%sCleared. New session: %s%s\n\n",
-                            ctx$palette$dim, fresh$sessionId, ctx$palette$reset))
+                # A fresh conversation leaves no live subagents behind:
+                # they were spawned for the conversation being cleared,
+                # and the wiped history no longer references them.
+                # Killing each retires its spend into the process-run
+                # total (subagent_kill -> subagent_retire_spend), so
+                # /spent still counts it.
+                killed <- 0L
+                for (sid in ls(.subagent_registry)) {
+                    if (isTRUE(tryCatch(subagent_kill(sid),
+                                        error = function(e) FALSE))) {
+                        killed <- killed + 1L
+                    }
+                }
+                # Spend is process-lifetime: close the current
+                # conversation segment and open a fresh one so /spent
+                # itemizes each conversation between clears.
+                spend_open_segment(ctx$session)
+                killed_note <- if (killed > 0L) {
+                    sprintf(" (killed %d subagent%s)", killed,
+                        if (killed == 1L) "" else "s")
+                } else {
+                    ""
+                }
+                cat(sprintf("%sCleared%s. New session: %s%s\n\n",
+                            ctx$palette$dim, killed_note, fresh$sessionId,
+                            ctx$palette$reset))
                 next
             }
             if (cmd == "/help") {
@@ -420,6 +444,10 @@ run_repl_loop <- function(ctx) {
                 cat(sprintf("%sPlan mode enabled.%s\n", ctx$palette$dim, ctx$palette$reset))
                 prompt <- rest
                 # Fall through to normal prompt handling below.
+            }
+            if (cmd %in% c("/spent", "/cost")) {
+                cat(format_spend(ctx$session, palette = ctx$palette), "\n", sep = "")
+                next
             }
             if (cmd %in% c("/context", "/status")) {
                 files <- ctx$config$context_files %||% character(0)
@@ -877,6 +905,11 @@ run_repl_loop <- function(ctx) {
                            depth = 0L
         )
 
+        # Accumulate this turn's spend into the session tally (both
+        # surfaces share ctx$session, persistent across the loop).
+        # Main-agent turns only; subagent spend is out of scope.
+        session_accumulate_spend(ctx$session, result$usage)
+
         # Post-turn context accounting (both chat() and the CLI go
         # through here). Mirror the /context handler's math against the
         # *live* history (ctx$session$history), not session$messages,
@@ -962,3 +995,4 @@ run_repl_loop <- function(ctx) {
 
     invisible(NULL)
 }
+
