@@ -142,12 +142,32 @@ run_repl_loop <- function(ctx) {
                 # has no carried-over commitments.
                 ctx$session$tasks <- list()
                 ctx$session$tasks_dirty <- TRUE
+                # A fresh conversation leaves no live subagents behind:
+                # they were spawned for the conversation being cleared,
+                # and the wiped history no longer references them.
+                # Killing each retires its spend into the process-run
+                # total (subagent_kill -> subagent_retire_spend), so
+                # /spent still counts it.
+                killed <- 0L
+                for (sid in ls(.subagent_registry)) {
+                    if (isTRUE(tryCatch(subagent_kill(sid),
+                                        error = function(e) FALSE))) {
+                        killed <- killed + 1L
+                    }
+                }
                 # Spend is process-lifetime: close the current
                 # conversation segment and open a fresh one so /spent
                 # itemizes each conversation between clears.
                 spend_open_segment(ctx$session)
-                cat(sprintf("%sCleared. New session: %s%s\n\n",
-                            ctx$palette$dim, fresh$sessionId, ctx$palette$reset))
+                killed_note <- if (killed > 0L) {
+                    sprintf(" (killed %d subagent%s)", killed,
+                        if (killed == 1L) "" else "s")
+                } else {
+                    ""
+                }
+                cat(sprintf("%sCleared%s. New session: %s%s\n\n",
+                            ctx$palette$dim, killed_note, fresh$sessionId,
+                            ctx$palette$reset))
                 next
             }
             if (cmd == "/help") {

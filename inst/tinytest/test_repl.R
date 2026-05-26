@@ -105,6 +105,40 @@ corteza:::run_repl_loop(ctx6)
 expect_equal(seen_model, "fresh-model")
 expect_equal(ctx6$disk_session$sessionId, "new-sess")
 
+# 6b. /clear kills live subagents and retires their spend. Inject a
+# fake registry entry, clear, and assert the registry is emptied while
+# the spend lands in the process-run total.
+reg <- corteza:::.subagent_registry
+rm(list = ls(reg), envir = reg)
+r <- corteza:::.subagent_spend_retired
+r$cost <- 0; r$input_tokens <- 0L; r$output_tokens <- 0L
+r$total_tokens <- 0L; r$query_count <- 0L; r$n_agents <- 0L
+r$cost_missing <- FALSE
+reg[["clear-test-agent"]] <- list(
+    id = "clear-test-agent", seq = 1L, session_key = "agent:main:subagent:cta",
+    session = NULL, cumulative_input_tokens = 300L,
+    cumulative_output_tokens = 100L, cumulative_total_tokens = 400L,
+    cumulative_cost = 0.04, cost_missing = FALSE, query_count = 3L)
+ctx6b <- base_ctx(c("/clear"))
+ctx6b$session <- new.env(parent = emptyenv())
+ctx6b$session$model_map <- list(cloud = "m")
+ctx6b$session$on_tool <- list()
+ctx6b$disk_session <- list(session = list(sessionId = "s0"), sessionId = "s0")
+ctx6b$new_session_fn <- function() {
+    list(session = list(sessionId = "s1"), sessionId = "s1", resumed = FALSE)
+}
+out6b <- capture.output(corteza:::run_repl_loop(ctx6b))
+expect_equal(length(ls(reg)), 0L)                       # registry emptied
+tot <- corteza:::subagent_spend_total()
+expect_equal(tot$cost, 0.04)                            # spend retired
+expect_equal(tot$total_tokens, 400L)
+expect_equal(tot$n_agents, 1L)
+expect_true(any(grepl("killed 1 subagent", out6b)))     # user is told
+rm(list = ls(reg), envir = reg)
+r$cost <- 0; r$input_tokens <- 0L; r$output_tokens <- 0L
+r$total_tokens <- 0L; r$query_count <- 0L; r$n_agents <- 0L
+r$cost_missing <- FALSE
+
 # Restore the data dir (no top-level on.exit in tinytest).
 if (is.na(old_data)) {
     Sys.unsetenv("R_USER_DATA_DIR")

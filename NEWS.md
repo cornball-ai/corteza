@@ -10,11 +10,11 @@ shown as a floor rather than a precise figure.
 
 Spend is process-lifetime: `/clear` no longer zeroes the tally, it
 closes the current conversation and opens a new one, so `/spent`
-itemizes each conversation between clears with a grand total. Subagent
-spend is rolled up as a separate process-level line that keeps counting
-an agent after it is killed (subagents survive `/clear`, so they are
-not split across conversations). Resumed prior-run spend is not loaded
-from disk.
+itemizes each conversation between clears with a grand total. `/clear`
+now also kills any live subagents (a fresh conversation leaves none
+behind); their spend is retired into the run total, shown as a separate
+process-level subagents line that keeps counting an agent after it is
+killed. Resumed prior-run spend is not loaded from disk.
 
 # corteza 0.6.7.4
 

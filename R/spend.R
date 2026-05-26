@@ -10,9 +10,11 @@
 # does not zero the tally; it closes the current conversation segment
 # and opens a new one, so /spent itemizes each conversation between
 # clears and shows a grand total. Subagent spend is a separate
-# process-level line (subagents survive /clear, so they are not split
-# across segments) sourced from subagent_spend_total(). Resumed
-# prior-run spend is not loaded from disk.
+# process-level line sourced from subagent_spend_total(): a subagent's
+# cost is process-level (killed agents are retired into the run total
+# rather than attributed to one conversation), so it is reported as one
+# line rather than split across segments. Resumed prior-run spend is
+# not loaded from disk.
 
 #' Add an integer usage field, treating NULL/NA as zero.
 #' @noRd
