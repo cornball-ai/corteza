@@ -82,6 +82,26 @@ corteza:::run_repl_loop(ctx5)
 expect_equal(rendered, "stubbed reply")
 expect_equal(ctx5$last_assistant_response, "stubbed reply")
 
+# 6. /clear after /model: the fresh-session hook must see the UPDATED
+# model (regression: the hook must read current state, not stale locals
+# captured before /model ran). Also asserts disk_session is reassigned.
+seen_model <- NULL
+ctx6 <- base_ctx(c("/model fresh-model", "/clear"))
+ctx6$session <- new.env(parent = emptyenv())
+ctx6$session$model_map <- list(cloud = "old")
+ctx6$session$on_tool <- list()
+ctx6$model <- "old"
+ctx6$disk_session <- list(session = list(sessionId = "old-sess"),
+                          sessionId = "old-sess")
+ctx6$new_session_fn <- function() {
+    seen_model <<- ctx6$model
+    list(session = list(sessionId = "new-sess"), sessionId = "new-sess",
+         resumed = FALSE)
+}
+corteza:::run_repl_loop(ctx6)
+expect_equal(seen_model, "fresh-model")
+expect_equal(ctx6$disk_session$sessionId, "new-sess")
+
 # Restore the data dir (no top-level on.exit in tinytest).
 if (is.na(old_data)) {
     Sys.unsetenv("R_USER_DATA_DIR")

@@ -302,7 +302,10 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     ctx$render_reply <- function(txt) cat(render_md_ansi(txt, palette = color), "\n\n")
     ctx$help_text <- chat_help_text
     ctx$new_session_fn <- function() {
-        fresh <- session_new(provider, model, cwd)
+        # Read provider/model from ctx, not the original locals: /model
+        # and /provider mutate ctx, so a later /clear must spin up the
+        # fresh session with the current model/provider.
+        fresh <- session_new(ctx$provider, ctx$model, cwd)
         list(session = fresh, sessionId = fresh$sessionId, resumed = FALSE)
     }
     ctx$handle_copy <- chat_handle_copy
@@ -310,7 +313,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     ctx$turn_fn <- turn
     run_repl_loop(ctx)
 
-    invisible(disk_session$session)
+    # ctx$disk_session, not the original local: /clear reassigns it.
+    invisible(ctx$disk_session$session)
 }
 
 # --- Chat-specific helpers ---
