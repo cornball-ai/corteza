@@ -78,9 +78,12 @@ ctx5$render_reply <- function(txt) rendered <<- txt
 ctx5$turn_fn <- function(prompt, session) {
     list(reply = "stubbed reply", usage = NULL)
 }
-corteza:::run_repl_loop(ctx5)
+out5 <- capture.output(corteza:::run_repl_loop(ctx5))
 expect_equal(rendered, "stubbed reply")
 expect_equal(ctx5$last_assistant_response, "stubbed reply")
+# Post-turn context indicator fires on a successful turn (no LLM here;
+# short history stays well under the compaction threshold).
+expect_true(any(grepl("context .*%", out5)))
 
 # 6. /clear after /model: the fresh-session hook must see the UPDATED
 # model (regression: the hook must read current state, not stale locals
@@ -109,3 +112,24 @@ if (is.na(old_data)) {
     Sys.setenv(R_USER_DATA_DIR = old_data)
 }
 unlink(tmp_data, recursive = TRUE)
+
+# 7. .repl_context_indicator(): non-empty string reflecting the
+# percentage. used = limit/2 -> "50".
+ind <- corteza:::.repl_context_indicator(
+    used = 100000L, limit = 200000L, palette = empty_palette,
+    thresholds = list(warn = 75, high = 90, crit = 95, compact = 90)
+)
+expect_true(is.character(ind) && nzchar(ind))
+expect_true(grepl("50", ind))
+expect_true(grepl("compact at 90", ind))
+
+# 8. tools_filter narrows the /tools view. Regression for the CLI
+# repoint: --tools must reach the turn session (its tools_filter), not
+# just the banner. chat_format_tools_list is what the loop's /tools
+# handler renders, keyed on session$tools_filter.
+corteza:::ensure_skills()
+sess_filt <- new.env(parent = emptyenv())
+sess_filt$tools_filter <- c("read_file")
+tools_out <- corteza:::chat_format_tools_list(sess_filt)
+expect_true(grepl("read_file", tools_out, fixed = TRUE))
+expect_false(grepl("write_file", tools_out, fixed = TRUE))

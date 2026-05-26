@@ -14,6 +14,41 @@
 #     render_reply(text), help_text(), new_session_fn(),
 #     handle_copy(text), format_tools(session), turn_fn(prompt, session)
 #
+# Build a terse one-line context indicator string. Color escalates by
+# threshold: dim below warn, yellow at warn, magenta at high, red at
+# crit. `thresholds` is a list(warn=, high=, crit=, compact=). Returns
+# a plain string (no trailing newline); caller prints it.
+#
+# @noRd
+.repl_context_indicator <- function(used, limit, palette, thresholds) {
+    limit <- as.numeric(limit %||% 0)
+    if (!is.null(limit) && limit > 0) {
+        pct <- 100 * used / limit
+    } else {
+        pct <- 0
+    }
+    warn <- thresholds$warn %||% 75
+    high <- thresholds$high %||% 90
+    crit <- thresholds$crit %||% 95
+    compact <- thresholds$compact %||% 90
+    col <- if (pct >= crit) {
+        palette$red %||% ""
+    } else if (pct >= high) {
+        palette$magenta %||% ""
+    } else if (pct >= warn) {
+        palette$yellow %||% ""
+    } else {
+        palette$dim %||% ""
+    }
+    if (limit > 0) {
+        limit_k <- sprintf("%.0fK", limit / 1000)
+    } else {
+        limit_k <- "?"
+    }
+    sprintf("%scontext %.0f%% of %s (compact at %.0f%%)%s", col, pct,
+            limit_k, compact, palette$reset %||% "")
+}
+
 # @noRd
 run_repl_loop <- function(ctx) {
     while (TRUE) {
@@ -784,6 +819,60 @@ run_repl_loop <- function(ctx) {
                            max_turns_hit = isTRUE(grepl("Max turns", reply)),
                            depth = 0L
         )
+
+        # Post-turn context accounting (both chat() and the CLI go
+        # through here). Mirror the /context handler's math against the
+        # *live* history (ctx$session$history), not session$messages,
+        # then print a terse one-line indicator and auto-compact when we
+        # cross the compaction threshold.
+        sys_tok <- estimate_text_tokens(ctx$session$system %||% "")
+        tools_tok <- estimate_tool_tokens(
+            tryCatch(skills_as_api_tools(ctx$session$tools_filter),
+                     error = function(e) list())
+        )
+        hist_tok <- estimate_history_tokens(ctx$session$history %||% list())
+        used <- as.integer(sys_tok + tools_tok + hist_tok)
+        model <- ctx$model %||% ctx$session$model_map$cloud
+        limit <- context_limit_for_model(model)
+        if (!is.null(limit) && limit > 0L) {
+            pct <- 100 * used / limit
+        } else {
+            pct <- 0
+        }
+        compact_pct <- ctx$config$context_compact_pct %||% 90
+        cat(.repl_context_indicator(
+                                    used, limit, ctx$palette,
+                                    list(warn = ctx$config$context_warn_pct %||% 75,
+                    high = ctx$config$context_high_pct %||% 90,
+                    crit = ctx$config$context_crit_pct %||% 95,
+                    compact = compact_pct)
+            ), "\n")
+
+        if (pct >= compact_pct && length(ctx$session$history) > 2) {
+            # Optional pre-compaction memory flush so durable facts get
+            # written before the turns that mention them are summarized
+            # away. Tolerate NULL/errors -- a flush failure must not
+            # block compaction.
+            if (isTRUE(ctx$config$memory_flush_enabled)) {
+                cat(sprintf("%sFlushing memories before compaction...%s\n",
+                            ctx$palette$dim, ctx$palette$reset))
+                tryCatch(run_memory_flush(ctx), error = function(e) NULL)
+            }
+            comp <- tryCatch(
+                             do_compact(list(messages = ctx$session$history),
+                                        ctx$session$provider,
+                                        ctx$session$model_map$cloud),
+                             error = function(e) NULL
+            )
+            if (!is.null(comp) && nzchar(comp$summary)) {
+                ctx$session$history <- list(
+                    list(role = "assistant", content = comp$summary)
+                )
+                transcript_compact(ctx$disk_session$session, comp$summary)
+                cat(sprintf("%sAuto-compacted (context was %.0f%%).%s\n",
+                            ctx$palette$dim, pct, ctx$palette$reset))
+            }
+        }
     }
 
     invisible(NULL)

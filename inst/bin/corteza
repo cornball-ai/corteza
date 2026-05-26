@@ -766,6 +766,7 @@ run_agent <- function(opts) {
                      local = corteza::default_local_model()),
     system = system_prompt,
     history = api_history,
+    tools_filter = opts$tools,
     approval_cb = cli_approval_cb(cwd),
     max_turns = 50L,
     plan_mode = isTRUE(opts$plan_mode)
@@ -843,8 +844,9 @@ run_agent <- function(opts) {
   # /clear reassigns it).
   corteza:::session_save(ctx$disk_session$session)
 
-  # Cleanup
-  cat(sprintf("\n%sGoodbye.%s\n", color$dim, color$reset))
+  # run_repl_loop already prints the farewell on exit (shared with
+  # chat()); no second goodbye here. worker is unused (NULL) but close
+  # is NULL-safe.
   suppressWarnings(cli_worker_close(worker))
 }
 
