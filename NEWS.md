@@ -1,3 +1,16 @@
+# corteza 0.6.7.5
+
+## /spent: approximate session cost
+
+`/spent` (alias `/cost`) reports the approximate USD spent on the
+current run's main-agent turns, in both `chat()` and the CLI. Each
+turn accumulates the `cost` scalar that llm.api 0.1.4 returns, plus
+token counts, onto the session. When a model is absent from llm.api's
+price snapshot its cost is unknown, so the total is shown as a floor
+rather than a precise figure. Scope is the current process run's main
+conversation; subagent spend and resumed prior-run spend are not
+included.
+
 # corteza 0.6.7.4
 
 ## CLI and chat() share one in-process REPL loop
