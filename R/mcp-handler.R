@@ -19,6 +19,17 @@ mcp_visible_tools <- function() {
     tools
 }
 
+#' TRUE when `name` is in the set the MCP server currently advertises.
+#'
+#' tools/call must reject anything not advertised by tools/list, so a
+#' tool hidden by the `corteza.tools` filter (or the subagent gate)
+#' cannot be invoked by name behind the listing's back.
+#' @noRd
+mcp_tool_advertised <- function(name) {
+    any(vapply(mcp_visible_tools(), function(t) identical(t$name, name),
+               logical(1)))
+}
+
 #' Gate an MCP tools/call against subagent policy.
 #'
 #' Returns NULL when the call may proceed, or an `err()` result to send
@@ -91,10 +102,17 @@ handle_request <- function(req) {
 
                "tools/call" = {
             blocked <- mcp_subagent_guard(params$name)
-            if (is.null(blocked)) {
-                call_tool(params$name, params$arguments)
-            } else {
+            if (!is.null(blocked)) {
+                # Subagent policy spoke (not exposed, or over cap):
+                # return its specific message.
                 blocked
+            } else if (!mcp_tool_advertised(params$name)) {
+                # Not in the advertised set (filtered out by
+                # corteza.tools, or otherwise hidden): refuse rather
+                # than dispatch a tool the listing never offered.
+                err(sprintf("Tool not available: %s", params$name))
+            } else {
+                call_tool(params$name, params$arguments)
             }
         },
 

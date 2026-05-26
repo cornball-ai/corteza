@@ -155,6 +155,31 @@ tok_blk <- corteza:::mcp_subagent_guard("spawn_subagent")
 expect_false(is.null(tok_blk))
 expect_true(grepl("token cap reached", tok_blk$content[[1]]$text, fixed = TRUE))
 
+# tools/call must honor the tools/list filter: a tool hidden by
+# corteza.tools cannot be invoked by name behind the listing's back,
+# even when subagent exposure is on. With tools="core", neither
+# list_subagents (a subagent tool) nor web_search (web category) is
+# advertised, so both calls are refused rather than dispatched.
+o_tools <- getOption("corteza.tools")
+reset_retired()
+options(corteza.tools = "core", corteza.mcp_expose_subagents = TRUE,
+        corteza.mcp_subagent_cap_usd = 5.00,
+        corteza.mcp_subagent_cap_tokens = NA_integer_)
+expect_false("list_subagents" %in% tool_names())
+resp_hidden <- corteza:::handle_request(list(
+    jsonrpc = "2.0", id = 10, method = "tools/call",
+    params = list(name = "list_subagents", arguments = list())))
+expect_true(isTRUE(resp_hidden$result$isError))
+expect_true(grepl("not available", resp_hidden$result$content[[1]]$text,
+                  fixed = TRUE))
+resp_web <- corteza:::handle_request(list(
+    jsonrpc = "2.0", id = 11, method = "tools/call",
+    params = list(name = "web_search", arguments = list(query = "x"))))
+expect_true(isTRUE(resp_web$result$isError))
+expect_true(grepl("not available", resp_web$result$content[[1]]$text,
+                  fixed = TRUE))
+options(corteza.tools = o_tools)
+
 # Restore options and shared state.
 reset_retired()
 options(corteza.mcp_expose_subagents = o_expose,
