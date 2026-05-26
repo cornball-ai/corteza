@@ -26,6 +26,18 @@
     }
 }
 
+#' TRUE when a usage list reports any nonzero token count.
+#'
+#' Gates the `cost_missing` floor flag: only a query that actually
+#' consumed tokens but came back without a price makes the total a
+#' floor. A zero-token turn (a no-op, an errored turn) with no cost
+#' should not flip the flag.
+#' @noRd
+.spend_usage_has_tokens <- function(usage) {
+    v <- c(usage$input_tokens, usage$output_tokens, usage$total_tokens)
+    any(!is.na(v) & v > 0)
+}
+
 #' An empty per-conversation main-agent segment tally.
 #' @param id Optional session id stamped on the segment for display.
 #' @noRd
@@ -38,10 +50,11 @@
 #'
 #' Works on either a session environment (chat(), mutated in place) or a
 #' session list (CLI, returned for reassignment). The tally is a list of
-#' conversation segments; this adds to the last (open) one, creating the
-#' first segment lazily. Costs are summed only when present; a missing
-#' or NA cost (a model absent from llm.api's price snapshot) flips
-#' `cost_missing` so the reported total reads as a floor.
+#' conversation segments; this adds to the last (open) one, opening a
+#' fresh segment first when one is pending (after a /clear) or none
+#' exists. Costs are summed only when present; a missing or NA cost on a
+#' query that consumed tokens (a model absent from llm.api's price
+#' snapshot) flips `cost_missing` so the reported total reads as a floor.
 #'
 #' @param session Session environment or list.
 #' @param usage Usage list from a turn: `input_tokens`, `output_tokens`,
@@ -52,9 +65,14 @@ session_accumulate_spend <- function(session, usage) {
     if (is.null(usage)) {
         return(invisible(session))
     }
-    sp <- session$spend
-    if (is.null(sp) || length(sp$segments) == 0L) {
-        sp <- list(segments = list(.spend_empty_segment(id = session$sessionId)))
+    sp <- session$spend %||% list(segments = list())
+    # Open a new segment lazily: on the first turn, or on the first turn
+    # after a /clear marked one pending. Deferring to here means a /clear
+    # with no following turn leaves no empty conversation in the report.
+    if (isTRUE(sp$pending_new) || length(sp$segments) == 0L) {
+        sp$segments <- c(sp$segments,
+                         list(.spend_empty_segment(id = session$sessionId)))
+        sp$pending_new <- FALSE
     }
     i <- length(sp$segments)
     seg <- sp$segments[[i]]
@@ -62,7 +80,9 @@ session_accumulate_spend <- function(session, usage) {
     seg$output_tokens <- .spend_add_int(seg$output_tokens, usage$output_tokens)
     seg$total_tokens <- .spend_add_int(seg$total_tokens, usage$total_tokens)
     if (is.null(usage$cost) || is.na(usage$cost)) {
-        seg$cost_missing <- TRUE
+        if (.spend_usage_has_tokens(usage)) {
+            seg$cost_missing <- TRUE
+        }
     } else {
         seg$cost <- seg$cost + as.numeric(usage$cost)
     }
@@ -78,16 +98,17 @@ session_accumulate_spend <- function(session, usage) {
 #' Close the current conversation segment and open a fresh one.
 #'
 #' Called on /clear. Process-lifetime: prior segments are kept (they
-#' remain visible as /spent line items), so this only appends a new
-#' empty segment stamped with the post-clear session id.
+#' remain visible as /spent line items). The new segment is not created
+#' here -- it is marked pending and opened by the next turn that spends,
+#' so a /clear with no following turn (or repeated /clear) adds no empty
+#' conversation to the report.
 #'
 #' @param session Session environment or list.
 #' @return The session, invisibly.
 #' @noRd
 spend_open_segment <- function(session) {
     sp <- session$spend %||% list(segments = list())
-    sp$segments <- c(sp$segments,
-                     list(.spend_empty_segment(id = session$sessionId)))
+    sp$pending_new <- TRUE
     session$spend <- sp
     invisible(session)
 }
@@ -112,6 +133,10 @@ format_spend <- function(session, palette = NULL) {
     if (length(segs) == 0L) {
         segs <- list(.spend_empty_segment())
     }
+    # With a pending new segment (after a /clear, before the next turn)
+    # the last existing segment is closed, not the live conversation, so
+    # nothing is marked current.
+    pending <- isTRUE(sp$pending_new)
     sub <- subagent_spend_total()
     has_sub <- (sub$n_agents %||% 0L) > 0L || (sub$total_tokens %||% 0L) > 0L
     tk <- function(n) format_tokens(as.integer(n %||% 0L))
@@ -155,7 +180,7 @@ format_spend <- function(session, palette = NULL) {
         } else {
             id_short <- "?"
         }
-        current <- if (k == length(segs)) {
+        current <- if (k == length(segs) && !pending) {
             paste0(c_dim, "  (current)", c_rst)
         } else {
             ""

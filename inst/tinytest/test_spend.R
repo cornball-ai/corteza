@@ -64,14 +64,38 @@ corteza:::session_accumulate_spend(
              total_tokens = 100L, cost = 0.05))
 e4$sessionId <- "bbbb2222"
 corteza:::spend_open_segment(e4)
-expect_equal(length(e4$spend$segments), 2L)
+# Deferred: the new segment is only marked pending, not created yet, so
+# a /clear with no following turn adds no empty conversation.
+expect_equal(length(e4$spend$segments), 1L)
+expect_true(isTRUE(e4$spend$pending_new))
 corteza:::session_accumulate_spend(
     e4, list(input_tokens = 50L, output_tokens = 0L,
              total_tokens = 50L, cost = 0.03))
+expect_equal(length(e4$spend$segments), 2L)       # opened by the turn
+expect_false(isTRUE(e4$spend$pending_new))
 expect_equal(e4$spend$segments[[1]]$cost, 0.05)   # segment 1 untouched
 expect_equal(e4$spend$segments[[2]]$cost, 0.03)
 expect_equal(e4$spend$segments[[1]]$id, "aaaa1111")
 expect_equal(e4$spend$segments[[2]]$id, "bbbb2222")
+
+# Repeated /clear with no turns in between does not stack empty
+# segments: still just the one real conversation, with a pending flag.
+e6 <- new.env()
+e6$sessionId <- "c1"
+corteza:::session_accumulate_spend(
+    e6, list(input_tokens = 10L, output_tokens = 0L,
+             total_tokens = 10L, cost = 0.01))
+corteza:::spend_open_segment(e6)
+corteza:::spend_open_segment(e6)
+expect_equal(length(e6$spend$segments), 1L)
+expect_true(isTRUE(e6$spend$pending_new))
+# A pending session marks no segment as current.
+expect_false(grepl("current", corteza:::format_spend(e6), fixed = TRUE))
+# The next turn opens exactly one fresh segment.
+corteza:::session_accumulate_spend(
+    e6, list(input_tokens = 10L, output_tokens = 0L,
+             total_tokens = 10L, cost = 0.01))
+expect_equal(length(e6$spend$segments), 2L)
 
 # --- format_spend rendering --------------------------------------------
 
@@ -85,7 +109,16 @@ expect_true(grepl("Session spend", out, fixed = TRUE))
 expect_true(grepl("$0.03", out, fixed = TRUE))
 expect_true(grepl("1 turn", out, fixed = TRUE))
 
-# floor note appears once a cost goes missing
+# A zero-token query with no cost does NOT flip the floor flag: there
+# was no spend whose price is unknown.
+e3b <- new.env()
+corteza:::session_accumulate_spend(
+    e3b, list(input_tokens = 0L, output_tokens = 0L,
+              total_tokens = 0L, cost = NA_real_))
+expect_false(e3b$spend$segments[[1]]$cost_missing)
+expect_false(grepl("floor", corteza:::format_spend(e3b), fixed = TRUE))
+
+# floor note appears once a cost goes missing on a token-consuming turn
 corteza:::session_accumulate_spend(
     e3, list(input_tokens = 1L, output_tokens = 1L,
              total_tokens = 2L, cost = NA_real_))
@@ -148,7 +181,8 @@ expect_true(grepl("$0.1000", out5, fixed = TRUE))
 
 reset_sub_spend()
 
-# subagent_accumulate_usage flips cost_missing on a no-cost query
+# subagent_accumulate_usage flips cost_missing on a no-cost query that
+# consumed tokens
 info <- list(cumulative_input_tokens = 0L, cumulative_output_tokens = 0L,
              cumulative_total_tokens = 0L, cumulative_cost = NA_real_,
              cost_missing = FALSE, query_count = 0L)
@@ -156,3 +190,12 @@ info <- corteza:::subagent_accumulate_usage(
     info, list(input_tokens = 10L, output_tokens = 5L, total_tokens = 15L))
 expect_true(info$cost_missing)
 expect_equal(info$cumulative_total_tokens, 15L)
+
+# ...but a zero-token no-cost query leaves the flag alone
+info2 <- list(cumulative_input_tokens = 0L, cumulative_output_tokens = 0L,
+              cumulative_total_tokens = 0L, cumulative_cost = NA_real_,
+              cost_missing = FALSE, query_count = 0L)
+info2 <- corteza:::subagent_accumulate_usage(
+    info2, list(input_tokens = 0L, output_tokens = 0L, total_tokens = 0L))
+expect_false(info2$cost_missing)
+expect_equal(info2$query_count, 1L)        # still counted as a query

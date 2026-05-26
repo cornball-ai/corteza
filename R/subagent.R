@@ -872,9 +872,10 @@ subagent_accumulate_usage <- function(info, usage) {
         } else {
             prev + as.numeric(usage$cost)
         }
-    } else {
-        # A query with tokens but no cost (cost-blind provider) makes
-        # the running cost a floor, not a precise figure.
+    } else if (.spend_usage_has_tokens(usage)) {
+        # A query that consumed tokens but came back without a price
+        # (cost-blind provider) makes the running cost a floor, not a
+        # precise figure. A zero-token query leaves the flag alone.
         info$cost_missing <- TRUE
     }
     info$query_count <- (info$query_count %||% 0L) + 1L
