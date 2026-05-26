@@ -1,3 +1,13 @@
+# corteza 0.6.7.7
+
+## Provider default models come from llm.api
+
+`default_provider_model()` now delegates to
+`llm.api::provider_default_model()` instead of corteza's own
+provider-to-model table, which had drifted. corteza tracks llm.api's
+picks going forward (e.g. `openai` and `moonshot` defaults shift to
+llm.api's current choices). No change when you set a model explicitly.
+
 # corteza 0.6.7.6
 
 ## MCP subagent exposure is opt-in, with a spend cap
