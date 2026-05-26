@@ -1249,3 +1249,4 @@ call_tool <- function(name, args, ctx = list(), timeout = 30L,
     # Fallback: unknown tool
     err(paste("Unknown tool:", name))
 }
+
