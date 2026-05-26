@@ -205,98 +205,6 @@ Tool output:
 }
 
 # ============================================================================
-# CLI worker transport
-#
-# The CLI drives a private R subprocess for tool execution via
-# callr::r_session. Tool dispatch goes directly through
-# corteza:::worker_dispatch() in the session; no JSON-RPC, no MCP.
-#
-# serve() remains a spec-compliant MCP server for external clients
-# (Claude Desktop, VS Code); nothing in that path changes.
-#
-# The `port` argument on cli_worker_start / cli_worker_connect is
-# vestigial from the MCP era and kept only so the CLI's outer control
-# flow doesn't need rewriting in this phase. It's ignored.
-# ============================================================================
-
-cli_worker_start <- function(port, tools = NULL) {
-  # callr::r_session starts on-demand inside cli_worker_connect; there
-  # is no separate long-lived server to probe or spawn here. Kept so
-  # the CLI control flow reads the same as before the transport swap.
-  TRUE
-}
-
-cli_worker_connect <- function(port, cwd = getwd(), tools_filter = NULL) {
-    corteza::cli_worker_spawn(cwd = cwd)
-}
-
-# Normalize an error crossing the callr boundary into the MCP-shaped
-# result the rest of the CLI expects. callr wraps caller conditions as
-# callr::callr_error with the original condition attached at $parent.
-.cli_worker_error_result <- function(e) {
-    cause <- e$parent %||% e
-    if (inherits(cause, "corteza_tool_error")) {
-        list(
-            isError = TRUE,
-            content = list(list(type = "text",
-                                text = sprintf("Error in %s: %s",
-                                               cause$tool,
-                                               conditionMessage(cause))))
-        )
-    } else {
-        list(
-            isError = TRUE,
-            content = list(list(type = "text",
-                                text = paste("Error:", conditionMessage(cause))))
-        )
-    }
-}
-
-cli_worker_call <- function(worker, name, args) {
-    result <- tryCatch(
-        worker$session$run(
-            function(name, args) corteza::worker_dispatch(name, args),
-            list(name = name, args = args)
-        ),
-        error = .cli_worker_error_result
-    )
-    # Drain any structured events the worker emitted to stderr while
-    # the tool ran. When --trace is on they are pretty-printed;
-    # otherwise we read and discard so the stderr buffer doesn't
-    # accumulate.
-    corteza::cli_worker_drain_events(
-        worker$session,
-        trace = isTRUE(getOption("corteza.trace", FALSE))
-    )
-    # Match the $text convenience mcp_call used to provide.
-    if (!is.null(result$content) && is.null(result$text)) {
-        texts <- vapply(result$content, function(c) {
-            if (identical(c$type, "text")) c$text else ""
-        }, character(1))
-        result$text <- paste(texts, collapse = "\n")
-    }
-    result
-}
-
-# (Event drain and pretty-print moved to corteza::cli_worker_drain_events
-# so printify is imported from R/ code, not only from this shell script.)
-
-cli_worker_tools_for_api <- function(worker, filter = NULL) {
-    # Schemas are built in the CLI process from its own tool registry —
-    # the callr worker doesn't participate in schema generation. The
-    # worker arg is accepted for call-site compatibility and ignored.
-    corteza::ensure_skills()
-    corteza::schema_from_registry(filter)
-}
-
-cli_worker_close <- function(worker) {
-    if (!is.null(worker$session)) {
-        try(worker$session$close(), silent = TRUE)
-    }
-    invisible(NULL)
-}
-
-# ============================================================================
 # Display helpers
 # ============================================================================
 
@@ -593,13 +501,9 @@ run_agent <- function(opts) {
   # resolved (below) so it can show them. The session id is the only
   # piece available here.
 
-  # Tools now run IN-PROCESS via corteza::turn(); there is no worker
-  # subprocess to spawn or connect for tool execution (Milestone 2 of
-  # the CLI/chat unification). The cli_worker_* helpers above and the
-  # worker_* package exports remain in place, unused, pending removal
-  # in Milestone 3. `worker <- NULL` keeps the cleanup call at the end
-  # of run_agent (cli_worker_close) a guarded no-op.
-  worker <- NULL
+  # Tools run IN-PROCESS via corteza::turn(); there is no worker
+  # subprocess to spawn or connect for tool execution (CLI/chat
+  # unification, Milestone 2).
 
   # Register built-in skills, user-installed skills from the data
   # dir + project's .corteza/skills, and any skill packages declared
@@ -793,9 +697,8 @@ run_agent <- function(opts) {
   corteza:::add_observer(turn_session, corteza:::chat_trace_observer(turn_session))
 
   # --trace: render structured tool-call events to stderr as they fire.
-  # Replaces the old worker stderr drain (cli_worker_drain_events); now
-  # that tools run in-process there is no worker stderr to read, so the
-  # same .cli_render_event pretty-printer runs straight off the event.
+  # Tools run in-process, so .cli_render_event pretty-prints each event
+  # straight off the observer.
   if (isTRUE(opts$trace)) {
     options(corteza.trace = TRUE)
     tty_ok <- isTRUE(tryCatch(isatty(stderr()), error = function(e) FALSE)) ||
@@ -845,9 +748,7 @@ run_agent <- function(opts) {
   corteza:::session_save(ctx$disk_session$session)
 
   # run_repl_loop already prints the farewell on exit (shared with
-  # chat()); no second goodbye here. worker is unused (NULL) but close
-  # is NULL-safe.
-  suppressWarnings(cli_worker_close(worker))
+  # chat()); no second goodbye here.
 }
 
 
