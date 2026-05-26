@@ -418,6 +418,34 @@ run_repl_loop <- function(ctx) {
                 }
                 next
             }
+            if (cmd == "/flush") {
+                # Manual memory flush: ask the LLM to write durable
+                # memories from the live conversation. Shares one
+                # in-process implementation (run_memory_flush) across
+                # chat() and the CLI; tools execute in-process so any
+                # subagent the flush spawns lands in the one shared
+                # registry.
+                live_messages <- ctx$session$history %||% list()
+                if (length(live_messages) < 2L) {
+                    cat(sprintf("%sNothing to flush (no conversation yet).%s\n",
+                                ctx$palette$dim, ctx$palette$reset))
+                    next
+                }
+                cat(sprintf("%sFlushing memories...%s\n",
+                            ctx$palette$cyan, ctx$palette$reset))
+                flush_result <- run_memory_flush(ctx)
+                if (!is.null(flush_result)) {
+                    content <- flush_result$content %||% ""
+                    if (!startsWith(trimws(content), "NO_REPLY")) {
+                        cat(sprintf("%sMemories flushed.%s\n",
+                                    ctx$palette$green, ctx$palette$reset))
+                    } else {
+                        cat(sprintf("%sNothing to flush.%s\n",
+                                    ctx$palette$dim, ctx$palette$reset))
+                    }
+                }
+                next
+            }
             if (cmd == "/doctor") {
                 tools <- skills_as_api_tools(ctx$session$tools_filter)
                 disp_model <- ctx$model %||% ctx$session$model_map$cloud %||%
@@ -562,10 +590,12 @@ run_repl_loop <- function(ctx) {
                 }
                 next
             }
-            # /remember /recall /flush are dead in the CLI too: their
+            # /remember /recall are dead in the CLI too: their
             # implementations rely on memory_store / memory_search /
             # strip_tags / parse_tags helpers that don't exist in the
             # package. Skipping the chat() port to match reality.
+            # (/flush is live above -- it's a plain agent turn pointed
+            # at config$memory_flush_prompt, no special memory helpers.)
             if (cmd %in% c("/skill", "/skills")) {
                 if (length(parts) >= 2L) {
                     subcmd <- parts[2]

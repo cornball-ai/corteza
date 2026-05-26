@@ -149,6 +149,61 @@ cli_read_line <- function(prompt_str = "> ") {
   corteza:::read_prompt_input(prompt_str, use_readline = FALSE)
 }
 
+# CLI /help text. Injected into run_repl_loop via ctx$help_text so the
+# terminal surface can keep its own phrasing (the command set itself is
+# shared with chat()).
+cli_help_text <- function() {
+  "
+Commands:
+  /quit, /exit   Exit corteza
+  /status        Alias for /context
+  /doctor        Check provider, git, MCP, and context health
+  /tools         List available tools
+  /diff [ref]    Show git diff against HEAD or a ref
+  /review [ref]  Review local changes with the current model
+  /config        Show active runtime configuration
+  /permissions   Show tool approval and sandbox settings
+  /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
+  /clear         Clear conversation (keeps session)
+  /compact       Summarize conversation to free context
+  /flush         Write durable memories from the conversation
+  /paste [text]  Multi-line. Collects every line verbatim until /end.
+  /copy          Copy the last assistant response to the system clipboard.
+  /tasks [clear] Show (or clear) the current task list.
+  /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
+  ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
+  /sessions      List sessions for this directory
+  /context       Show live context usage and loaded context files
+  /model <name>  Switch model
+  /provider <p>  Switch provider (anthropic, openai, moonshot, ollama)
+  /dryrun        Toggle dry-run mode (preview tools without executing)
+  /trace [N]     Show last N tool executions (default: 20)
+
+Subagents:
+  /spawn <task>                          Spawn a subagent for task
+  /spawn <task> --model <name>           Spawn with specific model
+  /spawn <task> --preset <name>          investigate (default), work, minimal
+  /spawn <task> --tools <a,b,c>          Explicit tool filter (overrides preset)
+  /agents                                List active subagents
+  /ask <id> <prompt>                     Query a subagent (blocks for reply)
+  /queue <id> <prompt>                   Fire a query and return; collect later
+  /collect <id>                          Collect a pending reply
+  /kill <id>                             Terminate a subagent
+
+Skills:
+  /skill list                 List installed skills
+  /skill install <path|url>   Install a skill
+  /skill remove <name>        Remove a skill
+  /skill test <path>          Run skill tests
+
+Tool output:
+  /last [N]      Show tool output (1=most recent)
+  /outputs       List recent tool outputs
+  /help          Show this help
+
+"
+}
+
 # ============================================================================
 # CLI worker transport
 #
@@ -385,46 +440,10 @@ is_approved <- function(cwd, tool_name) {
   isTRUE(approvals[[tool_name]])
 }
 
-# Build a one-shot turn-session for a memory flush and run
-# corteza::turn() on it. The flush is just another agent turn — same
-# model, same tools, same approval gate — pointed at the flush prompt
-# and the session's full message history. Routing through turn() (not
-# raw agent()) keeps the policy + approval_cb path consistent so a
-# flush that decides to call write_file still respects
-# config$permissions.
-.run_memory_flush <- function(flush_prompt, flush_history, system_prompt,
-                              provider, model, config, cwd, tools,
-                              cli_executor, dry_run = FALSE) {
-  flush_session <- corteza::new_session(
-    channel = "cli",
-    provider = provider,
-    model_map = list(cloud = corteza:::resolve_provider_model(provider, model),
-                     local = corteza::default_local_model()),
-    system = system_prompt,
-    history = flush_history,
-    approval_cb = cli_approval_cb(cwd),
-    max_turns = 20L
-  )
-  flush_session$config <- config
-  flush_session$dry_run <- isTRUE(dry_run)
-  tryCatch({
-    r <- corteza::turn(
-      prompt = flush_prompt,
-      session = flush_session,
-      tool_executor = cli_executor,
-      tools = tools
-    )
-    list(content = r$reply, history = flush_session$history)
-  }, corteza_user_deny = function(c) {
-    cat(sprintf("%sMemory flush denied -- skipping.%s\n",
-                color$yellow, color$reset))
-    NULL
-  }, error = function(e) {
-    cat(sprintf("%sFlush failed: %s%s\n",
-                color$bright_magenta, e$message, color$reset))
-    NULL
-  })
-}
+# The CLI's memory-flush helper moved into package R code as
+# corteza:::run_memory_flush(ctx) (R/chat-slash.R) so chat() and the
+# CLI share one /flush implementation through run_repl_loop(). The
+# in-process turn() path means it no longer needs a cli_executor.
 
 # Build the approval callback the CLI hands to corteza::new_session().
 # Replaces the historical split-brain setup where corteza::turn() had
@@ -572,33 +591,15 @@ run_agent <- function(opts) {
 
   # Banner is deferred until after provider / model / tool count are
   # resolved (below) so it can show them. The session id is the only
-  # piece available here; everything else comes after the worker
-  # handshake.
+  # piece available here.
 
-  # Propagate --trace to the option cli_worker_call reads.
-  if (isTRUE(opts$trace)) options(corteza.trace = TRUE)
-
-  # Start the CLI worker (callr::r_session) and initialize corteza
-  # inside it. No newline -- the "Connected." message below appends
-  # to this line so the user sees one combined startup line instead
-  # of two stacked ones.
-  cat(sprintf("%sStarting worker... %s", color$dim, color$reset))
-
-  if (!cli_worker_start(opts$port, opts$tools)) {
-    cat(sprintf("%sError: Could not start worker%s\n", color$bright_magenta, color$reset))
-    cat("Make sure corteza package is installed.\n")
-    return(invisible(NULL))
-  }
-
-  worker <- tryCatch(
-    cli_worker_connect(opts$port, cwd = cwd, tools_filter = opts$tools),
-    error = function(e) {
-      cat(sprintf("%sError connecting to worker: %s%s\n", color$bright_magenta, e$message, color$reset))
-      NULL
-    }
-  )
-
-  if (is.null(worker)) return(invisible(NULL))
+  # Tools now run IN-PROCESS via corteza::turn(); there is no worker
+  # subprocess to spawn or connect for tool execution (Milestone 2 of
+  # the CLI/chat unification). The cli_worker_* helpers above and the
+  # worker_* package exports remain in place, unused, pending removal
+  # in Milestone 3. `worker <- NULL` keeps the cleanup call at the end
+  # of run_agent (cli_worker_close) a guarded no-op.
+  worker <- NULL
 
   # Register built-in skills, user-installed skills from the data
   # dir + project's .corteza/skills, and any skill packages declared
@@ -609,9 +610,9 @@ run_agent <- function(opts) {
   corteza:::load_skills(corteza:::corteza_data_path("skills"))
   corteza:::load_skills(file.path(cwd, ".corteza", "skills"))
   corteza:::load_skill_packages(config)
-  tools <- cli_worker_tools_for_api(worker, filter = opts$tools)
+  tools <- corteza::schema_from_registry(opts$tools)
 
-  cat(sprintf("%sConnected. %d tools available.%s\n\n",
+  cat(sprintf("%s%d tools available.%s\n\n",
               color$dim, length(tools), color$reset))
 
   # Load skill docs (SKILL.md files)
@@ -637,120 +638,71 @@ run_agent <- function(opts) {
 
   # `tools` already built above, right after the worker connected.
 
-  # Track turn number for trace
-  turn_number <- 0L
+  # CLI tool-progress observer. Tools now run IN-PROCESS via
+  # corteza::turn()'s default call_skill dispatcher (no tool_executor,
+  # no worker round-trip), so the rich per-call UI the old tool_handler
+  # drew has to live in an observer fired by .make_tool_handler. This
+  # reproduces the previous terminal output: a colored `●` header with
+  # label + preview, indented detail lines, "Running...", then either a
+  # rendered diff or a `⎿ N lines in Xms` summary. The tool_buffer and
+  # trace recording are handled by the separate observers registered
+  # below (tool_buffer_observer + chat_trace_observer), matching chat().
+  cli_progress_observer <- function(event) {
+    outcome <- event$outcome %||% ""
+    name <- event$call$tool %||% ""
+    args <- event$call$args %||% list()
 
-  # Tool handler — runs after policy() + approval_cb have already
-  # cleared the call. UI, dispatch, and trace only.
-  tool_handler <- function(name, args) {
-    # Check dry-run mode first
-    if (isTRUE(opts$dry_run)) {
-      cat(sprintf("%s[DRY RUN] %s%s\n", color$yellow, name, color$reset))
-      # Call skill directly with dry_run=TRUE (bypass MCP server)
-      skill <- corteza:::get_skill(name)
-      if (!is.null(skill)) {
-        preview <- corteza:::format_dry_run_preview(skill, args)
-        cat(sprintf("%s%s%s\n", color$dim, preview, color$reset))
-        return(preview)
+    if (identical(outcome, "start")) {
+      preview <- corteza:::cli_tool_preview(name, args)
+      cat(sprintf("\n%s●%s %s", color$cyan, color$reset,
+                  corteza:::cli_tool_label(name)))
+      if (nzchar(preview)) {
+        cat(sprintf("(%s)", preview))
       }
-      return(sprintf("[DRY RUN] Would call: %s", name))
-    }
-
-    # Approval is now handled upstream in policy() + the cli_approval_cb
-    # passed to corteza::new_session(). By the time tool_handler runs,
-    # the call has already been approved (or denied/declined, in which
-    # case .make_tool_handler returned the rejection text and we never
-    # got here). No outer gate needed.
-
-    preview <- corteza:::cli_tool_preview(name, args)
-    cat(sprintf("\n%s●%s %s", color$cyan, color$reset,
-                corteza:::cli_tool_label(name)))
-    if (nzchar(preview)) {
-      cat(sprintf("(%s)", preview))
-    }
-    cat("\n")
-    detail_lines <- corteza:::cli_tool_detail_lines(name, args, cwd = cwd, width = 84L)
-    if (length(detail_lines) > 0L) {
-      for (line in detail_lines) {
-        cat(sprintf("  %s%s%s\n", color$dim, line, color$reset))
-      }
-    }
-    cat(sprintf("  %sRunning...%s\n", color$dim, color$reset))
-
-    turn_number <<- turn_number + 1L
-    start_time <- Sys.time()
-    failed <- FALSE
-
-    result <- tryCatch({
-      cli_worker_call(worker, name, args)
-    }, error = function(e) {
-      # Try to reconnect on connection errors
-      if (grepl("closed connection|SIGPIPE", e$message)) {
-        cat(sprintf("%sreconnecting...%s ", color$dim, color$reset))
-        worker <<- tryCatch(
-          cli_worker_connect(opts$port),
-          error = function(e2) NULL
-        )
-        if (!is.null(worker)) {
-          # Retry the call
-          return(tryCatch(
-            cli_worker_call(worker, name, args),
-            error = function(e2) {
-              failed <<- TRUE
-              cat(sprintf("  %s⎿ failed: %s%s\n",
-                          color$bright_magenta, e2$message, color$reset))
-              list(text = paste("Error:", e2$message))
-            }
-          ))
+      cat("\n")
+      detail_lines <- corteza:::cli_tool_detail_lines(name, args,
+                                                      cwd = cwd, width = 84L)
+      if (length(detail_lines) > 0L) {
+        for (line in detail_lines) {
+          cat(sprintf("  %s%s%s\n", color$dim, line, color$reset))
         }
       }
-      failed <<- TRUE
-      cat(sprintf("  %s⎿ failed: %s%s\n",
-                  color$bright_magenta, e$message, color$reset))
-      list(text = paste("Error:", e$message))
-    })
-
-    text <- result$text %||% ""
-    elapsed_ms <- as.numeric(difftime(Sys.time(), start_time, units = "secs")) * 1000
-
-    if (!failed) {
-      # File-edit tools (replace_in_file, write_file) attach a diff
-      # payload alongside the LLM-facing text. Render it inline so the
-      # user sees what changed instead of just a "N lines" summary.
-      if (!is.null(result$diff)) {
-        corteza:::render_tool_diff(result$diff)
-      } else {
-        lines <- length(strsplit(text, "\n")[[1]])
-        cat(sprintf("  %s⎿%s %d line%s in %dms\n",
-                    color$dim, color$reset,
-                    lines,
-                    if (identical(lines, 1L)) "" else "s",
-                    round(elapsed_ms)))
-      }
-      # Store in buffer for /last command
-      corteza:::tool_buffer_add(session, name, args, text)
+      cat(sprintf("  %sRunning...%s\n", color$dim, color$reset))
+      return(invisible())
     }
 
-    # Record trace (CLI-side, in addition to MCP server side). The
-    # approved_by field used to carry "user" / "always" / "config" /
-    # "auto" from the outer gate; with the unified approval path it
-    # comes from policy()'s decision reason and observers, so we
-    # leave it NULL here.
-    tryCatch({
-      corteza:::trace_add(
-        session_id = session$sessionId,
-        tool = name,
-        args = args,
-        result = text,
-        success = !failed,
-        elapsed_ms = round(elapsed_ms),
-        turn = turn_number
-      )
-    }, error = function(e) {
-      # Trace recording is best-effort
-    })
+    if (identical(outcome, "deny") || identical(outcome, "declined")) {
+      cat(sprintf("  %s⎿ %s%s\n", color$bright_magenta,
+                  sub("^\\[", "", sub("\\]$", "", event$result %||% "")),
+                  color$reset))
+      return(invisible())
+    }
 
-    text
+    if (!identical(outcome, "ran")) {
+      return(invisible())
+    }
+
+    if (!isTRUE(event$success)) {
+      cat(sprintf("  %s⎿ failed: %s%s\n", color$bright_magenta,
+                  sub("^Error:\\s*", "", event$result %||% ""), color$reset))
+      return(invisible())
+    }
+
+    # File-edit tools (replace_in_file, write_file) attach a diff
+    # payload alongside the LLM-facing text. Render it inline so the
+    # user sees what changed instead of just a "N lines" summary.
+    if (!is.null(event$diff)) {
+      corteza:::render_tool_diff(event$diff)
+      return(invisible())
+    }
+    text <- event$result %||% ""
+    lines <- length(strsplit(text, "\n")[[1]])
+    cat(sprintf("  %s⎿%s %d line%s in %dms\n",
+                color$dim, color$reset,
+                lines,
+                if (identical(lines, 1L)) "" else "s",
+                round(event$elapsed_ms %||% 0)))
+    invisible()
   }
 
   # Conversation state - restore from session
@@ -780,920 +732,122 @@ run_agent <- function(opts) {
     }
   }
 
-  # CLI tool_handler returns plain strings; turn() expects MCP-format.
-  # Wrap once, before the REPL loop, so slash commands like /flush can
-  # reuse it. (The per-iteration redefinition inside the loop was left
-  # over from when each turn rebuilt its handler.)
-  cli_executor <- function(name, args) {
-    text <- tool_handler(name, args)
-    if (is.character(text) && length(text) == 1L) {
-      list(content = list(list(type = "text", text = text)))
+  # Build the shared REPL context and hand off to corteza:::run_repl_loop
+  # (R/repl.R) -- the same loop chat() drives. The CLI supplies
+  # terminal-flavored hooks (colored reply renderer, bash-backed input,
+  # CLI help text) but the command set, prompt handling, and tool
+  # execution are shared. Tools run IN-PROCESS via corteza::turn() with
+  # no tool_executor, so model-driven and slash-driven subagents share
+  # one .subagent_registry per CLI session.
+
+  # --dry-run sets config$dry_run so the /dryrun toggle in
+  # run_repl_loop (which flips ctx$session$config$dry_run) stays
+  # coherent. .make_tool_handler reads session$config$dry_run at call
+  # time, matching chat()'s model.
+  config$dry_run <- isTRUE(opts$dry_run)
+
+  # Seed the turn session's live history from the resumed disk session.
+  api_history <- lapply(session$messages %||% list(), function(m) {
+    text <- if (is.list(m$content) && length(m$content) > 0 &&
+                !is.null(m$content[[1]]$text)) {
+      m$content[[1]]$text
     } else {
-      # Tool handler already returned MCP format (mcp_call passthrough)
-      text
+      m$content
     }
+    list(role = m$role, content = text)
+  })
+
+  # One persistent turn session for the whole CLI run. Approval is
+  # unified through policy(call, config = ...) + cli_approval_cb(cwd).
+  turn_session <- corteza::new_session(
+    channel = "cli",
+    provider = provider,
+    model_map = list(cloud = corteza:::resolve_provider_model(provider, model),
+                     local = corteza::default_local_model()),
+    system = system_prompt,
+    history = api_history,
+    approval_cb = cli_approval_cb(cwd),
+    max_turns = 50L,
+    plan_mode = isTRUE(opts$plan_mode)
+  )
+  turn_session$config <- config
+  turn_session$cwd <- cwd
+  turn_session$sessionId <- session$sessionId
+  turn_session$disk_session <- session
+  turn_session$tasks <- session$tasks %||% list()
+  # task_create's approval prompt routes through cli_read_line so stdin
+  # reads work under the non-interactive Rscript launch.
+  turn_session$task_approval_cb <- function() {
+    ans <- cli_read_line("Approve this plan? [y/n] ")
+    tolower(trimws(ans)) %in% c("", "y", "yes")
   }
 
-  # REPL
-  last_assistant_response <- ""
-  # Output from `! <cmd>` lines is queued here and prepended to the
-  # next real user message, so the LLM sees what the user ran.
-  pending_local_context <- character(0)
-  while (TRUE) {
-    prompt <- cli_read_line(sprintf("%s> %s", color$green, color$reset))
+  # Observers: CLI tool-progress UI, the /last + /outputs buffer, and
+  # the trace recorder. chat_trace_observer records trace rows to disk
+  # (drives /trace) and is always on, matching chat().
+  corteza:::add_observer(turn_session, cli_progress_observer)
+  tool_buf_obs <- corteza:::tool_buffer_observer(session)
+  attr(tool_buf_obs, "kind") <- "tool_buffer"
+  corteza:::add_observer(turn_session, tool_buf_obs)
+  corteza:::add_observer(turn_session, corteza:::chat_trace_observer(turn_session))
 
-    # Handle EOF (Ctrl+D on Unix, Ctrl+Z+Enter on Windows)
-    if (length(prompt) == 0) {
-      cat("\n")
-      break
-    }
-
-    prompt <- trimws(prompt)
-    if (nchar(prompt) == 0) next
-
-    # Trailing-backslash continuation. A non-slash line ending in an
-    # unescaped `\` drops into paste mode seeded with the line so far.
-    # `\\` at end = literal trailing backslash (no continuation). Slash
-    # commands are exempt — they own their own arg parsing. `from_paste`
-    # blocks the slash dispatcher below from reinterpreting a paste
-    # that happens to start with `/` (paths, code snippets) as a
-    # corteza command.
-    from_paste <- FALSE
-    if (!startsWith(prompt, "/")) {
-      cont_seed <- corteza:::backslash_continuation_seed(prompt)
-      if (!is.null(cont_seed)) {
-        joined <- corteza:::read_paste_block(seed = cont_seed,
-                                             heredoc = TRUE)
-        if (is.null(joined)) next
-        prompt <- joined
-        from_paste <- TRUE
+  # --trace: render structured tool-call events to stderr as they fire.
+  # Replaces the old worker stderr drain (cli_worker_drain_events); now
+  # that tools run in-process there is no worker stderr to read, so the
+  # same .cli_render_event pretty-printer runs straight off the event.
+  if (isTRUE(opts$trace)) {
+    options(corteza.trace = TRUE)
+    tty_ok <- isTRUE(tryCatch(isatty(stderr()), error = function(e) FALSE)) ||
+      isTRUE(tryCatch(isatty(stdout()), error = function(e) FALSE))
+    trace_pretty <- tty_ok && !nzchar(Sys.getenv("NO_COLOR"))
+    corteza:::add_observer(turn_session, function(event) {
+      if ((event$outcome %||% "") %in% c("start", "ran", "deny", "declined")) {
+        corteza:::.cli_render_event(event, pretty = trace_pretty)
       }
-    }
-
-    # `! <cmd>` runs a shell command locally, prints output, and
-    # stages it for the next user message so the LLM sees what was
-    # run. The space after `!` keeps prompts that legitimately start
-    # with `!` from being captured.
-    if (!from_paste && startsWith(prompt, "! ")) {
-      cmd <- sub("^!\\s+", "", prompt)
-      shell_out <- corteza:::run_bang_shell(cmd, cwd = cwd)
-      if (nchar(shell_out$text) > 0L) {
-        cat(shell_out$text, "\n", sep = "")
-      }
-      pending_local_context <- c(
-        pending_local_context,
-        sprintf("[!] %s\n%s", cmd, shell_out$staged)
-      )
-      next
-    }
-
-    # Handle commands
-    if (!from_paste && startsWith(prompt, "/")) {
-      cmd_parts <- strsplit(prompt, "\\s+")[[1]]
-      cmd <- tolower(cmd_parts[1])
-      cmd_arg <- if (length(cmd_parts) > 1) cmd_parts[2] else NULL
-      cmd_rest <- trimws(sub("^/\\S+\\s*", "", prompt, perl = TRUE))
-
-      if (cmd %in% c("/quit", "/exit", "/q")) {
-        break
-      } else if (cmd == "/tools") {
-        cat(sprintf("\n%sAvailable tools:%s\n", color$bold, color$reset))
-        for (tool in tools) {
-          cat(sprintf("  %s%s%s - %s\n", color$cyan, tool$name, color$reset,
-                      tool$description %||% ""))
-        }
-        cat("\n")
-        next
-      } else if (cmd == "/clear") {
-        # Clear in-memory messages (transcript preserved on disk)
-        session$messages <- list()
-        session$tasks <- list()
-        session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
-        session$tokens <- session_tokens
-        corteza:::session_save(session)
-        last_assistant_response <- ""
-        cat(sprintf("%sConversation cleared (transcript preserved).%s\n", color$dim, color$reset))
-        next
-      } else if (cmd == "/copy") {
-        corteza:::chat_handle_copy(last_assistant_response)
-        next
-      } else if (cmd == "/r") {
-        code <- trimws(sub("^/r\\s+", "", prompt))
-        if (!nzchar(code)) {
-          cat("Usage: /r <expr>\n")
-          next
-        }
-        # RStudio's Ctrl+Enter on a multi-line statement (or a user
-        # typing one manually) arrives one readline at a time. Read
-        # continuation lines until the expression parses, capped to
-        # keep a runaway loop from blocking the REPL.
-        cont_cap <- 100L
-        while (!corteza:::.r_expr_complete(code) && cont_cap > 0L) {
-          more <- tryCatch(cli_read_line("+ "),
-                           error = function(e) character())
-          if (length(more) == 0L || is.na(more[1L])) {
-            break
-          }
-          code <- paste(code, more[1L], sep = "\n")
-          cont_cap <- cont_cap - 1L
-        }
-        r_out <- corteza:::run_r_eval(code)
-        if (nchar(r_out$text) > 0L) {
-          cat(r_out$text, "\n", sep = "")
-        }
-        pending_local_context <- c(
-          pending_local_context,
-          sprintf("[/r] %s\n%s", code, r_out$staged)
-        )
-        next
-      } else if (cmd == "/tasks") {
-        if (length(cmd_parts) >= 2L &&
-            identical(tolower(cmd_parts[2]), "clear")) {
-          session$tasks <- list()
-          corteza:::session_save(session)
-          cat("Task list cleared.\n")
-          next
-        }
-        rendered <- corteza:::format_task_list_display(
-          session$tasks %||% list(), palette = color)
-        if (is.null(rendered)) {
-          cat("No tasks.\n")
-        } else {
-          cat(rendered, "\n", sep = "")
-        }
-        next
-      } else if (cmd == "/compact") {
-        if (length(session$messages) < 2) {
-          cat(sprintf("%sNothing to compact.%s\n", color$dim, color$reset))
-        } else {
-          compact_result <- corteza:::do_compact(session, provider, model)
-          if (!is.null(compact_result)) {
-            # Write compaction marker to transcript
-            corteza:::transcript_compact(session, compact_result$summary)
-
-            # Update in-memory session
-            session$messages <- list(
-              list(role = "assistant", content = compact_result$summary, type = "compaction")
-            )
-            session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
-            session$tokens <- session_tokens
-            session$compactionCount <- (session$compactionCount %||% 0L) + 1L
-            corteza:::session_save(session)
-          }
-        }
-        next
-      } else if (cmd == "/sessions") {
-        sessions <- corteza:::session_list()
-        cat(corteza:::format_session_list(sessions), "\n")
-        next
-      } else if (cmd == "/doctor") {
-        config <- corteza:::load_config(cwd)
-        cat(sprintf("\n%s%s%s\n\n",
-                    color$bold,
-                    corteza:::format_doctor_report(cwd, session, provider, display_model,
-                                         tools, config, context_files,
-                                         skill_docs),
-                    color$reset))
-        next
-      } else if (cmd == "/config") {
-        config <- corteza:::load_config(cwd)
-        cat(sprintf("\n%s%s%s\n\n",
-                    color$bold,
-                    corteza:::format_config_summary(config, provider, display_model, opts),
-                    color$reset))
-        next
-      } else if (cmd == "/permissions") {
-        config <- corteza:::load_config(cwd)
-        approvals_path <- file.path(cwd, ".corteza", "approvals.json")
-        cat(sprintf("\n%s%s%s\n",
-                    color$bold,
-                    corteza:::format_permissions(config),
-                    color$reset))
-        cat(sprintf("%sProject approvals:%s %s\n\n",
-                    color$dim, color$reset,
-                    if (file.exists(approvals_path)) approvals_path else "none"))
-        next
-      } else if (cmd == "/diff") {
-        material <- corteza:::collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
-        if (!isTRUE(material$ok)) {
-          cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
-        } else {
-          corteza:::tool_buffer_add(session, "git_diff", list(ref = material$target), material$diff)
-          cat(sprintf("\n%sDiff against %s%s\n", color$cyan, material$target, color$reset))
-          cat(corteza:::colorize_diff(material$diff), "\n")
-        }
-        next
-      } else if (cmd == "/review") {
-        material <- corteza:::collect_git_diff(if (nchar(cmd_rest) > 0) cmd_rest else NULL)
-        if (!isTRUE(material$ok)) {
-          cat(sprintf("%s%s%s\n", color$yellow, material$text, color$reset))
-          next
-        }
-
-        provider_check <- corteza:::provider_status(provider, model)
-        if (!isTRUE(provider_check$ok)) {
-          cat(sprintf("%sReview unavailable: %s%s\n",
-                      color$yellow, provider_check$message, color$reset))
-          next
-        }
-
-        cat(sprintf("%sReviewing diff against %s...%s\n",
-                    color$dim, material$target, color$reset))
-        review_result <- corteza:::run_review(provider, model, material$target,
-                                    material$status, material$diff)
-        if (inherits(review_result, "error")) {
-          cat(sprintf("%sReview failed: %s%s\n",
-                      color$bright_magenta, review_result$message,
-                      color$reset))
-        } else {
-          corteza:::tool_buffer_add(session, "review",
-                                    list(ref = material$target),
-                                    review_result$content)
-          print_response(review_result$content)
-        }
-        next
-      } else if (cmd == "/model" && nchar(cmd_rest) > 0) {
-        model <- corteza:::resolve_provider_model(provider, cmd_rest)
-        display_model <- corteza:::resolve_provider_model(provider, model)
-        context_limit <- context_limit_for_model(display_model)
-        session$model <- model
-        corteza:::session_save(session)
-        cat(sprintf("%sModel set to: %s%s\n", color$dim, model, color$reset))
-        next
-      } else if (cmd == "/provider" && nchar(cmd_rest) > 0) {
-        provider <- cmd_rest
-        display_model <- corteza:::resolve_provider_model(provider, model) %||% "(default)"
-        context_limit <- context_limit_for_model(display_model)
-        session$provider <- provider
-        corteza:::session_save(session)
-        cat(sprintf("%sProvider set to: %s%s\n", color$dim, provider, color$reset))
-        next
-      } else if (cmd %in% c("/context", "/status")) {
-        session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
-        session$tokens <- session_tokens
-        # Component breakdown — same math the composite estimator
-        # uses, split so the user can see which slice is hot.
-        sys_tok <- estimate_text_tokens(system_prompt %||% "")
-        tools_tok <- estimate_tool_tokens(tools)
-        hist_tok <- estimate_history_tokens(session$messages %||% list())
-        # Codex-style header above the meter. /status is now an alias
-        # of /context, both surfaces show the same block.
-        status_info <- list(
-          corteza = as.character(utils::packageVersion("corteza")),
-          model = sprintf("%s @ %s", display_model, provider),
-          dir = cwd,
-          session = session$sessionKey %||% session$sessionId %||% "(unset)"
-        )
-        cat(corteza:::format_context_block(
-                                           used = session_tokens,
-                                           limit = context_limit,
-                                           breakdown = list(system = sys_tok,
-                                                            tools = tools_tok,
-                                                            history = hist_tok),
-                                           compact_pct = opts$context_compact_pct %||% 90L,
-                                           warn_pct = opts$context_warn_pct %||% 75L,
-                                           high_pct = opts$context_high_pct %||% 90L,
-                                           crit_pct = opts$context_crit_pct %||% 95L,
-                                           files = context_files,
-                                           palette = color,
-                                           status_info = status_info
-            ), "\n", sep = "")
-        next
-      } else if (cmd == "/flush") {
-        # Manual memory flush: ask LLM to write durable memories
-        flush_prompt <- config$memory_flush_prompt
-
-        if (length(session$messages) < 2) {
-          cat(sprintf("%sNothing to flush (no conversation yet).%s\n", color$dim, color$reset))
-          next
-        }
-
-        cat(sprintf("%sFlushing memories...%s\n", color$cyan, color$reset))
-
-        # Build API history from current messages
-        flush_history <- lapply(session$messages, function(m) {
-          text <- if (is.list(m$content) && length(m$content) > 0 && !is.null(m$content[[1]]$text)) {
-            m$content[[1]]$text
-          } else {
-            m$content
-          }
-          list(role = m$role, content = text)
-        })
-
-        flush_result <- .run_memory_flush(flush_prompt, flush_history,
-                                          system_prompt, provider, model,
-                                          config, cwd, tools, cli_executor,
-                                          dry_run = isTRUE(opts$dry_run))
-
-        if (!is.null(flush_result)) {
-          content <- flush_result$content
-          if (!startsWith(trimws(content), "NO_REPLY")) {
-            cat(sprintf("%sMemories flushed.%s\n", color$green, color$reset))
-            # Reload context to pick up new memory files
-            system_prompt <- corteza:::load_context(cwd)
-          } else {
-            cat(sprintf("%sNothing to flush.%s\n", color$dim, color$reset))
-          }
-        }
-        next
-      } else if (cmd == "/last") {
-        # /last [N] - show tool output (default: most recent)
-        n <- if (!is.null(cmd_arg)) as.integer(cmd_arg) else 1L
-        outputs <- corteza:::tool_buffer_list(session)
-
-        if (length(outputs) == 0) {
-          cat(sprintf("%sNo tool outputs yet.%s\n", color$dim, color$reset))
-          next
-        }
-
-        if (n < 1 || n > length(outputs)) {
-          cat(sprintf("%sInvalid index. Have %d outputs.%s\n", color$yellow, length(outputs), color$reset))
-          next
-        }
-
-        entry <- outputs[[n]]
-        cat(sprintf("\n%s%s%s @ %s\n", color$cyan, entry$name, color$reset,
-                    format(entry$time, "%H:%M:%S")))
-        if (length(entry$args) > 0) {
-          cat(sprintf("%sArgs: %s%s\n", color$dim,
-                      jsonlite::toJSON(entry$args, auto_unbox = TRUE), color$reset))
-        }
-        cat(sprintf("%s%s%s\n", color$dim, strrep("-", 40), color$reset))
-        cat(entry$result)
-        cat("\n")
-        next
-      } else if (cmd == "/outputs") {
-        # List recent tool outputs
-        outputs <- corteza:::tool_buffer_list(session)
-        if (length(outputs) == 0) {
-          cat(sprintf("%sNo tool outputs yet.%s\n", color$dim, color$reset))
-        } else {
-          cat(sprintf("\n%sRecent tool outputs:%s\n", color$bold, color$reset))
-          for (i in seq_along(outputs)) {
-            entry <- outputs[[i]]
-            lines <- length(strsplit(entry$result, "\n")[[1]])
-            cat(sprintf("  %s[%d]%s %s%s%s (%d lines) @ %s\n",
-                        color$dim, i, color$reset,
-                        color$cyan, entry$name, color$reset,
-                        lines, format(entry$time, "%H:%M:%S")))
-          }
-          cat(sprintf("\n%sUse /last [N] to view output%s\n", color$dim, color$reset))
-        }
-        next
-      } else if (cmd == "/dryrun") {
-        # Toggle dry-run mode
-        opts$dry_run <- !isTRUE(opts$dry_run)
-        if (opts$dry_run) {
-          cat(sprintf("%sDry-run mode enabled - tool calls will show preview only%s\n",
-                      color$yellow, color$reset))
-        } else {
-          cat(sprintf("%sDry-run mode disabled - tool calls will execute normally%s\n",
-                      color$dim, color$reset))
-        }
-        next
-      } else if (cmd == "/paste") {
-        # /paste [optional text]: read a multi-line block via the
-        # shared helper, then fall through to the normal turn() call.
-        joined <- corteza:::read_paste_block(seed = trimws(cmd_rest))
-        if (is.null(joined)) next
-        prompt <- joined
-        # Fall through to regular prompt handling.
-      } else if (cmd == "/plan") {
-        # /plan with no args toggles plan mode. /plan <task> turns it
-        # on and submits <task> as the next user prompt (falls through
-        # to normal handling).
-        rest <- trimws(cmd_rest)
-        if (!nzchar(rest)) {
-          opts$plan_mode <- !isTRUE(opts$plan_mode)
-          if (opts$plan_mode) {
-            cat(sprintf("%sPlan mode enabled - reads only; LLM proposes a plan via exit_plan_mode%s\n",
-                        color$yellow, color$reset))
-          } else {
-            cat(sprintf("%sPlan mode disabled%s\n",
-                        color$dim, color$reset))
-          }
-          next
-        }
-        opts$plan_mode <- TRUE
-        cat(sprintf("%sPlan mode enabled.%s\n", color$dim, color$reset))
-        prompt <- rest
-        # Fall through to regular prompt handling.
-      } else if (cmd == "/trace") {
-        # Show tool execution trace
-        n <- if (!is.null(cmd_arg)) as.integer(cmd_arg) else 20L
-        trace <- corteza:::trace_load(session$sessionId, n = n)
-        if (length(trace) == 0) {
-          cat(sprintf("%sNo tool calls recorded for this session.%s\n", color$dim, color$reset))
-        } else {
-          cat(corteza:::format_trace(trace, show_args = TRUE), "\n")
-        }
-        next
-      } else if (cmd == "/skill" || cmd == "/skills") {
-        # Skill management commands
-        subcmd <- if (length(cmd_parts) > 1) cmd_parts[2] else "list"
-
-        if (subcmd == "list") {
-          tryCatch({
-            skills <- corteza::skill_list_installed()
-            cat(corteza:::format_skill_list(skills), "\n")
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "install" && length(cmd_parts) >= 3) {
-          source <- cmd_parts[3]
-          force <- "--force" %in% cmd_parts
-          tryCatch({
-            name <- corteza::skill_install(source, force = force)
-            cat(sprintf("%sInstalled skill: %s%s\n", color$green, name, color$reset))
-            # Reload skills
-            corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
-            corteza:::load_skills(corteza:::corteza_data_path("skills"))
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "remove" && length(cmd_parts) >= 3) {
-          name <- cmd_parts[3]
-          tryCatch({
-            corteza::skill_remove(name)
-            cat(sprintf("%sRemoved skill: %s%s\n", color$dim, name, color$reset))
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else if (subcmd == "test" && length(cmd_parts) >= 3) {
-          path <- cmd_parts[3]
-          tryCatch({
-            result <- corteza::skill_test(path)
-            if (result$failed == 0) {
-              cat(sprintf("%s%d test(s) passed%s\n", color$green, result$passed, color$reset))
-            } else {
-              cat(sprintf("%s%d passed, %d failed%s\n", color$yellow, result$passed, result$failed, color$reset))
-            }
-          }, error = function(e) {
-            cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-          })
-        } else {
-          cat("Usage:
-  /skill list                 List installed skills
-  /skill install <path|url>   Install a skill
-  /skill install <path> --force   Reinstall skill
-  /skill remove <name>        Remove a skill
-  /skill test <path>          Run skill tests
-")
-        }
-        next
-      } else if (cmd == "/spawn") {
-        # Spawn a subagent
-        if (length(cmd_parts) < 2) {
-          cat("Usage: /spawn <task description>\n")
-          cat("       /spawn <task> --model <name>\n")
-          cat("       /spawn <task> --preset investigate|work|minimal\n")
-          cat("       /spawn <task> --tools read_file,grep_files,...\n")
-          next
-        }
-        task_text <- paste(cmd_parts[-1], collapse = " ")
-
-        # Pull `--flag <value>` pairs out of task_text in any order.
-        extract_flag <- function(text, flag) {
-          pat <- paste0("\\s*", flag, "\\s+(\\S+)")
-          loc <- regexpr(pat, text)
-          if (loc == -1L) return(list(text = text, value = NULL))
-          matched <- regmatches(text, loc)
-          value <- sub(paste0("^\\s*", flag, "\\s+"), "", matched)
-          list(text = trimws(sub(pat, "", text)), value = value)
-        }
-
-        parsed <- extract_flag(task_text, "--model")
-        task_text <- parsed$text
-        subagent_model <- parsed$value
-
-        parsed <- extract_flag(task_text, "--preset")
-        task_text <- parsed$text
-        subagent_preset <- parsed$value
-
-        parsed <- extract_flag(task_text, "--tools")
-        task_text <- parsed$text
-        subagent_tools <- if (!is.null(parsed$value)) {
-          strsplit(parsed$value, ",")[[1]]
-        } else NULL
-
-        tryCatch({
-          id <- corteza::subagent_spawn(
-            task = task_text,
-            model = subagent_model,
-            tools = subagent_tools,
-            preset = subagent_preset,
-            parent_session = session
-          )
-          # Resolve seq from the registry so the success hint matches
-          # /agents output. Falls back to the 8-char prefix if the seq
-          # isn't recorded for some reason.
-          info <- corteza:::.subagent_registry[[id]]
-          seq_val <- info$seq
-          handle <- if (!is.null(seq_val)) as.character(seq_val) else substr(id, 1L, 8L)
-          cat(sprintf("%sSpawned subagent [%s] (id %s)%s\n",
-                      color$green, handle, id, color$reset))
-          cat(sprintf("%sUse /ask %s <prompt> to query%s\n",
-                      color$dim, handle, color$reset))
-        }, error = function(e) {
-          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-        })
-        next
-      } else if (cmd == "/agents") {
-        # List active subagents
-        agents <- corteza::subagent_list()
-        cat(corteza:::format_subagent_list(agents), "\n")
-        next
-      } else if (cmd == "/ask" && length(cmd_parts) >= 3) {
-        # Query a subagent: /ask <id> <prompt>
-        subagent_id <- cmd_parts[2]
-        subagent_prompt <- paste(cmd_parts[3:length(cmd_parts)], collapse = " ")
-
-        cat(sprintf("%sQuerying subagent %s...%s\n", color$dim, subagent_id, color$reset))
-        tryCatch({
-          result <- corteza::subagent_query(subagent_id, subagent_prompt)
-          cat(sprintf("%s%s%s\n", color$cyan, result, color$reset))
-        }, error = function(e) {
-          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-        })
-        next
-      } else if (cmd == "/queue" && length(cmd_parts) >= 3) {
-        # Fire async query: /queue <id> <prompt>
-        subagent_id <- cmd_parts[2]
-        subagent_prompt <- paste(cmd_parts[3:length(cmd_parts)], collapse = " ")
-        tryCatch({
-          corteza::subagent_query(subagent_id, subagent_prompt, wait = FALSE)
-          cat(sprintf("%sQueued for subagent %s; collect with /collect %s%s\n",
-                      color$dim, subagent_id, subagent_id, color$reset))
-        }, error = function(e) {
-          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-        })
-        next
-      } else if (cmd == "/collect" && length(cmd_parts) >= 2) {
-        # Collect pending reply: /collect <id>
-        subagent_id <- cmd_parts[2]
-        cat(sprintf("%sCollecting from subagent %s...%s\n",
-                    color$dim, subagent_id, color$reset))
-        tryCatch({
-          result <- corteza::subagent_collect(subagent_id)
-          if (is.null(result)) {
-            cat(sprintf("%sStill working; try /collect %s again.%s\n",
-                        color$yellow, subagent_id, color$reset))
-          } else {
-            cat(sprintf("%s%s%s\n", color$cyan, result, color$reset))
-          }
-        }, error = function(e) {
-          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-        })
-        next
-      } else if (cmd == "/kill" && length(cmd_parts) >= 2) {
-        # Kill a subagent
-        subagent_id <- cmd_parts[2]
-        tryCatch({
-          success <- corteza::subagent_kill(subagent_id)
-          if (success) {
-            cat(sprintf("%sSubagent %s terminated%s\n", color$dim, subagent_id, color$reset))
-          } else {
-            cat(sprintf("%sSubagent not found: %s%s\n", color$yellow, subagent_id, color$reset))
-          }
-        }, error = function(e) {
-          cat(sprintf("%sError: %s%s\n", color$red, e$message, color$reset))
-        })
-        next
-      } else if (cmd == "/help") {
-        cat("
-Commands:
-  /quit, /exit   Exit corteza
-  /status        Alias for /context
-  /doctor        Check provider, git, MCP, and context health
-  /tools         List available tools
-  /diff [ref]    Show git diff against HEAD or a ref
-  /review [ref]  Review local changes with the current model
-  /config        Show active runtime configuration
-  /permissions   Show tool approval and sandbox settings
-  /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
-  /clear         Clear conversation (keeps session)
-  /compact       Summarize conversation to free context
-  /paste [text]  Multi-line. Collects every line verbatim until /end.
-  /copy          Copy the last assistant response to the system clipboard.
-  /tasks [clear] Show (or clear) the current task list.
-  /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
-  ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
-  /sessions      List sessions for this directory
-  /context       Show live context usage and loaded context files
-  /model <name>  Switch model
-  /provider <p>  Switch provider (anthropic, openai, moonshot, ollama)
-  /dryrun        Toggle dry-run mode (preview tools without executing)
-  /trace [N]     Show last N tool executions (default: 20)
-
-Subagents:
-  /spawn <task>                          Spawn a subagent for task
-  /spawn <task> --model <name>           Spawn with specific model
-  /spawn <task> --preset <name>          investigate (default), work, minimal
-  /spawn <task> --tools <a,b,c>          Explicit tool filter (overrides preset)
-  /agents                                List active subagents
-  /ask <id> <prompt>                     Query a subagent (blocks for reply)
-  /queue <id> <prompt>                   Fire a query and return; collect later
-  /collect <id>                          Collect a pending reply
-  /kill <id>                             Terminate a subagent
-
-Skills:
-  /skill list                 List installed skills
-  /skill install <path|url>   Install a skill
-  /skill remove <name>        Remove a skill
-  /skill test <path>          Run skill tests
-
-Tool output:
-  /last [N]      Show tool output (1=most recent)
-  /outputs       List recent tool outputs
-  /help          Show this help
-
-")
-        next
-      } else {
-        cat(sprintf("%sUnknown command: %s%s\n", color$yellow, cmd, color$reset))
-        next
-      }
-    }
-
-    # Build API history from session BEFORE adding current user message
-    # (agent() adds the prompt itself)
-    # Messages are stored in content-block format, extract text for API
-    api_history <- lapply(session$messages, function(m) {
-      # Extract text from content blocks (pi-coding-agent format)
-      text <- if (is.list(m$content) && length(m$content) > 0 && !is.null(m$content[[1]]$text)) {
-        m$content[[1]]$text
-      } else {
-        m$content  # Fallback for legacy format
-      }
-      list(role = m$role, content = text)
     })
-
-    # Drain any queued `! <cmd>` output into the next user message
-    # so the LLM sees what the user ran.
-    if (length(pending_local_context) > 0L) {
-      prompt <- paste(c(pending_local_context, prompt), collapse = "\n\n")
-      pending_local_context <- character(0)
-    }
-
-    # Add user message to session (in-memory) and transcript (disk)
-    session <- corteza:::session_add_message(session, "user", prompt)
-    corteza:::transcript_append(session, "user", prompt)
-    corteza:::session_save(session)
-
-    # Send to LLM with tools
-    # Check API key (not needed for Ollama)
-    if (provider != "ollama") {
-      .config <- llm.api:::.get_provider_config(provider)
-      api_key <- .config$api_key %||% ""
-      if (nchar(api_key) == 0) {
-        cat(sprintf("%sWarning: No API key found for %s%s\n", color$yellow, provider, color$reset))
-        env_var <- switch(provider,
-          anthropic = "ANTHROPIC_API_KEY",
-          openai = "OPENAI_API_KEY",
-          paste0(toupper(provider), "_API_KEY")
-        )
-        cat(sprintf("Set %s in ~/.Renviron\n", env_var))
-        next
-      }
-    }
-
-    # Build a per-turn corteza session. Approval is unified through
-    # policy(call, config = ...) + cli_approval_cb(cwd): policy "ask"
-    # verdicts fire the cb (which prompts and persists via
-    # save_approval), "deny" verdicts short-circuit before the tool
-    # runs, "allow" verdicts pass straight through.
-    turn_session <- corteza::new_session(
-      channel = "cli",
-      provider = provider,
-      model_map = list(cloud = corteza:::resolve_provider_model(provider, model),
-                       local = corteza::default_local_model()),
-      system = system_prompt,
-      history = api_history,
-      approval_cb = cli_approval_cb(cwd),
-      max_turns = 20L,
-      plan_mode = isTRUE(opts$plan_mode)
-    )
-    # Make the loaded config visible to policy()'s config overlay
-    # inside .make_tool_handler so config$permissions and approval_mode
-    # / dangerous_tools are honored consistently with chat().
-    turn_session$config <- config
-    # Dry-run propagates so .make_tool_handler short-circuits before
-    # policy/approval and the CLI's tool_handler renders the preview
-    # instead of executing.
-    turn_session$dry_run <- isTRUE(opts$dry_run)
-    # Carry the persistent task list into the per-turn env so the
-    # LLM sees its prior commitments via task_compose_system().
-    turn_session$tasks <- session$tasks %||% list()
-    # task_create's approval prompt routes through cli_read_line so
-    # stdin reads work under the non-interactive Rscript launch
-    # (base readline() returns "" immediately there, which would
-    # silently auto-approve every plan).
-    turn_session$task_approval_cb <- function() {
-        ans <- cli_read_line("Approve this plan? [y/n] ")
-        tolower(trimws(ans)) %in% c("", "y", "yes")
-    }
-
-    cat(sprintf("● Thinking with %s\n", display_model))
-    pre_turn_len <- length(turn_session$history %||% list())
-    turn_start <- Sys.time()
-    result <- tryCatch({
-      r <- corteza::turn(
-        prompt = prompt,
-        session = turn_session,
-        tool_executor = cli_executor,
-        tools = tools
-      )
-      # Sync plan-mode state back to opts so a successful
-      # exit_plan_mode call inside this turn lifts plan mode for the
-      # next iteration (turn_session is per-turn, opts persists).
-      opts$plan_mode <- isTRUE(turn_session$plan_mode)
-      # Reshape to the llm.api::agent result shape so downstream
-      # compaction / token-tracking code keeps working unchanged.
-      list(
-        content = r$reply,
-        history = turn_session$history,
-        usage = r$usage
-      )
-    }, corteza_user_deny = function(c) {
-      # User picked "3. Deny". Abort the whole turn so the LLM doesn't
-      # cascade through more tool calls. Before writing the deny marker,
-      # dump any tool calls that already completed in this turn into the
-      # persistent session as a text summary -- session$messages is
-      # stored flat, so without this the next CLI turn's api_history
-      # would have no record of work the LLM had done up to the denial.
-      cat(sprintf("\n%sDenied -- aborting turn.%s\n",
-                  color$yellow, color$reset))
-      session <<- corteza:::dump_completed_tools_summary(
-                                                         turn_session, session, pre_turn_len
-      )
-      marker <- corteza:::user_deny_marker(c$tool %||% "?")
-      session <<- corteza:::session_add_message(session, "assistant", marker)
-      corteza:::transcript_append(session, "assistant", marker)
-      corteza:::session_save(session)
-      NULL
-    }, interrupt = function(c) {
-      cat(sprintf("\n%sInterrupted.%s\n", color$yellow, color$reset))
-      # Only touch the worker if a tool call was actually in flight
-      # (state "busy"). When the interrupt arrived during the LLM
-      # round-trip the worker is "idle" and should be left alone --
-      # otherwise we'd needlessly drop worker-local state like the
-      # background-process registry.
-      if (!is.null(worker) && !is.null(worker$session)) {
-        state <- tryCatch(worker$session$get_state(),
-                          error = function(e) "unknown")
-        if (identical(state, "busy")) {
-          tryCatch(worker$session$interrupt(),
-                   error = function(e) NULL)
-          # Drain any queued result so the state machine returns to idle.
-          tryCatch(worker$session$read(), error = function(e) NULL)
-          state <- tryCatch(worker$session$get_state(),
-                            error = function(e) "unknown")
-          if (!identical(state, "idle")) {
-            # Worker didn't recover from SIGINT; recycle it.
-            suppressWarnings(tryCatch(cli_worker_close(worker),
-                                      error = function(e) NULL))
-            worker <<- tryCatch(
-              cli_worker_connect(opts$port, cwd = cwd,
-                                 tools_filter = opts$tools),
-              error = function(e2) NULL
-            )
-          }
-        }
-      }
-      # Before writing the interrupt marker, dump any tool calls that
-      # already completed in this turn into the persistent session as
-      # a text summary. session$messages is stored flat (tool_use /
-      # tool_result blocks don't round-trip through disk), so without
-      # this the next CLI turn's api_history rebuild would have no
-      # record of work that completed before the user hit Ctrl+C.
-      # turn_session$history was being mirrored continuously by the
-      # history_callback in turn(), so it carries the latest snapshot
-      # even though turn() never returned.
-      session <<- corteza:::dump_completed_tools_summary(
-                                                         turn_session, session, pre_turn_len
-      )
-      marker <- "[Interrupted by user before completing.]"
-      session <<- corteza:::session_add_message(session, "assistant", marker)
-      corteza:::transcript_append(session, "assistant", marker)
-      corteza:::session_save(session)
-      NULL
-    }, error = function(e) {
-      cat(sprintf("%sError: %s%s\n", color$bright_magenta, e$message, color$reset))
-      NULL
-    })
-
-    # Sync task-list mutations to the persistent session record
-    # regardless of turn outcome (codex finding: prior code only
-    # synced on success, so an interrupt right after task_create
-    # approval threw away the just-approved plan). The handlers
-    # above already session_save() the marker; doing the tasks
-    # sync now means the next session_save() picks it up.
-    if (isTRUE(turn_session$tasks_dirty)) {
-      session$tasks <- turn_session$tasks
-      corteza:::session_save(session)
-      turn_session$tasks_dirty <- FALSE
-    }
-
-    if (is.null(result)) {
-      # Interrupt or error path. Print the timing footer too so the
-      # user sees how long the aborted turn ran before the prompt
-      # returns.
-      cat(corteza:::turn_footer_line(turn_start, palette = color), "\n",
-          sep = "")
-    }
-    if (!is.null(result)) {
-      print_response(result$content)
-      cat(corteza:::turn_footer_line(turn_start, palette = color), "\n",
-          sep = "")
-
-      reply_text <- as.character(result$content %||% "")
-      if (nzchar(reply_text)) last_assistant_response <- reply_text
-
-      session <- corteza:::session_add_message(session, "assistant", result$content)
-      corteza:::transcript_append(session, "assistant", result$content)
-
-      # Archival hook: opt-in via config$archival$enabled. Mutates
-      # turn_session$history in place when triggers fire.
-      corteza:::maybe_archive_turn(
-        turn_session = turn_session, prompt = prompt,
-        pre_turn_len = pre_turn_len, result = result, config = config,
-        parent_session_id = session$sessionId,
-        max_turns_hit = isTRUE(grepl("Max turns",
-                                     as.character(result$content %||% ""))),
-        depth = 0L
-      )
-
-      session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
-      session$tokens <- session_tokens
-      print_context_indicator(session_tokens, context_limit,
-                              opts$context_warn_pct, opts$context_high_pct,
-                              opts$context_crit_pct)
-
-      # Auto-compact based on estimated live context, not cumulative API usage.
-      pct <- (session_tokens / context_limit) * 100
-      if (pct >= opts$context_compact_pct && length(session$messages) > 2) {
-        # Pre-compaction memory flush
-        flush_enabled <- config$memory_flush_enabled
-        compaction_count <- session$compactionCount %||% 0L
-        flush_count <- session$memoryFlushCompactionCount %||% 0L
-        if (isTRUE(flush_enabled) && flush_count <= compaction_count) {
-          flush_prompt <- config$memory_flush_prompt
-
-          cat(sprintf("%sFlushing memories before compaction...%s\n", color$cyan, color$reset))
-
-          flush_history <- lapply(session$messages, function(m) {
-            text <- if (is.list(m$content) && length(m$content) > 0 && !is.null(m$content[[1]]$text)) {
-              m$content[[1]]$text
-            } else {
-              m$content
-            }
-            list(role = m$role, content = text)
-          })
-
-          flush_result <- .run_memory_flush(flush_prompt, flush_history,
-                                            system_prompt, provider, model,
-                                            config, cwd, tools, cli_executor,
-                                            dry_run = isTRUE(opts$dry_run))
-
-          if (!is.null(flush_result)) {
-            content <- flush_result$content
-            if (!startsWith(trimws(content), "NO_REPLY")) {
-              cat(sprintf("%sMemories flushed.%s\n", color$green, color$reset))
-              system_prompt <- corteza:::load_context(cwd)
-            }
-          }
-
-          session$memoryFlushCompactionCount <- compaction_count + 1L
-        }
-
-        compact_result <- corteza:::do_compact(session, provider, model)
-        if (!is.null(compact_result)) {
-          # Write compaction marker to transcript (full history preserved)
-          corteza:::transcript_compact(session, compact_result$summary)
-
-          # Update in-memory session to use summary for next API call
-          session$messages <- list(
-            list(role = "assistant", content = compact_result$summary, type = "compaction")
-          )
-          session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
-          session$tokens <- session_tokens
-          session$compactionCount <- (session$compactionCount %||% 0L) + 1L
-        }
-
-        corteza:::session_save(session)
-      } else {
-        corteza:::session_save(session)
-      }
-    }
   }
 
-  # Final save
-  corteza:::session_save(session)
+  # Build the ctx env. run_repl_loop reassigns mutable state on it, so
+  # it must be an environment.
+  ctx <- new.env(parent = emptyenv())
+  ctx$session <- turn_session
+  ctx$disk_session <- list(session = session, sessionId = session$sessionId,
+                           resumed = !is.null(opts$session))
+  ctx$config <- config
+  ctx$cwd <- cwd
+  ctx$ws_enabled <- ws_enabled
+  ctx$provider <- provider
+  ctx$model <- model
+  ctx$pending_r_context <- character(0)
+  ctx$last_assistant_response <- ""
+  ctx$read_input <- function(p) cli_read_line(p)
+  ctx$palette <- color
+  ctx$render_reply <- function(txt) print_response(txt)
+  ctx$help_text <- cli_help_text
+  ctx$new_session_fn <- function() {
+    # Read provider/model from ctx (not captured locals): /model and
+    # /provider mutate ctx, so a later /clear must spin up the fresh
+    # session with the current model/provider.
+    fresh <- corteza:::session_new(ctx$provider, ctx$model, cwd)
+    list(session = fresh, sessionId = fresh$sessionId, resumed = FALSE)
+  }
+  ctx$handle_copy <- corteza:::chat_handle_copy
+  ctx$format_tools <- corteza:::chat_format_tools_list
+  # IN-PROCESS turn: no tool_executor. This is the core unification --
+  # one R process, one skill registry, one .subagent_registry.
+  ctx$turn_fn <- function(p, s) corteza::turn(p, s)
+
+  corteza:::run_repl_loop(ctx)
+
+  # Final save (ctx$disk_session$session, not the original local:
+  # /clear reassigns it).
+  corteza:::session_save(ctx$disk_session$session)
 
   # Cleanup
   cat(sprintf("\n%sGoodbye.%s\n", color$dim, color$reset))
   suppressWarnings(cli_worker_close(worker))
 }
+
 
 # ============================================================================
 # Entry point
