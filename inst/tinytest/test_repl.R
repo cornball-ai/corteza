@@ -123,6 +123,27 @@ expect_true(is.character(ind) && nzchar(ind))
 expect_true(grepl("50", ind))
 expect_true(grepl("compact at 90", ind))
 
+# 9. .repl_interruptible(): an interrupt condition yields the sentinel;
+# a plain value passes through unchanged.
+interrupted <- corteza:::.repl_interruptible(
+    stop(structure(class = c("interrupt", "condition"),
+                   list(message = "x"))),
+    empty_palette
+)
+expect_true(inherits(interrupted, "repl_interrupted"))
+expect_equal(corteza:::.repl_interruptible(42, empty_palette), 42)
+
+# 10. /model persists the model onto the disk session record so the
+# end-of-loop session_save writes the current model, not the stale one.
+ctx_model <- base_ctx(c("/model newmodel"))
+ctx_model$session <- new.env(parent = emptyenv())
+ctx_model$session$model_map <- list(cloud = "old")
+ctx_model$model <- "old"
+ctx_model$disk_session <- list(session = list(sessionId = "s", model = "old"),
+                               sessionId = "s")
+corteza:::run_repl_loop(ctx_model)
+expect_equal(ctx_model$disk_session$session$model, "newmodel")
+
 # 8. tools_filter narrows the /tools view. Regression for the CLI
 # repoint: --tools must reach the turn session (its tools_filter), not
 # just the banner. chat_format_tools_list is what the loop's /tools

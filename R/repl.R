@@ -49,6 +49,22 @@
             limit_k, compact, palette$reset %||% "")
 }
 
+#' Sentinel returned by .repl_interruptible() when the wrapped op was
+#' interrupted. Callers check inherits(x, "repl_interrupted") and skip.
+#' @noRd
+.repl_interrupted_sentinel <- structure(list(), class = "repl_interrupted")
+
+#' Run a potentially long-blocking REPL op so an interrupt returns to
+#' the prompt instead of aborting the session. Returns expr's value,
+#' or the sentinel on interrupt.
+#' @noRd
+.repl_interruptible <- function(expr, palette = NULL) {
+    tryCatch(expr, interrupt = function(c) {
+        cat(sprintf("\n%s^C%s\n", palette$dim %||% "", palette$reset %||% ""))
+        .repl_interrupted_sentinel
+    })
+}
+
 # @noRd
 run_repl_loop <- function(ctx) {
     while (TRUE) {
@@ -175,6 +191,9 @@ run_repl_loop <- function(ctx) {
                 }
                 ctx$session$model_map$cloud <- parts[2]
                 ctx$model <- parts[2]
+                if (!is.null(ctx$disk_session)) {
+                    ctx$disk_session$session$model <- parts[2]
+                }
                 cat(sprintf("Model set to %s\n", parts[2]))
                 next
             }
@@ -186,6 +205,9 @@ run_repl_loop <- function(ctx) {
                 }
                 ctx$session$provider <- parts[2]
                 ctx$provider <- parts[2]
+                if (!is.null(ctx$disk_session)) {
+                    ctx$disk_session$session$provider <- parts[2]
+                }
                 cat(sprintf("Provider set to %s\n", parts[2]))
                 next
             }
@@ -236,13 +258,19 @@ run_repl_loop <- function(ctx) {
                 sub_prompt <- paste(parts[3:length(parts)], collapse = " ")
                 cat(sprintf("%sQuerying subagent %s...%s\n",
                             ctx$palette$dim, sub_id, ctx$palette$reset))
-                tryCatch({
-                    res <- subagent_query(sub_id, sub_prompt)
-                    cat(sprintf("%s%s%s\n", ctx$palette$cyan, res, ctx$palette$reset))
+                res <- .repl_interruptible(tryCatch({
+                    subagent_query(sub_id, sub_prompt)
                 }, error = function(e) {
                     cat(sprintf("%sError:%s %s\n",
                                 ctx$palette$bright_magenta, ctx$palette$reset, e$message))
-                })
+                    NULL
+                }), ctx$palette)
+                if (inherits(res, "repl_interrupted")) {
+                    next
+                }
+                if (!is.null(res)) {
+                    cat(sprintf("%s%s%s\n", ctx$palette$cyan, res, ctx$palette$reset))
+                }
                 next
             }
             if (cmd == "/queue") {
@@ -272,18 +300,25 @@ run_repl_loop <- function(ctx) {
                 sub_id <- parts[2]
                 cat(sprintf("%sCollecting from subagent %s...%s\n",
                             ctx$palette$dim, sub_id, ctx$palette$reset))
-                tryCatch({
-                    res <- subagent_collect(sub_id)
-                    if (is.null(res)) {
-                        cat(sprintf("%sStill working; try /collect %s again.%s\n",
-                                    ctx$palette$yellow, sub_id, ctx$palette$reset))
-                    } else {
-                        cat(sprintf("%s%s%s\n", ctx$palette$cyan, res, ctx$palette$reset))
-                    }
+                res <- .repl_interruptible(tryCatch({
+                    list(ok = TRUE, value = subagent_collect(sub_id))
                 }, error = function(e) {
                     cat(sprintf("%sError:%s %s\n",
                                 ctx$palette$bright_magenta, ctx$palette$reset, e$message))
-                })
+                    NULL
+                }), ctx$palette)
+                if (inherits(res, "repl_interrupted")) {
+                    next
+                }
+                if (!is.null(res)) {
+                    if (is.null(res$value)) {
+                        cat(sprintf("%sStill working; try /collect %s again.%s\n",
+                                    ctx$palette$yellow, sub_id, ctx$palette$reset))
+                    } else {
+                        cat(sprintf("%s%s%s\n", ctx$palette$cyan, res$value,
+                                    ctx$palette$reset))
+                    }
+                }
                 next
             }
             if (cmd == "/kill") {
@@ -441,14 +476,25 @@ run_repl_loop <- function(ctx) {
                     cat("Nothing to compact.\n")
                     next
                 }
-                result <- do_compact(list(messages = live_messages),
-                                     ctx$session$provider,
-                                     ctx$session$model_map$cloud)
+                result <- .repl_interruptible(
+                    do_compact(list(messages = live_messages),
+                               ctx$session$provider,
+                               ctx$session$model_map$cloud),
+                    ctx$palette)
+                if (inherits(result, "repl_interrupted")) {
+                    next
+                }
                 if (!is.null(result) && nzchar(result$summary)) {
                     ctx$session$history <- list(
                         list(role = "assistant", content = result$summary)
                     )
                     transcript_compact(ctx$disk_session$session, result$summary)
+                    if (!is.null(ctx$disk_session)) {
+                        ds <- ctx$disk_session$session
+                        ds$compactionCount <- (ds$compactionCount %||% 0L) + 1L
+                        ctx$disk_session$session <- ds
+                        tryCatch(session_save(ds), error = function(e) NULL)
+                    }
                     cat("Compacted.\n")
                 }
                 next
@@ -468,7 +514,11 @@ run_repl_loop <- function(ctx) {
                 }
                 cat(sprintf("%sFlushing memories...%s\n",
                             ctx$palette$cyan, ctx$palette$reset))
-                flush_result <- run_memory_flush(ctx)
+                flush_result <- .repl_interruptible(run_memory_flush(ctx),
+                    ctx$palette)
+                if (inherits(flush_result, "repl_interrupted")) {
+                    next
+                }
                 if (!is.null(flush_result)) {
                     content <- flush_result$content %||% ""
                     if (!startsWith(trimws(content), "NO_REPLY")) {
@@ -703,7 +753,10 @@ run_repl_loop <- function(ctx) {
                 code <- paste(code, more[1L], sep = "\n")
                 cont_cap <- cont_cap - 1L
             }
-            r_out <- run_r_eval(code)
+            r_out <- .repl_interruptible(run_r_eval(code), ctx$palette)
+            if (inherits(r_out, "repl_interrupted")) {
+                next
+            }
             if (nchar(r_out$text) > 0L) {
                 cat(r_out$text, "\n", sep = "")
             }
@@ -720,7 +773,11 @@ run_repl_loop <- function(ctx) {
         # (emphasis, markdown headings in some flavors, etc.).
         if (!from_paste && startsWith(sp, "! ")) {
             cmd <- sub("^!\\s+", "", sp)
-            shell_out <- run_bang_shell(cmd, cwd = ctx$cwd)
+            shell_out <- .repl_interruptible(
+                run_bang_shell(cmd, cwd = ctx$cwd), ctx$palette)
+            if (inherits(shell_out, "repl_interrupted")) {
+                next
+            }
             if (nchar(shell_out$text) > 0L) {
                 cat(shell_out$text, "\n", sep = "")
             }
@@ -853,22 +910,42 @@ run_repl_loop <- function(ctx) {
             # written before the turns that mention them are summarized
             # away. Tolerate NULL/errors -- a flush failure must not
             # block compaction.
+            flush_ran <- FALSE
             if (isTRUE(ctx$config$memory_flush_enabled)) {
                 cat(sprintf("%sFlushing memories before compaction...%s\n",
                             ctx$palette$dim, ctx$palette$reset))
-                tryCatch(run_memory_flush(ctx), error = function(e) NULL)
+                flush_ran <- !is.null(tryCatch(run_memory_flush(ctx),
+                        error = function(e) NULL,
+                        interrupt = function(c) {
+                    cat("\n^C\n")
+                    NULL
+                }))
             }
             comp <- tryCatch(
                              do_compact(list(messages = ctx$session$history),
                                         ctx$session$provider,
                                         ctx$session$model_map$cloud),
-                             error = function(e) NULL
+                             error = function(e) NULL,
+                             interrupt = function(c) {
+                cat("\n^C\n")
+                NULL
+            }
             )
             if (!is.null(comp) && nzchar(comp$summary)) {
                 ctx$session$history <- list(
                     list(role = "assistant", content = comp$summary)
                 )
                 transcript_compact(ctx$disk_session$session, comp$summary)
+                if (!is.null(ctx$disk_session)) {
+                    ds <- ctx$disk_session$session
+                    ds$compactionCount <- (ds$compactionCount %||% 0L) + 1L
+                    if (isTRUE(flush_ran)) {
+                        ds$memoryFlushCompactionCount <-
+                        (ds$memoryFlushCompactionCount %||% 0L) + 1L
+                    }
+                    ctx$disk_session$session <- ds
+                    tryCatch(session_save(ds), error = function(e) NULL)
+                }
                 cat(sprintf("%sAuto-compacted (context was %.0f%%).%s\n",
                             ctx$palette$dim, pct, ctx$palette$reset))
             }
