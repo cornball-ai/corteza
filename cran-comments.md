@@ -1,6 +1,6 @@
 ## Submission summary
 
-Resubmission of 'corteza' (v0.6.7), an agent runtime that lets Large
+Update of 'corteza' (v0.6.8), an agent runtime that lets Large
 Language Models (LLMs) drive an R session through a policy-gated
 tool-use loop. Three entry points: an interactive console
 read-eval-print-loop (`chat()`), a shell command-line interface
@@ -8,10 +8,8 @@ read-eval-print-loop (`chat()`), a shell command-line interface
 for external clients like Claude Code or Codex.
 
 This release is a patch bump from the on-CRAN 0.6.3 series, batching
-twenty post-release dev cycles (0.6.6.1 -> 0.6.6.20) plus one
-out-of-band change (deny aborts) that merged without a dev marker.
-The dev markers are preserved in NEWS.md so reviewers can trace each
-substantive change to its PR.
+the post-release dev cycles since 0.6.3. The dev markers are preserved
+in NEWS.md so reviewers can trace each substantive change to its PR.
 
 ## R CMD check results
 
@@ -52,6 +50,19 @@ Highlights, with the full per-PR detail in NEWS.md:
   per-turn timing footer, /context meter, /tasks, /paste,
   interrupt handling, Matrix bot adapter,** and other UX work.
   Each PR documented in NEWS.md.
+- **Session spend reporting.** `/spent` reports approximate USD per
+  process run for both surfaces, itemized per conversation (the spans
+  between `/clear`), with a separate process-level line for subagent
+  spend. `/clear` now also terminates live subagents.
+- **MCP subagent exposure is opt-in.** `serve()` no longer advertises
+  the subagent tools (`spawn_subagent` et al.) to MCP clients by
+  default -- a spawned subagent spends autonomously on the host's
+  credentials, so exposure now requires `subagents.expose_over_mcp` or
+  `serve(expose_subagents = TRUE)`, and when on is bounded by a
+  configurable spend cap. `tools/call` also now rejects any tool not
+  advertised by `tools/list`.
+- **Provider default models** come from `llm.api::provider_default_model()`
+  (a single source of truth) instead of a parallel in-package table.
 
 ## Reviewer-facing notes (carried over from v0.6.3)
 
