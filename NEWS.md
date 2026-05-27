@@ -1,3 +1,13 @@
+# corteza 0.6.7.9
+
+## CRAN pre-submission housekeeping
+
+Packaging-only pass ahead of the 0.6.8 release: applied a deferred
+rformat reflow, generated the `user_interrupt_marker` man page,
+refreshed `cran-comments.md`, and turned the skills vignette's clone
+example into a `<your-skills-repo-url>` placeholder so it carries no
+dead link. No code behavior changes.
+
 # corteza 0.6.7.8
 
 ## Interrupt marker matches the deny marker's directive

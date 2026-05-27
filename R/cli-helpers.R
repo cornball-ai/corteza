@@ -295,7 +295,8 @@ format_doctor_report <- function(cwd, session, provider, display_model,
                     paste("check failed:", provider_check$message)
                 }),
             sprintf("model: %s", display_model %||% "(default)"),
-            sprintf("tools: %d available (in-process)", length(tools %||% list())),
+            sprintf("tools: %d available (in-process)",
+                    length(tools %||% list())),
             sprintf("git: %s",
                 if (isTRUE(git_check_fn())) {
                     "repository detected"
