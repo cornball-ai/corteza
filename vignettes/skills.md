@@ -151,5 +151,5 @@ Skills are just files. Commit them, symlink them, copy them.
 ln -s ~/skills $(Rscript -e 'cat(file.path(tools::R_user_dir("corteza","data"),"skills"))')
 
 # Or just clone a collection into the project
-git clone https://github.com/cornball-ai/skills .corteza/skills
+git clone <your-skills-repo-url> .corteza/skills
 ```
