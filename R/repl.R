@@ -922,7 +922,12 @@ run_repl_loop <- function(ctx) {
         )
         hist_tok <- estimate_history_tokens(ctx$session$history %||% list())
         used <- as.integer(sys_tok + tools_tok + hist_tok)
-        model <- ctx$model %||% ctx$session$model_map$cloud
+        # A model-less chat() session (no explicit model, model_map$cloud
+        # still the placeholder) resolves to the provider default so the
+        # meter shows the real limit; context_limit_for_model tolerates a
+        # NULL here regardless.
+        model <- ctx$model %||% ctx$session$model_map$cloud %||%
+        default_provider_model(ctx$session$provider)
         limit <- context_limit_for_model(model)
         if (!is.null(limit) && limit > 0L) {
             pct <- 100 * used / limit

@@ -85,6 +85,29 @@ expect_equal(ctx5$last_assistant_response, "stubbed reply")
 # short history stays well under the compaction threshold).
 expect_true(any(grepl("context .*%", out5)))
 
+# 5b. Regression: a model-less chat() session (ctx$model NULL,
+# model_map$cloud unset, provider unset) used to crash the post-turn
+# context meter at context_limit_for_model(NULL). The loop must now
+# complete and still print the indicator.
+ctx5b <- base_ctx(c("hello"))
+ctx5b$provider <- "ollama"
+ctx5b$model <- NULL
+ctx5b$config <- list()
+ctx5b$session <- new.env(parent = emptyenv())
+ctx5b$session$history <- list()
+ctx5b$session$tasks <- list()
+ctx5b$session$tasks_dirty <- FALSE
+sess5b <- corteza:::session_new("ollama", "llama3.2", getwd())
+ctx5b$disk_session <- list(session = sess5b, sessionId = sess5b$sessionId,
+                           resumed = FALSE)
+ctx5b$render_reply <- function(txt) invisible(NULL)
+ctx5b$turn_fn <- function(prompt, session) {
+    list(reply = "ok", usage = NULL)
+}
+out5b <- capture.output(corteza:::run_repl_loop(ctx5b))
+expect_equal(ctx5b$last_assistant_response, "ok")   # completed, no crash
+expect_true(any(grepl("context .*%", out5b)))
+
 # 6. /clear after /model: the fresh-session hook must see the UPDATED
 # model (regression: the hook must read current state, not stale locals
 # captured before /model ran). Also asserts disk_session is reassigned.

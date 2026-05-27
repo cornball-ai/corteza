@@ -71,6 +71,13 @@ default_provider_model <- function(provider) {
 #' @keywords internal
 #' @export
 context_limit_for_model <- function(model) {
+    # No model named (NULL, length-0, NA, or empty) -> fall through to
+    # the default rather than indexing MODEL_CONTEXT_LIMITS[[model]],
+    # which errors on a zero-length or NA subscript. A function with an
+    # "unknown model" fallback must not crash on "no model".
+    if (length(model) != 1L || is.na(model) || !nzchar(model)) {
+        return(128000L)
+    }
     if (!is.null(MODEL_CONTEXT_LIMITS[[model]])) {
         return(MODEL_CONTEXT_LIMITS[[model]])
     }
