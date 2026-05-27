@@ -1,3 +1,13 @@
+# corteza 0.6.7.10
+
+## Fix: `chat()` crash on a model-less session
+
+A `chat()` started without an explicit `model` no longer crashes after
+the first turn. The per-turn context meter called
+`context_limit_for_model()` with a NULL model and errored on the table
+subscript; it now falls back to the default limit (and resolves a
+model-less session to the provider default for display).
+
 # corteza 0.6.7.9
 
 ## CRAN pre-submission housekeeping

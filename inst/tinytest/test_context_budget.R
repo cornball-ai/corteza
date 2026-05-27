@@ -45,6 +45,14 @@ expect_equal(corteza::context_limit_for_model("claude-3-haiku"),
 expect_equal(corteza::context_limit_for_model("totally-fictional-llm"),
              128000L)
 
+# "No model named" must fall back too, not crash on a zero-length/NA
+# subscript (regression: a model-less chat() session passed NULL here
+# and blew up the post-turn context meter).
+expect_equal(corteza::context_limit_for_model(NULL), 128000L)
+expect_equal(corteza::context_limit_for_model(character(0)), 128000L)
+expect_equal(corteza::context_limit_for_model(""), 128000L)
+expect_equal(corteza::context_limit_for_model(NA_character_), 128000L)
+
 # estimate_history_tokens ----
 
 # Empty history -> 0.
