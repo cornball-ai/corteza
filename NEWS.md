@@ -1,3 +1,17 @@
+# corteza 0.6.9
+
+## Fix: scope saber's cache to tempdir under R CMD check
+
+`inst/tinytest/test_context.R` runs `corteza:::load_context()`, which
+delegates to `saber::briefing()` / `saber::agent_context()`. saber
+exposes a `briefs_dir` argument but defaults to
+`tools::R_user_dir("saber", "cache")`, so the test was writing files
+to the user's persistent cache and tripping CRAN's "checking for new
+files in some other directories" NOTE (caught by BDR's `donttest`
+check on the 0.6.3 release). The test now scopes `R_USER_CACHE_DIR` to
+a tempdir for its duration and restores the prior value at the end,
+keeping the package's normal cache behavior unchanged for end users.
+
 # corteza 0.6.8
 
 Patch release batching the 0.6.7.1 through 0.6.7.12 dev cycles. Per-PR
