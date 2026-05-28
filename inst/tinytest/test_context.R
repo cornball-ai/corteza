@@ -11,6 +11,17 @@ testdir <- file.path(tmpdir, paste0("ctx_test_", Sys.getpid()))
 if (dir.exists(testdir)) unlink(testdir, recursive = TRUE)
 dir.create(testdir, recursive = TRUE)
 
+# Scope saber's cache to tempdir for the duration of this file.
+# load_context() calls saber::briefing() / saber::agent_context(), which
+# default to tools::R_user_dir("saber", "cache"). Without this redirect,
+# R CMD check trips the "checking for new files in some other
+# directories" NOTE for files left under the user's persistent cache.
+# Restored in the cleanup block at the bottom of the file (on.exit() at
+# top level fires immediately in tinytest, so we use explicit cleanup).
+prev_user_cache_dir <- Sys.getenv("R_USER_CACHE_DIR", unset = NA)
+Sys.setenv(R_USER_CACHE_DIR = file.path(tmpdir,
+                                        paste0("ctx_cache_", Sys.getpid())))
+
 # --- list_context_files returns empty when no custom files configured ---
 files <- corteza:::list_context_files(testdir)
 expect_equal(length(files), 0)
@@ -63,3 +74,9 @@ expect_false(grepl("DOES_NOT_EXIST", ctx))
 
 # Cleanup
 unlink(testdir, recursive = TRUE)
+unlink(Sys.getenv("R_USER_CACHE_DIR"), recursive = TRUE)
+if (is.na(prev_user_cache_dir)) {
+    Sys.unsetenv("R_USER_CACHE_DIR")
+} else {
+    Sys.setenv(R_USER_CACHE_DIR = prev_user_cache_dir)
+}
