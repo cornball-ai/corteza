@@ -165,3 +165,49 @@ fail_result <- corteza:::do_compact(
                                     emit = function(...) invisible()
 )
 expect_null(fail_result)
+
+# compact_message_text: short bodies unchanged, huge ones elided.
+expect_equal(corteza:::compact_message_text("short"), "short")
+local({
+    big <- strrep("y", 20000L)
+    out <- corteza:::compact_message_text(big)
+    expect_true(grepl("large message elided", out, fixed = TRUE))
+    expect_true(nchar(out) < nchar(big))
+})
+
+# Emergency compaction: a giant tool-result body already in history must
+# not blow the summary prompt. do_compact() elides it to a marker so
+# /compact can recover an already-wedged session.
+local({
+    huge <- paste(sprintf("row %d", 1:50000), collapse = "\n")
+    sess_big <- list(messages = list(
+        list(role = "user", content = "run the thing"),
+        # stand-in for a huge tool_result already mirrored into history
+        list(role = "user", content = huge)
+    ))
+    captured_big <- NULL
+    fake_chat_big <- function(prompt, provider, model, system, temperature, ...) {
+        captured_big <<- prompt
+        list(content = "ok")
+    }
+    res <- corteza:::do_compact(sess_big, "anthropic", NULL,
+                                chat_fn = fake_chat_big,
+                                emit = function(...) invisible())
+    expect_false(is.null(res))
+    expect_true(nchar(captured_big) < nchar(huge))
+    expect_true(grepl("large message elided", captured_big, fixed = TRUE))
+    # the small message survives verbatim
+    expect_true(grepl("[user]: run the thing", captured_big, fixed = TRUE))
+})
+
+# .compact_trim_total: drops oldest rendered messages when the aggregate
+# overflows the total budget, keeping the most recent + a note.
+local({
+    msgs <- vapply(1:20, function(i) strrep(sprintf("m%02d-", i), 2000L),
+                   character(1L))
+    trimmed <- corteza:::.compact_trim_total(msgs, max_total = 50000L)
+    expect_true(length(trimmed) < length(msgs))
+    expect_true(grepl("earlier message", trimmed[1], fixed = TRUE))
+    # the newest message is retained
+    expect_true(any(grepl("m20-", trimmed)))
+})
