@@ -149,4 +149,3 @@ compact_message_text <- function(text,
     }
     kept
 }
-
