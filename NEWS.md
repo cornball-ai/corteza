@@ -1,3 +1,15 @@
+# corteza 0.6.7.12
+
+## Fix: spawned subagents inherit the parent session's provider/model
+
+`chat(provider = "ollama")` followed by an LLM-triggered
+`spawn_subagent` was silently producing children on Anthropic: the
+default `tool_executor` in `.make_tool_handler()` called `call_skill()`
+with no `ctx`, so `tool_spawn_subagent()` saw `ctx$session = NULL` and
+`subagent_spawn()` fell through to `getOption("corteza.provider")`. The
+executor now passes `ctx = list(session = session)`, so provider, model,
+`cwd`, `plan_mode`, and `archival_depth` all flow through to the child.
+
 # corteza 0.6.7.11
 
 ## Fix: cap tool output before it reaches model context

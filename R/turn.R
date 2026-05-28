@@ -185,7 +185,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # honored dry-run via opts$dry_run but every other surface
         # would silently execute the tool during a "preview".
         tool_executor <- function(name, args) {
-            call_skill(name, as.list(args), dry_run = session_dry_run())
+            call_skill(name, as.list(args), ctx = list(session = session),
+                       dry_run = session_dry_run())
         }
     }
     function(name, args) {

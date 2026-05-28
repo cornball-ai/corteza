@@ -480,6 +480,41 @@ local({
     expect_equal(d2$reason, "user fn: trust everything")
 })
 
+# ---- default tool_executor passes the parent session in ctx ----
+# Regression: spawn_subagent silently defaulted to anthropic when chat()
+# ran a non-Anthropic provider because the default executor called
+# call_skill() with no ctx, so tool_spawn_subagent() saw ctx$session =
+# NULL and subagent_spawn() fell through to getOption("corteza.provider").
+local({
+    op <- options(
+        corteza.policy = function(call) {
+            list(model = "cloud", approval = "allow", reason = "test allow")
+        }
+    )
+    on.exit(options(op), add = TRUE)
+
+    captured <- NULL
+    orig <- corteza:::call_skill
+    assignInNamespace(
+        "call_skill",
+        function(name, args, ctx = list(), ...) {
+            captured <<- ctx
+            list(content = list(list(type = "text", text = "ok")))
+        },
+        ns = "corteza"
+    )
+    on.exit(assignInNamespace("call_skill", orig, ns = "corteza"), add = TRUE)
+
+    s <- corteza::new_session("cli", provider = "ollama",
+                              approval_cb = function(call, decision) TRUE)
+    h <- corteza:::.make_tool_handler(s) # default executor
+    h("spawn_subagent", list(task = "test"))
+
+    expect_false(is.null(captured))
+    expect_identical(captured$session, s)
+    expect_identical(captured$session$provider, "ollama")
+})
+
 # ---- turn(): smoke test that session is still usable ----
 
 s <- corteza::new_session("cli")
