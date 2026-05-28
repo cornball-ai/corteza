@@ -1,16 +1,20 @@
 # corteza 0.6.9
 
-## Fix: scope saber's cache to tempdir under R CMD check
+## Fix: scope all three `tools::R_user_dir()` roots to tempdir under R CMD check
 
-`inst/tinytest/test_context.R` runs `corteza:::load_context()`, which
-delegates to `saber::briefing()` / `saber::agent_context()`. saber
-exposes a `briefs_dir` argument but defaults to
-`tools::R_user_dir("saber", "cache")`, so the test was writing files
-to the user's persistent cache and tripping CRAN's "checking for new
-files in some other directories" NOTE (caught by BDR's `donttest`
-check on the 0.6.3 release). The test now scopes `R_USER_CACHE_DIR` to
-a tempdir for its duration and restores the prior value at the end,
-keeping the package's normal cache behavior unchanged for end users.
+PR #96 already redirected `R_USER_CACHE_DIR` for the test run (so
+saber's transitive briefs writes landed in tempdir), but corteza
+itself writes to all three `tools::R_user_dir()` roots — `cache`
+(saber briefs, `/last` response), `data` (session transcripts via
+`R/paths.R`, matrix state), and `config` (matrix.json). Session tests
+were still leaking files under
+`~/.local/share/R/corteza/agents/…/sessions/*.jsonl`, which would
+have tripped CRAN's "checking for new files in some other
+directories" NOTE on BDR's `donttest` box even when local
+`tinypkgr::check()` reports `Status: OK`. The suite-level redirect in
+`tests/tinytest.R` now sets all three (`R_USER_CACHE_DIR`,
+`R_USER_DATA_DIR`, `R_USER_CONFIG_DIR`) to tempfiles for the check
+run; end-user behavior is unchanged.
 
 # corteza 0.6.8
 
