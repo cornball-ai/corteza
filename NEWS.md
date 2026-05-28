@@ -1,3 +1,8 @@
+# corteza 0.6.8
+
+Patch release batching the 0.6.7.1 through 0.6.7.12 dev cycles. Per-PR
+detail is preserved in the dev-marker sections below.
+
 # corteza 0.6.7.12
 
 ## Fix: spawned subagents inherit the parent session's provider/model
