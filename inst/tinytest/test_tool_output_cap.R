@@ -26,7 +26,7 @@ local({
     expect_true(grepl("50000 lines", out))
     # marker is far smaller than the original
     expect_true(nchar(out) < nchar(big))
-    expect_true(nchar(out) < 20000L)
+    expect_true(nchar(out) < 5000L)
     # handle named in the marker resolves to the full output
     h <- regmatches(out, regexpr("\\.h_[0-9]+", out))
     expect_true(nzchar(h))
@@ -66,7 +66,7 @@ local({
     h <- corteza:::.make_tool_handler(s, tool_executor = fake)
     out <- h("grep_files", list(pattern = "x"))
     expect_true(grepl("truncated", out))
-    expect_true(nchar(out) < 20000L)
+    expect_true(nchar(out) < 5000L)
     expect_true(grepl("50000 lines", out))
 })
 
@@ -83,7 +83,7 @@ local({
     h <- corteza:::.make_tool_handler(s, tool_executor = fake)
     out <- h("grep_files", list(pattern = "x"))
     expect_true(grepl("truncated", out))
-    expect_true(nchar(out) < 20000L)
+    expect_true(nchar(out) < 5000L)
 })
 
 # Error output (isError result) is capped too.
@@ -106,7 +106,7 @@ local({
     h <- corteza:::.make_tool_handler(s, tool_executor = fake)
     out <- h("bash", list(command = "x"))
     expect_true(grepl("truncated", out))
-    expect_true(nchar(out) < 20000L)
+    expect_true(nchar(out) < 5000L)
 })
 
 # Non-bash tool: read_handle(op="print") of a huge object can't re-inline
@@ -125,7 +125,7 @@ local({
     h <- corteza:::.make_tool_handler(s) # default executor -> call_skill
     out <- h("read_handle", list(handle = stash$handle, op = "print"))
     expect_true(grepl("truncated", out))
-    expect_true(nchar(out) < 20000L)
+    expect_true(nchar(out) < 5000L)
 })
 
 # Real bash path: a command that prints thousands of lines is capped,

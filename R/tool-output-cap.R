@@ -15,10 +15,12 @@
 # bodies lets /compact recover an already-wedged session.
 
 # Caps. Constants for now; promote to config if tuning is needed.
-.tool_output_max_chars <- 12000L
-.tool_output_max_lines <- 300L
-.tool_output_preview_lines <- 200L
-.tool_output_preview_chars <- 8000L
+# Preview is intentionally a bit under the cap so the marker header
+# (~6 lines / ~250 chars) plus the preview body stays under both caps.
+.tool_output_max_chars <- 5000L
+.tool_output_max_lines <- 50L
+.tool_output_preview_lines <- 40L
+.tool_output_preview_chars <- 4000L
 
 .compact_max_chars_per_message <- 16000L
 .compact_max_total_chars <- 120000L
