@@ -1,3 +1,15 @@
+# corteza 0.6.7.11
+
+## Fix: cap tool output before it reaches model context
+
+A single unbounded tool result (e.g. a `bash` command that printed 57k
+lines) was flattened straight to the model and mirrored into history,
+blowing the next call past the provider token limit; `/compact` then
+couldn't recover the session. Tool results now pass through a universal
+guard (`admit_tool_result()`) that caps oversized output to a marker plus
+a recoverable handle, and `/compact` elides giant message bodies so it can
+rescue an already-wedged session.
+
 # corteza 0.6.7.10
 
 ## Fix: `chat()` crash on a model-less session
