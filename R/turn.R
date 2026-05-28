@@ -232,7 +232,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                             error = function(e) err(paste("Tool error:",
                         conditionMessage(e)))
             )
-            return(.flatten_mcp_result(raw))
+            return(admit_tool_result(.flatten_mcp_result(raw),
+                                     tool = internal_name))
         }
 
         # Resolve once up front so policy() and the sticky classifier
@@ -313,7 +314,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
-        outcome_text("ran", .flatten_mcp_result(raw), success, diff = raw$diff)
+        outcome_text("ran",
+                     admit_tool_result(.flatten_mcp_result(raw), tool = internal_name),
+                     success, diff = raw$diff)
     }
 }
 
