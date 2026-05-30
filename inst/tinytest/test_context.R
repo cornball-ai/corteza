@@ -48,6 +48,11 @@ expect_true(grepl("README.md", ctx))
 expect_true(grepl("My Project", ctx))
 expect_true(grepl("You are an AI assistant", ctx))
 
+# --- Runtime guidance block is present ---
+expect_true(grepl("Corteza Runtime Environment", ctx))
+expect_true(grepl("persistent R session", ctx))
+expect_true(grepl("bash tool makes you a general-purpose agent", ctx))
+
 # --- Multiple custom files ---
 writeLines(c("# Plan", "", "Phase 1: Core"), file.path(testdir, "PLAN.md"))
 writeLines('{"context_files": ["README.md", "PLAN.md"]}',

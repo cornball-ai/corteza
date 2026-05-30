@@ -31,6 +31,9 @@ load_context <- function(cwd = getwd()) {
                               sep = "\n"
         ))
 
+    # Runtime guidance: how corteza's live session and tools behave
+    b <- add_context(b, corteza_runtime_guidance())
+
     # Project briefing (DESCRIPTION, downstream deps, git log)
     b <- add_context(b, load_saber_briefing(cwd))
 
@@ -93,6 +96,42 @@ load_context <- function(cwd = getwd()) {
         return(NULL)
     }
     paste(b$parts, collapse = "\n\n")
+}
+
+#' Runtime guidance block for the system prompt
+#'
+#' Describes corteza's own runtime: the live, persistent R session, how
+#' its tools behave, and that the bash tool makes it a general-purpose
+#' agent, not an R-only one. Static text; corteza owns the tool names it
+#' references, so this lives here rather than in saber.
+#' @noRd
+corteza_runtime_guidance <- function() {
+    paste(
+          "## Corteza Runtime Environment",
+          "",
+          "You are corteza, running inside a live, persistent R session. Your `run_r`",
+          "tool evaluates code in that session, and the workspace survives across turns:",
+          "objects you create stick around, attached packages stay attached, the working",
+          "directory persists. You are not shelling out to `Rscript` for each call.",
+          "",
+          "Guidelines:",
+          "",
+          "- To inspect or transform data, just run R. Do not ask the user to run it,",
+          "  and do not write a throwaway `.R` file unless the goal is a committed script.",
+          "- Load data once, keep it in the workspace, reuse it across turns. If `dat`",
+          "  already exists from an earlier turn, do not re-read the CSV.",
+          "- `getwd()` is the project root. Paths resolve relative to it.",
+          "- `run_r` runs an expression in the live session; `run_r_script` runs a file.",
+          "  Prefer `run_r` for exploration, scripts for anything that gets committed.",
+          "- Plots: in headless sessions, write to a file rather than assuming a screen",
+          "  device.",
+          "",
+          "You are not limited to R. The bash tool makes you a general-purpose agent in",
+          "the same way Claude Code is: use it for shell commands, git, file operations,",
+          "builds, and tasks in other languages. Reach for bash whenever the work isn't R,",
+          "and combine it with `run_r` as the task demands.",
+          sep = "\n"
+    )
 }
 
 #' Render the live-subagents block for the system prompt.
