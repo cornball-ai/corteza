@@ -191,20 +191,18 @@ packages silently.
 
 ## CLI vs `chat()` slash-command parity
 
-`inst/bin/corteza` (shell binary) has the full command set:
-`/quit /clear /tools /spawn /agents /ask /kill /help /sessions /trace
-/permissions /context /dryrun /compact /skill /model /provider /diff
-/review /status /doctor /config /last /outputs /r`.
+Both surfaces share one slash-command implementation. `inst/bin/corteza`
+(shell binary) and `corteza::chat()` (in-R) each build a `ctx` and hand
+off to `run_repl_loop()` (`R/repl.R`), which dispatches every slash
+command, so the command set is identical across both. The
+`/status /doctor /config /diff /review /last /outputs` commands (once
+CLI-only) now work in `chat()` too.
 
-`corteza::chat()` (in-R) covers the subagent, skill, info, and basic
-introspection surface. It does **not** yet support
-`/status /doctor /config /diff /review /last /outputs` — those depend
-on display helpers that still live inside the CLI script. Filed as a
-follow-up.
-
-The CLI's `/remember /recall /flush` are dead branches: they call
-`memory_store` / `memory_search` / `strip_tags` / `parse_tags` which
-don't exist in the package. Don't use them.
+`/remember` and `/recall` no longer exist. `/flush` is the live memory
+command (manual memory flush), sharing one `run_memory_flush()`
+implementation (`R/chat-slash.R`) across both surfaces via
+`run_repl_loop()`. The legacy `memory_store` / `memory_search` tools are
+off by default behind `config$legacy_memory_tools_enabled`.
 
 ## Project context loading
 
