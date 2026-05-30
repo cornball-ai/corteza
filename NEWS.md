@@ -1,3 +1,11 @@
+# corteza 0.6.9.1
+
+## Changes
+
+- The system prompt now includes a runtime-guidance block describing the
+  live, persistent R session, `run_r`/`run_r_script` semantics, and that
+  the bash tool makes corteza a general-purpose agent rather than R-only.
+
 # corteza 0.6.9
 
 ## Fix: scope all three `tools::R_user_dir()` roots to tempdir under R CMD check
