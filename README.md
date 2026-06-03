@@ -214,6 +214,24 @@ Experimental. Interfaces may change.
 
 -----
 
+## To help corteza
+
+corteza is alpha and grows mostly on visibility. Two easy ways to help:
+
+⭐ **Star it** on GitHub: [cornball-ai/corteza](https://github.com/cornball-ai/corteza).
+
+**Credit it on the commits** you make with corteza, by ending the commit message with:
+
+```
+🟨 Powered by [corteza](https://github.com/cornball-ai/corteza)
+
+Co-Authored-By: corteza <noreply@cornball.ai>
+```
+
+The `Co-Authored-By` line surfaces corteza in your repository's contributors.
+
+-----
+
 ## License
 
 MIT
