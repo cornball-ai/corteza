@@ -53,10 +53,11 @@ In the agent world, tools, skills, and the servers that expose them are three se
 The primary interface. A terminal agent with session management and context compaction. 
 
 ```bash
-corteza                    # Start agent
-corteza --resume           # Resume last session
-corteza --provider ollama  # Use local models
+corteza                          # Start agent
+corteza --resume                 # Resume last session
+corteza --provider ollama        # Use local models
 corteza --provider moonshot --model kimi-k2
+corteza --provider openai_codex  # ChatGPT subscription (log in once, see API Keys)
 ```
 
 Context indicators are configurable. By default, the CLI starts showing
@@ -92,10 +93,11 @@ Exposes a persistent R session to external MCP clients (Claude Code, Claude Desk
 Runs inside your R console. Tools execute as direct function calls, no MCP server, no subprocess. Your `.GlobalEnv` objects are the agent's objects.
 
 ```r
-chat()                           # Claude (default)
-chat(provider = "openai")        # GPT-4o
-chat(provider = "moonshot")      # Kimi K2
-chat(provider = "ollama",        # Local
+chat()                            # Claude (default)
+chat(provider = "openai")         # GPT-4o
+chat(provider = "moonshot")       # Kimi K2
+chat(provider = "openai_codex")   # ChatGPT subscription (log in once, see API Keys)
+chat(provider = "ollama",         # Local
      model = "llama3.2")
 ```
 
@@ -144,6 +146,30 @@ OPENAI_API_KEY=sk-...
 MOONSHOT_API_KEY=sk-...
 TAVILY_API_KEY=tvly-...   # Optional, for web search
 ```
+
+#### ChatGPT subscription (Codex, no API key)
+
+The `openai_codex` provider uses your ChatGPT subscription instead of an
+API key. Log in once from R; the token is cached and refreshed by
+[tinyoauth](https://github.com/cornball-ai/tinyoauth), so it persists
+across sessions (including for the `corteza` CLI):
+
+```r
+llm.api::openai_codex_login()   # device-code login: opens a URL + code
+```
+
+Then use it from any interface:
+
+```bash
+corteza --provider openai_codex
+```
+```r
+corteza::chat(provider = "openai_codex")   # default model gpt-5.5
+```
+
+To skip the flag, set `provider: openai_codex` in `.corteza/config.json`.
+Models: `gpt-5.5` (default), `gpt-5.4`, `gpt-5.4-mini`,
+`gpt-5.3-codex-spark`.
 
 ### CLI (Optional)
 
