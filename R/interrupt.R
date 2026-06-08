@@ -23,7 +23,7 @@
 # to feed back into llm.api::agent(history = ...)).
 #
 # - history: current message list (may end mid-batch)
-# - provider: one of "anthropic" | "openai" | "moonshot" | "ollama"
+# - provider: one of "anthropic" | "openai" | "moonshot" | "openai_codex" | "ollama"
 # - marker: assistant text message describing why the turn stopped
 #   (e.g. user_interrupt_marker() or user_deny_marker())
 # - prompt: the user prompt that started this turn. Used only when

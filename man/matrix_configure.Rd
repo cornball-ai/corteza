@@ -4,7 +4,7 @@
 \title{Configure the Matrix channel for this host}
 \usage{
 matrix_configure(server, user, password, room, model = NULL,
-                 provider = c("anthropic", "openai", "moonshot", "ollama"),
+                 provider = c("anthropic", "openai", "moonshot", "openai_codex", "ollama"),
                  tools_filter = NULL, auto_approve_asks = FALSE)
 }
 \arguments{

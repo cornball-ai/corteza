@@ -108,7 +108,8 @@ matrix_mx_session <- function(cfg) {
 #' }
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
-                             provider = c("anthropic", "openai", "moonshot", "ollama"),
+                             provider = c("anthropic", "openai", "moonshot",
+                                          "openai_codex", "ollama"),
                              tools_filter = NULL, auto_approve_asks = FALSE) {
     matrix_require_mx()
     provider <- match.arg(provider)

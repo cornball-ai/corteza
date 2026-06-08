@@ -3,7 +3,7 @@
 # corteza - An open-source interactive CLI agent in R
 #
 # Usage: corteza [options]
-#   --provider   anthropic|openai|moonshot|ollama (default: anthropic)
+#   --provider   anthropic|openai|moonshot|openai_codex|ollama (default: anthropic)
 #   --model      model name (default: provider-specific)
 #   --port       MCP server port (default: 7850)
 #   --session    Session key (resume if exists, create if not)
@@ -83,7 +83,7 @@ corteza - An open-source interactive CLI agent
 Usage: corteza [options]
 
 Options:
-  --provider      LLM provider: anthropic, openai, moonshot, ollama (default: anthropic)
+  --provider      LLM provider: anthropic, openai, moonshot, openai_codex, ollama (default: anthropic)
   --model         Model name (default: auto per provider)
   --port          MCP server port (default: 7850)
   --tools         Tool filter: core, file, code, git, r, data, web, chat (default: all)
@@ -176,7 +176,7 @@ Commands:
   /context       Show live context usage and loaded context files
   /spent, /cost  Approximate USD spent this run (main-agent turns)
   /model <name>  Switch model
-  /provider <p>  Switch provider (anthropic, openai, moonshot, ollama)
+  /provider <p>  Switch provider (anthropic, openai, moonshot, openai_codex, ollama)
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)
 

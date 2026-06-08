@@ -8,7 +8,7 @@
 #   channel        one of "cli", "console", "matrix"
 #   history        list of prior messages (may be NULL)
 #   model_map      list(cloud = "...", local = "...") or NULL
-#   provider       "anthropic" | "openai" | "moonshot" | "ollama"
+#   provider       "anthropic" | "openai" | "moonshot" | "openai_codex" | "ollama"
 #   tools_filter   character vector of tool names/categories, or NULL
 #   system         character, system prompt override (or NULL for default)
 #   approval_cb    function(call, decision) -> TRUE|FALSE
