@@ -3,7 +3,7 @@
 \alias{matrix_send}
 \title{Send a message to a Matrix room}
 \usage{
-matrix_send(text, room_id = NULL, msgtype = "m.text")
+matrix_send(text, room_id = NULL, msgtype = "m.text", markdown = FALSE)
 }
 \arguments{
 \item{text}{Character. Plain text body.}
@@ -12,6 +12,9 @@ matrix_send(text, room_id = NULL, msgtype = "m.text")
 from the saved Matrix config (see \code{\link{matrix_configure}}).}
 
 \item{msgtype}{Character. Matrix msgtype, default "m.text".}
+
+\item{markdown}{Logical. If TRUE, also send Matrix custom HTML derived
+from a conservative markdown subset.}
 }
 \value{
 The event ID of the sent message.

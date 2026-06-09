@@ -134,6 +134,8 @@ matrix_configure <- function(server, user, password, room, model = NULL,
 #' @param room_id Character. Matrix room id. Defaults to \code{cfg$room_id}
 #'   from the saved Matrix config (see \code{\link{matrix_configure}}).
 #' @param msgtype Character. Matrix msgtype, default "m.text".
+#' @param markdown Logical. If TRUE, also send Matrix custom HTML derived
+#'   from a conservative markdown subset.
 #'
 #' @return The event ID of the sent message.
 #' @examples
@@ -142,14 +144,113 @@ matrix_configure <- function(server, user, password, room, model = NULL,
 #' matrix_send("hello from corteza")
 #' }
 #' @export
-matrix_send <- function(text, room_id = NULL, msgtype = "m.text") {
+matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
+                        markdown = FALSE) {
     matrix_require_mx()
     cfg <- matrix_load_config()
     s <- matrix_mx_session(cfg)
     if (is.null(room_id) || !nzchar(room_id)) {
         room_id <- cfg$room_id
     }
-    mx.api::mx_send(s, room_id, text, msgtype = msgtype)
+    matrix_send_room(s, room_id, text, msgtype = msgtype, markdown = markdown)
+}
+
+matrix_html_escape <- function(x) {
+    x <- gsub("&", "&amp;", x, fixed = TRUE)
+    x <- gsub("<", "&lt;", x, fixed = TRUE)
+    x <- gsub(">", "&gt;", x, fixed = TRUE)
+    x
+}
+
+matrix_markdown_inline_html <- function(x) {
+    x <- matrix_html_escape(x)
+    x <- gsub("`([^`]+)`", "<code>\\1</code>", x, perl = TRUE)
+    x <- gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", x, perl = TRUE)
+    x <- gsub("\\b_([^_]+)_\\b", "<em>\\1</em>", x, perl = TRUE)
+    x
+}
+
+matrix_markdown_to_html <- function(text) {
+    lines <- strsplit(text %||% "", "\n", fixed = TRUE)[[1]]
+    out <- character()
+    in_pre <- FALSE
+    in_ul <- FALSE
+    in_ol <- FALSE
+    close_lists <- function() {
+        z <- character()
+        if (in_ul) {
+            z <- c(z, "</ul>")
+            in_ul <<- FALSE
+        }
+        if (in_ol) {
+            z <- c(z, "</ol>")
+            in_ol <<- FALSE
+        }
+        z
+    }
+    for (ln in lines) {
+        if (grepl("^```", ln)) {
+            if (in_pre) {
+                out <- c(out, "</code></pre>")
+                in_pre <- FALSE
+            } else {
+                out <- c(out, close_lists(), "<pre><code>")
+                in_pre <- TRUE
+            }
+            next
+        }
+        if (in_pre) {
+            out <- c(out, matrix_html_escape(ln))
+            next
+        }
+        if (!nzchar(trimws(ln))) {
+            out <- c(out, close_lists())
+            next
+        }
+        if (grepl("^#{1,6}\\s+", ln)) {
+            out <- c(out, close_lists())
+            lvl <- nchar(sub("^(#{1,6}).*$", "\\1", ln))
+            body <- sub("^#{1,6}\\s+", "", ln)
+            out <- c(out, sprintf("<h%d>%s</h%d>", lvl,
+                                  matrix_markdown_inline_html(body), lvl))
+            next
+        }
+        if (grepl("^\\s*[-*]\\s+", ln)) {
+            if (!in_ul) {
+                out <- c(out, close_lists(), "<ul>")
+                in_ul <- TRUE
+            }
+            body <- sub("^\\s*[-*]\\s+", "", ln)
+            out <- c(out, sprintf("<li>%s</li>", matrix_markdown_inline_html(body)))
+            next
+        }
+        if (grepl("^\\s*[0-9]+[.)]\\s+", ln)) {
+            if (!in_ol) {
+                out <- c(out, close_lists(), "<ol>")
+                in_ol <- TRUE
+            }
+            body <- sub("^\\s*[0-9]+[.)]\\s+", "", ln)
+            out <- c(out, sprintf("<li>%s</li>", matrix_markdown_inline_html(body)))
+            next
+        }
+        out <- c(out, close_lists(),
+                 sprintf("<p>%s</p>", matrix_markdown_inline_html(ln)))
+    }
+    out <- c(out, close_lists())
+    if (in_pre) {
+        out <- c(out, "</code></pre>")
+    }
+    paste(out, collapse = "")
+}
+
+matrix_send_room <- function(mx_sess, room_id, text, msgtype = "m.text",
+                             markdown = FALSE) {
+    extra <- NULL
+    if (isTRUE(markdown)) {
+        extra <- list(format = "org.matrix.custom.html",
+                      formatted_body = matrix_markdown_to_html(text))
+    }
+    mx.api::mx_send(mx_sess, room_id, text, msgtype = msgtype, extra = extra)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
@@ -287,30 +388,48 @@ matrix_archive_all <- function(sessions, mx_sess = NULL) {
     invisible(n)
 }
 
-# Is this a /clear (or /reset, /new) command? In group rooms the body
-# will include the @-mention prefix — accept the command at the end of
-# the message after any leading mention text, or on its own.
-matrix_is_clear_command <- function(body) {
+# Matrix clients such as Element intercept single-slash commands before
+# they reach the bot. Accept normal chat forms too: "clear", "new chat",
+# "@tiny clear", and the legacy escaped "//clear".
+matrix_command_text <- function(body) {
     if (is.null(body) || !nzchar(body)) {
-        return(FALSE)
+        return("")
     }
-    trimmed <- trimws(body)
-    # Accept // as well as / so Element's slash-command interception
-    # doesn't swallow the verb (Element's escape is to double the slash).
-    grepl("(^|\\s)/+(clear|reset|new)\\s*$", trimmed)
+    txt <- trimws(body)
+    # Drop leading Matrix mentions or localpart mentions. This is kept
+    # syntactic rather than identity-aware so helpers stay pure and easy
+    # to test; group-room response gating already verified the mention.
+    txt <- sub("^@[A-Za-z0-9._=-]+(?::[^[:space:]]+)?[:,]?\\s+", "", txt,
+               perl = TRUE)
+    trimws(txt)
 }
 
-# Match `/model <name> [provider]` (or `/model` alone to query). Returns
-# NULL if not a model command, else a list(model = ..., provider = ...,
-# query_only = ...).
+# Is this a clear/reset/new command?
+matrix_is_clear_command <- function(body) {
+    cmd <- matrix_command_text(body)
+    if (!nzchar(cmd)) {
+        return(FALSE)
+    }
+    grepl("^/+(clear|reset|new)\\s*$|^(clear|reset|new)(\\s+chat)?\\s*$",
+          cmd, perl = TRUE, ignore.case = TRUE)
+}
+
+matrix_is_status_command <- function(body) {
+    cmd <- matrix_command_text(body)
+    nzchar(cmd) && grepl("^/+status\\s*$|^status\\s*$", cmd,
+                         perl = TRUE, ignore.case = TRUE)
+}
+
+# Match `/model <name> [provider]`, `model <name> [provider]`, or `model`
+# alone to query. Returns NULL if not a model command, else a list.
 matrix_parse_model_command <- function(body) {
-    if (is.null(body) || !nzchar(body)) {
+    cmd <- matrix_command_text(body)
+    if (!nzchar(cmd)) {
         return(NULL)
     }
-    trimmed <- trimws(body)
-    m <- regmatches(trimmed,
-                    regexec("(?:^|\\s)/+model(?:\\s+(\\S+)(?:\\s+(\\S+))?)?\\s*$",
-                            trimmed, perl = TRUE))[[1]]
+    m <- regmatches(cmd,
+                    regexec("^/*model(?:\\s+(\\S+)(?:\\s+(\\S+))?)?\\s*$",
+                            cmd, perl = TRUE, ignore.case = TRUE))[[1]]
     if (!length(m)) {
         return(NULL)
     }
@@ -871,6 +990,24 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             next
         }
 
+        if (matrix_is_status_command(m$body)) {
+            ack <- sprintf("model: %s\nprovider: %s\ncwd: %s",
+                           session$model %||% "(unset)",
+                           session$provider %||% "(unset)",
+                           session$cwd %||% getwd())
+            sent_id <- tryCatch(
+                                mx.api::mx_send(mx_sess, m$room_id, ack),
+                                error = function(e) NULL
+            )
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- matrix_remember_event(
+                    session$seen_event_ids, sent_id
+                )
+            }
+            replied <- replied + 1L
+            next
+        }
+
         model_cmd <- matrix_parse_model_command(m$body)
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd)
@@ -908,7 +1045,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- "(no reply)"
         }
         sent_id <- tryCatch(
-                            mx.api::mx_send(mx_sess, m$room_id, reply),
+                            matrix_send_room(mx_sess, m$room_id, reply,
+                                             markdown = TRUE),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
