@@ -1,5 +1,11 @@
 library(tinytest)
 
+# Matrix config/extract helpers delegate to mx.client (Suggests). Skip
+# when it's not installed (e.g. R CMD check without the GitHub mirror).
+if (!requireNamespace("mx.client", quietly = TRUE)) {
+    exit_file("mx.client not available")
+}
+
 expect_true(is.function(corteza::matrix_configure))
 expect_true(is.function(corteza::matrix_send))
 expect_true(is.function(corteza::matrix_poll))
@@ -44,6 +50,8 @@ if (at_home()) local({
     server = "https://example",
     user = "bot",
     user_id = "@bot:example",
+    token = "tok",
+    device_id = "DEV",
     room_id = "!abc:example",
     model = "kimi-k2.5",
     provider = "moonshot",

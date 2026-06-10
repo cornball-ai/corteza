@@ -1,5 +1,10 @@
 library(tinytest)
 
+# matrix_extract_reaction_verdict delegates to mx.client (Suggests).
+if (!requireNamespace("mx.client", quietly = TRUE)) {
+    exit_file("mx.client not available")
+}
+
 # --- matrix_extract_reaction_verdict ---
 
 # No events -> NULL.

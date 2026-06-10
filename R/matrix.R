@@ -8,60 +8,48 @@
 # The matrix_* functions hard-stop with an install hint if it's missing.
 
 matrix_require_mx <- function() {
-    if (!requireNamespace("mx.api", quietly = TRUE)) {
-        stop("Matrix integration requires the 'mx.api' package. ",
-             "Install it from CRAN, or from the cornball-ai GitHub mirror, ",
-             "before calling Matrix functions.", call. = FALSE)
+    for (pkg in c("mx.api", "mx.client")) {
+        if (!requireNamespace(pkg, quietly = TRUE)) {
+            stop("Matrix integration requires the '", pkg, "' package. ",
+                 "Install it from CRAN, or from the cornball-ai GitHub mirror, ",
+                 "before calling Matrix functions.", call. = FALSE)
+        }
     }
 }
 
-# Active write target for matrix config: under R_user_dir per CRAN
-# policy on home-filespace writes. CORTEZA_MATRIX_CONFIG overrides
-# this so multiple bots (e.g. a personal and a company identity) can
-# coexist on one host with separate systemd units.
+# Config persistence, session construction, and the markdown->HTML
+# converter live in mx.client now; these are thin corteza-side adapters
+# over it. The "corteza" app namespace plus the CORTEZA_MATRIX_CONFIG
+# override reproduce the historical paths exactly:
+# R_user_dir("corteza","config")/matrix.json, with a legacy fallback to
+# ~/.corteza/matrix.json (mx.client special-cases the "corteza" app for
+# that legacy path).
 matrix_config_path <- function() {
-    env <- Sys.getenv("CORTEZA_MATRIX_CONFIG", "")
-    if (nzchar(env)) {
-        return(path.expand(env))
-    }
-    file.path(tools::R_user_dir("corteza", "config"), "matrix.json")
+    mx.client::mx_client_config_path("corteza",
+                                     env_var = "CORTEZA_MATRIX_CONFIG")
 }
 
-# Pre-CRAN releases wrote to ~/.corteza/matrix.json. Read from there if
-# present so existing setups keep working; matrix_save_config() writes
-# to the new location, and matrix_configure_migrate_legacy() can move
-# the file outright.
-matrix_legacy_config_path <- function() path.expand("~/.corteza/matrix.json")
+matrix_legacy_config_path <- function() {
+    mx.client::mx_client_legacy_config_path("corteza")
+}
 
 matrix_load_config <- function() {
-    path <- matrix_config_path()
-    legacy <- matrix_legacy_config_path()
-    # When CORTEZA_MATRIX_CONFIG is set, treat it as authoritative: a
-    # missing/typo'd path must error rather than silently falling back
-    # to the default identity at the legacy location.
-    explicit <- nzchar(Sys.getenv("CORTEZA_MATRIX_CONFIG", ""))
-    src <- if (file.exists(path)) {
-        path
-    } else if (!explicit && file.exists(legacy)) {
-        legacy
-    } else {
-        stop("Matrix not configured. Call matrix_configure() first.",
-             call. = FALSE)
-    }
-    jsonlite::fromJSON(src, simplifyVector = TRUE)
+    cfg <- mx.client::mx_client_load(app = "corteza",
+                                     env_var = "CORTEZA_MATRIX_CONFIG")
+    # Hand corteza's downstream a plain list, as fromJSON did before.
+    cfg <- unclass(cfg)
+    attr(cfg, "path") <- NULL
+    attr(cfg, "app") <- NULL
+    cfg
 }
 
 matrix_save_config <- function(cfg) {
-    path <- matrix_config_path()
-    dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-    writeLines(jsonlite::toJSON(cfg, auto_unbox = TRUE, pretty = TRUE), path)
-    Sys.chmod(path, mode = "0600")
+    mx.client::mx_client_save(cfg, app = "corteza", path = matrix_config_path())
     invisible(cfg)
 }
 
 matrix_mx_session <- function(cfg) {
-    mx.api::mx_session(server = cfg$server, token = cfg$token,
-                       user_id = cfg$user_id, device_id = cfg$device_id)
+    mx.client::mx_client_session(cfg)
 }
 
 #' Configure the Matrix channel for this host
@@ -155,129 +143,18 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
     matrix_send_room(s, room_id, text, msgtype = msgtype, markdown = markdown)
 }
 
-matrix_html_escape <- function(x) {
-    x <- gsub("&", "&amp;", x, fixed = TRUE)
-    x <- gsub("<", "&lt;", x, fixed = TRUE)
-    x <- gsub(">", "&gt;", x, fixed = TRUE)
-    x
-}
-
-matrix_markdown_inline_html <- function(x) {
-    x <- matrix_html_escape(x)
-    x <- gsub("`([^`]+)`", "<code>\\1</code>", x, perl = TRUE)
-    x <- gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", x, perl = TRUE)
-    x <- gsub("\\b_([^_]+)_\\b", "<em>\\1</em>", x, perl = TRUE)
-    x
-}
-
-matrix_markdown_to_html <- function(text) {
-    lines <- strsplit(text %||% "", "\n", fixed = TRUE)[[1]]
-    out <- character()
-    in_pre <- FALSE
-    in_ul <- FALSE
-    in_ol <- FALSE
-    close_lists <- function() {
-        z <- character()
-        if (in_ul) {
-            z <- c(z, "</ul>")
-            in_ul <<- FALSE
-        }
-        if (in_ol) {
-            z <- c(z, "</ol>")
-            in_ol <<- FALSE
-        }
-        z
-    }
-    for (ln in lines) {
-        if (grepl("^```", ln)) {
-            if (in_pre) {
-                out <- c(out, "</code></pre>")
-                in_pre <- FALSE
-            } else {
-                out <- c(out, close_lists(), "<pre><code>")
-                in_pre <- TRUE
-            }
-            next
-        }
-        if (in_pre) {
-            out <- c(out, matrix_html_escape(ln))
-            next
-        }
-        if (!nzchar(trimws(ln))) {
-            out <- c(out, close_lists())
-            next
-        }
-        if (grepl("^#{1,6}\\s+", ln)) {
-            out <- c(out, close_lists())
-            lvl <- nchar(sub("^(#{1,6}).*$", "\\1", ln))
-            body <- sub("^#{1,6}\\s+", "", ln)
-            out <- c(out, sprintf("<h%d>%s</h%d>", lvl,
-                                  matrix_markdown_inline_html(body), lvl))
-            next
-        }
-        if (grepl("^\\s*[-*]\\s+", ln)) {
-            if (!in_ul) {
-                out <- c(out, close_lists(), "<ul>")
-                in_ul <- TRUE
-            }
-            body <- sub("^\\s*[-*]\\s+", "", ln)
-            out <- c(out, sprintf("<li>%s</li>", matrix_markdown_inline_html(body)))
-            next
-        }
-        if (grepl("^\\s*[0-9]+[.)]\\s+", ln)) {
-            if (!in_ol) {
-                out <- c(out, close_lists(), "<ol>")
-                in_ol <- TRUE
-            }
-            body <- sub("^\\s*[0-9]+[.)]\\s+", "", ln)
-            out <- c(out, sprintf("<li>%s</li>", matrix_markdown_inline_html(body)))
-            next
-        }
-        out <- c(out, close_lists(),
-                 sprintf("<p>%s</p>", matrix_markdown_inline_html(ln)))
-    }
-    out <- c(out, close_lists())
-    if (in_pre) {
-        out <- c(out, "</code></pre>")
-    }
-    paste(out, collapse = "")
-}
-
 matrix_send_room <- function(mx_sess, room_id, text, msgtype = "m.text",
                              markdown = FALSE) {
     extra <- NULL
     if (isTRUE(markdown)) {
         extra <- list(format = "org.matrix.custom.html",
-                      formatted_body = matrix_markdown_to_html(text))
+                      formatted_body = mx.client::mx_markdown_to_html(text))
     }
     mx.api::mx_send(mx_sess, room_id, text, msgtype = msgtype, extra = extra)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
-    joined <- sync_resp$rooms$join
-    if (!length(joined)) {
-        return(list())
-    }
-
-    out <- list()
-    for (rid in names(joined)) {
-        events <- joined[[rid]]$timeline$events
-        if (!length(events)) {
-            next
-        }
-        for (ev in events) {
-            if (isTRUE(ev$type == "m.room.message") &&
-                isTRUE(ev$content$msgtype == "m.text") &&
-                !is.null(ev$content$body)) {
-                out[[length(out) + 1L]] <- list(room_id = rid,
-                    event_id = ev$event_id, sender = ev$sender,
-                    is_self = isTRUE(ev$sender == self_id),
-                    body = ev$content$body,
-                    mentions = ev$content$`m.mentions`$user_ids)
-            }
-        }
-    }
-    out
+    mx.client::mx_extract_text_events(sync_resp, self_id)
 }
 
 # Format new turns since the session's `ingested_through` watermark
@@ -496,11 +373,7 @@ matrix_should_respond <- function(msg, session, self_id) {
 # Pending invites from a sync response: character vector of room_ids
 # the bot has been invited to but not yet joined.
 matrix_extract_invites <- function(sync_resp) {
-    invited <- sync_resp$rooms$invite
-    if (!length(invited)) {
-        return(character())
-    }
-    names(invited)
+    mx.client::mx_extract_invites(sync_resp)
 }
 
 matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
@@ -710,44 +583,8 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
 # verdict yet).
 matrix_extract_reaction_verdict <- function(sync_resp, room_id, self_id,
     target_event_id) {
-    room <- sync_resp$rooms$join[[room_id]]
-    if (is.null(room)) {
-        return(NULL)
-    }
-    events <- room$timeline$events
-    if (!length(events)) {
-        return(NULL)
-    }
-
-    approve_keys <- c("\U0001F44D", "\U00002705", "y", "yes", "ok")
-    deny_keys <- c("\U0001F44E", "\U0000274C", "n", "no", "nope")
-
-    for (ev in events) {
-        if (!isTRUE(ev$type == "m.reaction")) {
-            next
-        }
-        if (isTRUE(ev$sender == self_id)) {
-            next
-        }
-        rel <- ev$content$`m.relates_to`
-        if (!is.list(rel)) {
-            next
-        }
-        if (!identical(rel$event_id, target_event_id)) {
-            next
-        }
-        key <- rel$key
-        if (!is.character(key) || !length(key)) {
-            next
-        }
-        if (key %in% approve_keys) {
-            return(TRUE)
-        }
-        if (key %in% deny_keys) {
-            return(FALSE)
-        }
-    }
-    NULL
+    mx.client::mx_extract_reaction_verdict(sync_resp, room_id, self_id,
+                                           target_event_id)
 }
 
 # Build a fresh corteza session from a Matrix config. Does not fetch any

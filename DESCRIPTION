@@ -39,6 +39,7 @@ Suggests:
     clipr,
     fortunes,
     mx.api,
+    mx.client,
     rstudioapi,
     simplermarkdown,
     tinytest
