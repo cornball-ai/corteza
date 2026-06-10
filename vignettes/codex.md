@@ -20,7 +20,7 @@ remotes::install_github("cornball-ai/llm.api")
 install.packages("corteza")
 ```
 
-The practical value is that a current ChatGPT subscription can drive the same R package workflow as API-key-backed models: inspect a project, edit files, run R code, run tests, and review a git diff. The provider changes, the R development loop stays portable.
+For many developers, ChatGPT-account-backed Codex access is dramatically more cost effective than metered API keys. A current ChatGPT subscription can drive the same R package workflow as API-key-backed models: inspect a project, edit files, run R code, run tests, and review a git diff. The provider changes, the R development loop stays portable.
 
 ## Prerequisites
 
