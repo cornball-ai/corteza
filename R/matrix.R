@@ -52,6 +52,22 @@ matrix_mx_session <- function(cfg) {
     mx.client::mx_client_session(cfg)
 }
 
+# Re-login with the stored password and persist the refreshed token to
+# corteza's config path. Reuses the device_id so the device (and any
+# E2EE identity bound to it) survives the rotation.
+matrix_relogin <- function(cfg) {
+    if (is.null(cfg$password) || !nzchar(cfg$password)) {
+        stop("matrix config has no stored password to re-login with",
+             call. = FALSE)
+    }
+    s <- mx.api::mx_login(cfg$server, cfg$user, cfg$password,
+                          device_id = cfg$device_id)
+    cfg$token <- s$token
+    cfg$user_id <- s$user_id
+    cfg$device_id <- s$device_id
+    matrix_save_config(cfg)
+}
+
 #' Configure the Matrix channel for this host
 #'
 #' Logs in to a Matrix homeserver as the bot account, joins (or records)
@@ -746,8 +762,21 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     cfg <- matrix_load_config()
     mx_sess <- matrix_mx_session(cfg)
 
-    sync <- mx.api::mx_sync(mx_sess, since = cfg$sync_token,
-                            timeout = as.integer(timeout))
+    # Self-heal an invalidated access token: re-login with the stored
+    # password (same device_id, so an E2EE identity survives), persist
+    # the refreshed config, and retry the sync once. Other errors
+    # propagate as before.
+    sync <- tryCatch(
+                     mx.api::mx_sync(mx_sess, since = cfg$sync_token,
+                                     timeout = as.integer(timeout)),
+                     mx_error_M_UNKNOWN_TOKEN = function(e) {
+        message("matrix_poll: token rejected; re-logging in")
+        cfg <<- matrix_relogin(cfg)
+        mx_sess <<- matrix_mx_session(cfg)
+        mx.api::mx_sync(mx_sess, since = cfg$sync_token,
+                        timeout = as.integer(timeout))
+    }
+    )
 
     first_run <- is.null(cfg$sync_token)
     cfg$sync_token <- sync$next_batch
@@ -892,7 +921,17 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             next
         }
 
+        # Show a typing indicator while the model works -- turns run
+        # seconds to minutes, and the indicator is the only sign of
+        # life the other side gets. Best-effort: a failed typing call
+        # must never block the reply. 120s cap; Matrix clears it when
+        # the reply event arrives.
+        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, TRUE,
+                                   timeout = 120000L),
+                 error = function(e) NULL)
         reply <- matrix_run_turn_in_cwd(m$body, session)
+        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, FALSE),
+                 error = function(e) NULL)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }

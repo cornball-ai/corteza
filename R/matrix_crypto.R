@@ -38,9 +38,40 @@ matrix_crypto_init <- function(cfg) {
     crypto$encrypted <- matrix_crypto_load_encrypted(store)
     crypto$self_curve <-
         mx.crypto::mxc_account_identity_keys(acct)$curve25519
+    # Ask each joined room for its m.room.encryption state up front,
+    # instead of waiting for a sync to happen to mention it. Best-effort
+    # per room; a transient failure just defers that room to sync-time
+    # detection.
+    found <- matrix_crypto_scan_rooms(cfg)
+    new_rooms <- setdiff(found, crypto$encrypted)
+    if (length(new_rooms)) {
+        crypto$encrypted <- c(crypto$encrypted, new_rooms)
+        matrix_crypto_save_encrypted(crypto)
+    }
     message("matrix_run: E2EE enabled (", length(crypto$encrypted),
             " known encrypted room(s))")
     crypto
+}
+
+# All joined rooms that advertise m.room.encryption, by direct state
+# query (startup path; sync-time detection still runs in the poll loop).
+matrix_crypto_scan_rooms <- function(cfg) {
+    s <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
+    if (is.null(s)) {
+        return(character())
+    }
+    rooms <- tryCatch(mx.api::mx_rooms(s), error = function(e) character())
+    out <- character()
+    for (rid in rooms) {
+        enc <- tryCatch(
+                        mx.api::mx_get_state(s, rid, "m.room.encryption"),
+                        error = function(e) NULL
+        )
+        if (!is.null(enc$algorithm)) {
+            out <- c(out, rid)
+        }
+    }
+    out
 }
 
 matrix_crypto_load_encrypted <- function(store) {
