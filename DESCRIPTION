@@ -40,6 +40,7 @@ Suggests:
     fortunes,
     mx.api,
     mx.client,
+    mx.crypto,
     rstudioapi,
     simplermarkdown,
     tinytest

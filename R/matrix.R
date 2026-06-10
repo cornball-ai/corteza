@@ -740,7 +740,8 @@ matrix_accept_invites <- function(mx_sess, invites) {
 #' }
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
-                        tools_filter = NULL, timeout = 0L, sessions = NULL) {
+                        tools_filter = NULL, timeout = 0L, sessions = NULL,
+                        crypto = NULL) {
     matrix_require_mx()
     cfg <- matrix_load_config()
     mx_sess <- matrix_mx_session(cfg)
@@ -767,6 +768,18 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     }
 
     msgs <- matrix_extract_messages(sync, cfg$user_id)
+    # When E2EE is on, decrypt m.room.encrypted events (and recover room
+    # keys from to-device) and fold them in alongside the plaintext ones.
+    if (!is.null(crypto)) {
+        dec <- tryCatch(matrix_crypto_decrypt(crypto, sync, cfg),
+                        error = function(e) {
+            message("matrix_poll: decrypt failed: ", conditionMessage(e))
+            list()
+        })
+        if (length(dec)) {
+            msgs <- c(msgs, dec)
+        }
+    }
     if (!length(msgs)) {
         return(invisible(0L))
     }
@@ -833,7 +846,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                mx.api::mx_send(mx_sess, m$room_id, ack),
+                                matrix_send_maybe_encrypted(crypto, mx_sess,
+                                                            m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -849,7 +863,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd)
             sent_id <- tryCatch(
-                                mx.api::mx_send(mx_sess, m$room_id, ack),
+                                matrix_send_maybe_encrypted(crypto, mx_sess,
+                                                            m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -871,8 +886,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
-            mx.api::mx_send(mx_sess, m$room_id,
-                            "Cleared. Starting a fresh session.")
+            matrix_send_maybe_encrypted(crypto, mx_sess, m$room_id,
+                                        "Cleared. Starting a fresh session.")
             replied <- replied + 1L
             next
         }
@@ -882,8 +897,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- "(no reply)"
         }
         sent_id <- tryCatch(
-                            matrix_send_room(mx_sess, m$room_id, reply,
-                                             markdown = TRUE),
+                            matrix_send_maybe_encrypted(crypto, mx_sess,
+                                                        m$room_id, reply,
+                                                        markdown = TRUE),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
@@ -1059,6 +1075,14 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
         }
     }
 
+    crypto <- NULL
+    if (!is.null(cfg) && isTRUE(cfg$e2ee)) {
+        crypto <- tryCatch(matrix_crypto_init(cfg), error = function(e) {
+            message("matrix_run: E2EE init failed: ", conditionMessage(e))
+            NULL
+        })
+    }
+
     signal_dir <- matrix_signal_dir()
     flush_signal <- file.path(signal_dir, "archive.signal")
 
@@ -1068,7 +1092,7 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
         matrix_poll(
                     system = system, model = model,
                     provider = provider, tools_filter = tools_filter,
-                    timeout = timeout, sessions = sessions
+                    timeout = timeout, sessions = sessions, crypto = crypto
         )
         # Out-of-band archive trigger: another process (e.g. a cornelius
         # systemd timer) drops `archive.signal` to ask the bot to flush
