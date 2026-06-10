@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime
-Version: 0.6.9.2
+Version: 0.6.9.3
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -40,6 +40,7 @@ Suggests:
     fortunes,
     mx.api,
     mx.client,
+    mx.crypto,
     rstudioapi,
     simplermarkdown,
     tinytest
