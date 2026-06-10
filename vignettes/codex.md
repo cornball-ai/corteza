@@ -12,7 +12,14 @@ title: Using Codex with corteza
 
 corteza is provider-plural R-native agent tooling. It can run with Anthropic, OpenAI, Moonshot, Ollama, and ChatGPT-account-backed Codex access through `llm.api`.
 
-Codex/OpenAI-backed use keeps the same corteza workflow: inspect a project, edit files, run R code, run tests, and review a git diff. The provider changes, the R package workflow stays portable.
+Codex support currently needs development builds of `llm.api` and `tinyoauth`:
+
+```r eval=FALSE
+remotes::install_github("cornball-ai/llm.api")
+remotes::install_github("cornball-ai/tinyoauth")
+```
+
+The practical value is that a current ChatGPT subscription can drive the same R package workflow as API-key-backed models: inspect a project, edit files, run R code, run tests, and review a git diff. The provider changes, the R development loop stays portable.
 
 ## Prerequisites
 
@@ -191,14 +198,7 @@ Install or update corteza from CRAN:
 install.packages("corteza")
 ```
 
-Codex support currently needs development builds of `llm.api` and `tinyoauth`:
-
-```r eval=FALSE
-remotes::install_github("cornball-ai/llm.api")
-remotes::install_github("cornball-ai/tinyoauth")
-```
-
-Install those versions before starting the chat session.
+If `provider = "openai_codex"` or `llm.api::openai_codex_login()` is missing, install the development builds shown at the top of this vignette before starting the chat session.
 
 ### Tool execution disabled or sandboxed
 
