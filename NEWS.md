@@ -1,3 +1,12 @@
+# corteza 0.6.9.5
+
+## Changes
+
+- Matrix channel now delegates config persistence, session construction,
+  message sending, sync/cursor handling, relogin, and encrypted-room
+  detection to the `mx.client` package instead of hand-rolled plumbing
+  over `mx.api`. Behavior is unchanged; ~37 fewer lines in the adapter.
+
 # corteza 0.6.9.1
 
 ## Changes
