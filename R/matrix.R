@@ -385,9 +385,9 @@ matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
     parts <- base
 
     # Optional persona file declared by the matrix config. Path layout
-    # is left to the caller (e.g. cerebro keeps personas alongside its
-    # other prompts inside the instance dir); corteza just reads what
-    # the config points at. Silent no-op when unset or missing.
+    # is left to the caller (a host runner might keep personas alongside
+    # its other prompts in an instance dir); corteza just reads what the
+    # config points at. Silent no-op when unset or missing.
     spf <- cfg$system_prompt_file
     if (!is.null(spf) && nzchar(spf)) {
         spf <- path.expand(spf)
@@ -1019,29 +1019,38 @@ matrix_run_turn_in_cwd <- function(prompt, session) {
     )
 }
 
-#' Run the Matrix adapter as a long-poll loop
+#' Initialize the Matrix long-poll state
 #'
-#' Creates one session up front and reuses it across polls so conversation
-#' history accumulates within the process lifetime. Intended as the entry
-#' point for a systemd user unit.
+#' Performs everything \code{\link{matrix_run}} does before its loop:
+#' builds the per-room session registry, catches up on invites that
+#' predate the saved sync token, backfills recent room history into the
+#' registry, and (when the config sets \code{e2ee}) builds the E2EE
+#' crypto context. Returns an opaque state object to drive with
+#' \code{\link{matrix_run_step}}.
 #'
-#' @param timeout Integer. Long-poll timeout in milliseconds.
+#' Use this with \code{matrix_run_step()} when an external loop owns the
+#' main process and needs to interleave the Matrix poll with other work
+#' (a scheduler, a multiplexer, an embedding host). For a standalone bot,
+#' call \code{\link{matrix_run}}, which wraps both.
+#'
 #' @param system Character or NULL. System prompt override.
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
 #' @param tools_filter Character vector or NULL. Tool filter override.
 #'
-#' @return Never returns under normal operation. Crashes on fatal error
-#'   so systemd can restart.
+#' @return A list holding the session registry, startup session handle,
+#'   crypto context (or NULL), archive-flush signal path, and the saved
+#'   poll options. Pass it to \code{\link{matrix_run_step}}.
+#' @seealso \code{\link{matrix_run_step}}, \code{\link{matrix_run}}
 #' @examples
 #' \dontrun{
-#' # Run the Matrix bot loop -- typically launched by a systemd unit
-#' # rather than from an interactive R session.
-#' matrix_run()
+#' # Drive the loop yourself instead of calling matrix_run():
+#' state <- matrix_run_init()
+#' repeat matrix_run_step(state, timeout = 30000L)
 #' }
 #' @export
-matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
-                       provider = NULL, tools_filter = NULL) {
+matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
+                            tools_filter = NULL) {
     matrix_require_mx()
     sessions <- matrix_new_session_registry()
     mx_sess <- NULL
@@ -1091,23 +1100,83 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
         })
     }
 
-    signal_dir <- matrix_signal_dir()
-    flush_signal <- file.path(signal_dir, "archive.signal")
+    flush_signal <- file.path(matrix_signal_dir(), "archive.signal")
 
+    list(sessions = sessions, mx_sess = mx_sess, crypto = crypto,
+         flush_signal = flush_signal,
+         opts = list(system = system, model = model,
+                     provider = provider, tools_filter = tools_filter))
+}
+
+#' One Matrix long-poll iteration
+#'
+#' Polls \code{/sync} once (blocking up to \code{timeout} ms, returning
+#' early when a message arrives), runs the agent against any new messages
+#' and posts the replies, then services a pending archive-flush signal.
+#' Mutates the session registry and crypto context held in \code{state}
+#' in place, so successive calls accumulate conversation history.
+#'
+#' @param state A state object from \code{\link{matrix_run_init}}.
+#' @param timeout Integer. Long-poll timeout in milliseconds.
+#'
+#' @return Invisibly, the integer count of messages replied to this poll.
+#' @seealso \code{\link{matrix_run_init}}, \code{\link{matrix_run}}
+#' @examples
+#' \dontrun{
+#' state <- matrix_run_init()
+#' matrix_run_step(state, timeout = 5000L)
+#' }
+#' @export
+matrix_run_step <- function(state, timeout = 30000L) {
+    o <- state$opts
+    replied <- matrix_poll(
+                           system = o$system, model = o$model,
+                           provider = o$provider,
+                           tools_filter = o$tools_filter,
+                           timeout = timeout, sessions = state$sessions,
+                           crypto = state$crypto
+    )
+    # Out-of-band archive trigger: another process (e.g. a cornelius
+    # systemd timer) drops `archive.signal` to ask the bot to flush
+    # all in-memory room sessions to the pensar vault. The bot owns
+    # the registry; the schedule lives outside the package.
+    matrix_handle_flush_signal(state$flush_signal, state$sessions,
+                               state$mx_sess)
+    invisible(replied)
+}
+
+#' Run the Matrix adapter as a long-poll loop
+#'
+#' Creates one session up front and reuses it across polls so conversation
+#' history accumulates within the process lifetime. Intended as the entry
+#' point for a systemd user unit. A thin wrapper over
+#' \code{\link{matrix_run_init}} plus a \code{\link{matrix_run_step}}
+#' loop; call those two directly when an external scheduler needs to own
+#' the main process.
+#'
+#' @param timeout Integer. Long-poll timeout in milliseconds.
+#' @param system Character or NULL. System prompt override.
+#' @param model Character or NULL. Model override.
+#' @param provider Character or NULL. Provider override.
+#' @param tools_filter Character vector or NULL. Tool filter override.
+#'
+#' @return Never returns under normal operation. Crashes on fatal error
+#'   so systemd can restart.
+#' @seealso \code{\link{matrix_run_init}}, \code{\link{matrix_run_step}}
+#' @examples
+#' \dontrun{
+#' # Run the Matrix bot loop -- typically launched by a systemd unit
+#' # rather than from an interactive R session.
+#' matrix_run()
+#' }
+#' @export
+matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
+                       provider = NULL, tools_filter = NULL) {
+    state <- matrix_run_init(system = system, model = model,
+                             provider = provider, tools_filter = tools_filter)
     message("matrix_run: starting long-poll loop")
-    message("matrix_run: flush signal at ", flush_signal)
-    repeat {
-        matrix_poll(
-                    system = system, model = model,
-                    provider = provider, tools_filter = tools_filter,
-                    timeout = timeout, sessions = sessions, crypto = crypto
-        )
-        # Out-of-band archive trigger: another process (e.g. a cornelius
-        # systemd timer) drops `archive.signal` to ask the bot to flush
-        # all in-memory room sessions to the pensar vault. The bot owns
-        # the registry; the schedule lives outside the package.
-        matrix_handle_flush_signal(flush_signal, sessions, mx_sess)
-    }
+    message("matrix_run: flush signal at ", state$flush_signal)
+    repeat matrix_run_step(state, timeout = timeout)
 }
 
 # Resolve the directory where out-of-band signal files live. Honors

@@ -24,7 +24,10 @@ Never returns under normal operation. Crashes on fatal error
 \description{
 Creates one session up front and reuses it across polls so conversation
 history accumulates within the process lifetime. Intended as the entry
-point for a systemd user unit.
+point for a systemd user unit. A thin wrapper over
+\code{\link{matrix_run_init}} plus a \code{\link{matrix_run_step}}
+loop; call those two directly when an external scheduler needs to own
+the main process.
 }
 \examples{
 \dontrun{
@@ -32,4 +35,7 @@ point for a systemd user unit.
 # rather than from an interactive R session.
 matrix_run()
 }
+}
+\seealso{
+\code{\link{matrix_run_init}}, \code{\link{matrix_run_step}}
 }
