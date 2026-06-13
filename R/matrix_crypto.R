@@ -63,11 +63,8 @@ matrix_crypto_scan_rooms <- function(cfg) {
     rooms <- tryCatch(mx.api::mx_rooms(s), error = function(e) character())
     out <- character()
     for (rid in rooms) {
-        enc <- tryCatch(
-                        mx.api::mx_get_state(s, rid, "m.room.encryption"),
-                        error = function(e) NULL
-        )
-        if (!is.null(enc$algorithm)) {
+        if (isTRUE(tryCatch(mx.client::mx_room_encrypted(cfg, rid),
+                            error = function(e) FALSE))) {
             out <- c(out, rid)
         }
     }
@@ -126,11 +123,12 @@ matrix_crypto_decrypt <- function(crypto, sync, cfg) {
 }
 
 # Send text to a room, encrypting when crypto is on and the room is
-# known-encrypted; otherwise the existing plaintext path (with optional
+# known-encrypted; otherwise mx.client's plaintext path (with optional
 # markdown). Returns the event id, or NULL on failure.
-matrix_send_maybe_encrypted <- function(crypto, mx_sess, room_id, text,
+matrix_send_maybe_encrypted <- function(crypto, cfg, room_id, text,
                                         markdown = FALSE) {
     if (!is.null(crypto) && room_id %in% crypto$encrypted) {
+        mx_sess <- matrix_mx_session(cfg)
         members <- tryCatch(mx.api::mx_room_members(mx_sess, room_id),
                             error = function(e) character())
         res <- tryCatch(
@@ -149,9 +147,5 @@ matrix_send_maybe_encrypted <- function(crypto, mx_sess, room_id, text,
         crypto$sessions <- res$sessions
         return(res$event_id)
     }
-    if (isTRUE(markdown)) {
-        matrix_send_room(mx_sess, room_id, text, markdown = TRUE)
-    } else {
-        mx.api::mx_send(mx_sess, room_id, text)
-    }
+    mx.client::mx_send_text(cfg, text, room = room_id, markdown = markdown)
 }
