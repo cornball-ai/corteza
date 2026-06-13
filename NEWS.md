@@ -1,3 +1,15 @@
+# corteza 0.6.9.6
+
+## Changes
+
+- The Matrix long-poll loop is split into two new exports,
+  `matrix_run_init()` (build the session registry, catch up on invites,
+  backfill history, init E2EE) and `matrix_run_step(state, timeout)` (one
+  poll-and-reply iteration). `matrix_run()` is now a thin wrapper over
+  them. Lets an external scheduler own the main process and interleave
+  the Matrix poll with its own work. No behavior change for
+  `matrix_run()`.
+
 # corteza 0.6.9.5
 
 ## Changes
