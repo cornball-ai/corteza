@@ -8,7 +8,7 @@ r inst/bench/bench_schema_tokens.R   # LLM tools-payload token footprint
 
 ## Results
 
-Measured on Linux (Ubuntu 24.04 LTS, R 4.5, local `~/cerebro` checkout, warm disk cache). Numbers will vary across hardware; use these as an order-of-magnitude baseline.
+Measured on Linux (Ubuntu 24.04 LTS, R 4.5, local source checkout, warm disk cache). Numbers will vary across hardware; use these as an order-of-magnitude baseline.
 
 ### System-prompt tools payload (Phase 6 pruning)
 

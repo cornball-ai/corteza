@@ -874,8 +874,8 @@ Alt+Enter) to the two corteza addins. Override the built-in
 # corteza 0.6.1
 
 * Relicensed from MIT to Apache License (>= 2) for explicit patent
-  grant. Aligns with the rest of the cerebro toolchain (saber, pensar,
-  hacer, cerebro). The LICENSE stub file is removed; Apache 2.0
+  grant. Aligns with the rest of the cornball.ai toolchain (saber,
+  pensar, hacer). The LICENSE stub file is removed; Apache 2.0
   R-package convention points to the system-installed template.
 
 # corteza 0.6.0
