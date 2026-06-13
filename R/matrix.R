@@ -33,14 +33,25 @@ matrix_legacy_config_path <- function() {
     mx.client::mx_client_legacy_config_path("corteza")
 }
 
-matrix_load_config <- function() {
-    cfg <- mx.client::mx_client_load(app = "corteza",
-                                     env_var = "CORTEZA_MATRIX_CONFIG")
-    # Hand corteza's downstream a plain list, as fromJSON did before.
+# Hand corteza's downstream a plain list, as fromJSON did before.
+matrix_plain_cfg <- function(cfg) {
     cfg <- unclass(cfg)
     attr(cfg, "path") <- NULL
     attr(cfg, "app") <- NULL
     cfg
+}
+
+# Wrap a plain cfg back into an mx.client config carrying corteza's
+# save path, so mx.client's persisting helpers (relogin, sync cursor)
+# write to the right file.
+matrix_client <- function(cfg) {
+    mx.client::mx_client_from_config(cfg, path = matrix_config_path(),
+                                     app = "corteza")
+}
+
+matrix_load_config <- function() {
+    matrix_plain_cfg(mx.client::mx_client_load(
+        app = "corteza", env_var = "CORTEZA_MATRIX_CONFIG"))
 }
 
 matrix_save_config <- function(cfg) {
@@ -53,19 +64,10 @@ matrix_mx_session <- function(cfg) {
 }
 
 # Re-login with the stored password and persist the refreshed token to
-# corteza's config path. Reuses the device_id so the device (and any
-# E2EE identity bound to it) survives the rotation.
+# corteza's config path. mx.client reuses the device_id so the device
+# (and any E2EE identity bound to it) survives the rotation.
 matrix_relogin <- function(cfg) {
-    if (is.null(cfg$password) || !nzchar(cfg$password)) {
-        stop("matrix config has no stored password to re-login with",
-             call. = FALSE)
-    }
-    s <- mx.api::mx_login(cfg$server, cfg$user, cfg$password,
-                          device_id = cfg$device_id)
-    cfg$token <- s$token
-    cfg$user_id <- s$user_id
-    cfg$device_id <- s$device_id
-    matrix_save_config(cfg)
+    matrix_plain_cfg(mx.client::mx_client_relogin(matrix_client(cfg)))
 }
 
 #' Configure the Matrix channel for this host
@@ -118,18 +120,14 @@ matrix_configure <- function(server, user, password, room, model = NULL,
     matrix_require_mx()
     provider <- match.arg(provider)
 
-    s <- mx.api::mx_login(server, user, password)
-    room_id <- mx.api::mx_room_join(s, room)
-
-    cfg <- list(server = server, user = user, password = password,
-                token = s$token, user_id = s$user_id,
-                device_id = s$device_id, room_id = room_id, model = model,
-                provider = provider, tools_filter = tools_filter,
-                auto_approve_asks = isTRUE(auto_approve_asks),
-                sync_token = NULL)
-    matrix_save_config(cfg)
-    message(sprintf("Configured %s in room %s", s$user_id, room_id))
-    invisible(cfg)
+    cfg <- mx.client::mx_client_configure(
+        server, user, password, room,
+        app = "corteza", path = matrix_config_path(),
+        extra = list(model = model, provider = provider,
+                     tools_filter = tools_filter,
+                     auto_approve_asks = isTRUE(auto_approve_asks)))
+    message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
+    invisible(matrix_plain_cfg(cfg))
 }
 
 #' Send a message to a Matrix room
@@ -152,21 +150,8 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                         markdown = FALSE) {
     matrix_require_mx()
     cfg <- matrix_load_config()
-    s <- matrix_mx_session(cfg)
-    if (is.null(room_id) || !nzchar(room_id)) {
-        room_id <- cfg$room_id
-    }
-    matrix_send_room(s, room_id, text, msgtype = msgtype, markdown = markdown)
-}
-
-matrix_send_room <- function(mx_sess, room_id, text, msgtype = "m.text",
-                             markdown = FALSE) {
-    extra <- NULL
-    if (isTRUE(markdown)) {
-        extra <- list(format = "org.matrix.custom.html",
-                      formatted_body = mx.client::mx_markdown_to_html(text))
-    }
-    mx.api::mx_send(mx_sess, room_id, text, msgtype = msgtype, extra = extra)
+    mx.client::mx_send_text(cfg, text, room = room_id, msgtype = msgtype,
+                            markdown = markdown)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
@@ -707,22 +692,14 @@ matrix_detect_dm <- function(cfg, room_id) {
     length(members) == 2L && cfg$user_id %in% members
 }
 
-# Auto-join any rooms the bot has been invited to. Best-effort: failures
-# are logged to stderr but don't abort the poll.
-matrix_accept_invites <- function(mx_sess, invites) {
-    for (rid in invites) {
-        joined <- tryCatch(
-                           mx.api::mx_room_join(mx_sess, rid),
-                           error = function(e) {
-            message(sprintf("matrix: failed to join %s: %s", rid,
-                            conditionMessage(e)))
-            NULL
-        }
-        )
-        if (!is.null(joined)) {
-            message(sprintf("matrix: joined %s", joined))
-        }
+# Auto-join any rooms the bot has been invited to. Best-effort: mx.client
+# logs failures to stderr without aborting the poll.
+matrix_accept_invites <- function(cfg, invites) {
+    joined <- mx.client::mx_accept_invites(cfg, invites)
+    for (rid in joined) {
+        message(sprintf("matrix: joined %s", rid))
     }
+    invisible(joined)
 }
 
 #' One iteration of sync-and-reply
@@ -760,27 +737,19 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                         crypto = NULL) {
     matrix_require_mx()
     cfg <- matrix_load_config()
-    mx_sess <- matrix_mx_session(cfg)
 
-    # Self-heal an invalidated access token: re-login with the stored
+    # Sync and persist the cursor via mx.client. mx_with_relogin
+    # self-heals an invalidated access token: re-login with the stored
     # password (same device_id, so an E2EE identity survives), persist
     # the refreshed config, and retry the sync once. Other errors
     # propagate as before.
-    sync <- tryCatch(
-                     mx.api::mx_sync(mx_sess, since = cfg$sync_token,
-                                     timeout = as.integer(timeout)),
-                     mx_error_M_UNKNOWN_TOKEN = function(e) {
-        message("matrix_poll: token rejected; re-logging in")
-        cfg <<- matrix_relogin(cfg)
-        mx_sess <<- matrix_mx_session(cfg)
-        mx.api::mx_sync(mx_sess, since = cfg$sync_token,
-                        timeout = as.integer(timeout))
-    }
-    )
-
-    first_run <- is.null(cfg$sync_token)
-    cfg$sync_token <- sync$next_batch
-    matrix_save_config(cfg)
+    res <- mx.client::mx_with_relogin(matrix_client(cfg), function(cl) {
+        mx.client::mx_sync_update(cl, timeout = as.integer(timeout))
+    })
+    sync <- res$sync
+    first_run <- res$first_run
+    cfg <- matrix_plain_cfg(res$client)
+    mx_sess <- matrix_mx_session(cfg)
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
@@ -788,7 +757,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # pick up their timeline.
     invites <- matrix_extract_invites(sync)
     if (length(invites)) {
-        matrix_accept_invites(mx_sess, invites)
+        matrix_accept_invites(cfg, invites)
     }
 
     if (first_run) {
@@ -875,7 +844,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, mx_sess,
+                                matrix_send_maybe_encrypted(crypto, cfg,
                                                             m$room_id, ack),
                                 error = function(e) NULL
             )
@@ -892,7 +861,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd)
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, mx_sess,
+                                matrix_send_maybe_encrypted(crypto, cfg,
                                                             m$room_id, ack),
                                 error = function(e) NULL
             )
@@ -915,7 +884,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
-            matrix_send_maybe_encrypted(crypto, mx_sess, m$room_id,
+            matrix_send_maybe_encrypted(crypto, cfg, m$room_id,
                                         "Cleared. Starting a fresh session.")
             replied <- replied + 1L
             next
@@ -936,7 +905,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- "(no reply)"
         }
         sent_id <- tryCatch(
-                            matrix_send_maybe_encrypted(crypto, mx_sess,
+                            matrix_send_maybe_encrypted(crypto, cfg,
                                                         m$room_id, reply,
                                                         markdown = TRUE),
                             error = function(e) NULL
@@ -1090,7 +1059,7 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
                                 error = function(e) NULL)
             invites <- matrix_extract_invites(initial)
             if (length(invites)) {
-                matrix_accept_invites(mx_sess, invites)
+                matrix_accept_invites(cfg, invites)
             }
             # Backfill: in-memory session history is process-local and dies
             # on restart, so a fresh process loses every prior reply and
