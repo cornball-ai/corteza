@@ -392,3 +392,14 @@ expect_true(is.function(corteza:::matrix_relogin))
 expect_true(is.function(corteza:::matrix_crypto_scan_rooms))
 expect_error(corteza:::matrix_relogin(list(server = "https://x")),
              "no stored password")
+
+# The matrix loop is split into init/step exports so an external
+# scheduler can own the main process; matrix_run wraps them. All three
+# are exported.
+expect_true(is.function(corteza::matrix_run_init))
+expect_true(is.function(corteza::matrix_run_step))
+expect_true(is.function(corteza::matrix_run))
+expect_true(all(c("system", "model", "provider", "tools_filter") %in%
+                names(formals(corteza::matrix_run_init))))
+expect_true(all(c("state", "timeout") %in%
+                names(formals(corteza::matrix_run_step))))
