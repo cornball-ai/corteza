@@ -60,7 +60,7 @@ repair_interrupted_tool_history <- function(history, provider, marker,
     }, records)
 
     if (length(unfinished) > 0L) {
-        if (identical(provider, "anthropic")) {
+        if (provider %in% c("anthropic", "anthropic_claude")) {
             history <- .append_anthropic_tool_results(history, unfinished,
                 placeholder)
         } else {

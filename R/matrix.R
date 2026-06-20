@@ -114,7 +114,8 @@ matrix_relogin <- function(cfg) {
 #' }
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
-                             provider = c("anthropic", "openai", "moonshot",
+                             provider = c("anthropic", "anthropic_claude",
+                                          "openai", "moonshot",
                                           "openai_codex", "ollama"),
                              tools_filter = NULL, auto_approve_asks = FALSE) {
     matrix_require_mx()
