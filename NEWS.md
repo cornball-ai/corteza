@@ -1,3 +1,13 @@
+# corteza 0.6.9.7
+
+## Changes
+
+- Accept the `anthropic_claude` provider, which drives Claude on a Claude
+  subscription (OAuth) via llm.api instead of an API key. Added to
+  `matrix_configure()`'s provider whitelist and routed through the Anthropic
+  message shape for interrupt-time tool-result repair. Requires llm.api
+  (>= 0.1.4.3).
+
 # corteza 0.6.9.6
 
 ## Changes
