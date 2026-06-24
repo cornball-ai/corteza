@@ -90,7 +90,8 @@ matrix_relogin <- function(cfg) {
 #' @param room Character. Room ID or alias the bot should read and post
 #'   to. If the bot has been invited but not joined, it will be joined.
 #' @param model Character or NULL. Default model name.
-#' @param provider Character. LLM provider: "anthropic", "openai",
+#' @param provider Character. LLM provider: "anthropic", "anthropic_claude",
+#'   "openai", "openai_codex",
 #'   "moonshot", or "ollama".
 #' @param tools_filter Character vector or NULL. Passed to
 #'   \code{get_tools()} to restrict which tools the bot can invoke.
@@ -114,12 +115,12 @@ matrix_relogin <- function(cfg) {
 #' }
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
-                             provider = c("anthropic", "anthropic_claude",
-                                          "openai", "moonshot",
-                                          "openai_codex", "ollama"),
-                             tools_filter = NULL, auto_approve_asks = FALSE) {
+                             provider = "anthropic", tools_filter = NULL,
+                             auto_approve_asks = FALSE) {
+    providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
+                   "openai_codex", "ollama")
     matrix_require_mx()
-    provider <- match.arg(provider)
+    provider <- match.arg(provider, providers)
 
     cfg <- mx.client::mx_client_configure(
         server, user, password, room,
@@ -725,6 +726,8 @@ matrix_accept_invites <- function(cfg, invites) {
 #'   immediately.
 #' @param sessions Environment from \code{matrix_new_session_registry()}
 #'   keyed by room_id, or NULL to build fresh sessions each call.
+#' @param crypto Optional Matrix crypto context. NULL disables encrypted-event
+#'   handling; matrix_run() supplies a context when E2EE is configured.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples

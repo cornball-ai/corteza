@@ -166,6 +166,76 @@ fail_result <- corteza:::do_compact(
 )
 expect_null(fail_result)
 
+# do_compact must survive role-less provider-native history entries.
+# The codex (OpenAI Responses) provider stores assistant turns as
+# {type: ".openai_codex_output", output: [...]} and tool results as
+# {type: "function_call_output", ...} -- neither has a role, and
+# sprintf("[%s]", NULL) returns character(0), which used to kill the
+# render vapply exactly when /compact was needed to recover a wedged
+# session.
+local({
+    sess_codex <- list(messages = list(
+        list(role = "user", content = "list the files"),
+        list(type = ".openai_codex_output", output = list(
+            list(type = "reasoning", encrypted_content = "opaque"),
+            list(type = "message", content = list(
+                list(type = "output_text", text = "Sure, listing now."))),
+            list(type = "function_call", name = "shell",
+                 call_id = "c1", arguments = "{\"cmd\":\"ls\"}")
+        )),
+        list(type = "function_call_output", call_id = "c1",
+             output = "DESCRIPTION\nNAMESPACE"),
+        # OpenAI chat-completions assistant turn with tool_calls
+        list(role = "assistant", content = "",
+             tool_calls = list(list(`function` = list(name = "run_r")))),
+        # Anthropic-style blocks: text + tool_use, then a tool_result
+        list(role = "assistant", content = list(
+            list(type = "text", text = "Running it."),
+            list(type = "tool_use", name = "grep_files", input = list())
+        )),
+        list(role = "user", content = list(
+            list(type = "tool_result", tool_use_id = "t1",
+                 content = list(list(type = "text", text = "3 matches")))
+        ))
+    ))
+    captured_codex <- NULL
+    fake_chat_codex <- function(prompt, provider, model, system,
+                                temperature, ...) {
+        captured_codex <<- prompt
+        list(content = "codex summary")
+    }
+    res <- corteza:::do_compact(sess_codex, "openai-codex", NULL,
+                                chat_fn = fake_chat_codex,
+                                emit = function(...) invisible())
+    expect_identical(res$summary, "codex summary")
+    expect_true(grepl("[user]: list the files", captured_codex, fixed = TRUE))
+    # codex assistant text and tool call surface under the type label
+    expect_true(grepl("[.openai_codex_output]: Sure, listing now.",
+                      captured_codex, fixed = TRUE))
+    expect_true(grepl("<tool call: shell>", captured_codex, fixed = TRUE))
+    expect_true(grepl("[function_call_output]: DESCRIPTION",
+                      captured_codex, fixed = TRUE))
+    # reasoning payloads stay out of the summary prompt
+    expect_false(grepl("opaque", captured_codex, fixed = TRUE))
+    expect_true(grepl("<tool call: run_r>", captured_codex, fixed = TRUE))
+    expect_true(grepl("<tool call: grep_files>", captured_codex,
+                      fixed = TRUE))
+    expect_true(grepl("3 matches", captured_codex, fixed = TRUE))
+})
+
+# .compact_render_entry never errors on degenerate entries.
+local({
+    expect_true(is.character(corteza:::.compact_render_entry(NULL)))
+    expect_identical(corteza:::.compact_render_entry(list()),
+                     "[unknown]: ")
+    expect_identical(corteza:::.compact_render_entry("stray string"),
+                     "[unknown]: stray string")
+    expect_identical(
+        corteza:::.compact_render_entry(list(role = "user",
+                                             content = NULL)),
+        "[user]: ")
+})
+
 # compact_message_text: short bodies unchanged, huge ones elided.
 expect_equal(corteza:::compact_message_text("short"), "short")
 local({

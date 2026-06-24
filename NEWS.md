@@ -1,3 +1,14 @@
+# corteza 0.6.9.8
+
+## Changes
+
+- `/compact` now renders Anthropic, OpenAI chat, and role-less OpenAI Codex
+  Responses history safely, including tool calls and tool outputs. This prevents
+  provider-native history entries from wedging compaction.
+
+- Matrix documentation now matches the `anthropic_claude` provider default and
+  documents the optional `crypto` polling context.
+
 # corteza 0.6.9.7
 
 ## Changes

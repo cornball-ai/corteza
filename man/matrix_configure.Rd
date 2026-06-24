@@ -4,8 +4,8 @@
 \title{Configure the Matrix channel for this host}
 \usage{
 matrix_configure(server, user, password, room, model = NULL,
-                 provider = c("anthropic", "openai", "moonshot", "openai_codex", "ollama"),
-                 tools_filter = NULL, auto_approve_asks = FALSE)
+                 provider = "anthropic", tools_filter = NULL,
+                 auto_approve_asks = FALSE)
 }
 \arguments{
 \item{server}{Character. Homeserver base URL.}
@@ -20,7 +20,8 @@ to. If the bot has been invited but not joined, it will be joined.}
 
 \item{model}{Character or NULL. Default model name.}
 
-\item{provider}{Character. LLM provider: "anthropic", "openai",
+\item{provider}{Character. LLM provider: "anthropic", "anthropic_claude",
+"openai", "openai_codex",
 "moonshot", or "ollama".}
 
 \item{tools_filter}{Character vector or NULL. Passed to
