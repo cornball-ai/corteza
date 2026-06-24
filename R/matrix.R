@@ -50,8 +50,8 @@ matrix_client <- function(cfg) {
 }
 
 matrix_load_config <- function() {
-    matrix_plain_cfg(mx.client::mx_client_load(
-        app = "corteza", env_var = "CORTEZA_MATRIX_CONFIG"))
+    matrix_plain_cfg(mx.client::mx_client_load(app = "corteza",
+            env_var = "CORTEZA_MATRIX_CONFIG"))
 }
 
 matrix_save_config <- function(cfg) {
@@ -290,14 +290,14 @@ matrix_is_clear_command <- function(body) {
     if (!nzchar(cmd)) {
         return(FALSE)
     }
-    grepl("^/+(clear|reset|new)\\s*$|^(clear|reset|new)(\\s+chat)?\\s*$",
-          cmd, perl = TRUE, ignore.case = TRUE)
+    grepl("^/+(clear|reset|new)\\s*$|^(clear|reset|new)(\\s+chat)?\\s*$", cmd,
+          perl = TRUE, ignore.case = TRUE)
 }
 
 matrix_is_status_command <- function(body) {
     cmd <- matrix_command_text(body)
-    nzchar(cmd) && grepl("^/+status\\s*$|^status\\s*$", cmd,
-                         perl = TRUE, ignore.case = TRUE)
+    nzchar(cmd) && grepl("^/+status\\s*$|^status\\s*$", cmd, perl = TRUE,
+                         ignore.case = TRUE)
 }
 
 # Match `/model <name> [provider]`, `model <name> [provider]`, or `model`
@@ -308,8 +308,8 @@ matrix_parse_model_command <- function(body) {
         return(NULL)
     }
     m <- regmatches(cmd,
-                    regexec("^/*model(?:\\s+(\\S+)(?:\\s+(\\S+))?)?\\s*$",
-                            cmd, perl = TRUE, ignore.case = TRUE))[[1]]
+                    regexec("^/*model(?:\\s+(\\S+)(?:\\s+(\\S+))?)?\\s*$", cmd,
+                            perl = TRUE, ignore.case = TRUE))[[1]]
     if (!length(m)) {
         return(NULL)
     }
@@ -587,7 +587,7 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
 matrix_extract_reaction_verdict <- function(sync_resp, room_id, self_id,
     target_event_id) {
     mx.client::mx_extract_reaction_verdict(sync_resp, room_id, self_id,
-                                           target_event_id)
+        target_event_id)
 }
 
 # Build a fresh corteza session from a Matrix config. Does not fetch any
@@ -794,11 +794,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 
     replied <- 0L
     for (m in msgs) {
-        session <- matrix_get_or_create_session(
-            sessions, m$room_id, cfg,
-            system = system, model = model,
-            provider = provider, tools_filter = tools_filter
-        )
+        session <- matrix_get_or_create_session(sessions, m$room_id, cfg,
+            system = system, model = model, provider = provider,
+            tools_filter = tools_filter)
 
         # Self events: either an echo of our own reply (already in
         # $history via turn() — skip) or an out-of-band send from a
@@ -848,8 +846,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, cfg,
-                                                            m$room_id, ack),
+                                matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -865,8 +862,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd)
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, cfg,
-                                                            m$room_id, ack),
+                                matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -899,8 +895,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # life the other side gets. Best-effort: a failed typing call
         # must never block the reply. 120s cap; Matrix clears it when
         # the reply event arrives.
-        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, TRUE,
-                                   timeout = 120000L),
+        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, TRUE, timeout = 120000L),
                  error = function(e) NULL)
         reply <- matrix_run_turn_in_cwd(m$body, session)
         tryCatch(mx.api::mx_typing(mx_sess, m$room_id, FALSE),
@@ -910,8 +905,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
         sent_id <- tryCatch(
                             matrix_send_maybe_encrypted(crypto, cfg,
-                                                        m$room_id, reply,
-                                                        markdown = TRUE),
+                m$room_id, reply,
+                markdown = TRUE),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
@@ -1133,13 +1128,10 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 matrix_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
-    replied <- matrix_poll(
-                           system = o$system, model = o$model,
+    replied <- matrix_poll(system = o$system, model = o$model,
                            provider = o$provider,
-                           tools_filter = o$tools_filter,
-                           timeout = timeout, sessions = state$sessions,
-                           crypto = state$crypto
-    )
+                           tools_filter = o$tools_filter, timeout = timeout,
+                           sessions = state$sessions, crypto = state$crypto)
     # Out-of-band archive trigger: another process (e.g. a cornelius
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns
@@ -1180,7 +1172,9 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
                              provider = provider, tools_filter = tools_filter)
     message("matrix_run: starting long-poll loop")
     message("matrix_run: flush signal at ", state$flush_signal)
-    repeat matrix_run_step(state, timeout = timeout)
+    repeat {
+        matrix_run_step(state, timeout = timeout)
+    }
 }
 
 # Resolve the directory where out-of-band signal files live. Honors
@@ -1247,4 +1241,3 @@ matrix_handle_flush_signal <- function(flush_signal, sessions, mx_sess = NULL) {
     }
     invisible(n)
 }
-

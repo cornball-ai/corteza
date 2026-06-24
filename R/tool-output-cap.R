@@ -133,8 +133,7 @@ compact_message_text <- function(text,
 .compact_render_entry <- function(m) {
     if (!is.list(m)) {
         return(sprintf("[unknown]: %s",
-                       compact_message_text(paste(as.character(m),
-                    collapse = "\n"))))
+                       compact_message_text(paste(as.character(m), collapse = "\n"))))
     }
     label <- .compact_scalar(m$role) %||% .compact_scalar(m$type) %||%
     "unknown"
@@ -173,8 +172,8 @@ compact_message_text <- function(text,
         tc$name %||% tc$`function`$name %||% "?"
     }, character(1L))
     if (length(calls) > 0L) {
-        body <- paste(c(body[nzchar(body)],
-                        sprintf("<tool call: %s>", calls)), collapse = "\n")
+        body <- paste(c(body[nzchar(body)], sprintf("<tool call: %s>", calls)),
+                      collapse = "\n")
     }
     body
 }
