@@ -574,9 +574,11 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
     } else {
         ""
     }
+    expl <- cli_tool_explanation(call)
+    expl_line <- if (!is.null(expl) && nzchar(expl)) paste0(expl, "\n") else ""
     sprintf(
-            "Approval needed: %s(%s)\nReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
-            call$tool, args_str, decision$reason %||% "ask", timeout_sec
+            "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
+            call$tool, args_str, expl_line, decision$reason %||% "ask", timeout_sec
     )
 }
 

@@ -508,6 +508,52 @@ cli_call_noteworthy_warnings <- function(call, cwd = NULL, decision = NULL) {
     all[!all %in% boilerplate]
 }
 
+#' One-line explanation of what a tool call intends to do, for the
+#' approval prompt -- distinct from the policy reason. Path/URL tools
+#' (read/write/fetch/grep/search) template deterministically from their
+#' args; opaque exec tools (bash/run_r) instead surface the model's own
+#' narration from the per-call context, the only thing that conveys
+#' intent there. NULL when nothing useful is available.
+#' @noRd
+cli_tool_explanation <- function(call) {
+    tool <- call$tool %||% ""
+    args <- .cli_args_list(call$args %||% list())
+    templated <- switch(tool,
+                        read_file       = sprintf("Read %s.", args$path %||% "the file"),
+                        list_files      = sprintf("List %s.", args$path %||% "."),
+                        grep_files      = sprintf("Search files for /%s/.", args$pattern %||% ""),
+                        write_file      = sprintf("Write %s.", args$path %||% "the file"),
+                        replace_in_file = sprintf("Edit %s.", args$path %||% "the file"),
+                        fetch_url       = sprintf("Fetch %s.", args$url %||% "the URL"),
+                        web_search      = sprintf("Search the web for \"%s\".", args$query %||% ""),
+                        NULL)
+    if (!is.null(templated)) {
+        return(templated)
+    }
+    # bash / cmd / run_r / run_r_script and other opaque tools: the command
+    # or code is shown but not the intent, so lean on the model's narration.
+    .bounded_rationale(call$model_context$assistant_text)
+}
+
+#' Flatten the model's turn narration to one sanitized, bounded line for
+#' the approval prompt. Drops control characters (incl. ANSI escapes),
+#' collapses whitespace, and caps the length. NULL when empty.
+#' @noRd
+.bounded_rationale <- function(text, max_chars = 200L) {
+    if (is.null(text)) {
+        return(NULL)
+    }
+    clean <- gsub("[[:cntrl:]]", " ", as.character(text)[1L])
+    one_line <- trimws(gsub("[[:space:]]+", " ", clean))
+    if (!nzchar(one_line)) {
+        return(NULL)
+    }
+    if (nchar(one_line) > max_chars) {
+        one_line <- paste0(substr(one_line, 1L, max_chars - 3L), "...")
+    }
+    one_line
+}
+
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
                                cwd = NULL, persistent_label = "Allow always",
                                deny_label = "Deny", width = 88L) {
@@ -539,6 +585,11 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
     }
 
     lines <- c("", strrep("-", width), sprintf(" %s", title), "")
+
+    explanation <- cli_tool_explanation(call)
+    if (!is.null(explanation) && nzchar(explanation)) {
+        lines <- c(lines, paste0("   ", .cli_wrap_lines(explanation, width - 6L)), "")
+    }
 
     if (length(details) > 0L) {
         lines <- c(lines, paste0("   ", details), "")

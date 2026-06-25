@@ -313,6 +313,39 @@ local({
 # behavior left to pin.
 expect_equal(corteza:::.console_deny_label(), "Deny")
 
+# cli_tool_explanation ----
+# Path/URL tools template deterministically from their args.
+expect_equal(corteza:::cli_tool_explanation(list(tool = "read_file",
+                                                 args = list(path = "R/x.R"))),
+             "Read R/x.R.")
+expect_equal(corteza:::cli_tool_explanation(list(tool = "fetch_url",
+                                                 args = list(url = "https://e.com"))),
+             "Fetch https://e.com.")
+# Opaque exec tools (bash/run_r) surface the model's own narration.
+expect_equal(corteza:::cli_tool_explanation(list(
+                                                 tool = "bash", args = list(command = "git commit"),
+                                                 model_context = list(assistant_text = "Commit the staged changes."))),
+             "Commit the staged changes.")
+# No narration available -> no explanation.
+expect_null(corteza:::cli_tool_explanation(list(tool = "run_r",
+                                                args = list(code = "1 + 1"))))
+
+# .bounded_rationale: sanitize, collapse whitespace, cap length.
+expect_equal(corteza:::.bounded_rationale("  multi\n  line\ttext "), "multi line text")
+expect_null(corteza:::.bounded_rationale(NULL))
+expect_null(corteza:::.bounded_rationale("   "))
+bounded <- corteza:::.bounded_rationale(strrep("x", 300L), max_chars = 50L)
+expect_true(nchar(bounded) <= 50L)
+expect_true(endsWith(bounded, "..."))
+
+# The approval prompt renders the explanation line under the title.
+expl_lines <- corteza:::cli_approval_lines(
+                                           list(tool = "bash", args = list(command = "git commit -m x"),
+                                                model_context = list(assistant_text = "Commit the changes.")),
+                                           decision = list(model = "cloud", reason = "default"),
+                                           cwd = "/tmp/p")
+expect_true(any(grepl("Commit the changes.", expl_lines, fixed = TRUE)))
+
 # .handle_bash_prompt_status ----
 # Regression: PR #49 wired the approval prompt to bash's `read -e -p`
 # via .read_prompt_via_bash. When bash is killed by SIGINT (Ctrl+C
