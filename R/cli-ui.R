@@ -1,21 +1,13 @@
 .prompt_input_state <- new.env(parent = emptyenv())
 .prompt_input_state$stdin_con <- NULL
 
-# Deny-key label for the R-console approval prompt.
-#
-# corteza::chat() runs in any R console -- RStudio or a plain terminal.
-# RStudio captures Esc and translates it to an R-level interrupt; a
-# terminal does not (Esc is a raw \033 byte and only Ctrl+C raises
-# SIGINT). Show the label that actually works in the current console.
-#
-# The `rstudio` argument is exposed so tests can pin behavior without
-# touching Sys.setenv()/unsetenv() on each call.
-.console_deny_label <- function(rstudio = identical(Sys.getenv("RSTUDIO"), "1")) {
-    if (isTRUE(rstudio)) {
-        "Deny (Esc)"
-    } else {
-        "Deny (Ctrl+C)"
-    }
+# Deny-key label for the R-console approval prompt. Plain "Deny": the
+# interrupt-key hint is omitted for now because the actual key differs
+# across RStudio, the terminal R console, and the corteza CLI, and the
+# inconsistency misled more than it helped. Reinstate a surface-aware
+# hint once the TUI lands.
+.console_deny_label <- function() {
+    "Deny"
 }
 
 .read_prompt_via_bash <- function(prompt_str = "> ") {

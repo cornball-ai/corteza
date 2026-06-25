@@ -307,35 +307,11 @@ local({
 })
 
 # .console_deny_label ----
-# Regression: PR #103 hardcoded "Deny (Esc)" for chat()'s approval
-# prompt. That's correct in RStudio (Esc raises an interrupt) but
-# wrong in a plain terminal where Esc is a raw \033 byte and only
-# Ctrl+C raises SIGINT. The label must follow the actual key.
-
-# Explicit argument path -- no env-var juggling.
-expect_equal(corteza:::.console_deny_label(rstudio = TRUE), "Deny (Esc)")
-expect_equal(corteza:::.console_deny_label(rstudio = FALSE), "Deny (Ctrl+C)")
-
-# Env-var detection path.
-local({
-    old <- Sys.getenv("RSTUDIO", unset = NA)
-    on.exit({
-        if (is.na(old)) {
-            Sys.unsetenv("RSTUDIO")
-        } else {
-            Sys.setenv(RSTUDIO = old)
-        }
-    }, add = TRUE)
-
-    Sys.setenv(RSTUDIO = "1")
-    expect_equal(corteza:::.console_deny_label(), "Deny (Esc)")
-
-    Sys.setenv(RSTUDIO = "0")
-    expect_equal(corteza:::.console_deny_label(), "Deny (Ctrl+C)")
-
-    Sys.unsetenv("RSTUDIO")
-    expect_equal(corteza:::.console_deny_label(), "Deny (Ctrl+C)")
-})
+# The deny label is a plain "Deny". The interrupt-key hint (Esc /
+# Ctrl+C) was removed because the actual key differs across RStudio, the
+# terminal R console, and the corteza CLI -- no surface-dependent
+# behavior left to pin.
+expect_equal(corteza:::.console_deny_label(), "Deny")
 
 # .handle_bash_prompt_status ----
 # Regression: PR #49 wired the approval prompt to bash's `read -e -p`
