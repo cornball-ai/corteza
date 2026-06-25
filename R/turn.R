@@ -189,14 +189,19 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                        dry_run = session_dry_run())
         }
     }
-    function(name, args) {
+    function(name, args, context = NULL) {
         internal_name <- unsanitize_tool_name(name)
         call <- list(
                      tool = internal_name,
                      args = as.list(args),
                      channel = session$channel,
                      context = list(recent_classes = session$recent_classes,
-                                    plan_mode = isTRUE(session$plan_mode))
+                                    plan_mode = isTRUE(session$plan_mode)),
+                     # Read-only per-call snapshot from llm.api::agent (NULL
+                     # with a two-arg call or older llm.api): assistant_text,
+                     # agent_turn, call_index, call_count, provider. Drives the
+                     # approval rationale and the silent-streak narration guard.
+                     model_context = context
         )
 
         # Task-tracker intercept. task_create / task_update mutate

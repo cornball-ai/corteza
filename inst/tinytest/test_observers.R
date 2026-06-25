@@ -95,6 +95,40 @@ local({
     expect_false(seen[[1]]$success)
 })
 
+# The per-call model-context snapshot from llm.api lands on
+# call$model_context; a two-argument call leaves it NULL (back-compat).
+local({
+    tmp <- tempfile("ctx-")
+    dir.create(tmp)
+    file.create(file.path(tmp, "x.txt"))
+    on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
+    op <- options(corteza.code_paths = c(tmp),
+                  corteza.personal_paths = character(),
+                  corteza.policy = NULL)
+    on.exit(options(op), add = TRUE)
+
+    ran_of <- function(seen) Filter(function(e) identical(e$outcome, "ran"), seen)[[1]]
+
+    seen <- list()
+    s <- corteza::new_session("cli", approval_cb = function(call, decision) TRUE)
+    corteza::add_observer(s, function(event) seen[[length(seen) + 1L]] <<- event)
+    h <- corteza:::.make_tool_handler(s)
+    h("list_files", list(path = tmp),
+      context = list(assistant_text = "looking at the files", agent_turn = 1L,
+                     call_index = 1L, call_count = 1L, provider = "anthropic"))
+    mc <- ran_of(seen)$call$model_context
+    expect_equal(mc$assistant_text, "looking at the files")
+    expect_equal(mc$call_index, 1L)
+    expect_equal(mc$provider, "anthropic")
+
+    seen2 <- list()
+    s2 <- corteza::new_session("cli", approval_cb = function(call, decision) TRUE)
+    corteza::add_observer(s2, function(event) seen2[[length(seen2) + 1L]] <<- event)
+    h2 <- corteza:::.make_tool_handler(s2)
+    h2("list_files", list(path = tmp))
+    expect_null(ran_of(seen2)$call$model_context)
+})
+
 # Observer error doesn't break tool dispatch.
 local({
     s <- corteza::new_session("cli",
