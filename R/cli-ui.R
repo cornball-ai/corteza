@@ -21,9 +21,22 @@
     bash_prompt <- .markup_prompt_for_readline(prompt_str)
 
     script <- paste('out="$1"', 'prompt="$2"',
+                    # Turn off readline's bracketed-paste mode. With it on
+                    # (the bash 5.2 default), readline swallows a multi-line
+                    # paste as one unit and `read -e` returns only the first
+                    # line -- the rest are discarded before the drain below
+                    # can see them. Off, a paste arrives as a raw newline
+                    # burst the drain collects. The "line editing not enabled"
+                    # warning here is benign (the setting still applies once
+                    # read -e turns editing on), so silence it.
+                    "bind 'set enable-bracketed-paste off' 2>/dev/null",
                     'IFS= read -r -e -p "$prompt" line || exit 1',
                     'printf "%s\\n" "$line" > "$out"',
-                    'while IFS= read -r -t 0.01 next; do',
+                    # Drain the remaining lines of a pasted burst (already
+                    # buffered behind line 1). 50ms tolerates paste/SSH
+                    # latency between lines; a typed line just waits this out
+                    # once before the prompt returns.
+                    'while IFS= read -r -t 0.05 next; do',
                     '  printf "%s\\n" "$next" >> "$out"', 'done', sep = "\n")
 
     path <- tempfile("corteza-prompt-")
