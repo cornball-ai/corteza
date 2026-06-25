@@ -55,6 +55,14 @@ skill_spec <- function(name, description, params = list(), handler) {
 
 #' Run a skill
 #'
+# Tools that must not be wrapped in an R-level setTimeLimit: they either
+# bound themselves (bash/cmd via processx, run_r_script via callr) or are
+# in-process evals setTimeLimit cannot safely abort (run_r). Wrapping
+# them is the root of #142 (run_r returns empty then "Interrupted") and
+# #139 (bash fails with processx_poll), where the transient interrupt
+# either leaks onto the next call or fires inside processx's poll loop.
+.self_bounded_tools <- c("bash", "cmd", "run_r", "run_r_script")
+
 #' Executes a skill's handler with validation and optional timeout.
 #' Logs tool calls and results for observability.
 #'
@@ -100,8 +108,17 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
         return(ok(preview))
     }
 
-    # Execute with optional timeout
-    if (!is.null(timeout) && timeout > 0) {
+    # Clear any time limit left pending from a prior call. A transient
+    # setTimeLimit interrupt that fired but was not yet delivered can
+    # otherwise land partway through this call (the root of the run_r
+    # "empty, then Interrupted" report, #142).
+    setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)
+
+    # Execute with an optional R-level time limit, but skip it for tools
+    # that bound themselves -- arming it there does only harm (#142/#139).
+    use_time_limit <- !is.null(timeout) && timeout > 0 &&
+        !(skill$name %in% .self_bounded_tools)
+    if (use_time_limit) {
         result <- tryCatch({
             setTimeLimit(cpu = timeout, elapsed = timeout, transient = TRUE)
             on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
@@ -109,9 +126,9 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
         }, error = function(e) {
             if (grepl("time limit|elapsed time", e$message,
                       ignore.case = TRUE)) {
-                log_error(sprintf("Skill timed out after %d seconds", timeout),
+                log_error(sprintf("Skill timed out after %s seconds", timeout),
                           error_type = "timeout", tool = skill$name)
-                err(sprintf("Skill timed out after %d seconds", timeout))
+                err(sprintf("Skill timed out after %s seconds", timeout))
             } else {
                 log_error(e$message, error_type = "skill_error",
                           tool = skill$name)
