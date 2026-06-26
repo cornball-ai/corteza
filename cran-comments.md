@@ -18,9 +18,17 @@ substantive change to its PR.
 - 0 warnings
 - 0 notes
 
-`R CMD check --as-cran` is clean on Ubuntu 24.04 LTS, R 4.6.0.
-win-builder R-devel and R-release results are confirmed from the emailed
-reports before submission.
+`R CMD check --as-cran` is clean on Ubuntu 24.04 LTS, R 4.6.0, against
+llm.api 0.1.8 (this release's required Imports floor).
+
+## Note on the llm.api (>= 0.1.8) dependency
+
+corteza 0.7.0 requires llm.api (>= 0.1.8), which was published to CRAN
+earlier today. The macOS and Windows binaries for llm.api 0.1.8 are still
+being built, so the Ubuntu check above used llm.api 0.1.8 installed from
+source. A win-builder run can't complete the dependency install until those
+binaries are available; I'm glad to provide a win-builder report once they
+land if that would help.
 
 ## Changes since v0.6.9
 
