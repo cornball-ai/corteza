@@ -392,21 +392,24 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
     paths <- unique(resolve_paths(call))
     urls <- unique(resolve_urls(call))
 
+    # Every interpolated field below is model-controlled, so sanitize each
+    # one (strip ANSI/control chars incl. newlines) before it becomes a
+    # labeled line -- a crafted path/pattern/query must not forge its own.
     if (length(paths) > 0L) {
-        lines <- c(lines, sprintf("Path: %s", paths))
+        lines <- c(lines, sprintf("Path: %s", .sanitize_inline(paths)))
     }
     if (length(urls) > 0L) {
-        lines <- c(lines, sprintf("URL: %s", urls))
+        lines <- c(lines, sprintf("URL: %s", .sanitize_inline(urls)))
     }
 
     if (tool_name == "grep_files" && nzchar(args$pattern %||% "")) {
-        lines <- c(lines, sprintf("Pattern: %s", args$pattern))
+        lines <- c(lines, sprintf("Pattern: %s", .sanitize_inline(args$pattern)))
     }
     if (tool_name == "web_search" && nzchar(args$query %||% "")) {
-        lines <- c(lines, sprintf("Query: %s", args$query))
+        lines <- c(lines, sprintf("Query: %s", .sanitize_inline(args$query)))
     }
     if (tool_name == "r_help" && nzchar(args$topic %||% "")) {
-        lines <- c(lines, sprintf("Topic: %s", args$topic))
+        lines <- c(lines, sprintf("Topic: %s", .sanitize_inline(args$topic)))
     }
 
     if (!length(lines)) {
@@ -428,12 +431,12 @@ cli_call_access_lines <- function(call, cwd = NULL) {
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())
     if (length(paths) > 0L) {
-        path_str <- paths[[1L]]
+        path_str <- .sanitize_inline(paths[[1L]])
     } else {
         path_str <- ""
     }
     if (length(urls) > 0L) {
-        url_str <- urls[[1L]]
+        url_str <- .sanitize_inline(urls[[1L]])
     } else {
         url_str <- ""
     }
@@ -535,8 +538,8 @@ cli_tool_explanation <- function(call) {
     # ANSI/control chars incl. newlines, bound length) before interpolating --
     # otherwise a crafted path/query could forge extra approval-prompt lines.
     fld <- function(x, fallback) {
-        s <- .sanitize_inline(x, max_chars = 120L)
-        if (nzchar(s)) s else fallback
+        s <- .sanitize_inline(x %||% "", max_chars = 120L)
+        if (length(s) == 1L && nzchar(s)) s else fallback
     }
     templated <- switch(tool,
                         read_file       = sprintf("Read %s.", fld(args$path, "the file")),
@@ -561,16 +564,21 @@ cli_tool_explanation <- function(call) {
 #' lines), collapse whitespace, and cap the length. "" when empty.
 #' @noRd
 .sanitize_inline <- function(x, max_chars = 200L) {
-    x <- as.character(x %||% "")[1L]
-    # Whole escape sequences first, so the control-char pass below can't leave
-    # a visible "[31m" tail behind: CSI sequences, then any stray ESC + byte.
+    x <- as.character(x)
+    if (length(x) == 0L) {
+        return(character(0))
+    }
+    x[is.na(x)] <- ""
+    # Strip whole escape sequences (params included) so the control-char pass
+    # below can't leave a visible "[31m" or OSC payload behind: OSC strings
+    # (terminated by BEL or ST), then CSI sequences, then any stray ESC.
+    x <- gsub("\033\\][^\007\033]*(\007|\033\\\\)?", "", x)
     x <- gsub("\033\\[[0-9;?]*[ -/]*[@-~]", "", x)
-    x <- gsub("\033.", "", x)
+    x <- gsub("\033", "", x)
     x <- gsub("[[:cntrl:]]", " ", x)
     x <- trimws(gsub("[[:space:]]+", " ", x))
-    if (nchar(x) > max_chars) {
-        x <- paste0(substr(x, 1L, max_chars - 3L), "...")
-    }
+    long <- nchar(x) > max_chars
+    x[long] <- paste0(substr(x[long], 1L, max_chars - 3L), "...")
     x
 }
 
@@ -581,7 +589,7 @@ cli_tool_explanation <- function(call) {
     if (is.null(text)) {
         return(NULL)
     }
-    one_line <- .sanitize_inline(text, max_chars = max_chars)
+    one_line <- .sanitize_inline(as.character(text)[1L], max_chars = max_chars)
     if (nzchar(one_line)) one_line else NULL
 }
 
