@@ -565,8 +565,9 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
     args_str <- if (length(args)) {
         paste(
               mapply(function(k, v) {
-            s <- as.character(v)[1L] %||% ""
-            if (nchar(s) > 60L) s <- paste0(substr(s, 1L, 57L), "...")
+            # Model-controlled values: sanitize (strip ANSI/control chars incl.
+            # newlines) and bound, so an arg can't forge a line in the prompt.
+            s <- .sanitize_inline(as.character(v)[1L], max_chars = 60L)
             sprintf("%s=%s", k, s)
         }, names(args), args, USE.NAMES = FALSE),
               collapse = ", "

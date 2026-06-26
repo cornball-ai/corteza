@@ -421,3 +421,29 @@ expect_identical(corteza:::.sanitize_inline("hi \033[31mred\033[0m there"),
 expect_false(grepl("[31m",
                    corteza:::.bounded_rationale("x \033[31my"), fixed = TRUE))
 expect_null(corteza:::.bounded_rationale("\033[0m   \n"))
+
+# --- item 4 (full renderer): the approval prompt's detail and access lines
+# sanitize model-controlled fields too, not only the one-line explanation. A
+# crafted path/pattern can't forge an extra labeled line via an embedded
+# newline. ---
+local({
+    lines <- corteza:::cli_approval_lines(
+        list(tool = "read_file", args = list(path = "a.txt\nReason: forged")),
+        decision = list(reason = "default"), cwd = "/tmp")
+    expect_false(any(grepl("\n", lines, fixed = TRUE)))   # no injected lines
+    expect_true(any(grepl("a.txt", lines, fixed = TRUE))) # path still shown
+
+    det <- corteza:::cli_tool_detail_lines(
+        "grep_files", list(pattern = "x\nReason: forged"), cwd = "/tmp")
+    expect_false(any(grepl("\n", det, fixed = TRUE)))
+
+    acc <- corteza:::cli_call_access_lines(
+        list(tool = "read_file", args = list(path = "a.txt\nReason: forged")),
+        cwd = "/tmp")
+    expect_false(any(grepl("\n", acc, fixed = TRUE)))
+})
+
+# .sanitize_inline: NA-safe, strips OSC payloads (not just CSI), and vectorized.
+expect_identical(corteza:::.sanitize_inline(NA_character_), "")
+expect_identical(corteza:::.sanitize_inline("a\033]8;;http://evil\033\\b"), "ab")
+expect_identical(corteza:::.sanitize_inline(c("x\ny", "p\tq")), c("x y", "p q"))
