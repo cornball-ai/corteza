@@ -30,7 +30,7 @@ Highlights, with the full per-PR detail in NEWS.md:
   letting an external scheduler own the main process; the channel
   delegates session and transport plumbing to `mx.client`.
 - **`anthropic_claude` provider** drives Claude on a Claude subscription
-  via OAuth (no API key), through `llm.api` (>= 0.1.7).
+  via OAuth (no API key), through `llm.api` (>= 0.1.8).
 - **Tool-timeout hardening.** Self-bounding tools (bash/cmd/run_r/
   run_r_script) and the network tools (`fetch_url`/`web_search`, now
   bounded by curl's own connect/total timeout) are no longer wrapped in

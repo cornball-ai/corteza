@@ -8,7 +8,7 @@ runtime-hardening batch. Last CRAN release: 0.6.9. Per-cycle detail follows.
 - **Matrix loop split** into `matrix_run_init()` / `matrix_run_step()`, with
   the channel delegating session and transport plumbing to `mx.client`.
 - **`anthropic_claude` provider** (Claude on a subscription via OAuth),
-  requiring llm.api (>= 0.1.7).
+  requiring llm.api (>= 0.1.8).
 - **Tool-timeout hardening.** bash/cmd/run_r/run_r_script and the network
   tools (`fetch_url`/`web_search`, now bounded by curl's own timeout) are no
   longer wrapped in an R-level `setTimeLimit`; the residual flush moved to
