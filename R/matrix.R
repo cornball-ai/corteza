@@ -581,7 +581,8 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
     sprintf(
             "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
             .sanitize_inline(call$tool %||% "", max_chars = 60L), args_str,
-            expl_line, decision$reason %||% "ask", timeout_sec
+            expl_line, .sanitize_inline(decision$reason %||% "ask", max_chars = 120L),
+            timeout_sec
     )
 }
 

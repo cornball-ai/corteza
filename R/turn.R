@@ -269,6 +269,10 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # the prompt in chat() even though `replace_in_file` is in the
         # default dangerous_tools list.
         decision <- policy(call, config = session$config)
+        # decision$reason can embed a model-controlled path or tool name
+        # (policy.R); it is rendered into the approval prompt and the
+        # model-visible deny/decline results, so sanitize it once here.
+        decision$reason <- .sanitize_inline(decision$reason %||% "")
 
         # Sticky: record the class regardless of the decision outcome.
         # Even a denied tool call means the LLM is trying to touch that
