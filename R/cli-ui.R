@@ -282,6 +282,10 @@ read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
 }
 
 cli_tool_label <- function(tool_name, long = FALSE) {
+    # Model-controlled (built from the LLM tool-call name); sanitize so an
+    # exotic name can't forge a line in the rendered approval title. Known
+    # tool names are unaffected, so their switch mappings still match.
+    tool_name <- .sanitize_inline(tool_name %||% "", max_chars = 60L)
     label <- switch(
                     tool_name,
                     bash = "Bash",
