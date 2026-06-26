@@ -341,7 +341,10 @@ cli_tool_preview <- function(tool_name, args = list(), width = 72L) {
         sub("^\\s+", "", tool_hint(tool_name, args))
     }
 
-    .cli_truncate(preview %||% "", width = width)
+    # Model-controlled (tool_hint renders raw args); sanitize so a crafted
+    # value can't forge a line via the progress display or the approval
+    # detail-line fallback that consumes this preview.
+    .cli_truncate(.sanitize_inline(preview %||% ""), width = width)
 }
 
 cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
