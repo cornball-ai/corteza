@@ -433,7 +433,9 @@ cli_call_access_lines <- function(call, cwd = NULL) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
 
-    tool <- call$tool %||% ""
+    # Model-controlled tool name; sanitize so the "Tool: %s" fallback (and the
+    # verb phrases below) can't forge a line.
+    tool <- .sanitize_inline(call$tool %||% "")
     op <- classify_op(tool)
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())

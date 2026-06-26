@@ -448,6 +448,11 @@ local({
         list(tool = "read_file\nReason: forged", args = list(path = "a.txt")),
         decision = list(reason = "default"), cwd = "/tmp")
     expect_false(any(grepl("\n", tlines, fixed = TRUE)))
+
+    # The no-path/no-URL access fallback renders the tool name too.
+    accf <- corteza:::cli_call_access_lines(
+        list(tool = "unknown\nReason: forged", args = list()), cwd = "/tmp")
+    expect_false(any(grepl("\n", accf, fixed = TRUE)))
 })
 
 # cli_tool_preview feeds the progress display and the approval detail-line
