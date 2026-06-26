@@ -132,6 +132,113 @@ compact_message_text <- function(text,
             n_lines, n_chars, max_chars, substr(text, 1L, max_chars))
 }
 
+#' Render one history entry as "[label]: body" for the compaction
+#' prompt.
+#'
+#' History entries are provider-native, so shapes vary: Anthropic and
+#' OpenAI chat messages carry a `role`; OpenAI Responses (codex)
+#' entries carry only a `type` (".openai_codex_output" holding the raw
+#' output items, "function_call_output" for tool results) and no role
+#' at all. sprintf() with a NULL argument returns character(0), so a
+#' role-less entry used to kill do_compact()'s vapply -- exactly when
+#' /compact was needed to recover a wedged session. This renderer
+#' guarantees a length-1 string for any shape.
+#'
+#' @param m One history entry (any provider-native shape).
+#' @return A length-1 character string.
+#' @noRd
+.compact_render_entry <- function(m) {
+    if (!is.list(m)) {
+        return(sprintf("[unknown]: %s",
+                       compact_message_text(paste(as.character(m), collapse = "\n"))))
+    }
+    label <- .compact_scalar(m$role) %||% .compact_scalar(m$type) %||%
+    "unknown"
+    sprintf("[%s]: %s", label, compact_message_text(.compact_entry_body(m)))
+}
+
+# x if it is a length-1 non-NA character, else NULL (for %||% chains).
+.compact_scalar <- function(x) {
+    if (is.character(x) && length(x) == 1L && !is.na(x)) {
+        x
+    } else {
+        NULL
+    }
+}
+
+# Extract a text body from one provider-native history entry.
+.compact_entry_body <- function(m) {
+    # Codex assistant turn: raw Responses output items, no role/content.
+    if (identical(m$type, ".openai_codex_output")) {
+        return(.compact_codex_output_text(m$output))
+    }
+    # Codex tool result: output is the result string.
+    if (identical(m$type, "function_call_output")) {
+        return(paste(as.character(m$output %||% ""), collapse = "\n"))
+    }
+    body <- if (is.list(m$content)) {
+        parts <- vapply(m$content, .compact_block_text, character(1L))
+        paste(parts[nzchar(parts)], collapse = "\n")
+    } else {
+        paste(as.character(m$content %||% ""), collapse = "\n")
+    }
+    # OpenAI chat-completions assistant turns put tool invocations in
+    # tool_calls beside (often empty) content; name them so the
+    # summary sees what ran.
+    calls <- vapply(m$tool_calls %||% list(), function(tc) {
+        tc$name %||% tc$`function`$name %||% "?"
+    }, character(1L))
+    if (length(calls) > 0L) {
+        body <- paste(c(body[nzchar(body)], sprintf("<tool call: %s>", calls)),
+                      collapse = "\n")
+    }
+    body
+}
+
+# Text of one Anthropic-style content block (text, tool_use,
+# tool_result, or anything else).
+.compact_block_text <- function(block) {
+    if (!is.list(block)) {
+        return(paste(as.character(block), collapse = "\n"))
+    }
+    if (!is.null(block$text)) {
+        return(paste(as.character(block$text), collapse = "\n"))
+    }
+    type <- block$type %||% ""
+    if (identical(type, "tool_use")) {
+        return(sprintf("<tool call: %s>", block$name %||% "?"))
+    }
+    if (identical(type, "tool_result")) {
+        inner <- block$content
+        if (is.list(inner)) {
+            return(paste(vapply(inner, .compact_block_text, character(1L)),
+                         collapse = "\n"))
+        }
+        return(paste(as.character(inner %||% ""), collapse = "\n"))
+    }
+    ""
+}
+
+# Text of a Codex Responses output-item list: message items contribute
+# their text, function_call items their name. Reasoning items are
+# skipped (encrypted payloads, useless in a summary).
+.compact_codex_output_text <- function(output) {
+    parts <- character()
+    for (item in output %||% list()) {
+        type <- item$type %||% ""
+        if (identical(type, "message")) {
+            for (content in item$content %||% list()) {
+                if (!is.null(content$text)) {
+                    parts <- c(parts, content$text)
+                }
+            }
+        } else if (identical(type, "function_call")) {
+            parts <- c(parts, sprintf("<tool call: %s>", item$name %||% "?"))
+        }
+    }
+    paste(parts, collapse = "\n")
+}
+
 # Drop oldest rendered messages until the joined text fits the total
 # budget, prepending a note about what was dropped. Per-message elision
 # (compact_message_text) handles one giant result; this handles the

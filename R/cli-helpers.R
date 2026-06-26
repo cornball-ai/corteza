@@ -416,17 +416,12 @@ do_compact <- function(session, provider, model, chat_fn = llm.api::chat,
     # Elide oversized message bodies (e.g. a huge tool result already in
     # history) so the summarization prompt itself can't blow the model
     # limit -- this is what lets /compact recover an already-wedged
-    # session. compact_message_text() caps each body; .compact_trim_total()
-    # drops the oldest messages if the aggregate still overflows.
-    rendered <- vapply(session$messages %||% list(), function(m) {
-        text <- if (is.list(m$content) && length(m$content) > 0L &&
-                       !is.null(m$content[[1L]]$text)) {
-            m$content[[1L]]$text
-        } else {
-            m$content
-        }
-        sprintf("[%s]: %s", m$role, compact_message_text(text))
-    }, character(1L))
+    # session. .compact_render_entry() tolerates provider-native entry
+    # shapes (including role-less codex Responses items) and caps each
+    # body via compact_message_text(); .compact_trim_total() drops the
+    # oldest messages if the aggregate still overflows.
+    rendered <- vapply(session$messages %||% list(), .compact_render_entry,
+                       character(1L))
     conv_text <- paste(.compact_trim_total(rendered), collapse = "\n\n")
 
     summary_prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s",
@@ -456,4 +451,3 @@ do_compact <- function(session, provider, model, chat_fn = llm.api::chat,
 
     list(summary = summary, tokens = new_tokens)
 }
-
