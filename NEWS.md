@@ -1,3 +1,26 @@
+# corteza 0.7.0
+
+CRAN release consolidating the 0.6.9.1-0.6.9.7 development cycle plus a
+runtime-hardening batch. Last CRAN release: 0.6.9. Per-cycle detail follows.
+
+## Highlights since 0.6.9
+
+- **Matrix loop split** into `matrix_run_init()` / `matrix_run_step()`, with
+  the channel delegating session and transport plumbing to `mx.client`.
+- **`anthropic_claude` provider** (Claude on a subscription via OAuth),
+  requiring llm.api (>= 0.1.7).
+- **Tool-timeout hardening.** bash/cmd/run_r/run_r_script and the network
+  tools (`fetch_url`/`web_search`, now bounded by curl's own timeout) are no
+  longer wrapped in an R-level `setTimeLimit`; the residual flush moved to
+  `skill_run` entry so a validation/dry-run early return can't leak a queued
+  interrupt (#142, #139).
+- **Narration guard.** Every tool outcome (executed, denied, declined,
+  dry-run, task) routes through one nudge finalizer; the streak resets at
+  each agent-run boundary.
+- **Approval prompt.** Model-controlled explanation fields are sanitized
+  (complete ANSI/control-character stripping, length bound), and a one-line
+  tool explanation is shown at approval time.
+
 # corteza 0.6.9.7
 
 ## Changes
