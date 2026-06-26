@@ -395,3 +395,29 @@ local({
     on.exit(unlink(tmp), add = TRUE)
     expect_identical(corteza:::.handle_bash_prompt_status(NULL, tmp), "ok")
 })
+
+# --- approval-explanation sanitization: model-controlled fields can't forge
+# extra prompt lines or leak ANSI. ---
+local({
+    # Crafted path: embedded newline + fake "Reason:" line, plus an ANSI code.
+    evil <- "a.txt\nReason: rm -rf /\033[31m injected"
+    expl <- corteza:::cli_tool_explanation(
+        list(tool = "read_file", args = list(path = evil)))
+    expect_false(grepl("\n", expl, fixed = TRUE))     # no forged second line
+    expect_false(grepl("\033", expl, fixed = TRUE))   # no raw ESC byte
+    expect_false(grepl("[31m", expl, fixed = TRUE))   # no leftover ANSI tail
+    expect_true(startsWith(expl, "Read "))            # still the template
+
+    # An empty/whitespace field falls back to the template default.
+    expl2 <- corteza:::cli_tool_explanation(
+        list(tool = "fetch_url", args = list(url = "   ")))
+    expect_identical(expl2, "Fetch the URL.")
+})
+
+# .sanitize_inline strips complete CSI sequences, not just the ESC byte; and
+# .bounded_rationale stays NULL only when the result is empty.
+expect_identical(corteza:::.sanitize_inline("hi \033[31mred\033[0m there"),
+                 "hi red there")
+expect_false(grepl("[31m",
+                   corteza:::.bounded_rationale("x \033[31my"), fixed = TRUE))
+expect_null(corteza:::.bounded_rationale("\033[0m   \n"))

@@ -531,14 +531,21 @@ cli_call_noteworthy_warnings <- function(call, cwd = NULL, decision = NULL) {
 cli_tool_explanation <- function(call) {
     tool <- call$tool %||% ""
     args <- .cli_args_list(call$args %||% list())
+    # Every templated field is model-controlled, so sanitize each one (strip
+    # ANSI/control chars incl. newlines, bound length) before interpolating --
+    # otherwise a crafted path/query could forge extra approval-prompt lines.
+    fld <- function(x, fallback) {
+        s <- .sanitize_inline(x, max_chars = 120L)
+        if (nzchar(s)) s else fallback
+    }
     templated <- switch(tool,
-                        read_file       = sprintf("Read %s.", args$path %||% "the file"),
-                        list_files      = sprintf("List %s.", args$path %||% "."),
-                        grep_files      = sprintf("Search files for /%s/.", args$pattern %||% ""),
-                        write_file      = sprintf("Write %s.", args$path %||% "the file"),
-                        replace_in_file = sprintf("Edit %s.", args$path %||% "the file"),
-                        fetch_url       = sprintf("Fetch %s.", args$url %||% "the URL"),
-                        web_search      = sprintf("Search the web for \"%s\".", args$query %||% ""),
+                        read_file       = sprintf("Read %s.", fld(args$path, "the file")),
+                        list_files      = sprintf("List %s.", fld(args$path, ".")),
+                        grep_files      = sprintf("Search files for /%s/.", fld(args$pattern, "")),
+                        write_file      = sprintf("Write %s.", fld(args$path, "the file")),
+                        replace_in_file = sprintf("Edit %s.", fld(args$path, "the file")),
+                        fetch_url       = sprintf("Fetch %s.", fld(args$url, "the URL")),
+                        web_search      = sprintf("Search the web for \"%s\".", fld(args$query, "")),
                         NULL)
     if (!is.null(templated)) {
         return(templated)
@@ -548,23 +555,34 @@ cli_tool_explanation <- function(call) {
     .bounded_rationale(call$model_context$assistant_text)
 }
 
+#' Reduce a model-controlled string to one safe inline fragment for the
+#' approval prompt: strip complete ANSI/VT escape sequences first, then any
+#' remaining control characters (including newlines, so it can't forge extra
+#' lines), collapse whitespace, and cap the length. "" when empty.
+#' @noRd
+.sanitize_inline <- function(x, max_chars = 200L) {
+    x <- as.character(x %||% "")[1L]
+    # Whole escape sequences first, so the control-char pass below can't leave
+    # a visible "[31m" tail behind: CSI sequences, then any stray ESC + byte.
+    x <- gsub("\033\\[[0-9;?]*[ -/]*[@-~]", "", x)
+    x <- gsub("\033.", "", x)
+    x <- gsub("[[:cntrl:]]", " ", x)
+    x <- trimws(gsub("[[:space:]]+", " ", x))
+    if (nchar(x) > max_chars) {
+        x <- paste0(substr(x, 1L, max_chars - 3L), "...")
+    }
+    x
+}
+
 #' Flatten the model's turn narration to one sanitized, bounded line for
-#' the approval prompt. Drops control characters (incl. ANSI escapes),
-#' collapses whitespace, and caps the length. NULL when empty.
+#' the approval prompt. NULL when empty.
 #' @noRd
 .bounded_rationale <- function(text, max_chars = 200L) {
     if (is.null(text)) {
         return(NULL)
     }
-    clean <- gsub("[[:cntrl:]]", " ", as.character(text)[1L])
-    one_line <- trimws(gsub("[[:space:]]+", " ", clean))
-    if (!nzchar(one_line)) {
-        return(NULL)
-    }
-    if (nchar(one_line) > max_chars) {
-        one_line <- paste0(substr(one_line, 1L, max_chars - 3L), "...")
-    }
-    one_line
+    one_line <- .sanitize_inline(text, max_chars = max_chars)
+    if (nzchar(one_line)) one_line else NULL
 }
 
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
