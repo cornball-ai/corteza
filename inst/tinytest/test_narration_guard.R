@@ -58,3 +58,28 @@ local({
     s$silent_streak <- 99L
     expect_equal(corteza:::.maybe_append_narration_nudge("R", s, ctx("", 1L, 1L)), "R")
 })
+
+# --- the handler routes EVERY outcome through the nudge, not only the
+# executed path. A declined call that is the final call of a silent batch at
+# the threshold must still deliver the nudge and reset the streak. ---
+local({
+    op <- options(corteza.narration_streak = 3L,
+                  corteza.personal_paths = c("~/Documents"),
+                  corteza.policy = NULL)
+    on.exit(options(op), add = TRUE)
+
+    s <- corteza::new_session(
+        "cli",
+        approval_cb = function(call, decision) FALSE)   # ask -> declined
+    s$silent_streak <- 2L
+    h <- corteza:::.make_tool_handler(s)
+
+    # cli + personal + read = ask -> declined. Final (and only) silent call of
+    # the batch: .update_silent_streak bumps 2 -> 3 (threshold), and the
+    # declined return routes through nudge().
+    out <- h("read_file", list(path = "~/Documents/private.md"),
+             ctx("", 1L, 1L))
+    expect_true(grepl("declined", out))
+    expect_true(grepl("[corteza]", out, fixed = TRUE))
+    expect_equal(s$silent_streak, 0L)
+})

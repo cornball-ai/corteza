@@ -211,6 +211,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # context snapshot.
         .update_silent_streak(session, call$model_context)
 
+        # Single finalizer for the narration nudge: route every model-visible
+        # result (executed, denied, declined, dry-run, task intercept) through
+        # this, so a silent batch is nudged and the streak reset no matter
+        # which outcome its final call takes -- not only the executed path.
+        nudge <- function(text) {
+            .maybe_append_narration_nudge(text, session, call$model_context)
+        }
+
         # Task-tracker intercept. task_create / task_update mutate
         # session metadata (the task list) rather than doing real
         # work. They run in-process here so the mutation lands on the
@@ -220,6 +228,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         task_result <- task_tool_intercept(session, internal_name,
             as.list(args))
         if (!is.null(task_result)) {
+            task_result <- nudge(task_result)
             .fire_observers(session, list(
                     call = call,
                     outcome = "task",
@@ -245,8 +254,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                             error = function(e) err(paste("Tool error:",
                         conditionMessage(e)))
             )
-            return(admit_tool_result(.flatten_mcp_result(raw),
-                                     tool = internal_name))
+            return(nudge(admit_tool_result(.flatten_mcp_result(raw),
+                                           tool = internal_name)))
         }
 
         # Resolve once up front so policy() and the sticky classifier
@@ -291,7 +300,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(decision$approval, "deny")) {
             return(outcome_text(
                                 "deny",
-                                sprintf("[corteza policy denied: %s]", decision$reason),
+                                nudge(sprintf("[corteza policy denied: %s]",
+                                              decision$reason)),
                                 FALSE
                 ))
         }
@@ -303,7 +313,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             if (!isTRUE(approved)) {
                 return(outcome_text(
                                     "declined",
-                                    sprintf("[user declined: %s]", decision$reason),
+                                    nudge(sprintf("[user declined: %s]",
+                                                  decision$reason)),
                                     FALSE
                     ))
             }
@@ -327,9 +338,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
-        result_text <- .maybe_append_narration_nudge(
-            admit_tool_result(.flatten_mcp_result(raw), tool = internal_name),
-            session, call$model_context)
+        result_text <- nudge(
+            admit_tool_result(.flatten_mcp_result(raw), tool = internal_name))
         outcome_text("ran", result_text, success, diff = raw$diff)
     }
 }
@@ -565,6 +575,12 @@ observer_progress <- function() {
 #' @export
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     stopifnot(is.environment(session))
+
+    # Each user request is a fresh agent run: clear the narration streak so a
+    # silent tail of the previous run can't bleed into this one. Reset at the
+    # run boundary (here, before agent()) rather than after, so an interrupt
+    # mid-run can't leave a stale streak behind.
+    session$silent_streak <- 0L
 
     if (is.null(tools)) {
         ensure_skills()
