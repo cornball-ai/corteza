@@ -19,8 +19,8 @@ substantive change to its PR.
 - 0 notes
 
 `R CMD check --as-cran` is clean on Ubuntu 24.04 LTS, R 4.6.0.
-win-release and win-devel via windows-hr (R 4.6.0 / R-devel) are run
-before submission.
+win-builder R-devel and R-release results are confirmed from the emailed
+reports before submission.
 
 ## Changes since v0.6.9
 
