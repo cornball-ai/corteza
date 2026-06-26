@@ -40,9 +40,13 @@ Highlights, with the full per-PR detail in NEWS.md:
 - **Narration guard.** Every tool outcome (executed, denied, declined,
   dry-run, task) routes through one nudge finalizer, and the streak
   resets at each agent-run boundary.
-- **Approval prompt.** Model-controlled explanation fields are sanitized
-  (complete ANSI/control-character stripping, length bound); a one-line
-  tool explanation is shown at approval time.
+- **Approval prompt.** Model-controlled fields rendered into the approval
+  prompt and history (paths, tool names, args, policy reasons) are sanitized
+  so a crafted value cannot forge a prompt line; a one-line tool explanation
+  is shown at approval time.
+- **`/compact` survives provider-native history** (Anthropic, OpenAI chat,
+  and role-less OpenAI Codex Responses entries), so a wedged session can be
+  recovered regardless of provider.
 
 ## Reviewer-facing notes (carried over from v0.6.3)
 
