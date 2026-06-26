@@ -18,8 +18,14 @@ substantive change to its PR.
 - 0 warnings
 - 0 notes
 
-`R CMD check --as-cran` is clean on Ubuntu 24.04 LTS, R 4.6.0, against
-llm.api 0.1.8 (this release's required Imports floor).
+`R CMD check --as-cran` is clean (Status: OK) on:
+
+* Ubuntu 24.04 LTS, R 4.6.0
+* R Under development (unstable) (2026-06-21 r90185), in a rocker/r-devel
+  container
+
+both against llm.api 0.1.8 (this release's required Imports floor) installed
+from source.
 
 ## Note on the llm.api (>= 0.1.8) dependency
 
