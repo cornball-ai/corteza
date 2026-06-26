@@ -682,16 +682,16 @@ cli_user_replied_line <- function(call, choice,
                                   cwd = NULL) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
-    tool <- call$tool %||% ""
+    tool <- .sanitize_inline(call$tool %||% "")
     op <- classify_op(tool)
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())
 
+    # target is model-controlled (command / path / url) and this summary is
+    # written into the history the model reads next turn, so sanitize it -- a
+    # forged newline must not inject a line there.
     target <- if (tool %in% c("bash", "cmd")) {
-        cmd <- call$args$command %||% ""
-        if (nchar(cmd) > 40L) {
-            cmd <- paste0(substr(cmd, 1, 37), "...")
-        }
+        cmd <- .sanitize_inline(call$args$command %||% "", max_chars = 40L)
         if (nzchar(cmd)) {
             sprintf("`%s`", cmd)
         } else {
@@ -700,9 +700,9 @@ cli_user_replied_line <- function(call, choice,
     } else if (tool %in% c("run_r", "run_r_script")) {
         "R code"
     } else if (length(paths) > 0L) {
-        paths[[1L]]
+        .sanitize_inline(paths[[1L]])
     } else if (length(urls) > 0L) {
-        urls[[1L]]
+        .sanitize_inline(urls[[1L]])
     } else {
         tool
     }
