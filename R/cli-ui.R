@@ -1,21 +1,13 @@
 .prompt_input_state <- new.env(parent = emptyenv())
 .prompt_input_state$stdin_con <- NULL
 
-# Deny-key label for the R-console approval prompt.
-#
-# corteza::chat() runs in any R console -- RStudio or a plain terminal.
-# RStudio captures Esc and translates it to an R-level interrupt; a
-# terminal does not (Esc is a raw \033 byte and only Ctrl+C raises
-# SIGINT). Show the label that actually works in the current console.
-#
-# The `rstudio` argument is exposed so tests can pin behavior without
-# touching Sys.setenv()/unsetenv() on each call.
-.console_deny_label <- function(rstudio = identical(Sys.getenv("RSTUDIO"), "1")) {
-    if (isTRUE(rstudio)) {
-        "Deny (Esc)"
-    } else {
-        "Deny (Ctrl+C)"
-    }
+# Deny-key label for the R-console approval prompt. Plain "Deny": the
+# interrupt-key hint is omitted for now because the actual key differs
+# across RStudio, the terminal R console, and the corteza CLI, and the
+# inconsistency misled more than it helped. Reinstate a surface-aware
+# hint once the TUI lands.
+.console_deny_label <- function() {
+    "Deny"
 }
 
 .read_prompt_via_bash <- function(prompt_str = "> ") {
@@ -29,9 +21,22 @@
     bash_prompt <- .markup_prompt_for_readline(prompt_str)
 
     script <- paste('out="$1"', 'prompt="$2"',
+                    # Turn off readline's bracketed-paste mode. With it on
+                    # (the bash 5.2 default), readline swallows a multi-line
+                    # paste as one unit and `read -e` returns only the first
+                    # line -- the rest are discarded before the drain below
+                    # can see them. Off, a paste arrives as a raw newline
+                    # burst the drain collects. The "line editing not enabled"
+                    # warning here is benign (the setting still applies once
+                    # read -e turns editing on), so silence it.
+                    "bind 'set enable-bracketed-paste off' 2>/dev/null",
                     'IFS= read -r -e -p "$prompt" line || exit 1',
                     'printf "%s\\n" "$line" > "$out"',
-                    'while IFS= read -r -t 0.01 next; do',
+                    # Drain the remaining lines of a pasted burst (already
+                    # buffered behind line 1). 50ms tolerates paste/SSH
+                    # latency between lines; a typed line just waits this out
+                    # once before the prompt returns.
+                    'while IFS= read -r -t 0.05 next; do',
                     '  printf "%s\\n" "$next" >> "$out"', 'done', sep = "\n")
 
     path <- tempfile("corteza-prompt-")
@@ -277,6 +282,10 @@ read_prompt_input <- function(prompt_str = "> ", use_readline = TRUE) {
 }
 
 cli_tool_label <- function(tool_name, long = FALSE) {
+    # Model-controlled (built from the LLM tool-call name); sanitize so an
+    # exotic name can't forge a line in the rendered approval title. Known
+    # tool names are unaffected, so their switch mappings still match.
+    tool_name <- .sanitize_inline(tool_name %||% "", max_chars = 60L)
     label <- switch(
                     tool_name,
                     bash = "Bash",
@@ -332,7 +341,10 @@ cli_tool_preview <- function(tool_name, args = list(), width = 72L) {
         sub("^\\s+", "", tool_hint(tool_name, args))
     }
 
-    .cli_truncate(preview %||% "", width = width)
+    # Model-controlled (tool_hint renders raw args); sanitize so a crafted
+    # value can't forge a line via the progress display or the approval
+    # detail-line fallback that consumes this preview.
+    .cli_truncate(.sanitize_inline(preview %||% ""), width = width)
 }
 
 cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
@@ -387,21 +399,24 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
     paths <- unique(resolve_paths(call))
     urls <- unique(resolve_urls(call))
 
+    # Every interpolated field below is model-controlled, so sanitize each
+    # one (strip ANSI/control chars incl. newlines) before it becomes a
+    # labeled line -- a crafted path/pattern/query must not forge its own.
     if (length(paths) > 0L) {
-        lines <- c(lines, sprintf("Path: %s", paths))
+        lines <- c(lines, sprintf("Path: %s", .sanitize_inline(paths)))
     }
     if (length(urls) > 0L) {
-        lines <- c(lines, sprintf("URL: %s", urls))
+        lines <- c(lines, sprintf("URL: %s", .sanitize_inline(urls)))
     }
 
     if (tool_name == "grep_files" && nzchar(args$pattern %||% "")) {
-        lines <- c(lines, sprintf("Pattern: %s", args$pattern))
+        lines <- c(lines, sprintf("Pattern: %s", .sanitize_inline(args$pattern)))
     }
     if (tool_name == "web_search" && nzchar(args$query %||% "")) {
-        lines <- c(lines, sprintf("Query: %s", args$query))
+        lines <- c(lines, sprintf("Query: %s", .sanitize_inline(args$query)))
     }
     if (tool_name == "r_help" && nzchar(args$topic %||% "")) {
-        lines <- c(lines, sprintf("Topic: %s", args$topic))
+        lines <- c(lines, sprintf("Topic: %s", .sanitize_inline(args$topic)))
     }
 
     if (!length(lines)) {
@@ -418,17 +433,19 @@ cli_call_access_lines <- function(call, cwd = NULL) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
 
-    tool <- call$tool %||% ""
+    # Model-controlled tool name; sanitize so the "Tool: %s" fallback (and the
+    # verb phrases below) can't forge a line.
+    tool <- .sanitize_inline(call$tool %||% "")
     op <- classify_op(tool)
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())
     if (length(paths) > 0L) {
-        path_str <- paths[[1L]]
+        path_str <- .sanitize_inline(paths[[1L]])
     } else {
         path_str <- ""
     }
     if (length(urls) > 0L) {
-        url_str <- urls[[1L]]
+        url_str <- .sanitize_inline(urls[[1L]])
     } else {
         url_str <- ""
     }
@@ -516,6 +533,75 @@ cli_call_noteworthy_warnings <- function(call, cwd = NULL, decision = NULL) {
     all[!all %in% boilerplate]
 }
 
+#' One-line explanation of what a tool call intends to do, for the
+#' approval prompt -- distinct from the policy reason. Path/URL tools
+#' (read/write/fetch/grep/search) template deterministically from their
+#' args; opaque exec tools (bash/run_r) instead surface the model's own
+#' narration from the per-call context, the only thing that conveys
+#' intent there. NULL when nothing useful is available.
+#' @noRd
+cli_tool_explanation <- function(call) {
+    tool <- call$tool %||% ""
+    args <- .cli_args_list(call$args %||% list())
+    # Every templated field is model-controlled, so sanitize each one (strip
+    # ANSI/control chars incl. newlines, bound length) before interpolating --
+    # otherwise a crafted path/query could forge extra approval-prompt lines.
+    fld <- function(x, fallback) {
+        s <- .sanitize_inline(x %||% "", max_chars = 120L)
+        if (length(s) == 1L && nzchar(s)) s else fallback
+    }
+    templated <- switch(tool,
+                        read_file       = sprintf("Read %s.", fld(args$path, "the file")),
+                        list_files      = sprintf("List %s.", fld(args$path, ".")),
+                        grep_files      = sprintf("Search files for /%s/.", fld(args$pattern, "")),
+                        write_file      = sprintf("Write %s.", fld(args$path, "the file")),
+                        replace_in_file = sprintf("Edit %s.", fld(args$path, "the file")),
+                        fetch_url       = sprintf("Fetch %s.", fld(args$url, "the URL")),
+                        web_search      = sprintf("Search the web for \"%s\".", fld(args$query, "")),
+                        NULL)
+    if (!is.null(templated)) {
+        return(templated)
+    }
+    # bash / cmd / run_r / run_r_script and other opaque tools: the command
+    # or code is shown but not the intent, so lean on the model's narration.
+    .bounded_rationale(call$model_context$assistant_text)
+}
+
+#' Reduce a model-controlled string to one safe inline fragment for the
+#' approval prompt: strip complete ANSI/VT escape sequences first, then any
+#' remaining control characters (including newlines, so it can't forge extra
+#' lines), collapse whitespace, and cap the length. "" when empty.
+#' @noRd
+.sanitize_inline <- function(x, max_chars = 200L) {
+    x <- as.character(x)
+    if (length(x) == 0L) {
+        return(character(0))
+    }
+    x[is.na(x)] <- ""
+    # Strip whole escape sequences (params included) so the control-char pass
+    # below can't leave a visible "[31m" or OSC payload behind: OSC strings
+    # (terminated by BEL or ST), then CSI sequences, then any stray ESC.
+    x <- gsub("\033\\][^\007\033]*(\007|\033\\\\)?", "", x)
+    x <- gsub("\033\\[[0-9;?]*[ -/]*[@-~]", "", x)
+    x <- gsub("\033", "", x)
+    x <- gsub("[[:cntrl:]]", " ", x)
+    x <- trimws(gsub("[[:space:]]+", " ", x))
+    long <- nchar(x) > max_chars
+    x[long] <- paste0(substr(x[long], 1L, max_chars - 3L), "...")
+    x
+}
+
+#' Flatten the model's turn narration to one sanitized, bounded line for
+#' the approval prompt. NULL when empty.
+#' @noRd
+.bounded_rationale <- function(text, max_chars = 200L) {
+    if (is.null(text)) {
+        return(NULL)
+    }
+    one_line <- .sanitize_inline(as.character(text)[1L], max_chars = max_chars)
+    if (nzchar(one_line)) one_line else NULL
+}
+
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
                                cwd = NULL, persistent_label = "Allow always",
                                deny_label = "Deny", width = 88L) {
@@ -547,6 +633,11 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
     }
 
     lines <- c("", strrep("-", width), sprintf(" %s", title), "")
+
+    explanation <- cli_tool_explanation(call)
+    if (!is.null(explanation) && nzchar(explanation)) {
+        lines <- c(lines, paste0("   ", .cli_wrap_lines(explanation, width - 6L)), "")
+    }
 
     if (length(details) > 0L) {
         lines <- c(lines, paste0("   ", details), "")
@@ -600,16 +691,16 @@ cli_user_replied_line <- function(call, choice,
                                   cwd = NULL) {
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
-    tool <- call$tool %||% ""
+    tool <- .sanitize_inline(call$tool %||% "")
     op <- classify_op(tool)
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())
 
+    # target is model-controlled (command / path / url) and this summary is
+    # written into the history the model reads next turn, so sanitize it -- a
+    # forged newline must not inject a line there.
     target <- if (tool %in% c("bash", "cmd")) {
-        cmd <- call$args$command %||% ""
-        if (nchar(cmd) > 40L) {
-            cmd <- paste0(substr(cmd, 1, 37), "...")
-        }
+        cmd <- .sanitize_inline(call$args$command %||% "", max_chars = 40L)
         if (nzchar(cmd)) {
             sprintf("`%s`", cmd)
         } else {
@@ -618,9 +709,9 @@ cli_user_replied_line <- function(call, choice,
     } else if (tool %in% c("run_r", "run_r_script")) {
         "R code"
     } else if (length(paths) > 0L) {
-        paths[[1L]]
+        .sanitize_inline(paths[[1L]])
     } else if (length(urls) > 0L) {
-        urls[[1L]]
+        .sanitize_inline(urls[[1L]])
     } else {
         tool
     }

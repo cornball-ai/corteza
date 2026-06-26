@@ -55,6 +55,25 @@ skill_spec <- function(name, description, params = list(), handler) {
 
 #' Run a skill
 #'
+# Tools that must not be wrapped in an R-level setTimeLimit: they either
+# bound themselves (bash/cmd via processx, run_r_script via callr, fetch_url
+# and web_search via curl's own connect/total timeout) or are in-process
+# evals setTimeLimit cannot safely abort (run_r). Wrapping them is the root
+# of #142 (run_r returns empty then "Interrupted") and #139 (bash fails with
+# processx_poll), where the transient interrupt either leaks onto the next
+# call or fires inside processx's poll loop.
+.self_bounded_tools <- c("bash", "cmd", "run_r", "run_r_script",
+                         "fetch_url", "web_search")
+
+# Did a prior skill_run arm a transient setTimeLimit that may have fired and
+# left an interrupt queued? Only then must the next call flush it at entry, so
+# paths that never arm (validation failure, dry-run, self-bounded tool) leave
+# any enclosing caller limit untouched. Base R has no getTimeLimit() to read
+# and restore one, so this is the closest we get to not clobbering it.
+# Process-global, mirroring setTimeLimit()'s own scope.
+.timelimit_armed <- new.env(parent = emptyenv())
+.timelimit_armed$pending <- FALSE
+
 #' Executes a skill's handler with validation and optional timeout.
 #' Logs tool calls and results for observability.
 #'
@@ -69,6 +88,15 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
                       dry_run = FALSE) {
     args <- args %||% list()
     start_time <- Sys.time()
+
+    # Flush a transient interrupt a prior armed call may have left queued,
+    # BEFORE any early return, so a validation/dry-run exit can't carry it
+    # into the caller's next computation (#142). Gated on having actually
+    # armed one, so non-arming paths don't clobber an enclosing caller limit.
+    if (isTRUE(.timelimit_armed$pending)) {
+        setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)
+        .timelimit_armed$pending <- FALSE
+    }
 
     # Log tool call
     log_tool_call(skill$name, args)
@@ -100,18 +128,25 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
         return(ok(preview))
     }
 
-    # Execute with optional timeout
-    if (!is.null(timeout) && timeout > 0) {
+    # Execute with an optional R-level time limit, but skip it for tools
+    # that bound themselves -- arming it there does only harm (#142/#139).
+    use_time_limit <- !is.null(timeout) && timeout > 0 &&
+        !(skill$name %in% .self_bounded_tools)
+    if (use_time_limit) {
         result <- tryCatch({
             setTimeLimit(cpu = timeout, elapsed = timeout, transient = TRUE)
+            # Mark before the handler runs so the flag survives an interrupt;
+            # on.exit clears the limit but leaves the flag set, so the next
+            # call flushes any interrupt this one may have left queued.
+            .timelimit_armed$pending <- TRUE
             on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
             skill$handler(args, ctx)
         }, error = function(e) {
             if (grepl("time limit|elapsed time", e$message,
                       ignore.case = TRUE)) {
-                log_error(sprintf("Skill timed out after %d seconds", timeout),
+                log_error(sprintf("Skill timed out after %s seconds", timeout),
                           error_type = "timeout", tool = skill$name)
-                err(sprintf("Skill timed out after %d seconds", timeout))
+                err(sprintf("Skill timed out after %s seconds", timeout))
             } else {
                 log_error(e$message, error_type = "skill_error",
                           tool = skill$name)

@@ -22,6 +22,15 @@
 .tool_output_preview_lines <- 40L
 .tool_output_preview_chars <- 4000L
 
+# Deliberate content-read tools (read_file, git_diff): the agent asked
+# to see the file, so give them a far larger budget than chatty tools --
+# otherwise a whole-file read gets sliced into 50-line re-reads. Still
+# bounded: a pathological multi-megabyte file stashes to a handle rather
+# than wedging the model.
+.tool_output_read_tools <- c("read_file", "git_diff")
+.tool_output_read_max_chars <- 100000L
+.tool_output_read_max_lines <- 2000L
+
 .compact_max_chars_per_message <- 16000L
 .compact_max_total_chars <- 120000L
 
@@ -47,6 +56,14 @@ admit_tool_result <- function(text, tool = "tool",
                               max_lines = .tool_output_max_lines,
                               preview_lines = .tool_output_preview_lines,
                               preview_chars = .tool_output_preview_chars) {
+    # Deliberate content reads (read_file, git_diff) get a far larger
+    # budget so a whole-file read isn't sliced into 50-line re-reads --
+    # but only when the caller didn't pin explicit caps.
+    if (missing(max_chars) && missing(max_lines) &&
+        tool %in% .tool_output_read_tools) {
+        max_chars <- .tool_output_read_max_chars
+        max_lines <- .tool_output_read_max_lines
+    }
     # Only guard plain strings. A non-string here would be a flatten
     # bug; pass it through rather than mangle it.
     if (!is.character(text) || length(text) != 1L) {

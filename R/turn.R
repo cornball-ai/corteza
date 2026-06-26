@@ -189,15 +189,35 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                        dry_run = session_dry_run())
         }
     }
-    function(name, args) {
+    function(name, args, context = NULL) {
         internal_name <- unsanitize_tool_name(name)
         call <- list(
                      tool = internal_name,
                      args = as.list(args),
                      channel = session$channel,
                      context = list(recent_classes = session$recent_classes,
-                                    plan_mode = isTRUE(session$plan_mode))
+                                    plan_mode = isTRUE(session$plan_mode)),
+                     # Read-only per-call snapshot from llm.api::agent (NULL
+                     # with a two-arg call or older llm.api): assistant_text,
+                     # agent_turn, call_index, call_count, provider. Drives the
+                     # approval rationale and the silent-streak narration guard.
+                     model_context = context
         )
+
+        # Silent-streak narration guard: bookkeep once per model turn
+        # (the first dispatched call of the batch, call_index == 1). A
+        # turn that made tool calls with no assistant narration extends
+        # the streak; any narration resets it. No-op without the llm.api
+        # context snapshot.
+        .update_silent_streak(session, call$model_context)
+
+        # Single finalizer for the narration nudge: route every model-visible
+        # result (executed, denied, declined, dry-run, task intercept) through
+        # this, so a silent batch is nudged and the streak reset no matter
+        # which outcome its final call takes -- not only the executed path.
+        nudge <- function(text) {
+            .maybe_append_narration_nudge(text, session, call$model_context)
+        }
 
         # Task-tracker intercept. task_create / task_update mutate
         # session metadata (the task list) rather than doing real
@@ -208,6 +228,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         task_result <- task_tool_intercept(session, internal_name,
             as.list(args))
         if (!is.null(task_result)) {
+            task_result <- nudge(task_result)
             .fire_observers(session, list(
                     call = call,
                     outcome = "task",
@@ -233,8 +254,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                             error = function(e) err(paste("Tool error:",
                         conditionMessage(e)))
             )
-            return(admit_tool_result(.flatten_mcp_result(raw),
-                                     tool = internal_name))
+            return(nudge(admit_tool_result(.flatten_mcp_result(raw),
+                                           tool = internal_name)))
         }
 
         # Resolve once up front so policy() and the sticky classifier
@@ -248,6 +269,10 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # the prompt in chat() even though `replace_in_file` is in the
         # default dangerous_tools list.
         decision <- policy(call, config = session$config)
+        # decision$reason can embed a model-controlled path or tool name
+        # (policy.R); it is rendered into the approval prompt and the
+        # model-visible deny/decline results, so sanitize it once here.
+        decision$reason <- .sanitize_inline(decision$reason %||% "")
 
         # Sticky: record the class regardless of the decision outcome.
         # Even a denied tool call means the LLM is trying to touch that
@@ -279,7 +304,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(decision$approval, "deny")) {
             return(outcome_text(
                                 "deny",
-                                sprintf("[corteza policy denied: %s]", decision$reason),
+                                nudge(sprintf("[corteza policy denied: %s]",
+                                              decision$reason)),
                                 FALSE
                 ))
         }
@@ -291,7 +317,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             if (!isTRUE(approved)) {
                 return(outcome_text(
                                     "declined",
-                                    sprintf("[user declined: %s]", decision$reason),
+                                    nudge(sprintf("[user declined: %s]",
+                                                  decision$reason)),
                                     FALSE
                     ))
             }
@@ -315,10 +342,56 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
-        outcome_text("ran",
-                     admit_tool_result(.flatten_mcp_result(raw), tool = internal_name),
-                     success, diff = raw$diff)
+        result_text <- nudge(
+            admit_tool_result(.flatten_mcp_result(raw), tool = internal_name))
+        outcome_text("ran", result_text, success, diff = raw$diff)
     }
+}
+
+# Silent-streak narration guard -------------------------------------
+# corteza-owned and session-scoped (never the package-global .heartbeat,
+# which can't serve concurrent console/Matrix/subagent sessions). Uses
+# the llm.api per-call context snapshot (call$model_context): a model
+# turn is "silent" when it made tool calls with no assistant narration.
+# Keyed on call_index == 1 so a multi-call batch counts once; the nudge
+# rides only on the final result (call_index == call_count) of a silent
+# batch.
+
+#' Update session$silent_streak once per model turn (call_index == 1).
+#' @noRd
+.update_silent_streak <- function(session, mc) {
+    if (is.null(mc) || !identical(mc$call_index, 1L)) {
+        return(invisible(NULL))
+    }
+    if (nzchar(trimws(mc$assistant_text %||% ""))) {
+        session$silent_streak <- 0L
+    } else {
+        session$silent_streak <- (session$silent_streak %||% 0L) + 1L
+    }
+    invisible(NULL)
+}
+
+#' Append a one-time narration reminder to the final result of a silent
+#' batch once the streak reaches corteza.narration_streak (default 3).
+#' Resets the streak so it fires once per breach. The policy reason is
+#' untouched -- this rides on the tool-result text the model reads next.
+#' @noRd
+.maybe_append_narration_nudge <- function(text, session, mc) {
+    threshold <- getOption("corteza.narration_streak", 3L)
+    if (is.null(mc) || !is.numeric(threshold) || !is.finite(threshold) ||
+        threshold < 1L) {
+        return(text)
+    }
+    if (!identical(mc$call_index, mc$call_count) ||
+        (session$silent_streak %||% 0L) < threshold) {
+        return(text)
+    }
+    streak <- session$silent_streak
+    session$silent_streak <- 0L
+    paste0(text,
+           "\n\n[corteza] You've made tool calls across ", streak,
+           " turns without telling the user what you're doing. Before your",
+           " next tool call, say in one line what you're doing and why.")
 }
 
 # Resolve the LLM model for the turn. Policy's per-call model routing
@@ -506,6 +579,12 @@ observer_progress <- function() {
 #' @export
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     stopifnot(is.environment(session))
+
+    # Each user request is a fresh agent run: clear the narration streak so a
+    # silent tail of the previous run can't bleed into this one. Reset at the
+    # run boundary (here, before agent()) rather than after, so an interrupt
+    # mid-run can't leave a stale streak behind.
+    session$silent_streak <- 0L
 
     if (is.null(tools)) {
         ensure_skills()

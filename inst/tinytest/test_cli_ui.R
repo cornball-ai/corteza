@@ -307,35 +307,44 @@ local({
 })
 
 # .console_deny_label ----
-# Regression: PR #103 hardcoded "Deny (Esc)" for chat()'s approval
-# prompt. That's correct in RStudio (Esc raises an interrupt) but
-# wrong in a plain terminal where Esc is a raw \033 byte and only
-# Ctrl+C raises SIGINT. The label must follow the actual key.
+# The deny label is a plain "Deny". The interrupt-key hint (Esc /
+# Ctrl+C) was removed because the actual key differs across RStudio, the
+# terminal R console, and the corteza CLI -- no surface-dependent
+# behavior left to pin.
+expect_equal(corteza:::.console_deny_label(), "Deny")
 
-# Explicit argument path -- no env-var juggling.
-expect_equal(corteza:::.console_deny_label(rstudio = TRUE), "Deny (Esc)")
-expect_equal(corteza:::.console_deny_label(rstudio = FALSE), "Deny (Ctrl+C)")
+# cli_tool_explanation ----
+# Path/URL tools template deterministically from their args.
+expect_equal(corteza:::cli_tool_explanation(list(tool = "read_file",
+                                                 args = list(path = "R/x.R"))),
+             "Read R/x.R.")
+expect_equal(corteza:::cli_tool_explanation(list(tool = "fetch_url",
+                                                 args = list(url = "https://e.com"))),
+             "Fetch https://e.com.")
+# Opaque exec tools (bash/run_r) surface the model's own narration.
+expect_equal(corteza:::cli_tool_explanation(list(
+                                                 tool = "bash", args = list(command = "git commit"),
+                                                 model_context = list(assistant_text = "Commit the staged changes."))),
+             "Commit the staged changes.")
+# No narration available -> no explanation.
+expect_null(corteza:::cli_tool_explanation(list(tool = "run_r",
+                                                args = list(code = "1 + 1"))))
 
-# Env-var detection path.
-local({
-    old <- Sys.getenv("RSTUDIO", unset = NA)
-    on.exit({
-        if (is.na(old)) {
-            Sys.unsetenv("RSTUDIO")
-        } else {
-            Sys.setenv(RSTUDIO = old)
-        }
-    }, add = TRUE)
+# .bounded_rationale: sanitize, collapse whitespace, cap length.
+expect_equal(corteza:::.bounded_rationale("  multi\n  line\ttext "), "multi line text")
+expect_null(corteza:::.bounded_rationale(NULL))
+expect_null(corteza:::.bounded_rationale("   "))
+bounded <- corteza:::.bounded_rationale(strrep("x", 300L), max_chars = 50L)
+expect_true(nchar(bounded) <= 50L)
+expect_true(endsWith(bounded, "..."))
 
-    Sys.setenv(RSTUDIO = "1")
-    expect_equal(corteza:::.console_deny_label(), "Deny (Esc)")
-
-    Sys.setenv(RSTUDIO = "0")
-    expect_equal(corteza:::.console_deny_label(), "Deny (Ctrl+C)")
-
-    Sys.unsetenv("RSTUDIO")
-    expect_equal(corteza:::.console_deny_label(), "Deny (Ctrl+C)")
-})
+# The approval prompt renders the explanation line under the title.
+expl_lines <- corteza:::cli_approval_lines(
+                                           list(tool = "bash", args = list(command = "git commit -m x"),
+                                                model_context = list(assistant_text = "Commit the changes.")),
+                                           decision = list(model = "cloud", reason = "default"),
+                                           cwd = "/tmp/p")
+expect_true(any(grepl("Commit the changes.", expl_lines, fixed = TRUE)))
 
 # .handle_bash_prompt_status ----
 # Regression: PR #49 wired the approval prompt to bash's `read -e -p`
@@ -386,3 +395,84 @@ local({
     on.exit(unlink(tmp), add = TRUE)
     expect_identical(corteza:::.handle_bash_prompt_status(NULL, tmp), "ok")
 })
+
+# --- approval-explanation sanitization: model-controlled fields can't forge
+# extra prompt lines or leak ANSI. ---
+local({
+    # Crafted path: embedded newline + fake "Reason:" line, plus an ANSI code.
+    evil <- "a.txt\nReason: rm -rf /\033[31m injected"
+    expl <- corteza:::cli_tool_explanation(
+        list(tool = "read_file", args = list(path = evil)))
+    expect_false(grepl("\n", expl, fixed = TRUE))     # no forged second line
+    expect_false(grepl("\033", expl, fixed = TRUE))   # no raw ESC byte
+    expect_false(grepl("[31m", expl, fixed = TRUE))   # no leftover ANSI tail
+    expect_true(startsWith(expl, "Read "))            # still the template
+
+    # An empty/whitespace field falls back to the template default.
+    expl2 <- corteza:::cli_tool_explanation(
+        list(tool = "fetch_url", args = list(url = "   ")))
+    expect_identical(expl2, "Fetch the URL.")
+})
+
+# .sanitize_inline strips complete CSI sequences, not just the ESC byte; and
+# .bounded_rationale stays NULL only when the result is empty.
+expect_identical(corteza:::.sanitize_inline("hi \033[31mred\033[0m there"),
+                 "hi red there")
+expect_false(grepl("[31m",
+                   corteza:::.bounded_rationale("x \033[31my"), fixed = TRUE))
+expect_null(corteza:::.bounded_rationale("\033[0m   \n"))
+
+# --- item 4 (full renderer): the approval prompt's detail and access lines
+# sanitize model-controlled fields too, not only the one-line explanation. A
+# crafted path/pattern can't forge an extra labeled line via an embedded
+# newline. ---
+local({
+    lines <- corteza:::cli_approval_lines(
+        list(tool = "read_file", args = list(path = "a.txt\nReason: forged")),
+        decision = list(reason = "default"), cwd = "/tmp")
+    expect_false(any(grepl("\n", lines, fixed = TRUE)))   # no injected lines
+    expect_true(any(grepl("a.txt", lines, fixed = TRUE))) # path still shown
+
+    det <- corteza:::cli_tool_detail_lines(
+        "grep_files", list(pattern = "x\nReason: forged"), cwd = "/tmp")
+    expect_false(any(grepl("\n", det, fixed = TRUE)))
+
+    acc <- corteza:::cli_call_access_lines(
+        list(tool = "read_file", args = list(path = "a.txt\nReason: forged")),
+        cwd = "/tmp")
+    expect_false(any(grepl("\n", acc, fixed = TRUE)))
+
+    # The tool NAME (from the LLM tool-call name) is model-controlled too --
+    # a crafted name can't forge a line in the rendered title.
+    tlines <- corteza:::cli_approval_lines(
+        list(tool = "read_file\nReason: forged", args = list(path = "a.txt")),
+        decision = list(reason = "default"), cwd = "/tmp")
+    expect_false(any(grepl("\n", tlines, fixed = TRUE)))
+
+    # The no-path/no-URL access fallback renders the tool name too.
+    accf <- corteza:::cli_call_access_lines(
+        list(tool = "unknown\nReason: forged", args = list()), cwd = "/tmp")
+    expect_false(any(grepl("\n", accf, fixed = TRUE)))
+})
+
+# cli_tool_preview feeds the progress display and the approval detail-line
+# fallback (for tools with no explicit field line, e.g. git_diff's ref), so
+# its model-controlled output is sanitized too.
+expect_false(grepl("\n",
+    corteza:::cli_tool_preview("git_diff", list(ref = "x\nReason: forged")),
+    fixed = TRUE))
+
+# cli_user_replied_line feeds a summary into the history the model reads next
+# turn, so its model-controlled target (command/path/url/tool) is sanitized.
+local({
+    s <- corteza:::cli_user_replied_line(
+        list(tool = "read_file", args = list(path = "a.txt\nReason: forged")),
+        "1", cwd = "/tmp")
+    expect_false(grepl("\n", s, fixed = TRUE))
+    expect_true(grepl("a.txt Reason: forged", s, fixed = TRUE))
+})
+
+# .sanitize_inline: NA-safe, strips OSC payloads (not just CSI), and vectorized.
+expect_identical(corteza:::.sanitize_inline(NA_character_), "")
+expect_identical(corteza:::.sanitize_inline("a\033]8;;http://evil\033\\b"), "ab")
+expect_identical(corteza:::.sanitize_inline(c("x\ny", "p\tq")), c("x y", "p q"))

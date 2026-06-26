@@ -840,7 +840,9 @@ tool_web_search <- function(query, max_results = 5L) {
         h <- curl::new_handle()
         curl::handle_setopt(h,
                             customrequest = "POST",
-                            postfields = jsonlite::toJSON(body, auto_unbox = TRUE)
+                            postfields = jsonlite::toJSON(body, auto_unbox = TRUE),
+                            connecttimeout = 10L,
+                            timeout = 30L
         )
         curl::handle_setheaders(h, "Content-Type" = "application/json")
 
@@ -895,7 +897,11 @@ tool_fetch_url <- function(url, max_chars = 8000L) {
 
     tryCatch({
         h <- curl::new_handle()
-        curl::handle_setopt(h, followlocation = TRUE)
+        # Bound the request with curl's own connect/total timeout rather than
+        # an outer setTimeLimit, which can't reliably abort a blocking libcurl
+        # transfer. fetch_url is therefore on .self_bounded_tools.
+        curl::handle_setopt(h, followlocation = TRUE,
+                            connecttimeout = 10L, timeout = 30L)
         resp <- curl::curl_fetch_memory(url, handle = h)
 
         text <- tryCatch(rawToChar(resp$content),

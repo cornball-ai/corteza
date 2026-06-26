@@ -45,6 +45,21 @@ local({
     expect_true(nchar(out) < nchar(big))
 })
 
+# read_file / git_diff get a far larger budget than chatty tools, so a
+# whole-file read isn't sliced into 50-line re-reads.
+local({
+    on.exit(corteza:::clear_handles(), add = TRUE)
+    # 200 lines: over the 50-line default cap, well under the read budget.
+    body <- paste(sprintf("line %d", 1:200), collapse = "\n")
+    expect_equal(corteza:::admit_tool_result(body, tool = "read_file"), body)
+    expect_equal(corteza:::admit_tool_result(body, tool = "git_diff"), body)
+    # The same body through a chatty tool is still capped.
+    expect_true(grepl("truncated", corteza:::admit_tool_result(body, tool = "bash")))
+    # A read past the (larger) read budget still stashes to a handle.
+    huge <- paste(sprintf("line %d", 1:3000), collapse = "\n")
+    expect_true(grepl("truncated", corteza:::admit_tool_result(huge, tool = "read_file")))
+})
+
 # ---- handler integration ----
 
 # A fake executor returning 50k lines is capped before the model sees it.

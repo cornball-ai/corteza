@@ -130,6 +130,21 @@ corteza_runtime_guidance <- function() {
           "the same way Claude Code is: use it for shell commands, git, file operations,",
           "builds, and tasks in other languages. Reach for bash whenever the work isn't R,",
           "and combine it with `run_r` as the task demands.",
+          "",
+          "## Communicating while you work",
+          "",
+          "Narrate as you go. Before a tool call or a batch of related calls, say in",
+          "one line what you're about to do and why; after they return, say what you",
+          "found and how it changes the plan. The user should never watch a silent",
+          "streak of tool calls and have to guess what you're doing.",
+          "",
+          "- Give a short update between the steps of a multi-step task, not just at",
+          "  the end. Don't go more than a couple of tool calls without a word.",
+          "- If the user asks what you're doing, answer in plain prose first, before",
+          "  any further tool calls.",
+          "- Stop and check in before anything destructive, ambiguous, or expensive,",
+          "  and whenever the task could reasonably go more than one way.",
+          "- When the plan changes mid-task, say so and why before continuing.",
           sep = "\n"
     )
 }
