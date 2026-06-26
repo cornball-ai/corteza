@@ -90,8 +90,9 @@ matrix_relogin <- function(cfg) {
 #' @param room Character. Room ID or alias the bot should read and post
 #'   to. If the bot has been invited but not joined, it will be joined.
 #' @param model Character or NULL. Default model name.
-#' @param provider Character. LLM provider: "anthropic", "openai",
-#'   "moonshot", or "ollama".
+#' @param provider Character. LLM provider: "anthropic",
+#'   "anthropic_claude", "openai", "moonshot", "openai_codex", or
+#'   "ollama".
 #' @param tools_filter Character vector or NULL. Passed to
 #'   \code{get_tools()} to restrict which tools the bot can invoke.
 #'   NULL allows all registered tools.
@@ -727,6 +728,9 @@ matrix_accept_invites <- function(cfg, invites) {
 #'   immediately.
 #' @param sessions Environment from \code{matrix_new_session_registry()}
 #'   keyed by room_id, or NULL to build fresh sessions each call.
+#' @param crypto Optional E2EE crypto handle. When non-NULL,
+#'   \code{m.room.encrypted} events in the sync are decrypted before
+#'   processing; NULL (default) handles only plaintext rooms.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples

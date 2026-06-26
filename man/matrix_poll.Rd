@@ -20,6 +20,10 @@ immediately.}
 
 \item{sessions}{Environment from \code{matrix_new_session_registry()}
 keyed by room_id, or NULL to build fresh sessions each call.}
+
+\item{crypto}{Optional E2EE crypto handle. When non-NULL,
+\code{m.room.encrypted} events in the sync are decrypted before
+processing; NULL (default) handles only plaintext rooms.}
 }
 \value{
 An integer count of messages replied to, invisibly.
