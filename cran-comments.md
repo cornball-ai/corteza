@@ -1,15 +1,16 @@
 ## Submission summary
 
-Update of 'corteza' (v0.6.8), an agent runtime that lets Large
+Update of 'corteza' (v0.7.0), an agent runtime that lets Large
 Language Models (LLMs) drive an R session through a policy-gated
 tool-use loop. Three entry points: an interactive console
 read-eval-print-loop (`chat()`), a shell command-line interface
 (`corteza`), and a Model Context Protocol (MCP) server (`serve()`)
 for external clients like Claude Code or Codex.
 
-This release is a patch bump from the on-CRAN 0.6.3 series, batching
-the post-release dev cycles since 0.6.3. The dev markers are preserved
-in NEWS.md so reviewers can trace each substantive change to its PR.
+This release is a minor bump from the on-CRAN 0.6.9, batching the
+0.6.9.1-0.6.9.7 dev cycles plus a runtime-hardening pass. The dev
+markers are preserved in NEWS.md so reviewers can trace each
+substantive change to its PR.
 
 ## R CMD check results
 
@@ -17,52 +18,49 @@ in NEWS.md so reviewers can trace each substantive change to its PR.
 - 0 warnings
 - 0 notes
 
-`R CMD check --as-cran` is clean on Ubuntu 24.04 LTS, R 4.6.0.
-`devtools::check_win_devel()` / `tinypkgr::check_win_devel()` was
-run for win-devel and win-release.
+`R CMD check --as-cran` is clean (Status: OK) on:
 
-## Changes since v0.6.3
+* Ubuntu 24.04 LTS, R 4.6.0
+* R Under development (unstable) (2026-06-21 r90185), in a rocker/r-devel
+  container
+
+both against llm.api 0.1.8 (this release's required Imports floor) installed
+from source.
+
+## Note on the llm.api (>= 0.1.8) dependency
+
+corteza 0.7.0 requires llm.api (>= 0.1.8), which was published to CRAN
+earlier today. The macOS and Windows binaries for llm.api 0.1.8 are still
+being built, so the Ubuntu check above used llm.api 0.1.8 installed from
+source. A win-builder run can't complete the dependency install until those
+binaries are available; I'm glad to provide a win-builder report once they
+land if that would help.
+
+## Changes since v0.6.9
 
 Highlights, with the full per-PR detail in NEWS.md:
 
-- **Unified in-process runtime.** The shell CLI and `chat()` share one
-  read-eval-print loop (`run_repl_loop()`) in a single R process and
-  execute tools in-process; there is no CLI worker subprocess or
-  internal MCP transport. `serve()` remains a spec-compliant MCP server
-  for external clients. Same tool registry, shared via `R/registry.R`.
-- **Derived tool schemas.** Tool definitions are derived at runtime
-  from `formals()` and the package's `.Rd` files. Replaced 20+
-  hand-written `skill_spec()` blocks with one-line registrations.
-  A test asserts every formal maps to a `@param` entry and vice
-  versa.
-- **Subagents.** `subagent_spawn()` runs a child via
-  `callr::r_session`; the parent talks to it through
-  `subagent_query()` / `subagent_collect()` (sync or async).
-  `subagent_list()` / `subagent_kill()` round out the surface.
-- **Retroactive-extraction runtime (opt-in).** Off by default;
-  enabling it collapses finished turns into holder subagents that
-  keep the full transcript on disk while the parent keeps only a
-  summary. See `vignette("retroactive-extraction")`.
-- **Handle-based large results.** `tool_run_r()` wraps oversized
-  values with `with_handle()` and returns an opaque `.h_NNN` handle
-  the LLM can dereference in later `tool_read_handle()` calls.
-- **`/copy` slash command, inline diffs, markdown rendering,
-  per-turn timing footer, /context meter, /tasks, /paste,
-  interrupt handling, Matrix bot adapter,** and other UX work.
-  Each PR documented in NEWS.md.
-- **Session spend reporting.** `/spent` reports approximate USD per
-  process run for both surfaces, itemized per conversation (the spans
-  between `/clear`), with a separate process-level line for subagent
-  spend. `/clear` now also terminates live subagents.
-- **MCP subagent exposure is opt-in.** `serve()` no longer advertises
-  the subagent tools (`spawn_subagent` et al.) to MCP clients by
-  default -- a spawned subagent spends autonomously on the host's
-  credentials, so exposure now requires `subagents.expose_over_mcp` or
-  `serve(expose_subagents = TRUE)`, and when on is bounded by a
-  configurable spend cap. `tools/call` also now rejects any tool not
-  advertised by `tools/list`.
-- **Provider default models** come from `llm.api::provider_default_model()`
-  (a single source of truth) instead of a parallel in-package table.
+- **Matrix loop split** into `matrix_run_init()` / `matrix_run_step()`,
+  letting an external scheduler own the main process; the channel
+  delegates session and transport plumbing to `mx.client`.
+- **`anthropic_claude` provider** drives Claude on a Claude subscription
+  via OAuth (no API key), through `llm.api` (>= 0.1.8).
+- **Tool-timeout hardening.** Self-bounding tools (bash/cmd/run_r/
+  run_r_script) and the network tools (`fetch_url`/`web_search`, now
+  bounded by curl's own connect/total timeout) are no longer wrapped in
+  an R-level `setTimeLimit`; the residual flush moved to `skill_run`
+  entry so a validation or dry-run early return can't leak a queued
+  transient interrupt.
+- **Narration guard.** Every tool outcome (executed, denied, declined,
+  dry-run, task) routes through one nudge finalizer, and the streak
+  resets at each agent-run boundary.
+- **Approval prompt.** Model-controlled fields rendered into the approval
+  prompt and history (paths, tool names, args, policy reasons) are sanitized
+  so a crafted value cannot forge a prompt line; a one-line tool explanation
+  is shown at approval time.
+- **`/compact` survives provider-native history** (Anthropic, OpenAI chat,
+  and role-less OpenAI Codex Responses entries), so a wedged session can be
+  recovered regardless of provider.
 
 ## Reviewer-facing notes (carried over from v0.6.3)
 
@@ -157,15 +155,13 @@ written to.
 
 ### Optional companion package (pensar)
 
-`matrix_archive_session()` calls into a companion package
-**`pensar`** that is not on CRAN (lives at
-<https://github.com/cornball-ai/pensar>). Because CRAN does not
-accept `Suggests:` entries that aren't on CRAN/Bioconductor, the
+`matrix_archive_session()` calls into the companion package
+**`pensar`** (now on CRAN). corteza keeps it an optional integration
+rather than a hard `Suggests`, so a base install doesn't pull it: the
 function uses
 `tryCatch(getExportedValue("pensar", "ingest"), error = function(e) NULL)`
-for dynamic lookup: when pensar isn't installed,
-`matrix_archive_session()` is a silent no-op. Users who want
-session archiving install pensar manually from GitHub.
+for dynamic lookup, and when pensar isn't installed
+`matrix_archive_session()` is a silent no-op.
 
 ### Examples
 
@@ -208,11 +204,12 @@ All Imports are on CRAN: `callr`, `codetools`, `curl`, `jsonlite`,
 
 All Suggests are on CRAN: `clipr` (clipboard for `/copy`),
 `fortunes` (Easter-egg quotes), `mx.api` (Matrix Client-Server
-API), `rstudioapi` (RStudio addin glue), `simplermarkdown`
-(vignettes), `tinytest` (tests). Users who don't use a given
-feature don't need that Suggests installed. Every Suggests-backed
-call site uses `requireNamespace(..., quietly = TRUE)` before
-calling into the dependency.
+API), `mx.client` (stateful Matrix client + E2EE orchestration),
+`mx.crypto` (Olm/Megolm E2EE), `rstudioapi` (RStudio addin glue),
+`simplermarkdown` (vignettes), `tinytest` (tests). Users who don't
+use a given feature don't need that Suggests installed. Every
+Suggests-backed call site uses `requireNamespace(..., quietly =
+TRUE)` before calling into the dependency.
 
 ### SystemRequirements
 
