@@ -4,7 +4,7 @@
 \title{Start Interactive Chat}
 \usage{
 chat(provider = NULL, model = NULL, tools = NULL, session = NULL,
-     max_turns = NULL)
+     max_turns = NULL, web_search = NULL)
 }
 \arguments{
 \item{provider}{LLM provider: "anthropic", "openai", "moonshot", or
@@ -25,6 +25,11 @@ resume a specific session.}
 before the loop stops with \code{[Max turns reached]}. NULL (default)
 reads \code{getOption("corteza.max_turns")}, then falls back to the
 \code{\link{session_setup}} default (50).}
+
+\item{web_search}{Logical or NULL. Enable provider-native
+(server-side) web search for the conversation. NULL uses the config
+default (on for supported providers); the model searches inside its
+own turn with no Tavily key required.}
 }
 \value{
 The session object (invisibly).

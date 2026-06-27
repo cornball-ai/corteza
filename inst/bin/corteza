@@ -43,7 +43,8 @@ parse_args <- function() {
     resume = FALSE,  # Resume latest session
     list = FALSE,
     dry_run = config$dry_run,  # Dry-run mode
-    trace = isTRUE(config$trace) || isTRUE(getOption("corteza.trace", FALSE))
+    trace = isTRUE(config$trace) || isTRUE(getOption("corteza.trace", FALSE)),
+    web_search = config$web_search  # Provider-native search (NULL = default on)
   )
 
   i <- 1
@@ -76,6 +77,12 @@ parse_args <- function() {
     } else if (arg == "--trace") {
       opts$trace <- TRUE
       i <- i + 1
+    } else if (arg == "--web-search") {
+      opts$web_search <- TRUE
+      i <- i + 1
+    } else if (arg == "--no-web-search") {
+      opts$web_search <- FALSE
+      i <- i + 1
     } else if (arg == "--help" || arg == "-h") {
       cat("
 corteza - An open-source interactive CLI agent
@@ -90,6 +97,8 @@ Options:
                   Example: --tools core or --tools file,git,code
   --dry-run       Preview tool calls without executing
   --trace         Print structured tool-call events to stderr
+  --web-search    Provider-native web search, on by default for hosted providers
+  --no-web-search Disable provider-native web search (e.g. to rely on the Tavily tool)
   --session, -s   Session key (resume if exists, create if not)
   --resume, -r    Resume the most recent session
   --list          List sessions
@@ -674,7 +683,8 @@ run_agent <- function(opts) {
     tools_filter = opts$tools,
     approval_cb = cli_approval_cb(cwd),
     max_turns = 50L,
-    plan_mode = isTRUE(opts$plan_mode)
+    plan_mode = isTRUE(opts$plan_mode),
+    web_search = opts$web_search
   )
   turn_session$config <- config
   turn_session$cwd <- cwd

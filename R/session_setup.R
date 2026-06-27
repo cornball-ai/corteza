@@ -49,6 +49,9 @@
 #'   Defaults to 50, a safety net for interactive channels where a
 #'   multi-step request (read + edit + verify several files) can easily
 #'   exceed the \code{new_session()} default of 10.
+#' @param web_search Logical or NULL. Provider-native web search toggle
+#'   passed through to \code{\link{new_session}}. NULL falls back to
+#'   \code{config$web_search}, then on by default for supported providers.
 #'
 #' @return A session environment from \code{\link{new_session}}, with
 #'   an extra \code{cwd} field set.
@@ -65,7 +68,7 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
                           tools = NULL, system = NULL, approval_cb = NULL,
                           history = NULL, load_project_context = TRUE,
                           validate_api_key = TRUE, verbose = FALSE,
-                          max_turns = 50L) {
+                          max_turns = 50L, web_search = NULL) {
     channel <- match.arg(channel)
     cwd <- path.expand(cwd)
     config <- load_config(cwd)
@@ -73,6 +76,7 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     provider <- provider %||% config$provider %||% "anthropic"
     ensure_llm_api_provider(provider)
     model <- model %||% config$model
+    web_search <- web_search %||% config$web_search %||% TRUE
 
     if (isTRUE(validate_api_key)) {
         key_var <- switch(provider, anthropic = "ANTHROPIC_API_KEY",
@@ -106,7 +110,8 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
                            system = system,
                            approval_cb = approval_cb,
                            max_turns = max_turns,
-                           verbose = verbose
+                           verbose = verbose,
+                           web_search = web_search
     )
     session$cwd <- cwd
     session$config <- config

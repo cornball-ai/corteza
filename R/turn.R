@@ -83,6 +83,11 @@ default_local_model <- function() {
 #'   engine denies write/exec tool calls (except \code{exit_plan_mode}),
 #'   and \code{exit_plan_mode} is added to the tool list. A successful
 #'   \code{exit_plan_mode} call flips this back to FALSE.
+#' @param web_search Logical or NULL. When TRUE and the provider
+#'   supports it, \code{\link{turn}} enables \code{llm.api::agent}'s
+#'   provider-native (server-side) web search for the session: the
+#'   model searches inside its own turn, no Tavily key required. NULL
+#'   defers to \code{turn}'s default (on for supported providers).
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -97,7 +102,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         history = NULL, model_map = NULL,
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
-                        verbose = FALSE, plan_mode = FALSE) {
+                        verbose = FALSE, plan_mode = FALSE,
+                        web_search = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -123,7 +129,27 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$on_tool <- list()
     s$turn_number <- 0L
     s$plan_mode <- isTRUE(plan_mode)
+    s$web_search <- web_search
     s
+}
+
+# Providers whose wire format llm.api wires provider-native (server-side)
+# web search into. Mirrors llm.api's supported set; we gate on it so
+# providers without native search (e.g. ollama) don't take a per-turn
+# "ignored" warning. Local models fall back to the Tavily web_search tool.
+.web_search_providers <- c("anthropic", "anthropic_claude", "openai",
+                           "openai_codex", "moonshot")
+
+.web_search_supported <- function(provider) {
+    isTRUE(provider %in% .web_search_providers)
+}
+
+# Resolve the session's provider-native web-search setting to a concrete
+# value. Explicit session$web_search wins; then a config web_search key;
+# then on by default (the model only searches when it decides to, so the
+# cost is per actual search, not per turn).
+.session_web_search <- function(session) {
+    session$web_search %||% session$config$web_search %||% TRUE
 }
 
 # ---- Internal helpers ----
@@ -626,6 +652,17 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             session$history <- history
         }
     }
+
+    # Provider-native (server-side) web search: enable it when the session
+    # asks for it (default on) and the provider supports it. Gated on the
+    # formal so an older llm.api simply ignores the request, and on the
+    # provider so local models (ollama) don't take a per-turn warning.
+    ws <- .session_web_search(session)
+    if (!identical(ws, FALSE) && .web_search_supported(session$provider) &&
+        "web_search" %in% names(formals(llm.api::agent))) {
+        agent_args$web_search <- ws
+    }
+
     response <- do.call(llm.api::agent, agent_args)
 
     if (!is.null(response$history)) {

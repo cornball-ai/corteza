@@ -53,8 +53,6 @@ skill_spec <- function(name, description, params = list(), handler) {
     )
 }
 
-#' Run a skill
-#'
 # Tools that must not be wrapped in an R-level setTimeLimit: they either
 # bound themselves (bash/cmd via processx, run_r_script via callr, fetch_url
 # and web_search via curl's own connect/total timeout) or are in-process
