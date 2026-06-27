@@ -28,3 +28,15 @@ expect_equal(ns_off$web_search, FALSE)
 ns_default <- new_session(channel = "cli", provider = "anthropic")
 expect_true(is.null(ns_default$web_search))
 expect_true(corteza:::.session_web_search(ns_default))   # NULL -> default on
+
+# .drop_redundant_web_search(): when native search is active, corteza's own
+# web_search (Tavily) tool is removed so the request can't carry two tools
+# named "web_search" (the duplicate-tool-name 400 on anthropic_claude).
+tool_list <- list(list(name = "read_file"), list(name = "web_search"),
+                  list(name = "bash"))
+kept <- corteza:::.drop_redundant_web_search(tool_list, TRUE)
+expect_equal(length(kept), 2L)
+expect_false("web_search" %in% vapply(kept, function(t) t$name, ""))
+# Inactive: tools pass through untouched (Tavily stays for local models).
+expect_identical(corteza:::.drop_redundant_web_search(tool_list, FALSE),
+                 tool_list)

@@ -151,6 +151,19 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     session$web_search %||% session$config$web_search %||% TRUE
 }
 
+# When provider-native search is active, llm.api injects the provider's own
+# web_search tool. Drop corteza's same-named (Tavily) tool so the request
+# doesn't carry two tools called "web_search" (Anthropic 400s on duplicate
+# tool names). Native search supersedes Tavily for supported providers.
+.drop_redundant_web_search <- function(tools, ws_active) {
+    if (!isTRUE(ws_active)) {
+        return(tools)
+    }
+    keep <- !vapply(tools, function(t) identical(t$name, "web_search"),
+                    logical(1))
+    tools[keep]
+}
+
 # ---- Internal helpers ----
 
 # Convert an MCP-format skill result (list with $content) to a plain string
@@ -615,6 +628,19 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     tools <- .task_filter_tools(tools, session$channel)
+
+    # Provider-native (server-side) web search: enable it when the session
+    # asks for it (default on), the provider supports it, and the llm.api
+    # build accepts the arg. When active, drop corteza's own web_search tool
+    # (Tavily) so its name doesn't collide with the provider's native
+    # web_search tool, which llm.api injects into the request. Native search
+    # supersedes Tavily for supported providers; local models (ollama) keep
+    # the Tavily tool as their only web search.
+    ws <- .session_web_search(session)
+    ws_active <- !identical(ws, FALSE) &&
+    .web_search_supported(session$provider) &&
+    "web_search" %in% names(formals(llm.api::agent))
+    tools <- .drop_redundant_web_search(tools, ws_active)
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
     system <- task_compose_system(system, session$tasks %||% list(),
@@ -650,13 +676,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         }
     }
 
-    # Provider-native (server-side) web search: enable it when the session
-    # asks for it (default on) and the provider supports it. Gated on the
-    # formal so an older llm.api simply ignores the request, and on the
-    # provider so local models (ollama) don't take a per-turn warning.
-    ws <- .session_web_search(session)
-    if (!identical(ws, FALSE) && .web_search_supported(session$provider) &&
-        "web_search" %in% names(formals(llm.api::agent))) {
+    if (ws_active) {
         agent_args$web_search <- ws
     }
 
