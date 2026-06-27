@@ -173,4 +173,3 @@ archival_history_tool_calls_fallback <- function(history) {
     }
     as.character(cnt %||% "")
 }
-

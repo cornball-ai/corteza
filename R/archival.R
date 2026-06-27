@@ -778,4 +778,3 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     }
     invisible()
 }
-

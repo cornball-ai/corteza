@@ -1140,4 +1140,3 @@ format_subagent_list <- function(agents) {
             "Use the sequence number, the 8-char prefix, or the full id with /ask, /collect, and /kill."),
           collapse = "\n")
 }
-

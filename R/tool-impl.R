@@ -900,8 +900,8 @@ tool_fetch_url <- function(url, max_chars = 8000L) {
         # Bound the request with curl's own connect/total timeout rather than
         # an outer setTimeLimit, which can't reliably abort a blocking libcurl
         # transfer. fetch_url is therefore on .self_bounded_tools.
-        curl::handle_setopt(h, followlocation = TRUE,
-                            connecttimeout = 10L, timeout = 30L)
+        curl::handle_setopt(h, followlocation = TRUE, connecttimeout = 10L,
+                            timeout = 30L)
         resp <- curl::curl_fetch_memory(url, handle = h)
 
         text <- tryCatch(rawToChar(resp$content),
@@ -1255,4 +1255,3 @@ call_tool <- function(name, args, ctx = list(), timeout = 30L,
     # Fallback: unknown tool
     err(paste("Unknown tool:", name))
 }
-

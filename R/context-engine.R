@@ -829,4 +829,3 @@ ce_extract_files_touched <- function(result) {
     }
     unique(files)
 }
-

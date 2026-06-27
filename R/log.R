@@ -197,4 +197,3 @@ log_warn <- function(message, ...) {
 log_debug <- function(message, ...) {
     log_event("debug", message = message, ..., level = "debug")
 }
-

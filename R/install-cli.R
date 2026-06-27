@@ -137,4 +137,3 @@ uninstall_cli <- function(path = NULL) {
     }
     invisible(removed)
 }
-

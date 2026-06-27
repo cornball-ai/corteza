@@ -290,4 +290,3 @@ corteza_execute_in_chat <- function() {
 corteza_execute_in_chat_retain <- function() {
     .corteza_execute_in_chat(advance_cursor = FALSE)
 }
-

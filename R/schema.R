@@ -359,4 +359,3 @@ schema_from_registry <- function(filter = NULL) {
              input_schema = t$inputSchema)
     })
 }
-

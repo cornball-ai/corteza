@@ -75,4 +75,3 @@ user_interrupt_marker <- function() {
     sprintf("[Interrupted by user before completing. %s]",
             .user_abort_directive)
 }
-

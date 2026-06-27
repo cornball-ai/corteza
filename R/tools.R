@@ -162,4 +162,3 @@ unsanitize_tool_name <- function(name) {
     name <- gsub("__", "::", name, fixed = TRUE)
     gsub("_dot_", ".", name, fixed = TRUE)
 }
-

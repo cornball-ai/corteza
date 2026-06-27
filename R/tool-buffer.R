@@ -117,4 +117,3 @@ tool_buffer_observer <- function(session) {
                         result = event$result %||% "")
     }
 }
-

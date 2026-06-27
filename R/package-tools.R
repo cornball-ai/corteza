@@ -297,4 +297,3 @@ format_pkg_skill_docs <- function(config) {
     }
     paste(parts, collapse = "\n")
 }
-

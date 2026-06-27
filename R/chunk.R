@@ -181,4 +181,3 @@ find_break_point <- function(text) {
 
     -1L
 }
-

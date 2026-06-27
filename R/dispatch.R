@@ -86,4 +86,3 @@ worker_init <- function(cwd = getwd()) {
         cat(sprintf("\033[%dm  %s\033[0m\n", color, text), file = stderr())
     }
 }
-

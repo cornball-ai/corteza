@@ -350,4 +350,3 @@ task_tool_intercept <- function(session, name, args) {
              error = function(e) sprintf("[task error: %s]", conditionMessage(e))
     )
 }
-

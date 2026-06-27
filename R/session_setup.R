@@ -117,4 +117,3 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     session$config <- config
     session
 }
-

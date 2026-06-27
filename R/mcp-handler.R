@@ -173,4 +173,3 @@ process_request <- function(line, send_fn) {
 
     TRUE
 }
-

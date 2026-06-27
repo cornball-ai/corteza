@@ -90,4 +90,3 @@ run_socket <- function(port) {
         tryCatch(close(client), error = function(e) NULL)
     }
 }
-

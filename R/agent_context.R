@@ -229,4 +229,3 @@ same_file <- function(a, b) {
                        error = function(e) b)
     identical(norm_a, norm_b)
 }
-

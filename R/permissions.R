@@ -245,4 +245,3 @@ format_permissions <- function(config) {
 
     paste(lines, collapse = "\n")
 }
-

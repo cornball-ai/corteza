@@ -195,4 +195,3 @@ apply_exit_marker <- function(session, prompt, pre_turn_len, marker,
         pre_turn_len = pre_turn_len, placeholder = placeholder)
     invisible(session)
 }
-

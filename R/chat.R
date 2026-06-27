@@ -447,4 +447,3 @@ chat_trace_observer <- function(session) {
         )
     }
 }
-

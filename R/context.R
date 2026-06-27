@@ -303,4 +303,3 @@ list_context_files <- function(cwd = getwd()) {
     paths <- file.path(cwd, file_names)
     paths[file.exists(paths)]
 }
-

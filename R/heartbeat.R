@@ -297,4 +297,3 @@ hb_status <- function() {
          tool_history_length = length(.heartbeat$tool_history %||% list()),
          suppression = .heartbeat$suppression %||% list())
 }
-

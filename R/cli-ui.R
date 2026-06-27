@@ -44,8 +44,8 @@
     status <- suppressWarnings(
                                system2(
                                        "bash",
-                                       c("-c", shQuote(script), "bash",
-                shQuote(path), shQuote(bash_prompt)),
+                                       c("-c", shQuote(script), "bash", shQuote(path),
+                shQuote(bash_prompt)),
                                        stdout = "",
                                        stderr = ""
         )
@@ -410,7 +410,8 @@ cli_tool_detail_lines <- function(tool_name, args = list(), cwd = NULL,
     }
 
     if (tool_name == "grep_files" && nzchar(args$pattern %||% "")) {
-        lines <- c(lines, sprintf("Pattern: %s", .sanitize_inline(args$pattern)))
+        lines <- c(lines,
+                   sprintf("Pattern: %s", .sanitize_inline(args$pattern)))
     }
     if (tool_name == "web_search" && nzchar(args$query %||% "")) {
         lines <- c(lines, sprintf("Query: %s", .sanitize_inline(args$query)))
@@ -548,16 +549,20 @@ cli_tool_explanation <- function(call) {
     # otherwise a crafted path/query could forge extra approval-prompt lines.
     fld <- function(x, fallback) {
         s <- .sanitize_inline(x %||% "", max_chars = 120L)
-        if (length(s) == 1L && nzchar(s)) s else fallback
+        if (length(s) == 1L && nzchar(s)) {
+            s
+        } else {
+            fallback
+        }
     }
     templated <- switch(tool,
-                        read_file       = sprintf("Read %s.", fld(args$path, "the file")),
-                        list_files      = sprintf("List %s.", fld(args$path, ".")),
-                        grep_files      = sprintf("Search files for /%s/.", fld(args$pattern, "")),
-                        write_file      = sprintf("Write %s.", fld(args$path, "the file")),
+                        read_file = sprintf("Read %s.", fld(args$path, "the file")),
+                        list_files = sprintf("List %s.", fld(args$path, ".")),
+                        grep_files = sprintf("Search files for /%s/.", fld(args$pattern, "")),
+                        write_file = sprintf("Write %s.", fld(args$path, "the file")),
                         replace_in_file = sprintf("Edit %s.", fld(args$path, "the file")),
-                        fetch_url       = sprintf("Fetch %s.", fld(args$url, "the URL")),
-                        web_search      = sprintf("Search the web for \"%s\".", fld(args$query, "")),
+                        fetch_url = sprintf("Fetch %s.", fld(args$url, "the URL")),
+                        web_search = sprintf("Search the web for \"%s\".", fld(args$query, "")),
                         NULL)
     if (!is.null(templated)) {
         return(templated)
@@ -599,7 +604,11 @@ cli_tool_explanation <- function(call) {
         return(NULL)
     }
     one_line <- .sanitize_inline(as.character(text)[1L], max_chars = max_chars)
-    if (nzchar(one_line)) one_line else NULL
+    if (nzchar(one_line)) {
+        one_line
+    } else {
+        NULL
+    }
 }
 
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
@@ -803,4 +812,3 @@ cli_event_summary <- function(event, width = 88L) {
          detail_lines = character()
     )
 }
-

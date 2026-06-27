@@ -206,4 +206,3 @@ format_spend <- function(session, palette = NULL) {
                               total_cost, floor_note))
     paste(lines, collapse = "\n")
 }
-

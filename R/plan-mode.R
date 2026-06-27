@@ -96,4 +96,3 @@ tool_exit_plan_mode <- function(plan) {
     }
     paste(base_system, addendum, sep = "\n")
 }
-
