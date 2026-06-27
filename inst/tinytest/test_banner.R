@@ -42,14 +42,29 @@ expect_false(grepl("v9.9.9.42", out2, fixed = TRUE))
 # Banner is 9 terminal rows tall (one per pixel row, no compaction).
 expect_equal(length(strsplit(out, "\n", fixed = TRUE)[[1]]), 9L)
 
-# --- truncation --------------------------------------------------
+# --- full names on a fixed-width grid ----------------------------
 
-# A long model name is truncated rather than blowing out the row.
+# Long model / provider names render in full -- the row fills kernels to a
+# fixed width (a kernel is two columns, a letter one) instead of truncating.
 out <- banner(version = "0.0.0", model = strrep("X", 30L), provider = "p")
-# Truncation cap on model is 9 (right-padded slot); long name becomes
-# "XXXXXX..." (6 X + "..." = 9 chars).
-expect_true(grepl(paste0(strrep("X", 6L), "..."), out, fixed = TRUE))
-expect_false(grepl(strrep("X", 10L), out, fixed = TRUE))
+expect_true(grepl(strrep("X", 30L), out, fixed = TRUE))
+expect_false(grepl("...", out, fixed = TRUE))
+
+# Each half of the model / provider row is exactly 24 columns regardless of
+# name length or parity, so the centre kernel is locked to one column and
+# stacks with the dividers in rows 3 and 7.
+expect_equal(corteza:::.banner_cols(
+        corteza:::.banner_half("openai", 24L, "left")), 24L)
+expect_equal(corteza:::.banner_cols(
+        corteza:::.banner_half("anthropic_claude", 24L, "right")), 24L)
+expect_equal(corteza:::.banner_cols(
+        corteza:::.banner_half("anthropic", 24L, "left")), 24L)  # odd length
+
+# The whole row is the same width whether the names are short or long.
+expect_equal(
+        corteza:::.banner_cols(corteza:::.banner_name_row("gpt-4o", "openai")),
+        corteza:::.banner_cols(corteza:::.banner_name_row("claude-sonnet-4-6",
+                                                          "anthropic_claude")))
 
 # --- no-ANSI fallback --------------------------------------------
 

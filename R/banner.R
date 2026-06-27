@@ -70,9 +70,65 @@
     gsub("Y", .KERNEL, line, fixed = TRUE)
 }
 
-#' Render the corteza startup banner. Each slot in the template
-#' is truncated to its mockup width so a long model / provider
-#' name doesn't blow out the silhouette's right edge.
+#' Column width of a rendered banner string: each kernel emoji is two
+#' terminal columns, every other character is one.
+#' @noRd
+.banner_cols <- function(s) {
+    kernels <- nchar(s, type = "chars") -
+    nchar(gsub(.KERNEL, "", s, fixed = TRUE), type = "chars")
+    nchar(s, type = "chars") + kernels
+}
+
+#' One half of the model / provider row: the name flanked by single
+#' spaces, padded with kernels on its outer edge to a fixed `half`-column
+#' width. `outer` is the side the kernels sit on -- "left" for the
+#' provider (front kernels), "right" for the model (trailing kernels). A
+#' lone space absorbs an odd remainder so the kernels keep the two-column
+#' grid. Both halves share one width, so the centre kernel between them
+#' never moves: a longer name only eats kernels on its own side.
+#' @noRd
+.banner_half <- function(name, half, outer) {
+    name <- as.character(name %||% "")
+    # A space precedes the name; a space follows it only when the name is
+    # even-length. That keeps each half on the two-column grid without
+    # adding a space that would shove the centre kernel off-centre -- an
+    # odd-length name sits flush against what follows it (the centre kernel
+    # for the provider, the trailing kernels for the model).
+    if (nchar(name) %% 2L == 0L) {
+        trailing <- " "
+    } else {
+        trailing <- ""
+    }
+    inner <- paste0(" ", name, trailing)
+    pad <- (half - .banner_cols(inner)) %/% 2L
+    if (pad < 0L) {
+        return(inner)
+    }
+    kernels <- strrep(.KERNEL, pad)
+    if (identical(outer, "left")) {
+        paste0(kernels, inner)
+    } else {
+        paste0(inner, kernels)
+    }
+}
+
+#' Render the model / provider row with the centre kernel fixed. The
+#' provider sits left of centre and grows by eating front kernels; the
+#' model sits right of centre and grows by eating trailing kernels. Each
+#' half is a fixed 24 columns, so the centre square stays put however long
+#' the names get -- and lands at the same column as the corteza|version
+#' and /help|/quit dividers (rows 3 and 7), so all three stack vertically.
+#' The row carries no leading indent for that alignment, so its left edge
+#' juts one column past the rest of the silhouette by design.
+#' @noRd
+.banner_name_row <- function(model, provider) {
+    paste0(.banner_half(provider, 24L, "left"), .KERNEL,
+           .banner_half(model, 24L, "right"))
+}
+
+#' Render the corteza startup banner. The version slot is capped to its
+#' mockup width; the model / provider row is rebuilt on the two-column
+#' grid so full names show without bending the silhouette.
 #'
 #' @param version Corteza version string, e.g. `"0.6.6.16"`. The
 #'   4th-component dev marker is dropped for display.
@@ -84,23 +140,17 @@
 #' @return Character scalar with embedded newlines, ready to `cat()`.
 #' @noRd
 corteza_startup_banner <- function(version, model, provider, ...) {
-    # Pad model right-aligned to 9 chars, provider left-aligned to
-    # 8 chars so the row-5 width stays constant across name
-    # lengths. Without this, swapping kimi-k2.6 (9 chars) for
-    # gpt-4o (6 chars) would shift row 5's right edge by 3 cells
-    # and break the brick offset against rows 4 and 6.
-    .pad_right <- function(s, w) sprintf("%*s", w, .banner_truncate(s, w))
-    .pad_left <- function(s, w) sprintf("%-*s", w, .banner_truncate(s, w))
     vars <- list(version = .banner_truncate(
             paste0("v", .banner_short_version(version)), 9L
-        ),
-                 model = .pad_right(model, 9L),
-                 provider = .pad_left(provider, 8L))
+        ))
     lines <- vapply(.BANNER_TEMPLATE, function(row) {
         .banner_kernels(.banner_substitute(row, vars))
     },
                     character(1),
                     USE.NAMES = FALSE
     )
+    # Row 5 carries the model and provider; render it on the two-column grid
+    # so full names never truncate or bulge the silhouette.
+    lines[[5L]] <- .banner_name_row(model, provider)
     paste(lines, collapse = "\n")
 }
