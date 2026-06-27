@@ -1,3 +1,13 @@
+# corteza 0.7.0.1
+
+- **Provider-native web search.** The agent loop now enables
+  `llm.api::agent()`'s server-side web search for the hosted providers that
+  support it (`anthropic`, `anthropic_claude`, `openai`, `openai_codex`,
+  `moonshot`). On by default, no Tavily key required; the model searches
+  inside its own turn. Toggle with `--web-search` / `--no-web-search`,
+  `chat(web_search = )`, or a `web_search` key in `.corteza/config.json`.
+  The Tavily `web_search` tool remains the fallback for local models.
+
 # corteza 0.7.0
 
 CRAN release consolidating the 0.6.9.1-0.6.9.8 development cycle plus a

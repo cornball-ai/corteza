@@ -358,4 +358,3 @@ policy <- function(call, config = NULL) {
     }
     base
 }
-

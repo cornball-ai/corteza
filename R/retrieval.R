@@ -290,4 +290,3 @@ ws_format_context <- function(retrieved) {
 
     paste(parts, collapse = "\n")
 }
-

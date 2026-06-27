@@ -212,4 +212,3 @@ tool_read_handle <- function(handle, op = "str") {
                      error = function(e) paste("Error:", conditionMessage(e)))
     ok(paste(text, collapse = "\n"))
 }
-

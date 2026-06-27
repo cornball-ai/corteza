@@ -103,4 +103,3 @@ colorize_diff <- function(text, palette = ansi_colors()) {
     paste(vapply(lines, paint, character(1L), USE.NAMES = FALSE),
           collapse = "\n")
 }
-

@@ -364,4 +364,3 @@ render_tool_diff <- function(diff, palette = ansi_colors(), indent = "  ") {
     }
     invisible(TRUE)
 }
-

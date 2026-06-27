@@ -31,4 +31,3 @@ corteza_config_path <- function(file) {
 corteza_data_path <- function(...) {
     file.path(corteza_data_dir(), ...)
 }
-

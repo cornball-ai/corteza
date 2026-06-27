@@ -6,7 +6,7 @@
 new_session(channel = c("cli", "console", "matrix"), history = NULL,
             model_map = NULL, provider = "anthropic", tools_filter = NULL,
             system = NULL, approval_cb = NULL, max_turns = 10L,
-            verbose = FALSE, plan_mode = FALSE)
+            verbose = FALSE, plan_mode = FALSE, web_search = NULL)
 }
 \arguments{
 \item{channel}{Character, one of "cli", "console", "matrix".}
@@ -35,6 +35,12 @@ the LLM is told to research and propose without acting, the policy
 engine denies write/exec tool calls (except \code{exit_plan_mode}),
 and \code{exit_plan_mode} is added to the tool list. A successful
 \code{exit_plan_mode} call flips this back to FALSE.}
+
+\item{web_search}{Logical or NULL. When TRUE and the provider
+supports it, \code{\link{turn}} enables \code{llm.api::agent}'s
+provider-native (server-side) web search for the session: the
+model searches inside its own turn, no Tavily key required. NULL
+defers to \code{turn}'s default (on for supported providers).}
 }
 \value{
 An environment holding the session state.

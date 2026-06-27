@@ -67,4 +67,3 @@ log_msg <- function(...) {
         cat(..., "\n", file = stderr())
     }
 }
-

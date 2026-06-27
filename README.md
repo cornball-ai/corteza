@@ -58,6 +58,7 @@ corteza --resume                 # Resume last session
 corteza --provider ollama        # Use local models
 corteza --provider moonshot --model kimi-k2
 corteza --provider openai_codex  # ChatGPT subscription (log in once, see API Keys)
+corteza --provider anthropic_claude  # Claude subscription (log in once, see API Keys)
 ```
 
 Context indicators are configurable. By default, the CLI starts showing
@@ -97,6 +98,7 @@ chat()                            # Claude (default)
 chat(provider = "openai")         # GPT-4o
 chat(provider = "moonshot")       # Kimi K2
 chat(provider = "openai_codex")   # ChatGPT subscription (log in once, see API Keys)
+chat(provider = "anthropic_claude")  # Claude subscription (log in once, see API Keys)
 chat(provider = "ollama",         # Local
      model = "llama3.2")
 ```
@@ -121,7 +123,7 @@ This is the most interesting mode architecturally (the agent lives in the same p
 |`git_status`        |Git working tree status               |
 |`git_diff`          |Git diff                              |
 |`git_log`           |Git commit history                    |
-|`web_search`        |Search the web (requires Tavily key)  |
+|`web_search`        |Web search via Tavily (optional fallback)|
 |`fetch_url`         |Fetch web content                     |
 
 -----
@@ -129,11 +131,10 @@ This is the most interesting mode architecturally (the agent lives in the same p
 ## Installation
 
 ```r
-# corteza (not yet on CRAN)
-remotes::install_github("cornball-ai/corteza")
+install.packages("corteza")
 
-# Dependencies are on CRAN
-install.packages(c("llm.api", "saber"))
+# Or the development version:
+# remotes::install_github("cornball-ai/corteza")
 ```
 
 ### API Keys
@@ -144,7 +145,7 @@ Set in `~/.Renviron`:
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 MOONSHOT_API_KEY=sk-...
-TAVILY_API_KEY=tvly-...   # Optional, for web search
+TAVILY_API_KEY=tvly-...   # Optional; for the Tavily web_search tool fallback
 ```
 
 #### ChatGPT subscription (Codex, no API key)
@@ -170,6 +171,39 @@ corteza::chat(provider = "openai_codex")   # default model gpt-5.5
 To skip the flag, set `provider: openai_codex` in `.corteza/config.json`.
 Models: `gpt-5.5` (default), `gpt-5.4`, `gpt-5.4-mini`,
 `gpt-5.3-codex-spark`.
+
+#### Claude subscription (no API key)
+
+The `anthropic_claude` provider uses your Claude Pro/Max subscription
+instead of an API key, the same one-time OAuth login as Codex (cached and
+refreshed by [tinyoauth](https://github.com/cornball-ai/tinyoauth)):
+
+```r
+llm.api::claude_oauth_login()   # opens an authorization URL; paste the code back
+```
+
+```bash
+corteza --provider anthropic_claude
+```
+```r
+corteza::chat(provider = "anthropic_claude")
+```
+
+To skip the flag, set `provider: anthropic_claude` in `.corteza/config.json`.
+
+### Web search
+
+corteza searches the web two ways:
+
+- **Provider-native (default).** On the hosted providers (`anthropic`,
+  `anthropic_claude`, `openai`, `openai_codex`, `moonshot`), the model runs
+  the provider's own server-side search inside its turn. No Tavily key,
+  billed through the provider. Disable with `--no-web-search`,
+  `chat(web_search = FALSE)`, or `"web_search": false` in
+  `.corteza/config.json`.
+- **Tavily tool (fallback).** The `web_search` tool calls the Tavily API
+  and needs `TAVILY_API_KEY`. Useful for local models (`ollama`), which
+  have no native search. Hidden from the model when the key is unset.
 
 ### CLI (Optional)
 

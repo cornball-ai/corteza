@@ -53,8 +53,6 @@ skill_spec <- function(name, description, params = list(), handler) {
     )
 }
 
-#' Run a skill
-#'
 # Tools that must not be wrapped in an R-level setTimeLimit: they either
 # bound themselves (bash/cmd via processx, run_r_script via callr, fetch_url
 # and web_search via curl's own connect/total timeout) or are in-process
@@ -131,7 +129,7 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
     # Execute with an optional R-level time limit, but skip it for tools
     # that bound themselves -- arming it there does only harm (#142/#139).
     use_time_limit <- !is.null(timeout) && timeout > 0 &&
-        !(skill$name %in% .self_bounded_tools)
+    !(skill$name %in% .self_bounded_tools)
     if (use_time_limit) {
         result <- tryCatch({
             setTimeLimit(cpu = timeout, elapsed = timeout, transient = TRUE)
@@ -1043,4 +1041,3 @@ format_skill_list <- function(skills) {
 
     paste(lines, collapse = "\n")
 }
-

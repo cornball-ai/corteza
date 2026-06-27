@@ -50,4 +50,3 @@ clear_skills <- function() {
     rm(list = ls(.skill_registry), envir = .skill_registry)
     invisible(NULL)
 }
-

@@ -6,7 +6,8 @@
 session_setup(channel = c("cli", "console", "matrix"), cwd = getwd(),
               provider = NULL, model = NULL, tools = NULL, system = NULL,
               approval_cb = NULL, history = NULL, load_project_context = TRUE,
-              validate_api_key = TRUE, verbose = FALSE, max_turns = 50L)
+              validate_api_key = TRUE, verbose = FALSE, max_turns = 50L,
+              web_search = NULL)
 }
 \arguments{
 \item{channel}{Character, one of \code{"cli"}, \code{"console"},
@@ -48,6 +49,10 @@ API key env var is unset or empty.}
 Defaults to 50, a safety net for interactive channels where a
 multi-step request (read + edit + verify several files) can easily
 exceed the \code{new_session()} default of 10.}
+
+\item{web_search}{Logical or NULL. Provider-native web search toggle
+passed through to \code{\link{new_session}}. NULL falls back to
+\code{config$web_search}, then on by default for supported providers.}
 }
 \value{
 A session environment from \code{\link{new_session}}, with

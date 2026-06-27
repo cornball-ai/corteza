@@ -336,7 +336,8 @@ matrix_apply_model_command <- function(session, cmd) {
     if (isTRUE(cmd$query_only)) {
         return(sprintf("model: %s\nprovider: %s",
                        .sanitize_inline(session$model %||% "(unset)", max_chars = 80L),
-                       .sanitize_inline(session$provider %||% "(unset)", max_chars = 40L)))
+                       .sanitize_inline(session$provider %||% "(unset)",
+                                        max_chars = 40L)))
     }
     session$model <- cmd$model
     if (!is.na(cmd$provider)) {
@@ -591,11 +592,16 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
         ""
     }
     expl <- cli_tool_explanation(call)
-    expl_line <- if (!is.null(expl) && nzchar(expl)) paste0(expl, "\n") else ""
+    if (!is.null(expl) && nzchar(expl)) {
+        expl_line <- paste0(expl, "\n")
+    } else {
+        expl_line <- ""
+    }
     sprintf(
             "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
             .sanitize_inline(call$tool %||% "", max_chars = 60L), args_str,
-            expl_line, .sanitize_inline(decision$reason %||% "ask", max_chars = 120L),
+            expl_line, .sanitize_inline(decision$reason %||% "ask",
+                                        max_chars = 120L),
             timeout_sec
     )
 }

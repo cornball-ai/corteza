@@ -16,7 +16,7 @@ matrix_crypto_store <- function() {
 
 matrix_crypto_available <- function() {
     requireNamespace("mx.client", quietly = TRUE) &&
-        requireNamespace("mx.crypto", quietly = TRUE)
+    requireNamespace("mx.crypto", quietly = TRUE)
 }
 
 # Build the crypto context: load/create the account, publish keys, and
@@ -37,7 +37,7 @@ matrix_crypto_init <- function(cfg) {
     crypto$sessions <- mx.client::mx_crypto_sessions_load(store)
     crypto$encrypted <- matrix_crypto_load_encrypted(store)
     crypto$self_curve <-
-        mx.crypto::mxc_account_identity_keys(acct)$curve25519
+    mx.crypto::mxc_account_identity_keys(acct)$curve25519
     # Ask each joined room for its m.room.encryption state up front,
     # instead of waiting for a sync to happen to mention it. Best-effort
     # per room; a transient failure just defers that room to sync-time
@@ -114,9 +114,8 @@ matrix_crypto_decrypt <- function(crypto, sync, cfg) {
         crypto$encrypted <- c(crypto$encrypted, new_rooms)
         matrix_crypto_save_encrypted(crypto)
     }
-    res <- mx.client::mx_crypto_process_sync(
-        crypto$account, crypto$sessions, sync, crypto$self_curve,
-        self_id = cfg$user_id)
+    res <- mx.client::mx_crypto_process_sync(crypto$account, crypto$sessions,
+        sync, crypto$self_curve, self_id = cfg$user_id)
     crypto$sessions <- res$sessions
     mx.client::mx_crypto_sessions_save(crypto$sessions, crypto$store)
     res$events
@@ -132,15 +131,14 @@ matrix_send_maybe_encrypted <- function(crypto, cfg, room_id, text,
         members <- tryCatch(mx.api::mx_room_members(mx_sess, room_id),
                             error = function(e) character())
         res <- tryCatch(
-            mx.client::mx_send_encrypted(
+                        mx.client::mx_send_encrypted(
                 crypto$client, crypto$account, crypto$sessions, room_id,
                 list(msgtype = "m.text", body = text), crypto$store,
                 member_ids = members),
-            error = function(e) {
-                message("matrix: encrypted send failed: ",
-                        conditionMessage(e))
-                NULL
-            })
+                        error = function(e) {
+            message("matrix: encrypted send failed: ", conditionMessage(e))
+            NULL
+        })
         if (is.null(res)) {
             return(NULL)
         }

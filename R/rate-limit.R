@@ -214,4 +214,3 @@ reset_usage <- function(provider = NULL) {
     }
     invisible(NULL)
 }
-

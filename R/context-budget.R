@@ -261,4 +261,3 @@ context_usage_pct <- function(session, model, system_prompt = NULL,
     }
     100 * used / limit
 }
-

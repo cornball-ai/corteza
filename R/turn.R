@@ -83,6 +83,11 @@ default_local_model <- function() {
 #'   engine denies write/exec tool calls (except \code{exit_plan_mode}),
 #'   and \code{exit_plan_mode} is added to the tool list. A successful
 #'   \code{exit_plan_mode} call flips this back to FALSE.
+#' @param web_search Logical or NULL. When TRUE and the provider
+#'   supports it, \code{\link{turn}} enables \code{llm.api::agent}'s
+#'   provider-native (server-side) web search for the session: the
+#'   model searches inside its own turn, no Tavily key required. NULL
+#'   defers to \code{turn}'s default (on for supported providers).
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -97,7 +102,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         history = NULL, model_map = NULL,
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
-                        verbose = FALSE, plan_mode = FALSE) {
+                        verbose = FALSE, plan_mode = FALSE, web_search = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -123,7 +128,40 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$on_tool <- list()
     s$turn_number <- 0L
     s$plan_mode <- isTRUE(plan_mode)
+    s$web_search <- web_search
     s
+}
+
+# Providers whose wire format llm.api wires provider-native (server-side)
+# web search into. Mirrors llm.api's supported set; we gate on it so
+# providers without native search (e.g. ollama) don't take a per-turn
+# "ignored" warning. Local models fall back to the Tavily web_search tool.
+.web_search_providers <- c("anthropic", "anthropic_claude", "openai",
+                           "openai_codex", "moonshot")
+
+.web_search_supported <- function(provider) {
+    isTRUE(provider %in% .web_search_providers)
+}
+
+# Resolve the session's provider-native web-search setting to a concrete
+# value. Explicit session$web_search wins; then a config web_search key;
+# then on by default (the model only searches when it decides to, so the
+# cost is per actual search, not per turn).
+.session_web_search <- function(session) {
+    session$web_search %||% session$config$web_search %||% TRUE
+}
+
+# When provider-native search is active, llm.api injects the provider's own
+# web_search tool. Drop corteza's same-named (Tavily) tool so the request
+# doesn't carry two tools called "web_search" (Anthropic 400s on duplicate
+# tool names). Native search supersedes Tavily for supported providers.
+.drop_redundant_web_search <- function(tools, ws_active) {
+    if (!isTRUE(ws_active)) {
+        return(tools)
+    }
+    keep <- !vapply(tools, function(t) identical(t$name, "web_search"),
+                    logical(1))
+    tools[keep]
 }
 
 # ---- Internal helpers ----
@@ -255,7 +293,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         conditionMessage(e)))
             )
             return(nudge(admit_tool_result(.flatten_mcp_result(raw),
-                                           tool = internal_name)))
+                        tool = internal_name)))
         }
 
         # Resolve once up front so policy() and the sticky classifier
@@ -305,7 +343,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             return(outcome_text(
                                 "deny",
                                 nudge(sprintf("[corteza policy denied: %s]",
-                                              decision$reason)),
+                            decision$reason)),
                                 FALSE
                 ))
         }
@@ -317,8 +355,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             if (!isTRUE(approved)) {
                 return(outcome_text(
                                     "declined",
-                                    nudge(sprintf("[user declined: %s]",
-                                                  decision$reason)),
+                                    nudge(sprintf("[user declined: %s]", decision$reason)),
                                     FALSE
                     ))
             }
@@ -343,7 +380,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             session$plan_mode <- FALSE
         }
         result_text <- nudge(
-            admit_tool_result(.flatten_mcp_result(raw), tool = internal_name))
+                             admit_tool_result(.flatten_mcp_result(raw), tool = internal_name))
         outcome_text("ran", result_text, success, diff = raw$diff)
     }
 }
@@ -388,8 +425,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     }
     streak <- session$silent_streak
     session$silent_streak <- 0L
-    paste0(text,
-           "\n\n[corteza] You've made tool calls across ", streak,
+    paste0(text, "\n\n[corteza] You've made tool calls across ", streak,
            " turns without telling the user what you're doing. Before your",
            " next tool call, say in one line what you're doing and why.")
 }
@@ -592,6 +628,19 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     tools <- .task_filter_tools(tools, session$channel)
+
+    # Provider-native (server-side) web search: enable it when the session
+    # asks for it (default on), the provider supports it, and the llm.api
+    # build accepts the arg. When active, drop corteza's own web_search tool
+    # (Tavily) so its name doesn't collide with the provider's native
+    # web_search tool, which llm.api injects into the request. Native search
+    # supersedes Tavily for supported providers; local models (ollama) keep
+    # the Tavily tool as their only web search.
+    ws <- .session_web_search(session)
+    ws_active <- !identical(ws, FALSE) &&
+    .web_search_supported(session$provider) &&
+    "web_search" %in% names(formals(llm.api::agent))
+    tools <- .drop_redundant_web_search(tools, ws_active)
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
     system <- task_compose_system(system, session$tasks %||% list(),
@@ -626,6 +675,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             session$history <- history
         }
     }
+
+    if (ws_active) {
+        agent_args$web_search <- ws
+    }
+
     response <- do.call(llm.api::agent, agent_args)
 
     if (!is.null(response$history)) {
@@ -639,4 +693,3 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
          raw = response
     )
 }
-

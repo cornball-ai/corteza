@@ -153,6 +153,10 @@ tool_hint <- function(name, args) {
 #'   before the loop stops with \code{[Max turns reached]}. NULL (default)
 #'   reads \code{getOption("corteza.max_turns")}, then falls back to the
 #'   \code{\link{session_setup}} default (50).
+#' @param web_search Logical or NULL. Enable provider-native
+#'   (server-side) web search for the conversation. NULL uses the config
+#'   default (on for supported providers); the model searches inside its
+#'   own turn with no Tavily key required.
 #'
 #' @return The session object (invisibly).
 #' @export
@@ -169,7 +173,7 @@ tool_hint <- function(name, args) {
 #'     chat(tools = "core")
 #' }
 chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
-                 max_turns = NULL) {
+                 max_turns = NULL, web_search = NULL) {
     if (!interactive()) {
         stop("chat() requires an interactive R session", call. = FALSE)
     }
@@ -201,7 +205,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
                                   load_project_context = TRUE,
                                   validate_api_key = TRUE,
                                   approval_cb = chat_approval_cb(cwd),
-                                  max_turns = max_turns)
+                                  max_turns = max_turns,
+                                  web_search = web_search)
     config <- turn_session$config
     provider <- turn_session$provider
     model <- turn_session$model_map$cloud
@@ -442,4 +447,3 @@ chat_trace_observer <- function(session) {
         )
     }
 }
-

@@ -333,4 +333,3 @@ get_context_files <- function(cwd = getwd()) {
     config <- load_config(cwd)
     config$context_files
 }
-

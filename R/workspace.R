@@ -513,4 +513,3 @@ ws_scan_globalenv <- function(max_bytes = 50e6) {
 
     invisible(registered)
 }
-
