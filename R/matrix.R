@@ -930,10 +930,14 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             engaged[[sender]] <- NULL
             session$engaged <- engaged
         }
-        engaged_until <- if (nzchar(sender)) engaged[[sender]] else NULL
+        if (nzchar(sender)) {
+            engaged_until <- engaged[[sender]]
+        } else {
+            engaged_until <- NULL
+        }
         members <- matrix_room_members_cached(session, m$room_id,
-                                              sender = m$sender,
-                                              mx_sess = mx_sess, now = now)
+            sender = m$sender,
+            mx_sess = mx_sess, now = now)
         if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
                                    engaged_until = engaged_until,
                                    now = now)) {

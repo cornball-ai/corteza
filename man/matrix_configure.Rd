@@ -5,7 +5,7 @@
 \usage{
 matrix_configure(server, user, password, room, model = NULL,
                  provider = "anthropic", tools_filter = NULL,
-                 auto_approve_asks = FALSE)
+                 auto_approve_asks = FALSE, bots = NULL)
 }
 \arguments{
 \item{server}{Character. Homeserver base URL.}
@@ -32,6 +32,12 @@ NULL allows all registered tools.}
 returns \code{"ask"} for are auto-approved. Suitable for a
 personal bot on a trusted tailnet. When FALSE (default) asks are
 declined until the thumbs-up reaction protocol lands.}
+
+\item{bots}{Character vector or NULL. Full Matrix IDs of other known
+bot accounts. Their messages only get a reply when they mention
+this bot, and they are not counted as humans when deciding whether
+a room gets ungated replies (a room whose only non-bot member is
+one human is answered without a mention).}
 }
 \value{
 The saved configuration, invisibly.
