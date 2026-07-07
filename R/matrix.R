@@ -100,6 +100,11 @@ matrix_relogin <- function(cfg) {
 #'   returns \code{"ask"} for are auto-approved. Suitable for a
 #'   personal bot on a trusted tailnet. When FALSE (default) asks are
 #'   declined until the thumbs-up reaction protocol lands.
+#' @param bots Character vector or NULL. Full Matrix IDs of other known
+#'   bot accounts. Their messages only get a reply when they mention
+#'   this bot, and they are not counted as humans when deciding whether
+#'   a room gets ungated replies (a room whose only non-bot member is
+#'   one human is answered without a mention).
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -116,18 +121,27 @@ matrix_relogin <- function(cfg) {
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
                              provider = "anthropic", tools_filter = NULL,
-                             auto_approve_asks = FALSE) {
+                             auto_approve_asks = FALSE, bots = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     matrix_require_mx()
     provider <- match.arg(provider, providers)
+    if (!is.null(bots)) {
+        bots <- as.character(bots)
+        bad <- bots[!grepl("^@.+:.+", bots)]
+        if (length(bad)) {
+            stop("bots must be full Matrix IDs like '@name:example.org': ",
+                 paste(bad, collapse = ", "), call. = FALSE)
+        }
+    }
 
     cfg <- mx.client::mx_client_configure(
         server, user, password, room,
         app = "corteza", path = matrix_config_path(),
         extra = list(model = model, provider = provider,
                      tools_filter = tools_filter,
-                     auto_approve_asks = isTRUE(auto_approve_asks)))
+                     auto_approve_asks = isTRUE(auto_approve_asks),
+                     bots = bots))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
     invisible(matrix_plain_cfg(cfg))
 }
@@ -367,14 +381,72 @@ matrix_message_mentions_self <- function(msg, self_id) {
     grepl(sprintf("@%s\\b", localpart), body, perl = TRUE, ignore.case = TRUE)
 }
 
-# Should the bot respond to this message? DMs: always. Group rooms
-# (3+ members, or anything the session recorded as non-DM): only when
-# the bot is explicitly mentioned.
-matrix_should_respond <- function(msg, session, self_id) {
-    if (isTRUE(session$is_dm)) {
+# Known bot accounts for gating: the configured `bots` list from the
+# Matrix config plus the bot itself.
+matrix_known_bots <- function(cfg) {
+    bots <- as.character(unlist(cfg$bots, use.names = FALSE))
+    unique(c(cfg$user_id, bots[nzchar(bots)]))
+}
+
+# Cached joined-member list for a room's session. Refetched when the
+# cache is empty, older than ttl seconds, or missing the incoming
+# sender -- covers an invite accepted after the session was created and
+# any later joiner. On fetch failure the previous cache is kept
+# (character() when never fetched); the next message retries. fetch and
+# now are injectable for tests.
+matrix_room_members_cached <- function(session, room_id, sender = NULL,
+                                       mx_sess = NULL, fetch = NULL,
+                                       now = Sys.time(), ttl = 600) {
+    if (is.null(fetch)) {
+        fetch <- function(rid) {
+            if (is.null(mx_sess)) {
+                return(NULL)
+            }
+            tryCatch(mx.api::mx_room_members(mx_sess, rid),
+                     error = function(e) NULL)
+        }
+    }
+    cached <- session$members
+    stale <- is.null(cached) || is.null(session$members_at) ||
+    as.numeric(difftime(now, session$members_at, units = "secs")) > ttl ||
+    (!is.null(sender) && !(sender %in% cached))
+    if (stale) {
+        fresh <- fetch(room_id)
+        if (!is.null(fresh)) {
+            session$members <- fresh
+            session$members_at <- now
+            cached <- fresh
+        }
+    }
+    cached %||% character()
+}
+
+# Should the bot respond to this message? Humans are the room members
+# not on the bots list. Exactly one human: respond to that human without
+# a mention. Two or more humans: respond when mentioned (replies count,
+# since clients put the replied-to user in m.mentions) or while the
+# sender's engagement window from a recent exchange is still open.
+# Messages from known bot accounts always require a mention, whatever
+# the room size -- prevents bot-loops between two AIs.
+matrix_should_respond <- function(msg, self_id, members, bots = character(),
+                                  engaged_until = NULL, now = Sys.time()) {
+    bots <- unique(c(self_id, bots))
+    sender <- msg$sender %||% ""
+    if (sender %in% bots) {
+        return(matrix_message_mentions_self(msg, self_id))
+    }
+    # The sender demonstrably posts in this room, so count them even when
+    # the cached member list hasn't caught up or the fetch failed. Unknown
+    # membership degrades to "assume this is the only human", not silence.
+    humans <- setdiff(unique(c(members, sender)), bots)
+    if (length(humans) <= 1L) {
         return(TRUE)
     }
-    matrix_message_mentions_self(msg, self_id)
+    if (matrix_message_mentions_self(msg, self_id)) {
+        return(TRUE)
+    }
+    !is.null(engaged_until) &&
+    as.numeric(difftime(now, engaged_until, units = "secs")) <= 300
 }
 
 # Pending invites from a sync response: character vector of room_ids
@@ -701,22 +773,8 @@ matrix_get_or_create_session <- function(registry, room_id, cfg,
     s <- matrix_new_session(cfg, system = system, model = model,
                             provider = provider, tools_filter = tools_filter,
                             room_id = room_id)
-    s$is_dm <- matrix_detect_dm(cfg, room_id)
     assign(room_id, s, envir = registry)
     s
-}
-
-# A DM is a 2-member room where one of the members is the bot itself.
-# Anything else (3+ members, or just the bot alone) is a group room
-# subject to mention-gating.
-matrix_detect_dm <- function(cfg, room_id) {
-    mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
-    if (is.null(mx_sess)) {
-        return(TRUE) # conservative fallback
-    }
-    members <- tryCatch(mx.api::mx_room_members(mx_sess, room_id),
-                        error = function(e) character())
-    length(members) == 2L && cfg$user_id %in% members
 }
 
 # Auto-join any rooms the bot has been invited to. Best-effort: mx.client
@@ -818,6 +876,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     }
 
     replied <- 0L
+    bots <- matrix_known_bots(cfg)
     for (m in msgs) {
         session <- matrix_get_or_create_session(sessions, m$room_id, cfg,
             system = system, model = model, provider = provider,
@@ -858,11 +917,34 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                  mx.api::mx_read_receipt(mx_sess, m$room_id, m$event_id),
                  error = function(e) NULL
         )
-        # Group rooms: only respond when @-mentioned. DMs: always.
-        # Prevents bot-loops between two AIs and stops noise in
-        # multi-human rooms.
-        if (!matrix_should_respond(m, session, cfg$user_id)) {
+        # Rooms with one human: respond freely. More humans: require a
+        # mention (replies count) or an open engagement window. Messages
+        # from known bot accounts always require a mention.
+        now <- Sys.time()
+        sender <- m$sender %||% ""
+        engaged <- session$engaged %||% list()
+        # A message that mentions others but not us is the sender turning
+        # away from the bot; close their window.
+        if (nzchar(sender) && length(m$mentions) &&
+            !(cfg$user_id %in% unlist(m$mentions))) {
+            engaged[[sender]] <- NULL
+            session$engaged <- engaged
+        }
+        engaged_until <- if (nzchar(sender)) engaged[[sender]] else NULL
+        members <- matrix_room_members_cached(session, m$room_id,
+                                              sender = m$sender,
+                                              mx_sess = mx_sess, now = now)
+        if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
+                                   engaged_until = engaged_until,
+                                   now = now)) {
             next
+        }
+        # Passing the gate is an exchange: open or refresh this human's
+        # engagement window so a back-and-forth keeps flowing without a
+        # reply or mention on every message.
+        if (nzchar(sender) && !(sender %in% bots)) {
+            engaged[[sender]] <- now
+            session$engaged <- engaged
         }
 
         if (matrix_is_status_command(m$body)) {
