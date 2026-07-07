@@ -1,3 +1,20 @@
+# corteza 0.7.0.2
+
+- **Matrix reply gating counts humans, not members.** Rooms whose only
+  non-bot member is one human are answered without a mention; rooms with
+  two or more humans require a mention (replies count, since clients put
+  the replied-to user in `m.mentions`) or an open engagement window: after
+  the bot answers someone, that person's plain messages keep getting
+  replies for 5 minutes, ending early when they address someone else.
+  Other bot accounts are declared via the new `matrix_configure(bots =)`
+  parameter; their messages always require a mention. Room membership is
+  now cached per session and refreshed on unknown senders or every 10
+  minutes, replacing the boot-time DM snapshot that left rooms stuck on
+  stale gating after membership changed. With `bots` unset, behavior
+  matches the old member-count rule minus the staleness; during a
+  members-API outage the gate fails open for human senders instead of
+  going silent.
+
 # corteza 0.7.0.1
 
 - **Provider-native web search.** The agent loop now enables

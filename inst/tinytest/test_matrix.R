@@ -30,12 +30,14 @@ local({
     user_id = "@bot:example",
     device_id = "DEV",
     room_id = "!abc:example",
+    bots = c("@otherbot:example", "@thirdbot:example"),
     sync_token = NULL
   )
   corteza:::matrix_save_config(cfg)
   loaded <- corteza:::matrix_load_config()
   expect_equal(loaded$user_id, "@bot:example")
   expect_equal(loaded$room_id, "!abc:example")
+  expect_equal(loaded$bots, c("@otherbot:example", "@thirdbot:example"))
   # POSIX file modes don't apply on Windows; skip there.
   if (.Platform$OS.type != "windows") {
     expect_equal(file.mode(corteza:::matrix_config_path()),
@@ -166,25 +168,136 @@ local({
     list(body = ""), "@cornelius:cornball.ai"))
 })
 
-# matrix_should_respond: DM always -> TRUE regardless of mention.
+# matrix_should_respond: one human + the bot -> respond without a
+# mention (the old DM behavior, no bots list configured).
 local({
-  s <- new.env(parent = emptyenv())
-  s$is_dm <- TRUE
+  members <- c("@bot:ex", "@troy:ex")
   expect_true(corteza:::matrix_should_respond(
-    list(body = "hi"), s, "@cornelius:cornball.ai"))
+    list(body = "hi", sender = "@troy:ex"), "@bot:ex", members))
 })
 
-# matrix_should_respond: group room requires mention.
+# matrix_should_respond: one human + two bots -> the human is answered
+# without a mention; the other bot needs a mention (loop protection).
 local({
-  s <- new.env(parent = emptyenv())
-  s$is_dm <- FALSE
-  expect_false(corteza:::matrix_should_respond(
-    list(body = "chatter among humans"), s,
-    "@cornelius:cornball.ai"))
+  members <- c("@bot:ex", "@troy:ex", "@otherbot:ex")
+  bots <- "@otherbot:ex"
   expect_true(corteza:::matrix_should_respond(
-    list(body = "@cornelius what?"), s,
-    "@cornelius:cornball.ai"))
+    list(body = "hi", sender = "@troy:ex"), "@bot:ex", members,
+    bots = bots))
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "hi", sender = "@otherbot:ex"), "@bot:ex", members,
+    bots = bots))
+  expect_true(corteza:::matrix_should_respond(
+    list(body = "hi", sender = "@otherbot:ex",
+         mentions = list("@bot:ex")), "@bot:ex", members,
+    bots = bots))
+  # Without the bots list the same room counts 2 humans -> gated (the
+  # old 3-member group behavior).
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "hi", sender = "@troy:ex"), "@bot:ex", members))
 })
+
+# matrix_should_respond: two humans -> mention required.
+local({
+  members <- c("@bot:ex", "@troy:ex", "@ann:ex")
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "chatter among humans", sender = "@troy:ex"),
+    "@bot:ex", members))
+  expect_true(corteza:::matrix_should_respond(
+    list(body = "@bot what?", sender = "@troy:ex"),
+    "@bot:ex", members))
+})
+
+# matrix_should_respond: a sender missing from the member list counts
+# as a human (stale cache), and an empty member list fails open toward
+# the lone sender.
+local({
+  members <- c("@bot:ex", "@troy:ex")
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "hi", sender = "@ann:ex"), "@bot:ex", members))
+  expect_true(corteza:::matrix_should_respond(
+    list(body = "hi", sender = "@troy:ex"), "@bot:ex", character()))
+})
+
+# matrix_should_respond: engagement window keeps a multi-human room
+# open for the engaged sender, and expires after 300s.
+local({
+  members <- c("@bot:ex", "@troy:ex", "@ann:ex")
+  now <- as.POSIXct("2026-01-01 12:00:00", tz = "UTC")
+  expect_true(corteza:::matrix_should_respond(
+    list(body = "plain follow-up", sender = "@troy:ex"),
+    "@bot:ex", members, engaged_until = now - 200, now = now))
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "plain follow-up", sender = "@troy:ex"),
+    "@bot:ex", members, engaged_until = now - 301, now = now))
+  # Someone else's window does not apply to this sender.
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "plain follow-up", sender = "@ann:ex"),
+    "@bot:ex", members, engaged_until = NULL, now = now))
+})
+
+# matrix_known_bots: always includes self, unlists config shapes,
+# drops empties.
+local({
+  expect_equal(corteza:::matrix_known_bots(list(user_id = "@bot:ex")),
+               "@bot:ex")
+  expect_equal(
+    corteza:::matrix_known_bots(list(user_id = "@bot:ex",
+                                     bots = c("@a:ex", "@bot:ex"))),
+    c("@bot:ex", "@a:ex"))
+  expect_equal(
+    corteza:::matrix_known_bots(list(user_id = "@bot:ex",
+                                     bots = list("@a:ex", ""))),
+    c("@bot:ex", "@a:ex"))
+})
+
+# matrix_room_members_cached: fetches when cold, skips when the sender
+# is cached and fresh, refetches on unknown sender and on TTL expiry,
+# and keeps the old cache when the fetch fails.
+local({
+  now <- as.POSIXct("2026-01-01 12:00:00", tz = "UTC")
+  calls <- new.env(parent = emptyenv())
+  calls$n <- 0L
+  fetch <- function(rid) {
+    calls$n <- calls$n + 1L
+    c("@bot:ex", "@troy:ex")
+  }
+
+  s <- new.env(parent = emptyenv())
+  got <- corteza:::matrix_room_members_cached(s, "!r:ex",
+    sender = "@troy:ex", fetch = fetch, now = now)
+  expect_equal(got, c("@bot:ex", "@troy:ex"))
+  expect_equal(calls$n, 1L)
+
+  got <- corteza:::matrix_room_members_cached(s, "!r:ex",
+    sender = "@troy:ex", fetch = fetch, now = now + 60)
+  expect_equal(calls$n, 1L)
+
+  got <- corteza:::matrix_room_members_cached(s, "!r:ex",
+    sender = "@ann:ex", fetch = fetch, now = now + 61)
+  expect_equal(calls$n, 2L)
+
+  got <- corteza:::matrix_room_members_cached(s, "!r:ex",
+    sender = "@troy:ex", fetch = fetch, now = now + 1000)
+  expect_equal(calls$n, 3L)
+
+  failing <- function(rid) NULL
+  got <- corteza:::matrix_room_members_cached(s, "!r:ex",
+    sender = "@ann:ex", fetch = failing, now = now + 1000)
+  expect_equal(got, c("@bot:ex", "@troy:ex"))
+
+  cold <- new.env(parent = emptyenv())
+  got <- corteza:::matrix_room_members_cached(cold, "!r:ex",
+    sender = "@troy:ex", fetch = failing, now = now)
+  expect_equal(got, character())
+})
+
+# matrix_configure validates bots before any network call.
+expect_error(
+  corteza::matrix_configure("https://example", "bot", "pw", "!r:ex",
+                            bots = "not-an-mxid"),
+  pattern = "Matrix ID"
+)
 
 # Agent name capitalization.
 expect_equal(
