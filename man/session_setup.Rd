@@ -52,7 +52,11 @@ exceed the \code{new_session()} default of 10.}
 
 \item{web_search}{Logical or NULL. Provider-native web search toggle
 passed through to \code{\link{new_session}}. NULL falls back to
-\code{config$web_search}, then on by default for supported providers.}
+\code{config$web_search}, then on by default for supported providers.
+The endpoint for the \code{"openai_compatible"} provider is read
+from \code{config$base_url} (falling back to the
+\code{OPENAI_COMPATIBLE_BASE_URL} environment variable); a missing
+endpoint or model errors here rather than at the first request.}
 }
 \value{
 A session environment from \code{\link{new_session}}, with

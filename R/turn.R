@@ -109,8 +109,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         history = NULL, model_map = NULL,
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
-                        verbose = FALSE, plan_mode = FALSE, web_search = NULL,
-                        base_url = NULL) {
+                        verbose = FALSE, plan_mode = FALSE,
+                        web_search = NULL, base_url = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(

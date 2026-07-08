@@ -6,7 +6,8 @@
 new_session(channel = c("cli", "console", "matrix"), history = NULL,
             model_map = NULL, provider = "anthropic", tools_filter = NULL,
             system = NULL, approval_cb = NULL, max_turns = 10L,
-            verbose = FALSE, plan_mode = FALSE, web_search = NULL)
+            verbose = FALSE, plan_mode = FALSE, web_search = NULL,
+            base_url = NULL)
 }
 \arguments{
 \item{channel}{Character, one of "cli", "console", "matrix".}
@@ -41,6 +42,14 @@ supports it, \code{\link{turn}} enables \code{llm.api::agent}'s
 provider-native (server-side) web search for the session: the
 model searches inside its own turn, no Tavily key required. NULL
 defers to \code{turn}'s default (on for supported providers).}
+
+\item{base_url}{Character or NULL. Endpoint for the
+\code{"openai_compatible"} provider (OpenRouter, DeepSeek, a
+corporate gateway). \code{\link{turn}} applies it via
+\code{llm.api::llm_base()} for the duration of the agent call.
+NULL falls back to \code{config$base_url}, then llm.api's own
+\code{OPENAI_COMPATIBLE_BASE_URL} environment variable. Ignored
+for every other provider.}
 }
 \value{
 An environment holding the session state.
