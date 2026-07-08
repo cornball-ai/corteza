@@ -88,6 +88,13 @@ default_local_model <- function() {
 #'   provider-native (server-side) web search for the session: the
 #'   model searches inside its own turn, no Tavily key required. NULL
 #'   defers to \code{turn}'s default (on for supported providers).
+#' @param base_url Character or NULL. Endpoint for the
+#'   \code{"openai_compatible"} provider (OpenRouter, DeepSeek, a
+#'   corporate gateway). \code{\link{turn}} applies it via
+#'   \code{llm.api::llm_base()} for the duration of the agent call.
+#'   NULL falls back to \code{config$base_url}, then llm.api's own
+#'   \code{OPENAI_COMPATIBLE_BASE_URL} environment variable. Ignored
+#'   for every other provider.
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -102,7 +109,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         history = NULL, model_map = NULL,
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
-                        verbose = FALSE, plan_mode = FALSE, web_search = NULL) {
+                        verbose = FALSE, plan_mode = FALSE, web_search = NULL,
+                        base_url = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -129,6 +137,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$turn_number <- 0L
     s$plan_mode <- isTRUE(plan_mode)
     s$web_search <- web_search
+    s$base_url <- base_url
     s
 }
 
@@ -149,6 +158,18 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # cost is per actual search, not per turn).
 .session_web_search <- function(session) {
     session$web_search %||% session$config$web_search %||% TRUE
+}
+
+# Resolve the endpoint for the openai_compatible provider. Explicit
+# session$base_url wins, then config$base_url. NULL means "not set on
+# the corteza side"; llm.api then falls back to its own
+# OPENAI_COMPATIBLE_BASE_URL env var, or errors with setup guidance.
+.session_base_url <- function(session) {
+    bu <- session$base_url %||% session$config$base_url
+    if (is.null(bu) || !nzchar(bu)) {
+        return(NULL)
+    }
+    bu
 }
 
 # When provider-native search is active, llm.api injects the provider's own
@@ -678,6 +699,19 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
 
     if (ws_active) {
         agent_args$web_search <- ws
+    }
+
+    # For openai_compatible the endpoint is corteza-configured, not built
+    # into llm.api. Apply it through llm.api's own setter (so we don't
+    # depend on the option's spelling) for the duration of this call, and
+    # restore the previous value after. Scoped to the call so a mid-session
+    # /provider switch or a subagent on another provider can't inherit it.
+    if (identical(session$provider, "openai_compatible")) {
+        base_url <- .session_base_url(session)
+        if (!is.null(base_url)) {
+            old_base <- llm.api::llm_base(base_url)
+            on.exit(llm.api::llm_base(old_base), add = TRUE)
+        }
     }
 
     response <- do.call(llm.api::agent, agent_args)
