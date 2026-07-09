@@ -5,6 +5,9 @@ on:
 
 env:
   _R_CHECK_FORCE_SUGGESTS_: "false"
+  # Authenticate GitHub API calls so remotes can resolve the llm.api
+  # Remote (and to avoid unauthenticated rate limits on shared runners).
+  GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   ci:
