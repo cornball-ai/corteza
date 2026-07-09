@@ -11,7 +11,7 @@
   session setup rather than at the first request. `turn()` applies the
   endpoint through `llm.api::llm_base()` scoped to each agent call, so a
   mid-session `/provider` switch or a subagent on another provider can't
-  inherit it. Requires `llm.api >= 0.2.0`. See
+  inherit it. Requires `llm.api >= 0.1.8.1`. See
   `vignette("configuration")`.
 
 # corteza 0.7.0.2

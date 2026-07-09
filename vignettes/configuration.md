@@ -103,7 +103,7 @@ corteza::chat(provider = "openai_compatible",
 
 A missing endpoint or model is reported at startup, not at the first
 request. Cost is usually `NA`, since gateway model ids rarely match
-the bundled price table. Requires `llm.api >= 0.2.0`.
+the bundled price table. Requires `llm.api >= 0.1.8.1`.
 
 ## JSON config keys
 
