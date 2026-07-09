@@ -52,6 +52,10 @@
 #' @param web_search Logical or NULL. Provider-native web search toggle
 #'   passed through to \code{\link{new_session}}. NULL falls back to
 #'   \code{config$web_search}, then on by default for supported providers.
+#'   The endpoint for the \code{"openai_compatible"} provider is read
+#'   from \code{config$base_url} (falling back to the
+#'   \code{OPENAI_COMPATIBLE_BASE_URL} environment variable); a missing
+#'   endpoint or model errors here rather than at the first request.
 #'
 #' @return A session environment from \code{\link{new_session}}, with
 #'   an extra \code{cwd} field set.
@@ -77,6 +81,7 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     ensure_llm_api_provider(provider)
     model <- model %||% config$model
     web_search <- web_search %||% config$web_search %||% TRUE
+    base_url <- config$base_url
 
     if (isTRUE(validate_api_key)) {
         key_var <- switch(provider, anthropic = "ANTHROPIC_API_KEY",
@@ -85,6 +90,29 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
         if (!is.null(key_var) && nchar(Sys.getenv(key_var, "")) == 0L) {
             stop(sprintf("%s not set. Add it to ~/.Renviron", key_var),
                  call. = FALSE)
+        }
+
+        # openai_compatible has no built-in endpoint: it must come from
+        # config$base_url or llm.api's OPENAI_COMPATIBLE_BASE_URL env var.
+        # A keyless gateway is fine (no key check), but a missing endpoint
+        # is not, so fail here with corteza-flavored guidance rather than
+        # at the first request. Model is likewise required and
+        # caller-supplied. Gated with the key check so validate_api_key =
+        # FALSE (build-for-inspection) skips it too.
+        if (identical(provider, "openai_compatible")) {
+            endpoint <- base_url %||% Sys.getenv("OPENAI_COMPATIBLE_BASE_URL", "")
+            if (!nzchar(endpoint %||% "")) {
+                stop("provider \"openai_compatible\" needs an endpoint: set ",
+                     "\"base_url\" in .corteza/config.json or the ",
+                     "OPENAI_COMPATIBLE_BASE_URL environment variable.",
+                     call. = FALSE)
+            }
+            if (is.null(model) || !nzchar(model)) {
+                stop("provider \"openai_compatible\" needs a model: set ",
+                     "\"model\" in .corteza/config.json (the id your gateway ",
+                     "expects, e.g. \"meta-llama/llama-3-70b-instruct\").",
+                     call. = FALSE)
+            }
         }
     }
 
@@ -111,7 +139,8 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
                            approval_cb = approval_cb,
                            max_turns = max_turns,
                            verbose = verbose,
-                           web_search = web_search
+                           web_search = web_search,
+                           base_url = base_url
     )
     session$cwd <- cwd
     session$config <- config

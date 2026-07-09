@@ -15,6 +15,29 @@ expect_equal(length(s$history), 1L)
 # Invalid channel rejected
 expect_error(corteza::new_session("bogus"))
 
+# base_url is carried on the session and defaults to NULL.
+s <- corteza::new_session("cli")
+expect_null(s$base_url)
+s <- corteza::new_session("cli", provider = "openai_compatible",
+                          base_url = "https://openrouter.ai/api/v1")
+expect_equal(s$base_url, "https://openrouter.ai/api/v1")
+
+# ---- .session_base_url ----
+
+# Explicit session$base_url wins.
+expect_equal(corteza:::.session_base_url(s), "https://openrouter.ai/api/v1")
+
+# Falls back to config$base_url when session$base_url is unset.
+s2 <- corteza::new_session("cli", provider = "openai_compatible")
+s2$config <- list(base_url = "https://gateway.example.com/v1")
+expect_equal(corteza:::.session_base_url(s2), "https://gateway.example.com/v1")
+
+# NULL / empty resolves to NULL (llm.api then uses its own env fallback).
+s3 <- corteza::new_session("cli", provider = "openai_compatible")
+expect_null(corteza:::.session_base_url(s3))
+s3$base_url <- ""
+expect_null(corteza:::.session_base_url(s3))
+
 # ---- .flatten_mcp_result ----
 
 expect_equal(

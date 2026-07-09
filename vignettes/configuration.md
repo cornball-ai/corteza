@@ -50,8 +50,9 @@ corteza [options]
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--provider <p>` | LLM provider: `anthropic`, `openai`, `moonshot`, `ollama` | `anthropic` |
+| `--provider <p>` | LLM provider: `anthropic`, `openai`, `moonshot`, `openai_codex`, `ollama`, `openai_compatible` | `anthropic` |
 | `--model <name>` | Model name | provider default |
+| `--base-url <url>` | Endpoint for `--provider openai_compatible` | config / env |
 | `--tools <filter>` | Tool filter: `core`, `file`, `code`, `git`, `r`, `data`, `web`, `chat` | all |
 | `--session <key>` | Session key; resumes if exists | none |
 | `--resume` | Resume most recent session | `false` |
@@ -62,6 +63,48 @@ corteza [options]
 
 Flags override config values for the current run.
 
+## OpenAI-compatible endpoints
+
+The `openai_compatible` provider targets any endpoint that speaks the
+OpenAI chat-completions wire format: OpenRouter, DeepSeek, DeepInfra,
+a local proxy, or a corporate gateway. It separates three things the
+named providers hardcode:
+
+- **provider** — `openai_compatible` (the wire format, not an official endpoint)
+- **endpoint** — `base_url`, from config or the `OPENAI_COMPATIBLE_BASE_URL` environment variable
+- **model** — passed through untouched; required, since there is no default
+
+`base_url` is used as given with `/chat/completions` appended, so include
+whatever `/v1` prefix the gateway expects.
+
+```json
+{
+  "provider": "openai_compatible",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "meta-llama/llama-3-70b-instruct"
+}
+```
+
+The API key is read from `OPENAI_COMPATIBLE_API_KEY`, falling back to
+`OPENAI_API_KEY`. A keyless gateway (an internal proxy that needs no
+`Authorization` header) works with neither set. Equivalent one-liners:
+
+```bash
+corteza --provider openai_compatible \
+  --base-url https://openrouter.ai/api/v1 \
+  --model meta-llama/llama-3-70b-instruct
+```
+
+```r
+# base_url comes from config or OPENAI_COMPATIBLE_BASE_URL
+corteza::chat(provider = "openai_compatible",
+              model = "meta-llama/llama-3-70b-instruct")
+```
+
+A missing endpoint or model is reported at startup, not at the first
+request. Cost is usually `NA`, since gateway model ids rarely match
+the bundled price table. Requires `llm.api >= 0.1.8.1`.
+
 ## JSON config keys
 
 All keys shown with type and default, current as of corteza 0.6.3. Most defaults live in `R/config.R::load_config()`; a few (memory keys and the CLI port fallback) live in `inst/bin/corteza`.
@@ -70,8 +113,9 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | string | `"anthropic"` | LLM provider |
-| `model` | string or null | null | Model name (null = provider default) |
+| `provider` | string | `"anthropic"` | LLM provider: `anthropic`, `openai`, `moonshot`, `openai_codex`, `ollama`, `openai_compatible` |
+| `model` | string or null | null | Model name (null = provider default; required for `openai_compatible`) |
+| `base_url` | string or null | null | Endpoint for `openai_compatible` (see below) |
 | `port` | integer | `7850` | MCP server port |
 
 ### Context

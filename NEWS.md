@@ -1,3 +1,19 @@
+# corteza 0.7.0.3
+
+- **`openai_compatible` provider for generic OpenAI-compatible
+  endpoints** (#149). Point corteza at OpenRouter, DeepSeek, DeepInfra,
+  a local proxy, or a corporate gateway via a `base_url` config key or
+  the `--base-url` CLI flag (falling back to the
+  `OPENAI_COMPATIBLE_BASE_URL` environment variable). The model id is
+  passed through untouched and is required; the API key comes from
+  `OPENAI_COMPATIBLE_API_KEY` or `OPENAI_API_KEY`, and a keyless gateway
+  works with neither. A missing endpoint or model is reported at
+  session setup rather than at the first request. `turn()` applies the
+  endpoint through `llm.api::llm_base()` scoped to each agent call, so a
+  mid-session `/provider` switch or a subagent on another provider can't
+  inherit it. Requires `llm.api >= 0.1.8.1`. See
+  `vignette("configuration")`.
+
 # corteza 0.7.0.2
 
 - **Matrix reply gating counts humans, not members.** Rooms whose only

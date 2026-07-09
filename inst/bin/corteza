@@ -33,6 +33,7 @@ parse_args <- function() {
   opts <- list(
     provider = config$provider,
     model = config$model,
+    base_url = config$base_url,  # openai_compatible endpoint (NULL = unset)
     port = config$port,
     tools = config$tools,  # NULL = all tools
     context_warn_pct = config$context_warn_pct,
@@ -55,6 +56,9 @@ parse_args <- function() {
       i <- i + 2
     } else if (arg == "--model" && i < length(args)) {
       opts$model <- args[i + 1]
+      i <- i + 2
+    } else if (arg == "--base-url" && i < length(args)) {
+      opts$base_url <- args[i + 1]
       i <- i + 2
     } else if (arg == "--port" && i < length(args)) {
       opts$port <- as.integer(args[i + 1])
@@ -90,8 +94,10 @@ corteza - An open-source interactive CLI agent
 Usage: corteza [options]
 
 Options:
-  --provider      LLM provider: anthropic, openai, moonshot, openai_codex, ollama (default: anthropic)
+  --provider      LLM provider: anthropic, openai, moonshot, openai_codex, ollama, openai_compatible (default: anthropic)
   --model         Model name (default: auto per provider)
+  --base-url      Endpoint for --provider openai_compatible (OpenRouter, DeepSeek, a gateway).
+                  Also reads config base_url / OPENAI_COMPATIBLE_BASE_URL.
   --port          MCP server port (default: 7850)
   --tools         Tool filter: core, file, code, git, r, data, web, chat (default: all)
                   Example: --tools core or --tools file,git,code
@@ -185,7 +191,7 @@ Commands:
   /context       Show live context usage and loaded context files
   /spent, /cost  Approximate USD spent this run (main-agent turns)
   /model <name>  Switch model
-  /provider <p>  Switch provider (anthropic, openai, moonshot, openai_codex, ollama)
+  /provider <p>  Switch provider (anthropic, openai, moonshot, openai_codex, ollama, openai_compatible)
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)
 
@@ -659,6 +665,12 @@ run_agent <- function(opts) {
   # coherent. .make_tool_handler reads session$config$dry_run at call
   # time, matching chat()'s model.
   config$dry_run <- isTRUE(opts$dry_run)
+
+  # Endpoint for the openai_compatible provider. turn() reads it from
+  # session$config$base_url (via .session_base_url) and applies it with
+  # llm.api::llm_base() for the duration of each agent call. A --base-url
+  # flag overrides the config-file value.
+  config$base_url <- opts$base_url
 
   # Seed the turn session's live history from the resumed disk session.
   api_history <- lapply(session$messages %||% list(), function(m) {
