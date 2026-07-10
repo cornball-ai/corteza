@@ -1,3 +1,17 @@
+# corteza 0.7.0.4
+
+- **Matrix: ingest non-triggering messages instead of dropping them.** In
+  a room with more than one human, a message that didn't warrant a reply
+  was marked seen, given a read receipt, then dropped with a bare `next` —
+  never appended to the session's history and, because it was already
+  marked seen, never reconsidered. The agent genuinely never saw other
+  people's non-mention messages in a busy room, even though it had "read"
+  them. Gated messages are now appended to history as context; the reply
+  gate (and its bot-loop protection) is unchanged, only ingestion is.
+  Turns are attributed with a `[sender]` prefix in rooms with more than
+  one human (both the live poll and the startup backfill) so the model
+  can tell speakers apart; a lone-human DM is unchanged.
+
 # corteza 0.7.0.3
 
 - **`openai_compatible` provider for generic OpenAI-compatible
