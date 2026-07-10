@@ -236,6 +236,26 @@ local({
     "@bot:ex", members, engaged_until = NULL, now = now))
 })
 
+# matrix_room_humans: member list plus the sender, minus bots (self incl.).
+local({
+  members <- c("@bot:ex", "@troy:ex", "@ann:ex", "@otherbot:ex")
+  bots <- c("@bot:ex", "@otherbot:ex")
+  expect_equal(sort(corteza:::matrix_room_humans(members, "@troy:ex", bots)),
+               c("@ann:ex", "@troy:ex"))
+  # A sender absent from the (stale) member list still counts as a human.
+  expect_true("@zoe:ex" %in%
+    corteza:::matrix_room_humans(c("@bot:ex"), "@zoe:ex", "@bot:ex"))
+})
+
+# matrix_ingest_body: attribute in multi-human rooms, pass through in a DM.
+local({
+  expect_equal(corteza:::matrix_ingest_body("@ann:ex", "hi", TRUE),
+               "[@ann:ex] hi")
+  expect_equal(corteza:::matrix_ingest_body("@ann:ex", "hi", FALSE), "hi")
+  # No sender -> never prefix (nothing meaningful to attribute).
+  expect_equal(corteza:::matrix_ingest_body("", "hi", TRUE), "hi")
+})
+
 # matrix_known_bots: always includes self, unlists config shapes,
 # drops empties.
 local({

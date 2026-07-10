@@ -428,6 +428,26 @@ matrix_room_members_cached <- function(session, room_id, sender = NULL,
 # sender's engagement window from a recent exchange is still open.
 # Messages from known bot accounts always require a mention, whatever
 # the room size -- prevents bot-loops between two AIs.
+# Humans in a room: the member list plus the current sender, minus known
+# bot accounts (self included). Folding the sender in means a demonstrable
+# poster counts even when the cached member list lags. Shared by the
+# respond gate and the ingest path so both agree on "how many humans".
+matrix_room_humans <- function(members, sender, bots) {
+    setdiff(unique(c(members, sender)), bots)
+}
+
+# The body corteza ingests (and feeds to the model) for one message. In a
+# room with more than one human, each turn is prefixed with its sender so
+# the model can tell speakers apart; a lone human (the common DM) needs no
+# label, so the body passes through unchanged and history stays as before.
+matrix_ingest_body <- function(sender, body, multi_human) {
+    if (isTRUE(multi_human) && nzchar(sender %||% "")) {
+        sprintf("[%s] %s", sender, body)
+    } else {
+        body
+    }
+}
+
 matrix_should_respond <- function(msg, self_id, members, bots = character(),
                                   engaged_until = NULL, now = Sys.time()) {
     bots <- unique(c(self_id, bots))
@@ -438,7 +458,7 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
     # The sender demonstrably posts in this room, so count them even when
     # the cached member list hasn't caught up or the fetch failed. Unknown
     # membership degrades to "assume this is the only human", not silence.
-    humans <- setdiff(unique(c(members, sender)), bots)
+    humans <- matrix_room_humans(members, sender, bots)
     if (length(humans) <= 1L) {
         return(TRUE)
     }
@@ -460,7 +480,12 @@ matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
                                   room_name = NULL) {
     base <- sprintf("You are %s, a helpful assistant for %s.", cfg$user_id,
                     cfg$user)
-    parts <- base
+    parts <- c(base,
+               paste("When a room has more than one person, each incoming",
+                     "message is prefixed with its sender in square",
+                     "brackets, e.g. \"[@ann:example] hello\". Use the",
+                     "prefix to tell speakers apart; do not copy it into",
+                     "your own replies."))
 
     # Optional persona file declared by the matrix config. Path layout
     # is left to the caller (a host runner might keep personas alongside
@@ -938,9 +963,25 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         members <- matrix_room_members_cached(session, m$room_id,
             sender = m$sender,
             mx_sess = mx_sess, now = now)
+        # Attribute the turn to its sender in multi-human rooms so the
+        # model (and the ingest path below) can tell speakers apart.
+        multi_human <- length(matrix_room_humans(members, sender, bots)) > 1L
+        ingest_body <- matrix_ingest_body(sender, m$body, multi_human)
         if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
                                    engaged_until = engaged_until,
                                    now = now)) {
+            # No reply is warranted, but the bot still saw the message, so
+            # ingest it as context instead of dropping it. Previously a bare
+            # `next` discarded it, and because seen_event_ids was already
+            # marked above it could never be reconsidered -- the agent
+            # simply never saw non-triggering messages in a busy room. The
+            # read receipt sent above is now accurate: the message really is
+            # ingested. This does not open a reply path (the gate is
+            # unchanged), so bot-loop protection is intact.
+            session$history <- c(
+                session$history %||% list(),
+                list(list(role = "user", content = ingest_body))
+            )
             next
         }
         # Passing the gate is an exchange: open or refresh this human's
@@ -1008,7 +1049,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # the reply event arrives.
         tryCatch(mx.api::mx_typing(mx_sess, m$room_id, TRUE, timeout = 120000L),
                  error = function(e) NULL)
-        reply <- matrix_run_turn_in_cwd(m$body, session)
+        reply <- matrix_run_turn_in_cwd(ingest_body, session)
         tryCatch(mx.api::mx_typing(mx_sess, m$room_id, FALSE),
                  error = function(e) NULL)
         if (is.null(reply) || !nzchar(reply)) {
@@ -1077,6 +1118,17 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
             system = system, model = model,
             provider = provider, tools_filter = tools_filter
         )
+        # Attribution mirrors the live path: label senders in a room with
+        # more than one human. Membership isn't fetched during backfill, so
+        # multi-human is inferred from the distinct human senders in this
+        # window -- enough to catch an active group thread, and it keeps
+        # the backfilled history in the same shape the live poll produces.
+        room_bots <- matrix_known_bots(cfg)
+        window_senders <- setdiff(
+            unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
+            c(room_bots, "")
+        )
+        multi_human <- length(window_senders) > 1L
         added <- 0L
         for (ev in chunk) {
             if (!isTRUE(ev$type == "m.room.message")) {
@@ -1089,14 +1141,16 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
             if (is.null(body) || !nzchar(body)) {
                 next
             }
-            role <- if (isTRUE(ev$sender == cfg$user_id)) {
-                "assistant"
+            is_self <- isTRUE(ev$sender == cfg$user_id)
+            role <- if (is_self) "assistant" else "user"
+            content <- if (is_self) {
+                body
             } else {
-                "user"
+                matrix_ingest_body(ev$sender, body, multi_human)
             }
             session$history <- c(
                                  session$history %||% list(),
-                                 list(list(role = role, content = body))
+                                 list(list(role = role, content = content))
             )
             session$seen_event_ids <- matrix_remember_event(
                 session$seen_event_ids, ev$event_id
