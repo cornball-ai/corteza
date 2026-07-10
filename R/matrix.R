@@ -979,8 +979,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             # ingested. This does not open a reply path (the gate is
             # unchanged), so bot-loop protection is intact.
             session$history <- c(
-                session$history %||% list(),
-                list(list(role = "user", content = ingest_body))
+                                 session$history %||% list(),
+                                 list(list(role = "user", content = ingest_body))
             )
             next
         }
@@ -1125,8 +1125,8 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
         # the backfilled history in the same shape the live poll produces.
         room_bots <- matrix_known_bots(cfg)
         window_senders <- setdiff(
-            unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
-            c(room_bots, "")
+                                  unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
+                                  c(room_bots, "")
         )
         multi_human <- length(window_senders) > 1L
         added <- 0L
@@ -1142,7 +1142,11 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
                 next
             }
             is_self <- isTRUE(ev$sender == cfg$user_id)
-            role <- if (is_self) "assistant" else "user"
+            if (is_self) {
+                role <- "assistant"
+            } else {
+                role <- "user"
+            }
             content <- if (is_self) {
                 body
             } else {
