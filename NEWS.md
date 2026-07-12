@@ -13,6 +13,9 @@
   several rooms the most recent switch wins; the per-reply badge line
   is always room-accurate. `display_name` optionally sets the base name
   the rename builds on (default: the user-id localpart).
+  The profile update goes through the new mx.client
+  `mx_set_displayname()` (>= 0.1.1.1), which refreshes a rotated token
+  instead of silently failing the rename.
 
 # corteza 0.7.0.3
 

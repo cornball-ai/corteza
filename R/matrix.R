@@ -450,16 +450,18 @@ matrix_badge_displayname <- function(cfg, session = NULL) {
     paste0(base, " \u26a1 ", .sanitize_inline(model, max_chars = 60L))
 }
 
-# Push the desired display name to the bot's Matrix profile.
-# Best-effort: a failed profile rename must never block a reply. The
-# display name is account-global, so with sessions in several rooms the
-# most recent switch wins; the per-reply badge line stays room-accurate.
-matrix_update_displayname <- function(cfg, mx_sess, session = NULL) {
+# Push the desired display name to the bot's Matrix profile, via
+# mx.client's client-level wrapper so a rotated token is refreshed and
+# retried instead of failing the rename. Best-effort beyond that: a
+# failed rename must never block a reply. The display name is
+# account-global, so with sessions in several rooms the most recent
+# switch wins; the per-reply badge line stays room-accurate.
+matrix_update_displayname <- function(cfg, session = NULL) {
     name <- matrix_badge_displayname(cfg, session)
-    if (is.null(name) || is.null(mx_sess)) {
+    if (is.null(name)) {
         return(invisible(NULL))
     }
-    tryCatch(mx.api::mx_set_displayname(mx_sess, name),
+    tryCatch(mx.client::mx_set_displayname(matrix_client(cfg), name),
              error = function(e) NULL)
     invisible(NULL)
 }
@@ -1079,7 +1081,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd)
             if (!isTRUE(model_cmd$query_only)) {
-                matrix_update_displayname(cfg, mx_sess, session)
+                matrix_update_displayname(cfg, session)
             }
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
@@ -1106,7 +1108,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             }
             # The fresh session starts back on the configured default,
             # so any badge rename is undone with it.
-            matrix_update_displayname(cfg, mx_sess)
+            matrix_update_displayname(cfg)
             matrix_send_maybe_encrypted(crypto, cfg, m$room_id,
                                         "Cleared. Starting a fresh session.")
             replied <- replied + 1L
@@ -1319,7 +1321,7 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
             }
             # Fresh process, fresh sessions on the configured default:
             # clear any badge rename left over from a previous run.
-            matrix_update_displayname(cfg, mx_sess)
+            matrix_update_displayname(cfg)
         }
     }
 
