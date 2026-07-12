@@ -45,7 +45,8 @@ Suggests:
     simplermarkdown,
     tinytest
 Remotes:
-    cornball-ai/llm.api
+    cornball-ai/llm.api,
+    cornball-ai/mx.client
 VignetteBuilder: simplermarkdown
 SystemRequirements: On Windows, Rtools45 (R 4.5.x) or Rtools44 (R 4.4.x)
     is recommended so the 'bash' shell tool is available; minimal
