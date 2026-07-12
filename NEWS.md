@@ -1,3 +1,19 @@
+# corteza 0.7.0.5
+
+- **Opt-in Matrix model badge.** New `matrix_configure(model_badge =)`
+  key: `"never"` (default, unchanged behavior), `"non_default"`, or
+  `"always"`. When a badge applies, deterministic post-turn code — not
+  the model — prepends a `⚡ <model> (<provider>)` first line to each
+  reply and renames the bot to `<name> ⚡ <model>`, so a room session
+  that `/model`-switched to a paid provider is visible on every message
+  and in the sender line. In `"non_default"` mode silence means the
+  configured default: the badge appears only while a switch is live and
+  disappears on `/clear` or a process restart (both reset the profile
+  name too). The display name is account-global, so with sessions in
+  several rooms the most recent switch wins; the per-reply badge line
+  is always room-accurate. `display_name` optionally sets the base name
+  the rename builds on (default: the user-id localpart).
+
 # corteza 0.7.0.3
 
 - **`openai_compatible` provider for generic OpenAI-compatible
