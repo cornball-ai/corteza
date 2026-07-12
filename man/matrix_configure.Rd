@@ -3,9 +3,18 @@
 \alias{matrix_configure}
 \title{Configure the Matrix channel for this host}
 \usage{
-matrix_configure(server, user, password, room, model = NULL,
-                 provider = "anthropic", tools_filter = NULL,
-                 auto_approve_asks = FALSE, bots = NULL)
+matrix_configure(
+  server,
+  user,
+  password,
+  room,
+  model = NULL,
+  provider = "anthropic",
+  tools_filter = NULL,
+  auto_approve_asks = FALSE,
+  bots = NULL,
+  models = NULL
+)
 }
 \arguments{
 \item{server}{Character. Homeserver base URL.}
@@ -38,6 +47,13 @@ bot accounts. Their messages only get a reply when they mention
 this bot, and they are not counted as humans when deciding whether
 a room gets ungated replies (a room whose only non-bot member is
 one human is answered without a mention).}
+
+\item{models}{Character vector or NULL. Extra entries for the
+\code{/model} menu, each a \code{"model provider"} pair (e.g.
+\code{"claude-sonnet-4-6 anthropic_claude"}; a bare model name
+uses the default provider). The menu always lists the configured
+default and the live local Ollama inventory; this key adds hosted
+models that can't be discovered automatically.}
 }
 \value{
 The saved configuration, invisibly.
@@ -49,12 +65,9 @@ the target room, and writes credentials to
 mode 0600. Call once per host. Model, provider, tools_filter, and
 auto_approve_asks are defaults the poll loop uses unless overridden
 at call time.
-}
-\details{
 Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
 that path is still read for backward compatibility, but the next
 \code{matrix_configure()} call writes to the new location.
-
 }
 \examples{
 \dontrun{

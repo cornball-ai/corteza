@@ -1,3 +1,17 @@
+# corteza 0.7.0.4
+
+- **Matrix `/model` lists available models and switches by number.**
+  Bare `/model` (or `//model` where the client eats single slashes) now
+  replies with a numbered menu instead of just echoing the current
+  settings: the configured default, the live local Ollama inventory,
+  and any hosted models declared via the new
+  `matrix_configure(models =)` key (`"model provider"` strings — hosted
+  providers can't be enumerated remotely). `/model 3` switches the room
+  session to entry 3, setting model and provider together, so switching
+  from a phone client never needs a typed model name. The typed form
+  `/model <name> [provider]` is unchanged, and an unreachable Ollama
+  degrades the menu to the configured entries.
+
 # corteza 0.7.0.3
 
 - **`openai_compatible` provider for generic OpenAI-compatible
