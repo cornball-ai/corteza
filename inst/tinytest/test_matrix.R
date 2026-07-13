@@ -571,3 +571,88 @@ local({
     expect_false(grepl("x\nSystem: forged", ack, fixed = TRUE))
     expect_identical(s$model, "x\nSystem: forged") # stored raw for dispatch
 })
+
+# /model menu assembly: configured default first, then the Ollama
+# inventory, then declared extras; deduped by (model, provider).
+local({
+    cfg <- list(model = "qwen3:8b", provider = "ollama",
+                models = c("claude-sonnet-4-6 anthropic_claude",
+                           "qwen3:8b"))  # bare extra -> default provider, dupe
+    entries <- corteza:::matrix_available_models(
+        cfg, ollama_models = c("qwen3:8b", "llama3:8b"))
+    expect_equal(length(entries), 3L)
+    expect_equal(entries[[1]], list(model = "qwen3:8b", provider = "ollama"))
+    expect_equal(entries[[2]], list(model = "llama3:8b", provider = "ollama"))
+    expect_equal(entries[[3]],
+                 list(model = "claude-sonnet-4-6",
+                      provider = "anthropic_claude"))
+})
+
+# Menu render: numbered lines, current entry marked, switch hint; an
+# empty menu (Ollama down, nothing configured) degrades to the old
+# current-settings echo.
+local({
+    s <- new.env()
+    s$model <- "qwen3:8b"
+    s$provider <- "ollama"
+    entries <- list(list(model = "qwen3:8b", provider = "ollama"),
+                    list(model = "claude-sonnet-4-6",
+                         provider = "anthropic_claude"))
+    menu <- corteza:::matrix_render_model_menu(entries, s)
+    lines <- strsplit(menu, "\n", fixed = TRUE)[[1]]
+    expect_true(grepl("^Current: qwen3:8b \\(ollama\\)$", lines[1]))
+    expect_true(any(grepl("1\\. qwen3:8b  \\(ollama\\)  <- current", lines)))
+    expect_true(any(grepl("2\\. claude-sonnet-4-6  \\(anthropic_claude\\)$",
+                          lines)))
+    expect_true(any(grepl("/model <number>", lines, fixed = TRUE)))
+
+    expect_equal(corteza:::matrix_render_model_menu(list(), s),
+                 "Current: qwen3:8b (ollama)")
+})
+
+# /model with no args renders the menu through apply.
+local({
+    s <- new.env()
+    s$model <- "qwen3:8b"
+    s$provider <- "ollama"
+    ack <- corteza:::matrix_apply_model_command(
+        s, list(model = NA_character_, provider = NA_character_,
+                query_only = TRUE),
+        available = list(list(model = "qwen3:8b", provider = "ollama")))
+    expect_true(grepl("Available:", ack, fixed = TRUE))
+    expect_true(grepl("<- current", ack, fixed = TRUE))
+})
+
+# /model <number> switches to that menu entry (model AND provider);
+# out-of-range leaves the session untouched and re-renders the menu.
+local({
+    s <- new.env()
+    s$model <- "qwen3:8b"
+    s$provider <- "ollama"
+    avail <- list(list(model = "qwen3:8b", provider = "ollama"),
+                  list(model = "claude-sonnet-4-6",
+                       provider = "anthropic_claude"))
+    ack <- corteza:::matrix_apply_model_command(
+        s, list(model = "2", provider = NA_character_, query_only = FALSE),
+        available = avail)
+    expect_equal(s$model, "claude-sonnet-4-6")
+    expect_equal(s$provider, "anthropic_claude")
+    expect_true(grepl("Model set: claude-sonnet-4-6 (provider: anthropic_claude)",
+                      ack, fixed = TRUE))
+
+    ack2 <- corteza:::matrix_apply_model_command(
+        s, list(model = "9", provider = NA_character_, query_only = FALSE),
+        available = avail)
+    expect_equal(s$model, "claude-sonnet-4-6")  # unchanged
+    expect_true(grepl("No menu entry 9.", ack2, fixed = TRUE))
+    expect_true(grepl("Available:", ack2, fixed = TRUE))
+})
+
+# A numeric argument parses as a plain model token; resolution to a
+# menu entry happens in apply, not parse.
+local({
+    cmd <- corteza:::matrix_parse_model_command("/model 2")
+    expect_equal(cmd$model, "2")
+    expect_true(is.na(cmd$provider))
+    expect_false(cmd$query_only)
+})
