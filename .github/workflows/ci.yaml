@@ -5,9 +5,6 @@ on:
 
 env:
   _R_CHECK_FORCE_SUGGESTS_: "false"
-  # Authenticate GitHub API calls so remotes can resolve the llm.api
-  # Remote (and to avoid unauthenticated rate limits on shared runners).
-  GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   ci:
@@ -24,6 +21,11 @@ jobs:
 
       - name: Setup
         uses: eddelbuettel/github-actions/r-ci@master
+
+      - name: Install llm.api
+        run: |
+          git clone --depth 1 https://github.com/cornball-ai/llm.api.git "$RUNNER_TEMP/llm.api"
+          R CMD INSTALL "$RUNNER_TEMP/llm.api"
 
       - name: Dependencies
         run: ./run.sh install_deps
