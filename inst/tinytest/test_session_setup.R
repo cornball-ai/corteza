@@ -80,7 +80,8 @@ local({
     )
 })
 
-# openai_compatible: endpoint present (via env) but no model errors too.
+# openai_compatible: endpoint present (via env) but a blank model errors too.
+# NULL falls back to config$model, which may be set in the user's global config.
 local({
     orig <- Sys.getenv("OPENAI_COMPATIBLE_BASE_URL", unset = NA_character_)
     Sys.setenv(OPENAI_COMPATIBLE_BASE_URL = "https://gateway.example.com/v1")
@@ -97,7 +98,7 @@ local({
             channel = "console",
             cwd = tempdir(),
             provider = "openai_compatible",
-            model = NULL,
+            model = "",
             load_project_context = FALSE,
             validate_api_key = TRUE
         ),

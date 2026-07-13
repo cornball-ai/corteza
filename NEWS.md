@@ -1,4 +1,4 @@
-# corteza 0.7.0.4
+# corteza 0.7.0.5
 
 - **Matrix: ingest non-triggering messages instead of dropping them.** In
   a room with more than one human, a message that didn't warrant a reply
@@ -9,8 +9,23 @@
   them. Gated messages are now appended to history as context; the reply
   gate (and its bot-loop protection) is unchanged, only ingestion is.
   Turns are attributed with a `[sender]` prefix in rooms with more than
-  one human (both the live poll and the startup backfill) so the model
+  one human (both the live poll and the startup backfill), and known bot
+  senders are labeled even in one-human rooms, so the model
   can tell speakers apart; a lone-human DM is unchanged.
+
+# corteza 0.7.0.4
+
+- **Matrix `/model` lists available models and switches by number.**
+  Bare `/model` (or `//model` where the client eats single slashes) now
+  replies with a numbered menu instead of just echoing the current
+  settings: the configured default, the live local Ollama inventory,
+  and any hosted models declared via the new
+  `matrix_configure(models =)` key (`"model provider"` strings — hosted
+  providers can't be enumerated remotely). `/model 3` switches the room
+  session to entry 3, setting model and provider together, so switching
+  from a phone client never needs a typed model name. The typed form
+  `/model <name> [provider]` is unchanged, and an unreachable Ollama
+  degrades the menu to the configured entries.
 
 # corteza 0.7.0.3
 

@@ -105,6 +105,12 @@ matrix_relogin <- function(cfg) {
 #'   this bot, and they are not counted as humans when deciding whether
 #'   a room gets ungated replies (a room whose only non-bot member is
 #'   one human is answered without a mention).
+#' @param models Character vector or NULL. Extra entries for the
+#'   \code{/model} menu, each a \code{"model provider"} pair (e.g.
+#'   \code{"claude-sonnet-4-6 anthropic_claude"}; a bare model name
+#'   uses the default provider). The menu always lists the configured
+#'   default and the live local Ollama inventory; this key adds hosted
+#'   models that can't be discovered automatically.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -121,7 +127,8 @@ matrix_relogin <- function(cfg) {
 #' @export
 matrix_configure <- function(server, user, password, room, model = NULL,
                              provider = "anthropic", tools_filter = NULL,
-                             auto_approve_asks = FALSE, bots = NULL) {
+                             auto_approve_asks = FALSE, bots = NULL,
+                             models = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     matrix_require_mx()
@@ -134,6 +141,13 @@ matrix_configure <- function(server, user, password, room, model = NULL,
                  paste(bad, collapse = ", "), call. = FALSE)
         }
     }
+    if (!is.null(models)) {
+        models <- as.character(models)
+        models <- models[nzchar(trimws(models))]
+        if (!length(models)) {
+            models <- NULL
+        }
+    }
 
     cfg <- mx.client::mx_client_configure(
         server, user, password, room,
@@ -141,7 +155,7 @@ matrix_configure <- function(server, user, password, room, model = NULL,
         extra = list(model = model, provider = provider,
                      tools_filter = tools_filter,
                      auto_approve_asks = isTRUE(auto_approve_asks),
-                     bots = bots))
+                     bots = bots, models = models))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
     invisible(matrix_plain_cfg(cfg))
 }
@@ -340,18 +354,122 @@ matrix_parse_model_command <- function(body) {
     list(model = model, provider = provider, query_only = is.na(model))
 }
 
+# Live local Ollama model inventory (names only). Best-effort: an
+# unreachable Ollama yields character(0) so the /model menu still
+# renders the configured entries.
+matrix_ollama_models <- function() {
+    tryCatch({
+        url <- paste0(Sys.getenv("OLLAMA_HOST", "http://localhost:11434"),
+                      "/api/tags")
+        resp <- jsonlite::fromJSON(url, simplifyVector = FALSE)
+        vapply(resp$models %||% list(), function(m) {
+            m$name %||% m$model %||% ""
+        }, character(1))
+    }, error = function(e) character(0))
+}
+
+# Assemble the /model menu: the configured default first, then the live
+# local Ollama inventory, then the config's `models` extras ("model
+# provider" strings; hosted providers can't be enumerated remotely, so
+# they are declared). Deduped by (model, provider), order preserved.
+# `ollama_models` is injectable for tests; NULL fetches live.
+matrix_available_models <- function(cfg = NULL, ollama_models = NULL) {
+    entries <- list()
+    seen <- character()
+    add <- function(model, provider) {
+        model <- trimws(model %||% "")
+        provider <- trimws(provider %||% "")
+        if (!nzchar(model) || !nzchar(provider)) {
+            return(invisible(NULL))
+        }
+        key <- paste(model, provider)
+        if (!(key %in% seen)) {
+            seen <<- c(seen, key)
+            entries[[length(entries) + 1L]] <<- list(model = model,
+                provider = provider)
+        }
+        invisible(NULL)
+    }
+
+    default_provider <- cfg$provider %||% "ollama"
+    add(cfg$model %||% default_provider_model(default_provider),
+        default_provider)
+    if (is.null(ollama_models)) {
+        ollama_models <- matrix_ollama_models()
+    }
+    for (m in ollama_models) {
+        add(m, "ollama")
+    }
+    for (extra in cfg$models %||% character()) {
+        parts <- strsplit(trimws(extra), "\\s+")[[1]]
+        add(parts[1], if (length(parts) >= 2L) parts[2] else default_provider)
+    }
+    entries
+}
+
+# Render the numbered /model menu with the session's current pick
+# marked. Menu content (Ollama names, config entries) is external
+# input, so every rendered field is sanitized.
+matrix_render_model_menu <- function(entries, session) {
+    cur_model <- session$model %||% ""
+    cur_provider <- session$provider %||% ""
+    current <- sprintf("Current: %s (%s)",
+                       .sanitize_inline(if (nzchar(cur_model)) cur_model else "(unset)",
+                                        max_chars = 80L),
+                       .sanitize_inline(if (nzchar(cur_provider)) cur_provider else "(unset)",
+                                        max_chars = 40L))
+    if (!length(entries)) {
+        return(current)
+    }
+    lines <- vapply(seq_along(entries), function(i) {
+        e <- entries[[i]]
+        mark <- if (identical(e$model, cur_model) &&
+                    identical(e$provider, cur_provider)) {
+            "  <- current"
+        } else {
+            ""
+        }
+        sprintf("%2d. %s  (%s)%s", i,
+                .sanitize_inline(e$model, max_chars = 80L),
+                .sanitize_inline(e$provider, max_chars = 40L), mark)
+    }, character(1))
+    paste(c(current, "Available:", lines,
+            "Switch: /model <number>  or  /model <name> [provider]"),
+          collapse = "\n")
+}
+
 # Apply a parsed model command to a session. Returns the ack text to
-# post back to the room. For a query (`/model` with no args), reports
-# the current settings. For a setter, mutates session$model and
-# (optionally) session$provider in place so the next turn picks them up.
-matrix_apply_model_command <- function(session, cmd) {
+# post back to the room. For a query (`/model` with no args), renders
+# the numbered menu of available models. For a setter, mutates
+# session$model and (optionally) session$provider in place so the next
+# turn picks them up; a bare number picks that menu entry, so nobody
+# has to thumb-type a model name from a phone client. `available` is
+# injectable for tests; NULL assembles the menu from cfg + live Ollama.
+matrix_apply_model_command <- function(session, cmd, cfg = NULL,
+                                       available = NULL) {
     # The stored model/provider drive dispatch and stay raw; only the room
     # echo of these user-supplied values is sanitized so it can't forge a line.
     if (isTRUE(cmd$query_only)) {
-        return(sprintf("model: %s\nprovider: %s",
-                       .sanitize_inline(session$model %||% "(unset)", max_chars = 80L),
-                       .sanitize_inline(session$provider %||% "(unset)",
-                                        max_chars = 40L)))
+        if (is.null(available)) {
+            available <- matrix_available_models(cfg)
+        }
+        return(matrix_render_model_menu(available, session))
+    }
+    if (grepl("^[0-9]+$", cmd$model)) {
+        if (is.null(available)) {
+            available <- matrix_available_models(cfg)
+        }
+        idx <- as.integer(cmd$model)
+        if (idx < 1L || idx > length(available)) {
+            return(paste0(sprintf("No menu entry %d.\n", idx),
+                          matrix_render_model_menu(available, session)))
+        }
+        entry <- available[[idx]]
+        session$model <- entry$model
+        session$provider <- entry$provider
+        return(sprintf("Model set: %s (provider: %s). Effective on the next reply.",
+                       .sanitize_inline(entry$model, max_chars = 80L),
+                       .sanitize_inline(entry$provider, max_chars = 40L)))
     }
     session$model <- cmd$model
     if (!is.na(cmd$provider)) {
@@ -436,12 +554,23 @@ matrix_room_humans <- function(members, sender, bots) {
     setdiff(unique(c(members, sender)), bots)
 }
 
-# The body corteza ingests (and feeds to the model) for one message. In a
-# room with more than one human, each turn is prefixed with its sender so
-# the model can tell speakers apart; a lone human (the common DM) needs no
-# label, so the body passes through unchanged and history stays as before.
-matrix_ingest_body <- function(sender, body, multi_human) {
-    if (isTRUE(multi_human) && nzchar(sender %||% "")) {
+# Does this message need an explicit speaker label in model history?
+# Multi-human rooms need labels so participants can be distinguished.
+# Known bot senders also need labels even in one-human rooms, so multi-bot
+# rooms like cooking do not turn into unlabeled transcript fragments.
+matrix_needs_sender_attribution <- function(members, sender, bots) {
+    sender <- sender %||% ""
+    if (!nzchar(sender)) {
+        return(FALSE)
+    }
+    length(matrix_room_humans(members, sender, bots)) > 1L || sender %in% bots
+}
+
+# The body corteza ingests (and feeds to the model) for one message. When
+# attribution is needed, prefix the turn with its sender; otherwise pass
+# through unchanged so lone-human DMs keep their old history shape.
+matrix_ingest_body <- function(sender, body, attribute_sender) {
+    if (isTRUE(attribute_sender) && nzchar(sender %||% "")) {
         sprintf("[%s] %s", sender, body)
     } else {
         body
@@ -963,10 +1092,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         members <- matrix_room_members_cached(session, m$room_id,
             sender = m$sender,
             mx_sess = mx_sess, now = now)
-        # Attribute the turn to its sender in multi-human rooms so the
-        # model (and the ingest path below) can tell speakers apart.
-        multi_human <- length(matrix_room_humans(members, sender, bots)) > 1L
-        ingest_body <- matrix_ingest_body(sender, m$body, multi_human)
+        # Attribute turns when multiple people or another bot could be
+        # speaking; the reply gate below is unchanged.
+        attribute_sender <- matrix_needs_sender_attribution(members, sender, bots)
+        ingest_body <- matrix_ingest_body(sender, m$body, attribute_sender)
         if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
                                    engaged_until = engaged_until,
                                    now = now)) {
@@ -1012,7 +1141,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         model_cmd <- matrix_parse_model_command(m$body)
         if (!is.null(model_cmd)) {
-            ack <- matrix_apply_model_command(session, model_cmd)
+            ack <- matrix_apply_model_command(session, model_cmd, cfg = cfg)
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
                                 error = function(e) NULL
@@ -1118,17 +1247,16 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
             system = system, model = model,
             provider = provider, tools_filter = tools_filter
         )
-        # Attribution mirrors the live path: label senders in a room with
-        # more than one human. Membership isn't fetched during backfill, so
-        # multi-human is inferred from the distinct human senders in this
-        # window -- enough to catch an active group thread, and it keeps
-        # the backfilled history in the same shape the live poll produces.
+        # Attribution mirrors the live path: label senders in multi-human
+        # rooms, and label known bot senders even in one-human rooms.
+        # Membership is not fetched during backfill, so multi-human is
+        # inferred from the distinct human senders in this window.
         room_bots <- matrix_known_bots(cfg)
-        window_senders <- setdiff(
-                                  unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
-                                  c(room_bots, "")
+        human_senders <- setdiff(
+                                 unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
+                                 c(room_bots, "")
         )
-        multi_human <- length(window_senders) > 1L
+        multi_human <- length(human_senders) > 1L
         added <- 0L
         for (ev in chunk) {
             if (!isTRUE(ev$type == "m.room.message")) {
@@ -1150,7 +1278,8 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
             content <- if (is_self) {
                 body
             } else {
-                matrix_ingest_body(ev$sender, body, multi_human)
+                matrix_ingest_body(ev$sender, body,
+                                   multi_human || ev$sender %in% room_bots)
             }
             session$history <- c(
                                  session$history %||% list(),
