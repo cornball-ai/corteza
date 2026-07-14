@@ -3,18 +3,9 @@
 \alias{matrix_configure}
 \title{Configure the Matrix channel for this host}
 \usage{
-matrix_configure(
-  server,
-  user,
-  password,
-  room,
-  model = NULL,
-  provider = "anthropic",
-  tools_filter = NULL,
-  auto_approve_asks = FALSE,
-  bots = NULL,
-  models = NULL
-)
+matrix_configure(server, user, password, room, model = NULL,
+                 provider = "anthropic", tools_filter = NULL,
+                 auto_approve_asks = FALSE, bots = NULL, models = NULL)
 }
 \arguments{
 \item{server}{Character. Homeserver base URL.}
@@ -65,9 +56,12 @@ the target room, and writes credentials to
 mode 0600. Call once per host. Model, provider, tools_filter, and
 auto_approve_asks are defaults the poll loop uses unless overridden
 at call time.
+}
+\details{
 Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
 that path is still read for backward compatibility, but the next
 \code{matrix_configure()} call writes to the new location.
+
 }
 \examples{
 \dontrun{
