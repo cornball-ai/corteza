@@ -21,6 +21,8 @@ jobs:
 
       - name: Setup
         uses: eddelbuettel/github-actions/r-ci@master
+        with:
+          backend: RAPT
 
       - name: Install llm.api
         run: |
