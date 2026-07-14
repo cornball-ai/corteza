@@ -24,6 +24,7 @@ jobs:
 
       - name: Install llm.api
         run: |
+          Rscript -e 'install.packages(c("curl", "jsonlite", "tinyoauth"), repos = "https://cloud.r-project.org")'
           git clone --depth 1 https://github.com/cornball-ai/llm.api.git "$RUNNER_TEMP/llm.api"
           R CMD INSTALL "$RUNNER_TEMP/llm.api"
 
