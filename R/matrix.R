@@ -206,8 +206,16 @@ matrix_session_to_markdown <- function(session, room_id, room_name = NULL) {
         }
         sprintf("## %s\n\n%s", role, text)
     }, character(1))
-    header <- sprintf("# %s", room_name %||% room_id)
-    paste(c(header, "", parts), collapse = "\n\n")
+    header <- sprintf("# %s", room_id)
+    room_label <- room_name %||% ""
+    room_label <- if (length(room_label)) room_label[[1L]] else ""
+    room_label <- .sanitize_inline(room_label, max_chars = 100L)
+    metadata <- if (nzchar(room_label)) {
+        sprintf("Room name at archive time: %s", room_label)
+    } else {
+        character()
+    }
+    paste(c(header, "", metadata, parts), collapse = "\n\n")
 }
 
 # Archive new turns from one room's session to the pensar vault and
@@ -243,8 +251,8 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     }
     out <- tryCatch(
                     pensar_ingest(content = md, type = "matrix",
-                                  source = room_name %||% room_id,
-                                  title = room_name %||% room_id),
+                                  source = room_id,
+                                  title = room_id),
                     error = function(e) {
         message("matrix_archive_session: pensar ingest failed: ",
                 conditionMessage(e))

@@ -396,7 +396,9 @@ local({
     )
     s$ingested_through <- 1L
     md <- corteza:::matrix_session_to_markdown(s, "!room:s.c", "Test Room")
-    expect_true(grepl("# Test Room", md, fixed = TRUE))
+    expect_true(grepl("# !room:s.c", md, fixed = TRUE))
+    expect_true(grepl("Room name at archive time: Test Room",
+                      md, fixed = TRUE))
     expect_false(grepl("hello", md, fixed = TRUE))      # already ingested
     expect_true(grepl("hi back", md, fixed = TRUE))
     expect_true(grepl("and now this", md, fixed = TRUE))
@@ -423,6 +425,9 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         )
         out1 <- corteza:::matrix_archive_session(s, "!t:s.c")
         expect_true(file.exists(out1))
+        fm1 <- pensar:::parse_frontmatter(out1)
+        expect_equal(fm1$title, "!t:s.c")
+        expect_equal(fm1$source, "!t:s.c")
         expect_equal(s$ingested_through, 2L)
 
         # No new turns -> no-op.

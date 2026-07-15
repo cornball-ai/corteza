@@ -13,6 +13,13 @@
   senders are labeled even in one-human rooms, so the model
   can tell speakers apart; a lone-human DM is unchanged.
 
+- **Matrix archives are keyed by room id, not display name.** Room
+  display names and avatars are mutable Matrix state, so archived
+  transcripts now use the global Matrix room id for `title` and
+  `source`. The room name is retained only as archive-time metadata,
+  which keeps renames from splitting one chat into multiple raw
+  archive identities.
+
 # corteza 0.7.0.4
 
 - **Matrix `/model` lists available models and switches by number.**
