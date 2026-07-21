@@ -180,8 +180,21 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                         markdown = FALSE) {
     matrix_require_mx()
     cfg <- matrix_load_config()
-    mx.client::mx_send_text(cfg, text, room = room_id, msgtype = msgtype,
-                            markdown = markdown)
+    chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+                        markup = if (isTRUE(markdown)) {
+                            "markdown"
+                        } else {
+                            "plain"
+                        },
+                        kind = switch(msgtype, m.notice = "notice",
+                                      m.emote = "emote", "message"))
+}
+
+# The transport-contract view of corteza's Matrix account. Cursor
+# persistence stays with corteza's own config save; chat.api must not
+# write a second copy.
+matrix_chat_client <- function(cfg) {
+    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = FALSE)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {

@@ -145,5 +145,12 @@ matrix_send_maybe_encrypted <- function(crypto, cfg, room_id, text,
         crypto$sessions <- res$sessions
         return(res$event_id)
     }
-    mx.client::mx_send_text(cfg, text, room = room_id, markdown = markdown)
+    # Plaintext rooms ride the transport contract; encrypted rooms stay
+    # on the mx.crypto path above until chat.api models E2EE
+    chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+                        markup = if (isTRUE(markdown)) {
+                            "markdown"
+                        } else {
+                            "plain"
+                        })
 }
