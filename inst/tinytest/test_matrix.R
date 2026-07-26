@@ -696,3 +696,40 @@ local({
     expect_true(is.na(cmd$provider))
     expect_false(cmd$query_only)
 })
+
+# Matrix room system prompt includes the normal project/Saber context for the
+# room cwd, not just the Matrix-specific identity/header.
+local({
+    tmp <- tempfile("matrix-room-context-")
+    dir.create(tmp, recursive = TRUE)
+    dir.create(file.path(tmp, ".corteza"), showWarnings = FALSE)
+    writeLines(c("# Room Project Context", "", "saber-context-sentinel"),
+               file.path(tmp, "ROOM_CONTEXT.md"))
+    writeLines('{"context_files": ["ROOM_CONTEXT.md"]}',
+               file.path(tmp, ".corteza", "config.json"))
+
+    prev_user_cache_dir <- Sys.getenv("R_USER_CACHE_DIR", unset = NA)
+    cache <- tempfile("matrix-room-context-cache-")
+    Sys.setenv(R_USER_CACHE_DIR = cache)
+    on.exit({
+        unlink(tmp, recursive = TRUE)
+        unlink(cache, recursive = TRUE)
+        if (is.na(prev_user_cache_dir)) {
+            Sys.unsetenv("R_USER_CACHE_DIR")
+        } else {
+            Sys.setenv(R_USER_CACHE_DIR = prev_user_cache_dir)
+        }
+    }, add = TRUE)
+
+    sys <- corteza:::matrix_room_system(
+        list(user_id = "@bot:x", user = "Troy"),
+        cwd = tmp,
+        room_name = "~/project",
+        description = "topic")
+
+    expect_true(grepl("You are @bot:x", sys, fixed = TRUE))
+    expect_true(grepl("Working directory:", sys, fixed = TRUE))
+    expect_true(grepl("Room Project Context", sys, fixed = TRUE))
+    expect_true(grepl("saber-context-sentinel", sys, fixed = TRUE))
+    expect_true(grepl("Corteza Runtime Environment", sys, fixed = TRUE))
+})
