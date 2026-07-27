@@ -436,6 +436,18 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         op <- options(pensar.vault = v)
         on.exit(options(op), add = TRUE)
 
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(sd, recursive = TRUE)
+        }, add = TRUE)
+
         s <- new.env(parent = emptyenv())
         s$history <- list(
             list(role = "user",      content = "first"),
@@ -505,6 +517,18 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         op <- options(pensar.vault = v)
         on.exit(options(op), add = TRUE)
 
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(sd, recursive = TRUE)
+        }, add = TRUE)
+
         sig <- tempfile("sig-")
         file.create(sig)
         on.exit(if (file.exists(sig)) file.remove(sig), add = TRUE)
@@ -529,6 +553,20 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         pensar::init_vault(v)
         op <- options(pensar.vault = v)
         on.exit(options(op), add = TRUE)
+        # Archive keys persist under CORTEZA_STATE_DIR; without this the
+        # suite writes them into the real state directory and later runs
+        # dedupe against leftovers from earlier ones.
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(sd, recursive = TRUE)
+        }, add = TRUE)
 
         reg <- new.env(parent = emptyenv())
         s1 <- new.env(parent = emptyenv())
@@ -812,3 +850,113 @@ local({
     expect_identical(corteza:::matrix_invite_inviters(sync, "@bot:ex")[["!bad:ex"]],
                      "@jorge:ex")
 })
+
+# Archive identity: an ordered per-room key tail, persisted under
+# CORTEZA_STATE_DIR, so a restart's backfill does not re-archive history.
+local({
+    p <- c("a", "b", "c")
+    # Full overlap: everything already archived.
+    expect_equal(corteza:::matrix_overlap_len(p, c("a", "b", "c")), 3L)
+    # Partial: the backfilled tail plus one genuinely new turn.
+    expect_equal(corteza:::matrix_overlap_len(p, c("c", "d")), 1L)
+    # Disjoint content overlaps not at all.
+    expect_equal(corteza:::matrix_overlap_len(p, c("x", "y")), 0L)
+    expect_equal(corteza:::matrix_overlap_len(character(), c("a")), 0L)
+    expect_equal(corteza:::matrix_overlap_len(p, character()), 0L)
+
+    # Repeated identical turns: ordering is what distinguishes a replay
+    # from a second genuine "ok". A set-based watermark cannot.
+    expect_equal(corteza:::matrix_overlap_len(c("ok", "ok"), c("ok", "ok")), 2L)
+    expect_equal(corteza:::matrix_overlap_len(c("x", "ok"), c("ok", "ok")), 1L)
+    # The cap bounds how far a repetitive tail can align.
+    expect_equal(corteza:::matrix_overlap_len(rep("ok", 10), rep("ok", 10),
+                                              max_k = 4L), 4L)
+
+    # Keys fold whitespace and never contain a newline (one per line on
+    # disk), and differ by role.
+    k <- corteza:::matrix_turn_key(list(role = "user", content = "a\n\n b"))
+    expect_false(grepl("\n", k, fixed = TRUE))
+    expect_true(startsWith(k, "user:"))
+    expect_false(identical(
+        k, corteza:::matrix_turn_key(list(role = "assistant", content = "a b"))))
+})
+
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            options(op)
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(c(v, sd), recursive = TRUE)
+        }, add = TRUE)
+
+        mk <- function(...) {
+            s <- new.env(parent = emptyenv())
+            s$history <- lapply(list(...), function(x) {
+                list(role = "user", content = x)
+            })
+            s
+        }
+        n_files <- function() {
+            length(list.files(file.path(v, "raw"), recursive = TRUE))
+        }
+
+        # 1. First flush archives the new turns once.
+        s <- mk("one", "two")
+        corteza:::matrix_archive_session(s, "!a:ex")
+        expect_equal(n_files(), 1L)
+
+        # 2. A repeated flush of the same session archives nothing.
+        corteza:::matrix_archive_session(s, "!a:ex")
+        expect_equal(n_files(), 1L)
+
+        # 3. Restart: a fresh session backfilled with the same turns and
+        #    no in-memory watermark still archives nothing.
+        restarted <- mk("one", "two")
+        expect_null(restarted$ingested_through)
+        corteza:::matrix_archive_session(restarted, "!a:ex")
+        expect_equal(n_files(), 1L)
+
+        # 4. A new turn after the restart archives once, and only the
+        #    new turn reaches the vault.
+        grown <- mk("one", "two", "three")
+        corteza:::matrix_archive_session(grown, "!a:ex")
+        expect_equal(n_files(), 2L)
+        raw <- list.files(file.path(v, "raw"), recursive = TRUE,
+                          full.names = TRUE)
+        newest <- raw[which.max(file.mtime(raw))]
+        body <- paste(readLines(newest, warn = FALSE), collapse = "\n")
+        expect_true(grepl("three", body, fixed = TRUE))
+        expect_false(grepl("one", body, fixed = TRUE))
+
+        # 5. A failed ingest leaves persistent state untouched, so the
+        #    same turns are retried rather than lost.
+        before <- corteza:::matrix_archive_state_read("!b:ex")
+        expect_equal(length(before), 0L)
+        options(pensar.vault = file.path(tempfile("gone-"), "nope"))
+        boom <- mk("unsaved")
+        suppressMessages(corteza:::matrix_archive_session(boom, "!b:ex"))
+        expect_equal(length(corteza:::matrix_archive_state_read("!b:ex")), 0L)
+        options(pensar.vault = v)
+        corteza:::matrix_archive_session(mk("unsaved"), "!b:ex")
+        expect_true(length(corteza:::matrix_archive_state_read("!b:ex")) > 0L)
+
+        # 6. Rooms are isolated: one room's state cannot suppress
+        #    identical content in another.
+        n <- n_files()
+        corteza:::matrix_archive_session(mk("one", "two"), "!c:ex")
+        expect_equal(n_files(), n + 1L)
+        expect_false(identical(
+            corteza:::matrix_archive_state_path("!a:ex"),
+            corteza:::matrix_archive_state_path("!c:ex")))
+    })
+}

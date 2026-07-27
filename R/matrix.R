@@ -188,11 +188,85 @@ matrix_extract_messages <- function(sync_resp, self_id) {
     mx.client::mx_extract_text_events(sync_resp, self_id)
 }
 
-# Format new turns since the session's `ingested_through` watermark
-# as a markdown transcript. Returns NULL when nothing new to archive.
-matrix_session_to_markdown <- function(session, room_id, room_name = NULL) {
+# Identity for one history turn: role plus a bounded, whitespace-folded
+# prefix of the content. Ordering is what disambiguates repeated turns
+# (see matrix_overlap_len), so this only has to be cheap and stable
+# rather than cryptographic, which keeps corteza free of a hashing
+# dependency. Never contains a newline, so the state file is one key
+# per line.
+matrix_turn_key <- function(m) {
+    role <- m$role %||% "?"
+    text <- if (is.character(m$content)) {
+        paste(m$content, collapse = "\n")
+    } else {
+        as.character(m$content %||% "")
+    }
+    text <- gsub("[[:space:]]+", " ", trimws(text))
+    sprintf("%s:%d:%s", role, nchar(text), substr(text, 1L, 96L))
+}
+
+matrix_turn_keys <- function(history) {
+    if (!length(history)) {
+        return(character())
+    }
+    vapply(history, matrix_turn_key, character(1))
+}
+
+# How much of `current` has already been archived: the longest k where
+# the persisted tail equals the current head.
+#
+# Ordered comparison rather than set membership, because a set cannot
+# tell a replayed "ok" from a second genuine "ok". Capped at max_k so a
+# repetitive tail cannot align far past the backfill window and silently
+# swallow new turns -- under-archiving is the worse failure here, since
+# nothing surfaces it.
+matrix_overlap_len <- function(persisted, current, max_k = 64L) {
+    k <- min(length(persisted), length(current), max_k)
+    while (k > 0L) {
+        if (identical(utils::tail(persisted, k), utils::head(current, k))) {
+            return(k)
+        }
+        k <- k - 1L
+    }
+    0L
+}
+
+# Per-room archive state. Room ids are not filename-safe, so they are
+# slugged; the trailing length keeps two rooms differing only in
+# punctuation from colliding.
+matrix_archive_state_path <- function(room_id) {
+    slug <- gsub("[^A-Za-z0-9]+", "_", room_id)
+    file.path(matrix_signal_dir(), "archive",
+              sprintf("%s-%d.keys", substr(slug, 1L, 80L), nchar(room_id)))
+}
+
+matrix_archive_state_read <- function(room_id) {
+    path <- matrix_archive_state_path(room_id)
+    if (!file.exists(path)) {
+        return(character())
+    }
+    tryCatch(readLines(path, warn = FALSE), error = function(e) character())
+}
+
+# Bounded rolling tail. Only ever called after a successful ingest, so a
+# failed archive leaves the previous state untouched and the same turns
+# are retried on the next flush.
+matrix_archive_state_write <- function(room_id, keys, cap = 512L) {
+    path <- matrix_archive_state_path(room_id)
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    keys <- utils::tail(keys, cap)
+    writeLines(keys, path)
+    invisible(keys)
+}
+
+# Format turns from `start` onward as a markdown transcript. Returns
+# NULL when nothing new to archive.
+matrix_session_to_markdown <- function(session, room_id, room_name = NULL,
+                                       start = NULL) {
     history <- session$history %||% list()
-    start <- (session$ingested_through %||% 0L) + 1L
+    if (is.null(start)) {
+        start <- (session$ingested_through %||% 0L) + 1L
+    }
     if (start > length(history)) {
         return(NULL)
     }
@@ -234,8 +308,18 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     }
 
     history <- session$history %||% list()
-    last <- session$ingested_through %||% 0L
-    if (length(history) <= last) {
+    if (!length(history)) {
+        return(invisible(NULL))
+    }
+    # The in-memory index cannot survive a restart: startup backfill
+    # refills history from the server while the index resets to zero,
+    # which re-archived the backfilled tail every time the process came
+    # back. Persisted per-room keys are the authority; ingested_through
+    # is kept only so matrix_archive_all can count this process's work.
+    keys <- matrix_turn_keys(history)
+    persisted <- matrix_archive_state_read(room_id)
+    start <- matrix_overlap_len(persisted, keys) + 1L
+    if (start > length(keys)) {
         return(invisible(NULL))
     }
 
@@ -245,7 +329,8 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     } else {
         NULL
     }
-    md <- matrix_session_to_markdown(session, room_id, room_name)
+    md <- matrix_session_to_markdown(session, room_id, room_name,
+                                     start = start)
     if (is.null(md)) {
         return(invisible(NULL))
     }
@@ -260,6 +345,8 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     }
     )
     if (!is.null(out)) {
+        matrix_archive_state_write(room_id,
+                                   c(persisted, keys[start:length(keys)]))
         session$ingested_through <- length(history)
     }
     invisible(out)
