@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime
-Version: 0.7.0.7
+Version: 0.7.0.8
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -30,6 +30,7 @@ Imports:
     callr,
     codetools,
     curl,
+    digest,
     jsonlite,
     llm.api (>= 0.1.8.1),
     printify,
