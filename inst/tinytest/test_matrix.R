@@ -411,7 +411,7 @@ local({
     corteza:::matrix_transcript_add(s, "$m2", "assistant", "hi back")
     corteza:::matrix_transcript_add(s, "$m3", "user", "and now this")
     md <- corteza:::matrix_session_to_markdown(s, "!room:s.c", "Test Room",
-                                               start = 2L)
+                                               which = 2:3)
     expect_true(grepl("# !room:s.c", md, fixed = TRUE))
     expect_true(grepl("Room name at archive time: Test Room",
                       md, fixed = TRUE))
@@ -421,7 +421,7 @@ local({
 
     # Past the end -> NULL.
     expect_null(corteza:::matrix_session_to_markdown(s, "!room:s.c",
-                                                     start = 4L))
+                                                     which = 4L))
     # History is not a source: tool turns there never reach the archive.
     s$history <- list(list(role = "tool", content = "TOOLNOISE"))
     expect_false(grepl("TOOLNOISE",
@@ -461,21 +461,22 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         fm1 <- pensar:::parse_frontmatter(out1)
         expect_equal(fm1$title, "!t:s.c")
         expect_equal(fm1$source, "!t:s.c")
-        expect_equal(s$ingested_through, 2L)
+        # Archived events are consumed from the ledger, which is what
+        # keeps it from outgrowing the persisted id tail.
+        expect_equal(length(s$transcript), 0L)
 
-        # No new turns -> no-op.
+        # Nothing pending -> no-op.
         out2 <- corteza:::matrix_archive_session(s, "!t:s.c")
         expect_null(out2)
-        expect_equal(s$ingested_through, 2L)
+        expect_equal(length(s$transcript), 0L)
 
-        # New turn -> only that turn lands in the file.
-        s$transcript[[3]] <- list(event_id = "$t3", role = "user",
-                                  content = "third")
+        # A new event -> only that event lands in the file.
+        corteza:::matrix_transcript_add(s, "$t3", "user", "third")
         out3 <- corteza:::matrix_archive_session(s, "!t:s.c")
         body <- paste(readLines(out3), collapse = "\n")
         expect_false(grepl("first", body, fixed = TRUE))
         expect_true(grepl("third", body, fixed = TRUE))
-        expect_equal(s$ingested_through, 3L)
+        expect_equal(length(s$transcript), 0L)
     })
 }
 
@@ -546,7 +547,7 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         n <- corteza:::matrix_handle_flush_signal(sig, reg)
         expect_equal(n, 1L)
         expect_false(file.exists(sig))    # signal consumed
-        expect_equal(s$ingested_through, 1L)
+        expect_equal(length(s$transcript), 0L)   # ledger consumed
     })
 }
 
@@ -1026,5 +1027,79 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         # Restart with the same events: nothing archived, nothing counted.
         expect_equal(corteza:::matrix_archive_all(mk_reg()), 0L)
         expect_equal(n_files(), 1L)
+    })
+}
+
+# Ledger archival regressions found in review of the transcript change.
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            options(op)
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(c(v, sd), recursive = TRUE)
+        }, add = TRUE)
+
+        mk <- function(ids) {
+            s <- new.env(parent = emptyenv())
+            for (i in ids) {
+                corteza:::matrix_transcript_add(s, i, "user", paste("turn", i))
+            }
+            s
+        }
+        n_files <- function() {
+            length(list.files(file.path(v, "raw"), recursive = TRUE))
+        }
+
+        # More events than the persisted cap. The ledger is consumed on
+        # success, so nothing can age out of the tail while still
+        # pending -- previously event 1 fell off the 512-entry tail and
+        # came back as fresh on the next flush.
+        big <- sprintf("$big%04d", 1:513)
+        s <- mk(big)
+        corteza:::matrix_archive_session(s, "!big:ex")
+        expect_equal(n_files(), 1L)
+        expect_equal(length(s$transcript), 0L)
+        corteza:::matrix_archive_session(s, "!big:ex")
+        expect_equal(n_files(), 1L)
+
+        # A fresh event BETWEEN persisted ones archives only itself.
+        # Finding the first fresh index and slicing to the end
+        # re-archived everything after it.
+        seeded <- mk(c("$s1", "$s2", "$s3"))
+        corteza:::matrix_archive_session(seeded, "!mid:ex")
+        n <- n_files()
+        gapped <- mk(c("$s1", "$snew", "$s2", "$s3"))
+        corteza:::matrix_archive_session(gapped, "!mid:ex")
+        expect_equal(n_files(), n + 1L)
+        raw <- list.files(file.path(v, "raw"), recursive = TRUE,
+                          full.names = TRUE)
+        body <- paste(readLines(raw[which.max(file.mtime(raw))],
+                                warn = FALSE), collapse = "\n")
+        expect_true(grepl("turn $snew", body, fixed = TRUE))
+        expect_false(grepl("turn $s2", body, fixed = TRUE))
+        expect_false(grepl("turn $s3", body, fixed = TRUE))
+
+        # The /clear shape: an acknowledgement that reaches the room
+        # after earlier traffic was archived. A restart's backfill puts
+        # it back among archived events; only it should be archived.
+        restart <- mk(c("$s1", "$snew", "$s2", "$s3", "$clear"))
+        corteza:::matrix_archive_session(restart, "!mid:ex")
+        raw <- list.files(file.path(v, "raw"), recursive = TRUE,
+                          full.names = TRUE)
+        body <- paste(readLines(raw[which.max(file.mtime(raw))],
+                                warn = FALSE), collapse = "\n")
+        expect_true(grepl("turn $clear", body, fixed = TRUE))
+        expect_false(grepl("turn $snew", body, fixed = TRUE))
+        expect_false(grepl("turn $s3", body, fixed = TRUE))
     })
 }

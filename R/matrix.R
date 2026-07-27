@@ -265,12 +265,16 @@ matrix_archive_state_write <- function(room_id, keys, cap = 512L) {
 # needed and out of the human conversation archive. Returns NULL when
 # there is nothing new.
 matrix_session_to_markdown <- function(session, room_id, room_name = NULL,
-                                       start = 1L) {
+                                       which = NULL) {
     entries <- session$transcript %||% list()
-    if (start > length(entries)) {
+    if (is.null(which)) {
+        which <- seq_along(entries)
+    }
+    which <- which[which >= 1L & which <= length(entries)]
+    if (!length(which)) {
         return(NULL)
     }
-    new_msgs <- entries[start:length(entries)]
+    new_msgs <- entries[which]
     parts <- vapply(new_msgs, function(m) {
         role <- m$role %||% "?"
         text <- if (is.character(m$content)) {
@@ -321,7 +325,6 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     if (!length(fresh)) {
         return(invisible(NULL))
     }
-    start <- fresh[[1L]]
 
     room_name <- if (!is.null(mx_sess)) {
         tryCatch(mx.api::mx_room_name(mx_sess, room_id),
@@ -330,7 +333,7 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
         NULL
     }
     md <- matrix_session_to_markdown(session, room_id, room_name,
-                                     start = start)
+                                     which = fresh)
     if (is.null(md)) {
         return(invisible(NULL))
     }
@@ -345,24 +348,29 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     }
     )
     if (!is.null(out)) {
-        matrix_archive_state_write(room_id, c(persisted, ids[start:length(ids)]))
-        session$ingested_through <- length(entries)
+        matrix_archive_state_write(room_id, c(persisted, ids[fresh]))
+        # Consume what was archived. The ledger is a queue of unarchived
+        # events, so it can never outgrow the persisted tail and an
+        # event cannot age out of that tail while still pending. The
+        # tail only has to cover a restart backfill window.
+        session$transcript <- entries[-fresh]
     }
     invisible(out)
 }
 
 #' Flush all in-memory matrix sessions to the pensar vault
 #'
-#' Walks the per-room session registry and archives any turns that
-#' haven't been ingested yet via the pensar archive ingest.
-#' Repeated calls only write new turns. Progress is persisted per room
-#' under \code{CORTEZA_STATE_DIR} as an ordered key tail, so a restarted
-#' process does not re-archive the history its startup backfill pulled
-#' back in. Silent no-op when \code{pensar} is not installed.
+#' Walks the per-room session registry and archives each room's
+#' unarchived Matrix events via the pensar archive ingest. Archived
+#' events are consumed from the session ledger, and their Matrix event
+#' ids are persisted per room under \code{CORTEZA_STATE_DIR} so a
+#' restart's backfill is recognized rather than archived again. Silent
+#' no-op when \code{pensar} is not installed.
 #'
 #' @param sessions A registry environment built by
 #'   \code{matrix_run}/\code{matrix_poll}. Keys are room IDs, values
-#'   are session lists carrying \code{$history}.
+#'   are session environments carrying \code{$transcript}, the
+#'   Matrix-visible event ledger.
 #' @param mx_sess Optional Matrix session for room-name lookups. When
 #'   NULL, the room ID is used as the source identifier.
 #'
@@ -382,11 +390,11 @@ matrix_archive_all <- function(sessions, mx_sess = NULL) {
     n <- 0L
     for (room_id in ls(envir = sessions, all.names = TRUE)) {
         s <- get(room_id, envir = sessions, inherits = FALSE)
-        # Count what actually reached the vault. Comparing
-        # `ingested_through` before and after cannot: a restart whose
-        # persisted overlap covers the whole backfill seeds that counter
-        # and returns without ingesting, which reported an archived room
-        # that never existed.
+        # Count what actually reached the vault. Inspecting session
+        # state before and after cannot: a room whose pending events
+        # turn out to be already archived leaves state changed while
+        # ingesting nothing, which reported archived rooms that were
+        # never written.
         if (!is.null(matrix_archive_session(s, room_id, mx_sess))) {
             n <- n + 1L
         }
@@ -1336,8 +1344,18 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
-            matrix_send_maybe_encrypted(crypto, cfg, m$room_id,
-                                        "Cleared. Starting a fresh session.")
+            ack <- "Cleared. Starting a fresh session."
+            sent_id <- tryCatch(
+                                matrix_send_maybe_encrypted(crypto, cfg,
+                    m$room_id, ack),
+                                error = function(e) NULL
+            )
+            # The session was just discarded, so re-create the ledger
+            # entry on the fresh one: otherwise backfill reinserts this
+            # event later, among already archived ones.
+            fresh_session <- matrix_get_or_create_session(sessions, m$room_id,
+                                                          cfg)
+            matrix_transcript_add(fresh_session, sent_id, "assistant", ack)
             replied <- replied + 1L
             next
         }
