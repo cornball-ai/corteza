@@ -1,3 +1,15 @@
+# corteza 0.7.0.7
+
+- **Private conversations and invites are restricted to configured
+  operators.** The new `operators` key lists the Matrix ids allowed a
+  one-on-one conversation with the bot. A room with one human is
+  answered only when that human is an operator; everyone else gets
+  silence rather than a mention-gated session. Invites are gated on the
+  same list, read from the inviter in the stripped `invite_state`, and
+  an invite whose inviter cannot be determined is refused. Group rooms
+  are unaffected. Leaving `operators` unset preserves the previous
+  behavior.
+
 # corteza 0.7.0.6
 
 - **Matrix rooms load project context into the room system prompt.**
