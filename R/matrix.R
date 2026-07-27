@@ -408,9 +408,12 @@ matrix_archive_all <- function(sessions, mx_sess = NULL) {
     n <- 0L
     for (room_id in ls(envir = sessions, all.names = TRUE)) {
         s <- get(room_id, envir = sessions, inherits = FALSE)
-        before <- s$ingested_through %||% 0L
-        matrix_archive_session(s, room_id, mx_sess)
-        if ((s$ingested_through %||% 0L) > before) {
+        # Count what actually reached the vault. Comparing
+        # `ingested_through` before and after cannot: a restart whose
+        # persisted overlap covers the whole backfill seeds that counter
+        # and returns without ingesting, which reported an archived room
+        # that never existed.
+        if (!is.null(matrix_archive_session(s, room_id, mx_sess))) {
             n <- n + 1L
         }
     }

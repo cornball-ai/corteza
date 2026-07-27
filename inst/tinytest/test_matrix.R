@@ -1044,3 +1044,49 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         expect_equal(n_files(), 2L)
     })
 }
+
+# matrix_archive_all counts rooms that actually reached the vault.
+# A restart whose persisted overlap covers the whole backfill seeds
+# ingested_through and ingests nothing; counting by that watermark
+# reported a phantom archived room and would have faked the N = 0
+# check this whole change exists to make observable.
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            options(op)
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(c(v, sd), recursive = TRUE)
+        }, add = TRUE)
+
+        mk_reg <- function() {
+            reg <- new.env(parent = emptyenv())
+            s <- new.env(parent = emptyenv())
+            s$history <- list(list(role = "user", content = "hello"),
+                              list(role = "assistant", content = "hi back"))
+            assign("!count:ex", s, envir = reg)
+            reg
+        }
+        n_files <- function() {
+            length(list.files(file.path(v, "raw"), recursive = TRUE))
+        }
+
+        # First flush: one room archived, one file written.
+        expect_equal(corteza:::matrix_archive_all(mk_reg()), 1L)
+        expect_equal(n_files(), 1L)
+
+        # Restart: a brand-new registry with no in-memory watermark and
+        # a full persisted overlap must report zero and write nothing.
+        expect_equal(corteza:::matrix_archive_all(mk_reg()), 0L)
+        expect_equal(n_files(), 1L)
+    })
+}
