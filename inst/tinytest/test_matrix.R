@@ -11,14 +11,32 @@ expect_true(is.function(corteza::matrix_send))
 expect_true(is.function(corteza::matrix_poll))
 expect_true(is.function(corteza::matrix_run))
 
-# Config persistence round-trip (no network, isolated HOME).
+# Config persistence round-trip (no network, isolated config location).
+#
+# Isolating HOME alone is not enough. matrix_config_path() forwards
+# env_var = "CORTEZA_MATRIX_CONFIG" to mx_client_config_path(), which
+# returns that path outright when set, and tools::R_user_dir() consults
+# R_USER_CONFIG_DIR and XDG_CONFIG_HOME before falling back to HOME. Any
+# one of them left pointing outside the tempdir sends this write to a real
+# config file, which for a running bot means its live credentials.
 local({
-  orig_home <- Sys.getenv("HOME")
   tmp_home <- tempfile("home-")
   dir.create(tmp_home)
-  Sys.setenv(HOME = tmp_home)
+  vars <- c(HOME = tmp_home,
+            CORTEZA_MATRIX_CONFIG = file.path(tmp_home, "matrix.json"),
+            R_USER_CONFIG_DIR = file.path(tmp_home, "config"),
+            XDG_CONFIG_HOME = file.path(tmp_home, "config"))
+  orig <- Sys.getenv(names(vars), unset = NA)
+  do.call(Sys.setenv, as.list(vars))
   on.exit({
-    Sys.setenv(HOME = orig_home)
+    keep <- orig[!is.na(orig)]
+    if (length(keep)) {
+      do.call(Sys.setenv, as.list(keep))
+    }
+    drop <- names(orig)[is.na(orig)]
+    if (length(drop)) {
+      Sys.unsetenv(drop)
+    }
     unlink(tmp_home, recursive = TRUE)
   }, add = TRUE)
 
