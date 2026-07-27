@@ -1,3 +1,13 @@
+# corteza 0.7.0.6
+
+- **Matrix rooms load project context into the room system prompt.**
+  `matrix_new_session()` passed a non-NULL `system` to `session_setup()`
+  with `load_project_context = FALSE`, so Matrix bots ran without the
+  project briefing, agent context files, `.corteza` `context_files`, and
+  package tool docs that other channels receive. The new
+  `matrix_room_system()` composes the Matrix identity header with
+  `load_context()` for the room cwd.
+
 # corteza 0.7.0.5
 
 - **Matrix: ingest non-triggering messages instead of dropping them.** In

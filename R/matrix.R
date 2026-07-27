@@ -660,6 +660,16 @@ matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
     paste(parts, collapse = "\n")
 }
 
+matrix_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
+    parts <- c(
+        matrix_default_system(cfg, cwd = cwd, description = description,
+                              room_name = room_name),
+        load_context(cwd)
+    )
+    parts <- parts[!is.na(parts) & nzchar(parts)]
+    paste(parts, collapse = "\n\n")
+}
+
 # Agent name for path-building. "@cornelius:cornball.ai" -> "Cornelius".
 matrix_agent_name <- function(cfg) {
     local <- sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
@@ -888,11 +898,11 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
             NULL
         }
         parsed <- matrix_parse_topic(topic_raw)
-        system <- matrix_default_system(
-                                        cfg,
-                                        cwd = room_cwd,
-                                        description = parsed$description,
-                                        room_name = room_name
+        system <- matrix_room_system(
+                                     cfg,
+                                     cwd = room_cwd,
+                                     description = parsed$description,
+                                     room_name = room_name
         )
     }
 
