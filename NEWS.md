@@ -1,3 +1,15 @@
+# corteza 0.7.0.9
+
+- **Archives are built from a Matrix-visible event ledger, not from
+  provider history.** History holds tool calls and tool results that
+  were never Matrix events, so a restarted process (which rebuilds
+  history from the server's visible messages) could not align with what
+  it had archived, and tool-using rooms re-archived their whole backfill
+  on every restart. Sessions now keep an append-only transcript of
+  `{event_id, role, content}` written where events are seen or sent, and
+  archival keys on Matrix event ids. Transcripts no longer contain tool
+  turns.
+
 # corteza 0.7.0.8
 
 - **Archive progress is persisted per room instead of tracked in
