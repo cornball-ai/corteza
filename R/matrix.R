@@ -586,7 +586,8 @@ matrix_ingest_body <- function(sender, body, attribute_sender) {
 }
 
 matrix_should_respond <- function(msg, self_id, members, bots = character(),
-                                  engaged_until = NULL, now = Sys.time()) {
+                                  engaged_until = NULL, now = Sys.time(),
+                                  operators = character()) {
     bots <- unique(c(self_id, bots))
     sender <- msg$sender %||% ""
     if (sender %in% bots) {
@@ -597,7 +598,14 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
     # membership degrades to "assume this is the only human", not silence.
     humans <- matrix_room_humans(members, sender, bots)
     if (length(humans) <= 1L) {
-        return(TRUE)
+        # A room with one human is a private conversation, and the
+        # ungated reply below is the bot talking to that person alone.
+        # With operators configured, only they get one: everyone else is
+        # met with silence rather than a mention-gated session, because
+        # "answers if you @ it" is still a private conversation. Group
+        # rooms are unaffected -- a non-operator is answered there on
+        # the usual mention/engagement terms.
+        return(length(operators) == 0L || all(humans %in% operators))
     }
     if (matrix_message_mentions_self(msg, self_id)) {
         return(TRUE)
@@ -606,10 +614,56 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
     as.numeric(difftime(now, engaged_until, units = "secs")) <= 300
 }
 
+# Matrix ids permitted to open a private conversation with this bot and
+# to have their invites auto-accepted. Empty means unrestricted, which
+# is the pre-existing behavior.
+matrix_operators <- function(cfg) {
+    ops <- as.character(cfg$operators %||% character())
+    ops[!is.na(ops) & nzchar(ops)]
+}
+
+# Who invited the bot to each pending-invite room, read from the
+# stripped invite_state the server sends alongside the invite. Named by
+# room id; NA when no matching membership event is present.
+matrix_invite_inviters <- function(sync_resp, self_id) {
+    invited <- sync_resp$rooms$invite
+    out <- character()
+    for (rid in names(invited)) {
+        who <- NA_character_
+        for (ev in invited[[rid]]$invite_state$events) {
+            if (isTRUE(ev$type == "m.room.member") &&
+                isTRUE(ev$state_key == self_id) &&
+                isTRUE(ev$content$membership == "invite")) {
+                who <- ev$sender %||% NA_character_
+                break
+            }
+        }
+        out[[rid]] <- who
+    }
+    out
+}
+
 # Pending invites from a sync response: character vector of room_ids
 # the bot has been invited to but not yet joined.
-matrix_extract_invites <- function(sync_resp) {
-    mx.client::mx_extract_invites(sync_resp)
+#
+# With operators configured, an invite is only accepted when an operator
+# issued it. Auto-joining anyone's invite hands a stranger a session
+# with a tool-using agent, and refusing at the door is cheaper than
+# staying silent once inside. An invite whose inviter cannot be
+# determined is refused rather than guessed at.
+matrix_extract_invites <- function(sync_resp, self_id = NULL,
+                                   operators = character()) {
+    rooms <- mx.client::mx_extract_invites(sync_resp)
+    if (!length(rooms) || !length(operators)) {
+        return(rooms)
+    }
+    inviters <- matrix_invite_inviters(sync_resp, self_id)[rooms]
+    keep <- !is.na(inviters) & inviters %in% operators
+    for (rid in rooms[!keep]) {
+        message(sprintf("matrix: refusing invite to %s from %s (not an operator)",
+                        rid, inviters[[rid]] %||% "unknown"))
+    }
+    rooms[keep]
 }
 
 matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
@@ -1014,7 +1068,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # matching JOIN state is in place before any replies go out. Invites
     # in this sync won't yet appear in rooms$join; the next sync will
     # pick up their timeline.
-    invites <- matrix_extract_invites(sync)
+    invites <- matrix_extract_invites(sync, cfg$user_id,
+                                      matrix_operators(cfg))
     if (length(invites)) {
         matrix_accept_invites(cfg, invites)
     }
@@ -1116,7 +1171,8 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         ingest_body <- matrix_ingest_body(sender, m$body, attribute_sender)
         if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
                                    engaged_until = engaged_until,
-                                   now = now)) {
+                                   now = now,
+                                   operators = matrix_operators(cfg))) {
             # No reply is warranted, but the bot still saw the message, so
             # ingest it as context instead of dropping it. Previously a bare
             # `next` discarded it, and because seen_event_ids was already
@@ -1381,7 +1437,8 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(mx_sess)) {
             initial <- tryCatch(mx.api::mx_sync(mx_sess, timeout = 0L),
                                 error = function(e) NULL)
-            invites <- matrix_extract_invites(initial)
+            invites <- matrix_extract_invites(initial, cfg$user_id,
+                                              matrix_operators(cfg))
             if (length(invites)) {
                 matrix_accept_invites(cfg, invites)
             }

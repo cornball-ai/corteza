@@ -751,3 +751,64 @@ local({
     expect_true(grepl("saber-context-sentinel", sys, fixed = TRUE))
     expect_true(grepl("Corteza Runtime Environment", sys, fixed = TRUE))
 })
+
+# Operator gating: private conversations are for operators only, and
+# invites from anyone else are refused at the door.
+local({
+    expect_identical(corteza:::matrix_operators(list()), character())
+    expect_identical(corteza:::matrix_operators(list(operators = c("@t:ex", ""))),
+                     "@t:ex")
+
+    ops <- "@troy:ex"
+    msg_plain <- list(body = "hi", sender = "@jorge:ex")
+    msg_ping <- list(body = "@bot:ex hi", sender = "@jorge:ex")
+    solo <- c("@bot:ex", "@jorge:ex")
+
+    # One human, not an operator: silence, even when mentioned. A
+    # mention-gated private session is still a private session.
+    expect_false(corteza:::matrix_should_respond(msg_plain, "@bot:ex", solo,
+        bots = "@bot:ex", operators = ops))
+    expect_false(corteza:::matrix_should_respond(msg_ping, "@bot:ex", solo,
+        bots = "@bot:ex", operators = ops))
+
+    # One human who IS an operator: ungated, as before.
+    expect_true(corteza:::matrix_should_respond(
+        list(body = "hi", sender = "@troy:ex"), "@bot:ex",
+        c("@bot:ex", "@troy:ex"), bots = "@bot:ex", operators = ops))
+
+    # Unconfigured operators preserve the old ungated behavior.
+    expect_true(corteza:::matrix_should_respond(msg_plain, "@bot:ex", solo,
+        bots = "@bot:ex"))
+
+    # Group room: a non-operator is answered on the usual mention terms.
+    group <- c("@bot:ex", "@troy:ex", "@jorge:ex")
+    expect_true(corteza:::matrix_should_respond(msg_ping, "@bot:ex", group,
+        bots = "@bot:ex", operators = ops))
+    expect_false(corteza:::matrix_should_respond(msg_plain, "@bot:ex", group,
+        bots = "@bot:ex", operators = ops))
+})
+
+local({
+    invite_ev <- function(sender) {
+        list(invite_state = list(events = list(
+            list(type = "m.room.member", state_key = "@bot:ex",
+                 sender = sender, content = list(membership = "invite")))))
+    }
+    sync <- list(rooms = list(invite = list(
+        "!ok:ex" = invite_ev("@troy:ex"),
+        "!bad:ex" = invite_ev("@jorge:ex"),
+        "!blank:ex" = list(invite_state = list(events = list())))))
+
+    # No operators configured: every invite is accepted, as before.
+    expect_equal(corteza:::matrix_extract_invites(sync, "@bot:ex"),
+                 c("!ok:ex", "!bad:ex", "!blank:ex"))
+
+    # Configured: only the operator's invite survives, and an invite
+    # with no determinable inviter is refused rather than guessed at.
+    got <- suppressMessages(
+        corteza:::matrix_extract_invites(sync, "@bot:ex", "@troy:ex"))
+    expect_equal(got, "!ok:ex")
+
+    expect_identical(corteza:::matrix_invite_inviters(sync, "@bot:ex")[["!bad:ex"]],
+                     "@jorge:ex")
+})
