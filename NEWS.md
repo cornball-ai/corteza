@@ -1,3 +1,14 @@
+# corteza 0.7.0.8
+
+- **Archive progress is persisted per room instead of tracked in
+  memory.** `matrix_archive_session()` used `ingested_through`, an index
+  into the in-memory session history, which reset on every restart while
+  startup backfill refilled history from the server. Each restart
+  therefore re-archived the backfilled tail. Progress is now an ordered
+  key tail persisted per room under `CORTEZA_STATE_DIR`, advanced only
+  after a successful ingest, so a failed archive retries rather than
+  loses turns.
+
 # corteza 0.7.0.7
 
 - **Private conversations and invites are restricted to configured
