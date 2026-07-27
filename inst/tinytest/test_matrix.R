@@ -404,26 +404,29 @@ if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # package check.
 }
 
-# matrix_session_to_markdown: format only the unseen tail.
+# matrix_session_to_markdown: format the ledger from `start` onward.
 local({
     s <- new.env(parent = emptyenv())
-    s$history <- list(
-        list(role = "user",      content = "hello"),
-        list(role = "assistant", content = "hi back"),
-        list(role = "user",      content = "and now this")
-    )
-    s$ingested_through <- 1L
-    md <- corteza:::matrix_session_to_markdown(s, "!room:s.c", "Test Room")
+    corteza:::matrix_transcript_add(s, "$m1", "user", "hello")
+    corteza:::matrix_transcript_add(s, "$m2", "assistant", "hi back")
+    corteza:::matrix_transcript_add(s, "$m3", "user", "and now this")
+    md <- corteza:::matrix_session_to_markdown(s, "!room:s.c", "Test Room",
+                                               start = 2L)
     expect_true(grepl("# !room:s.c", md, fixed = TRUE))
     expect_true(grepl("Room name at archive time: Test Room",
                       md, fixed = TRUE))
-    expect_false(grepl("hello", md, fixed = TRUE))      # already ingested
+    expect_false(grepl("hello", md, fixed = TRUE))      # already archived
     expect_true(grepl("hi back", md, fixed = TRUE))
     expect_true(grepl("and now this", md, fixed = TRUE))
 
-    # Nothing new -> NULL.
-    s$ingested_through <- 3L
-    expect_null(corteza:::matrix_session_to_markdown(s, "!room:s.c"))
+    # Past the end -> NULL.
+    expect_null(corteza:::matrix_session_to_markdown(s, "!room:s.c",
+                                                     start = 4L))
+    # History is not a source: tool turns there never reach the archive.
+    s$history <- list(list(role = "tool", content = "TOOLNOISE"))
+    expect_false(grepl("TOOLNOISE",
+                       corteza:::matrix_session_to_markdown(s, "!room:s.c"),
+                       fixed = TRUE))
 })
 
 # matrix_archive_session round-trip: ingest, dedupe, ingest tail only.
@@ -449,9 +452,9 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         }, add = TRUE)
 
         s <- new.env(parent = emptyenv())
-        s$history <- list(
-            list(role = "user",      content = "first"),
-            list(role = "assistant", content = "ok")
+        s$transcript <- list(
+            list(event_id = "$t1", role = "user",      content = "first"),
+            list(event_id = "$t2", role = "assistant", content = "ok")
         )
         out1 <- corteza:::matrix_archive_session(s, "!t:s.c")
         expect_true(file.exists(out1))
@@ -466,7 +469,8 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         expect_equal(s$ingested_through, 2L)
 
         # New turn -> only that turn lands in the file.
-        s$history[[3]] <- list(role = "user", content = "third")
+        s$transcript[[3]] <- list(event_id = "$t3", role = "user",
+                                  content = "third")
         out3 <- corteza:::matrix_archive_session(s, "!t:s.c")
         body <- paste(readLines(out3), collapse = "\n")
         expect_false(grepl("first", body, fixed = TRUE))
@@ -535,7 +539,8 @@ if (requireNamespace("pensar", quietly = TRUE)) {
 
         reg <- new.env(parent = emptyenv())
         s <- new.env(parent = emptyenv())
-        s$history <- list(list(role = "user", content = "hi"))
+        s$transcript <- list(list(event_id = "$h1", role = "user",
+                                 content = "hi"))
         assign("!r:s.c", s, envir = reg)
 
         n <- corteza:::matrix_handle_flush_signal(sig, reg)
@@ -570,10 +575,12 @@ if (requireNamespace("pensar", quietly = TRUE)) {
 
         reg <- new.env(parent = emptyenv())
         s1 <- new.env(parent = emptyenv())
-        s1$history <- list(list(role = "user", content = "a"))
+        s1$transcript <- list(list(event_id = "$a1", role = "user",
+                                  content = "a"))
         assign("!r1:s.c", s1, envir = reg)
         s2 <- new.env(parent = emptyenv())
-        s2$history <- list(list(role = "user", content = "b"))
+        s2$transcript <- list(list(event_id = "$b1", role = "user",
+                                  content = "b"))
         assign("!r2:s.c", s2, envir = reg)
 
         expect_equal(corteza:::matrix_archive_all(reg), 2L)
@@ -851,34 +858,26 @@ local({
                      "@jorge:ex")
 })
 
-# Archive identity: an ordered per-room key tail, persisted under
-# CORTEZA_STATE_DIR, so a restart's backfill does not re-archive history.
+# The Matrix-visible transcript is an explicit ledger, not a projection
+# of session$history. History carries tool calls and tool results that
+# were never Matrix events and that a restart's backfill cannot
+# reconstruct, so deriving one from the other could never align.
 local({
-    p <- c("a", "b", "c")
-    # Full overlap: everything already archived.
-    expect_equal(corteza:::matrix_overlap_len(p, c("a", "b", "c")), 3L)
-    # Partial: the backfilled tail plus one genuinely new turn.
-    expect_equal(corteza:::matrix_overlap_len(p, c("c", "d")), 1L)
-    # Disjoint content overlaps not at all.
-    expect_equal(corteza:::matrix_overlap_len(p, c("x", "y")), 0L)
-    expect_equal(corteza:::matrix_overlap_len(character(), c("a")), 0L)
-    expect_equal(corteza:::matrix_overlap_len(p, character()), 0L)
+    s <- new.env(parent = emptyenv())
+    corteza:::matrix_transcript_add(s, "$e1", "user", "hello")
+    corteza:::matrix_transcript_add(s, "$e2", "assistant", c("multi", "line"))
+    expect_equal(length(s$transcript), 2L)
+    expect_equal(corteza:::matrix_transcript_ids(s$transcript),
+                 c("$e1", "$e2"))
+    # Content is flattened to text so the ledger stays serializable.
+    expect_equal(s$transcript[[2L]]$content, "multi\nline")
 
-    # Repeated identical turns: ordering is what distinguishes a replay
-    # from a second genuine "ok". A set-based watermark cannot.
-    expect_equal(corteza:::matrix_overlap_len(c("ok", "ok"), c("ok", "ok")), 2L)
-    expect_equal(corteza:::matrix_overlap_len(c("x", "ok"), c("ok", "ok")), 1L)
-
-    # Keys never contain a newline (the state file is one key per line)
-    # and are role-sensitive: the same text from the bot and from a
-    # human are different turns.
-    k <- corteza:::matrix_turn_key(list(role = "user", content = "a\n\n b"))
-    expect_false(grepl("\n", k, fixed = TRUE))
-    expect_false(identical(k, corteza:::matrix_turn_key(
-        list(role = "assistant", content = "a\n\n b"))))
-    # Stable across calls, so a restart recomputes the same identity.
-    expect_identical(k, corteza:::matrix_turn_key(
-        list(role = "user", content = "a\n\n b")))
+    # An event with no id cannot be deduplicated on restart, so it is
+    # refused rather than recorded unidentifiably.
+    corteza:::matrix_transcript_add(s, NULL, "user", "ghost")
+    corteza:::matrix_transcript_add(s, "", "user", "ghost")
+    expect_equal(length(s$transcript), 2L)
+    expect_equal(corteza:::matrix_transcript_ids(list()), character())
 })
 
 if (requireNamespace("pensar", quietly = TRUE)) {
@@ -899,157 +898,99 @@ if (requireNamespace("pensar", quietly = TRUE)) {
             unlink(c(v, sd), recursive = TRUE)
         }, add = TRUE)
 
-        mk <- function(...) {
+        mk <- function(ids) {
             s <- new.env(parent = emptyenv())
-            s$history <- lapply(list(...), function(x) {
-                list(role = "user", content = x)
-            })
+            for (i in ids) {
+                corteza:::matrix_transcript_add(s, i, "user", paste("turn", i))
+            }
             s
         }
         n_files <- function() {
             length(list.files(file.path(v, "raw"), recursive = TRUE))
         }
 
-        # 1. First flush archives the new turns once.
-        s <- mk("one", "two")
-        corteza:::matrix_archive_session(s, "!a:ex")
+        # 1. First flush archives the ledger once.
+        corteza:::matrix_archive_session(mk(c("$1", "$2")), "!a:ex")
         expect_equal(n_files(), 1L)
 
-        # 2. A repeated flush of the same session archives nothing.
-        corteza:::matrix_archive_session(s, "!a:ex")
+        # 2. A repeat flush of the same events archives nothing.
+        corteza:::matrix_archive_session(mk(c("$1", "$2")), "!a:ex")
         expect_equal(n_files(), 1L)
 
-        # 3. Restart: a fresh session backfilled with the same turns and
-        #    no in-memory watermark still archives nothing.
-        restarted <- mk("one", "two")
+        # 3. Restart: a fresh session whose backfill rebuilt the same
+        #    events archives nothing, with no in-memory watermark.
+        restarted <- mk(c("$1", "$2"))
         expect_null(restarted$ingested_through)
         corteza:::matrix_archive_session(restarted, "!a:ex")
         expect_equal(n_files(), 1L)
 
-        # 4. A new turn after the restart archives once, and only the
-        #    new turn reaches the vault.
-        grown <- mk("one", "two", "three")
-        corteza:::matrix_archive_session(grown, "!a:ex")
-        expect_equal(n_files(), 2L)
-        raw <- list.files(file.path(v, "raw"), recursive = TRUE,
-                          full.names = TRUE)
-        newest <- raw[which.max(file.mtime(raw))]
-        body <- paste(readLines(newest, warn = FALSE), collapse = "\n")
-        expect_true(grepl("three", body, fixed = TRUE))
-        expect_false(grepl("one", body, fixed = TRUE))
-
-        # 5. A failed ingest leaves persistent state untouched, so the
-        #    same turns are retried rather than lost.
-        before <- corteza:::matrix_archive_state_read("!b:ex")
-        expect_equal(length(before), 0L)
-        options(pensar.vault = file.path(tempfile("gone-"), "nope"))
-        boom <- mk("unsaved")
-        suppressMessages(corteza:::matrix_archive_session(boom, "!b:ex"))
-        expect_equal(length(corteza:::matrix_archive_state_read("!b:ex")), 0L)
-        options(pensar.vault = v)
-        corteza:::matrix_archive_session(mk("unsaved"), "!b:ex")
-        expect_true(length(corteza:::matrix_archive_state_read("!b:ex")) > 0L)
-
-        # 6. Rooms are isolated: one room's state cannot suppress
-        #    identical content in another.
-        n <- n_files()
-        corteza:::matrix_archive_session(mk("one", "two"), "!c:ex")
-        expect_equal(n_files(), n + 1L)
-        expect_false(identical(
-            corteza:::matrix_archive_state_path("!a:ex"),
-            corteza:::matrix_archive_state_path("!c:ex")))
-    })
-}
-
-# Regressions from review of the archive-identity change.
-local({
-    # A room with more archived turns than any fixed search cap must
-    # still align. The first version capped the search at 64, so 65
-    # archived turns found no alignment at all and re-archived the whole
-    # room -- worse than the over-matching the cap guarded against.
-    many <- sprintf("k%03d", 1:65)
-    expect_equal(corteza:::matrix_overlap_len(many, c(many, "new")), 65L)
-    expect_equal(corteza:::matrix_overlap_len(many, many), 65L)
-
-    # Equal-length room ids differing only in punctuation must not share
-    # a state file: slugging collapsed them and let one room's state
-    # suppress the other's.
-    expect_false(identical(corteza:::matrix_archive_state_path("!a-b:ex"),
-                           corteza:::matrix_archive_state_path("!a_b:ex")))
-    expect_equal(corteza:::matrix_archive_state_path("!a-b:ex"),
-                 corteza:::matrix_archive_state_path("!a-b:ex"))
-
-    # Turns sharing a long opening but diverging later are distinct.
-    # A truncated key called them equal and silently dropped the second.
-    stem <- strrep("x", 200L)
-    a <- list(role = "user", content = paste0(stem, "ending A"))
-    b <- list(role = "user", content = paste0(stem, "ending B"))
-    expect_false(identical(corteza:::matrix_turn_key(a),
-                           corteza:::matrix_turn_key(b)))
-    # Whitespace is significant: folding collapsed different markdown.
-    expect_false(identical(
-        corteza:::matrix_turn_key(list(role = "user", content = "a\n\nb")),
-        corteza:::matrix_turn_key(list(role = "user", content = "a b"))))
-})
-
-if (requireNamespace("pensar", quietly = TRUE)) {
-    local({
-        v <- tempfile("vault-")
-        pensar::init_vault(v)
-        op <- options(pensar.vault = v)
-        sd <- tempfile("state-")
-        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
-        Sys.setenv(CORTEZA_STATE_DIR = sd)
-        on.exit({
-            options(op)
-            if (is.na(prev_sd)) {
-                Sys.unsetenv("CORTEZA_STATE_DIR")
-            } else {
-                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
-            }
-            unlink(c(v, sd), recursive = TRUE)
-        }, add = TRUE)
-
-        mk <- function(n, extra = NULL) {
-            s <- new.env(parent = emptyenv())
-            s$history <- lapply(c(sprintf("turn %d", seq_len(n)), extra),
-                                function(x) list(role = "user", content = x))
-            s
-        }
-        n_files <- function() {
-            length(list.files(file.path(v, "raw"), recursive = TRUE))
-        }
-
-        # 65 distinct turns archive once, then a restart with the same 65
-        # plus one new turn archives only the new one.
-        corteza:::matrix_archive_session(mk(65L), "!long:ex")
-        expect_equal(n_files(), 1L)
-        grown <- mk(65L, "brand new")
-        corteza:::matrix_archive_session(grown, "!long:ex")
+        # 4. A new event archives once, and only the new event lands.
+        corteza:::matrix_archive_session(mk(c("$1", "$2", "$3")), "!a:ex")
         expect_equal(n_files(), 2L)
         raw <- list.files(file.path(v, "raw"), recursive = TRUE,
                           full.names = TRUE)
         body <- paste(readLines(raw[which.max(file.mtime(raw))],
                                 warn = FALSE), collapse = "\n")
-        expect_true(grepl("brand new", body, fixed = TRUE))
-        expect_false(grepl("turn 1\n", body, fixed = TRUE))
+        expect_true(grepl("turn $3", body, fixed = TRUE))
+        expect_false(grepl("turn $1", body, fixed = TRUE))
 
-        # A restart whose overlap covers everything seeds the in-process
-        # counter, so later flushes take the fast path instead of
-        # re-aligning.
-        restarted <- mk(65L, "brand new")
-        expect_null(restarted$ingested_through)
-        corteza:::matrix_archive_session(restarted, "!long:ex")
-        expect_equal(restarted$ingested_through, 66L)
-        expect_equal(n_files(), 2L)
+        # A room with more events than any fixed window still dedupes:
+        # event ids are exact, so there is no alignment search to cap.
+        many <- sprintf("$m%03d", 1:65)
+        corteza:::matrix_archive_session(mk(many), "!long:ex")
+        n <- n_files()
+        corteza:::matrix_archive_session(mk(many), "!long:ex")
+        expect_equal(n_files(), n)
+        corteza:::matrix_archive_session(mk(c(many, "$new")), "!long:ex")
+        expect_equal(n_files(), n + 1L)
+
+        # 5. A failed ingest leaves persistent state untouched, so the
+        #    same events are retried rather than lost.
+        expect_equal(length(corteza:::matrix_archive_state_read("!b:ex")), 0L)
+        options(pensar.vault = file.path(tempfile("gone-"), "nope"))
+        suppressMessages(corteza:::matrix_archive_session(mk("$x"), "!b:ex"))
+        expect_equal(length(corteza:::matrix_archive_state_read("!b:ex")), 0L)
+        options(pensar.vault = v)
+        corteza:::matrix_archive_session(mk("$x"), "!b:ex")
+        expect_true(length(corteza:::matrix_archive_state_read("!b:ex")) > 0L)
+
+        # 6. Rooms are isolated: one room's state cannot suppress
+        #    identical events in another.
+        n <- n_files()
+        corteza:::matrix_archive_session(mk(c("$1", "$2")), "!c:ex")
+        expect_equal(n_files(), n + 1L)
+        expect_false(identical(
+            corteza:::matrix_archive_state_path("!a:ex"),
+            corteza:::matrix_archive_state_path("!c:ex")))
+
+        # Equal-length room ids differing only in punctuation must not
+        # share a state file.
+        expect_false(identical(corteza:::matrix_archive_state_path("!a-b:ex"),
+                               corteza:::matrix_archive_state_path("!a_b:ex")))
+
+        # Tool turns live in history for the provider's benefit and must
+        # never reach the archive, whatever role the provider gives them
+        # (Anthropic returns tool results as role = "user").
+        withtools <- mk(c("$v1", "$v2"))
+        withtools$history <- list(
+            list(role = "user", content = "visible ask"),
+            list(role = "assistant", content = "calling a tool"),
+            list(role = "tool", content = "TOOLRESULT-SENTINEL"),
+            list(role = "user", content = "TOOLRESULT-ANTHROPIC-SHAPE"))
+        corteza:::matrix_archive_session(withtools, "!tools:ex")
+        raw <- list.files(file.path(v, "raw"), recursive = TRUE,
+                          full.names = TRUE)
+        tool_body <- paste(readLines(raw[which.max(file.mtime(raw))],
+                                     warn = FALSE), collapse = "\n")
+        expect_false(grepl("TOOLRESULT-SENTINEL", tool_body, fixed = TRUE))
+        expect_false(grepl("TOOLRESULT-ANTHROPIC-SHAPE", tool_body,
+                           fixed = TRUE))
+        expect_true(grepl("turn $v1", tool_body, fixed = TRUE))
     })
 }
 
-# matrix_archive_all counts rooms that actually reached the vault.
-# A restart whose persisted overlap covers the whole backfill seeds
-# ingested_through and ingests nothing; counting by that watermark
-# reported a phantom archived room and would have faked the N = 0
-# check this whole change exists to make observable.
+# matrix_archive_all counts rooms that actually reached the vault, not
+# rooms it merely looked at.
 if (requireNamespace("pensar", quietly = TRUE)) {
     local({
         v <- tempfile("vault-")
@@ -1071,8 +1012,8 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         mk_reg <- function() {
             reg <- new.env(parent = emptyenv())
             s <- new.env(parent = emptyenv())
-            s$history <- list(list(role = "user", content = "hello"),
-                              list(role = "assistant", content = "hi back"))
+            corteza:::matrix_transcript_add(s, "$c1", "user", "hello")
+            corteza:::matrix_transcript_add(s, "$c2", "assistant", "hi back")
             assign("!count:ex", s, envir = reg)
             reg
         }
@@ -1080,12 +1021,9 @@ if (requireNamespace("pensar", quietly = TRUE)) {
             length(list.files(file.path(v, "raw"), recursive = TRUE))
         }
 
-        # First flush: one room archived, one file written.
         expect_equal(corteza:::matrix_archive_all(mk_reg()), 1L)
         expect_equal(n_files(), 1L)
-
-        # Restart: a brand-new registry with no in-memory watermark and
-        # a full persisted overlap must report zero and write nothing.
+        # Restart with the same events: nothing archived, nothing counted.
         expect_equal(corteza:::matrix_archive_all(mk_reg()), 0L)
         expect_equal(n_files(), 1L)
     })

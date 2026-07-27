@@ -188,52 +188,40 @@ matrix_extract_messages <- function(sync_resp, self_id) {
     mx.client::mx_extract_text_events(sync_resp, self_id)
 }
 
-# Identity for one history turn: a hash of the COMPLETE role and
-# content. An earlier version used a truncated, whitespace-folded prefix
-# to avoid a hashing dependency; that was wrong. Two long turns sharing
-# an opening but diverging later collided, and folding whitespace
-# collapsed materially different markdown. A collision here means a turn
-# is silently never archived, which nothing surfaces, so the identity
-# has to be exact.
-matrix_turn_key <- function(m) {
-    text <- if (is.character(m$content)) {
-        paste(m$content, collapse = "\n")
-    } else {
-        as.character(m$content %||% "")
+# The Matrix-visible transcript: an explicit ledger of the events this
+# room actually exchanged, each carrying the Matrix event id that
+# identifies it.
+#
+# Deliberately NOT derived by filtering session$history. History is the
+# provider's working context and holds tool calls and tool results,
+# which a restart's backfill cannot reconstruct because they were never
+# Matrix events. Any attempt to align the two by projecting history had
+# to infer which entries had been sent, and role is not that signal --
+# Anthropic returns tool results as role = "user".
+#
+# So the ledger is appended at the moments a Matrix event is seen or
+# successfully sent, and nowhere else. Backfill produces the same shape
+# from the server, which is what makes restart dedup exact.
+matrix_transcript_add <- function(session, event_id, role, content) {
+    if (is.null(event_id) || !length(event_id) || !nzchar(event_id)) {
+        return(invisible(NULL))
     }
-    digest::digest(list(role = m$role %||% "?", content = text),
-                   algo = "sha256")
+    text <- if (is.character(content)) {
+        paste(content, collapse = "\n")
+    } else {
+        as.character(content %||% "")
+    }
+    session$transcript <- c(session$transcript %||% list(),
+                            list(list(event_id = as.character(event_id),
+                                      role = role, content = text)))
+    invisible(NULL)
 }
 
-matrix_turn_keys <- function(history) {
-    if (!length(history)) {
+matrix_transcript_ids <- function(transcript) {
+    if (!length(transcript)) {
         return(character())
     }
-    vapply(history, matrix_turn_key, character(1))
-}
-
-# How much of `current` has already been archived: the longest k where
-# the persisted tail equals the current head.
-#
-# Ordered comparison rather than set membership, because a set cannot
-# tell a replayed "ok" from a second genuine "ok".
-#
-# Deliberately uncapped. An earlier version capped the search, which
-# meant a room with more archived turns than the cap could find no
-# alignment at all and re-archive its entire history -- a far worse
-# failure than the over-matching the cap was meant to prevent. In
-# practice this only runs on the first flush after a restart, where
-# `current` is the bounded backfill window; within a process
-# `ingested_through` is the authority.
-matrix_overlap_len <- function(persisted, current) {
-    k <- min(length(persisted), length(current))
-    while (k > 0L) {
-        if (identical(utils::tail(persisted, k), utils::head(current, k))) {
-            return(k)
-        }
-        k <- k - 1L
-    }
-    0L
+    vapply(transcript, function(e) e$event_id %||% "", character(1))
 }
 
 # Per-room archive state, named by a hash of the COMPLETE room id.
@@ -271,18 +259,18 @@ matrix_archive_state_write <- function(room_id, keys, cap = 512L) {
     invisible(keys)
 }
 
-# Format turns from `start` onward as a markdown transcript. Returns
-# NULL when nothing new to archive.
+# Format ledger entries from `start` onward as a markdown transcript.
+# Reads the Matrix-visible transcript, not session$history, so tool
+# calls and tool results stay in the provider context where they are
+# needed and out of the human conversation archive. Returns NULL when
+# there is nothing new.
 matrix_session_to_markdown <- function(session, room_id, room_name = NULL,
-                                       start = NULL) {
-    history <- session$history %||% list()
-    if (is.null(start)) {
-        start <- (session$ingested_through %||% 0L) + 1L
-    }
-    if (start > length(history)) {
+                                       start = 1L) {
+    entries <- session$transcript %||% list()
+    if (start > length(entries)) {
         return(NULL)
     }
-    new_msgs <- history[start:length(history)]
+    new_msgs <- entries[start:length(entries)]
     parts <- vapply(new_msgs, function(m) {
         role <- m$role %||% "?"
         text <- if (is.character(m$content)) {
@@ -319,34 +307,21 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
         return(invisible(NULL))
     }
 
-    history <- session$history %||% list()
-    if (!length(history)) {
+    entries <- session$transcript %||% list()
+    if (!length(entries)) {
         return(invisible(NULL))
     }
-    # Two authorities, by design.
-    #
-    # Within a process, `ingested_through` is exact and cheap: we appended
-    # the turns ourselves and know precisely how far archiving got.
-    #
-    # Across a restart it is meaningless -- startup backfill refills
-    # history from the server while the index resets to zero, which is
-    # what re-archived the backfilled tail on every restart. Only then do
-    # we fall back to aligning against the persisted per-room key tail,
-    # and we seed the index from that result so the rest of the process
-    # takes the fast path.
-    known <- session$ingested_through
-    if (is.null(known)) {
-        keys <- matrix_turn_keys(history)
-        known <- matrix_overlap_len(matrix_archive_state_read(room_id), keys)
-        session$ingested_through <- known
-    } else {
-        keys <- matrix_turn_keys(history)
-    }
-    start <- known + 1L
-    if (start > length(keys)) {
-        return(invisible(NULL))
-    }
+    # Matrix event ids are unique and stable across a restart, so
+    # "already archived" is exact set membership rather than an
+    # alignment guess. Anything the persisted tail has not seen is new,
+    # in ledger order.
+    ids <- matrix_transcript_ids(entries)
     persisted <- matrix_archive_state_read(room_id)
+    fresh <- which(!(ids %in% persisted))
+    if (!length(fresh)) {
+        return(invisible(NULL))
+    }
+    start <- fresh[[1L]]
 
     room_name <- if (!is.null(mx_sess)) {
         tryCatch(mx.api::mx_room_name(mx_sess, room_id),
@@ -370,9 +345,8 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     }
     )
     if (!is.null(out)) {
-        matrix_archive_state_write(room_id,
-                                   c(persisted, keys[start:length(keys)]))
-        session$ingested_through <- length(history)
+        matrix_archive_state_write(room_id, c(persisted, ids[start:length(ids)]))
+        session$ingested_through <- length(entries)
     }
     invisible(out)
 }
@@ -1235,6 +1209,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                                      session$history %||% list(),
                                      list(list(role = "assistant", content = m$body))
                 )
+                matrix_transcript_add(session, m$event_id, "assistant", m$body)
                 session$seen_event_ids <- matrix_remember_event(
                     session$seen_event_ids, m$event_id
                 )
@@ -1285,6 +1260,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # speaking; the reply gate below is unchanged.
         attribute_sender <- matrix_needs_sender_attribution(members, sender, bots)
         ingest_body <- matrix_ingest_body(sender, m$body, attribute_sender)
+        # Ledger the incoming event once, before the gate, so both the
+        # replied-to and the merely-ingested branch record it exactly
+        # once and in arrival order.
+        matrix_transcript_add(session, m$event_id, "user", ingest_body)
         if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
                                    engaged_until = engaged_until,
                                    now = now,
@@ -1324,6 +1303,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- matrix_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                matrix_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
             next
@@ -1340,6 +1320,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- matrix_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                matrix_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
             next
@@ -1384,6 +1365,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             session$seen_event_ids <- matrix_remember_event(
                 session$seen_event_ids, sent_id
             )
+            matrix_transcript_add(session, sent_id, "assistant", reply)
         }
         replied <- replied + 1L
     }
@@ -1475,6 +1457,7 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
                                  session$history %||% list(),
                                  list(list(role = role, content = content))
             )
+            matrix_transcript_add(session, ev$event_id, role, content)
             session$seen_event_ids <- matrix_remember_event(
                 session$seen_event_ids, ev$event_id
             )
