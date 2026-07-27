@@ -868,17 +868,17 @@ local({
     # from a second genuine "ok". A set-based watermark cannot.
     expect_equal(corteza:::matrix_overlap_len(c("ok", "ok"), c("ok", "ok")), 2L)
     expect_equal(corteza:::matrix_overlap_len(c("x", "ok"), c("ok", "ok")), 1L)
-    # The cap bounds how far a repetitive tail can align.
-    expect_equal(corteza:::matrix_overlap_len(rep("ok", 10), rep("ok", 10),
-                                              max_k = 4L), 4L)
 
-    # Keys fold whitespace and never contain a newline (one per line on
-    # disk), and differ by role.
+    # Keys never contain a newline (the state file is one key per line)
+    # and are role-sensitive: the same text from the bot and from a
+    # human are different turns.
     k <- corteza:::matrix_turn_key(list(role = "user", content = "a\n\n b"))
     expect_false(grepl("\n", k, fixed = TRUE))
-    expect_true(startsWith(k, "user:"))
-    expect_false(identical(
-        k, corteza:::matrix_turn_key(list(role = "assistant", content = "a b"))))
+    expect_false(identical(k, corteza:::matrix_turn_key(
+        list(role = "assistant", content = "a\n\n b"))))
+    # Stable across calls, so a restart recomputes the same identity.
+    expect_identical(k, corteza:::matrix_turn_key(
+        list(role = "user", content = "a\n\n b")))
 })
 
 if (requireNamespace("pensar", quietly = TRUE)) {
@@ -958,5 +958,89 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         expect_false(identical(
             corteza:::matrix_archive_state_path("!a:ex"),
             corteza:::matrix_archive_state_path("!c:ex")))
+    })
+}
+
+# Regressions from review of the archive-identity change.
+local({
+    # A room with more archived turns than any fixed search cap must
+    # still align. The first version capped the search at 64, so 65
+    # archived turns found no alignment at all and re-archived the whole
+    # room -- worse than the over-matching the cap guarded against.
+    many <- sprintf("k%03d", 1:65)
+    expect_equal(corteza:::matrix_overlap_len(many, c(many, "new")), 65L)
+    expect_equal(corteza:::matrix_overlap_len(many, many), 65L)
+
+    # Equal-length room ids differing only in punctuation must not share
+    # a state file: slugging collapsed them and let one room's state
+    # suppress the other's.
+    expect_false(identical(corteza:::matrix_archive_state_path("!a-b:ex"),
+                           corteza:::matrix_archive_state_path("!a_b:ex")))
+    expect_equal(corteza:::matrix_archive_state_path("!a-b:ex"),
+                 corteza:::matrix_archive_state_path("!a-b:ex"))
+
+    # Turns sharing a long opening but diverging later are distinct.
+    # A truncated key called them equal and silently dropped the second.
+    stem <- strrep("x", 200L)
+    a <- list(role = "user", content = paste0(stem, "ending A"))
+    b <- list(role = "user", content = paste0(stem, "ending B"))
+    expect_false(identical(corteza:::matrix_turn_key(a),
+                           corteza:::matrix_turn_key(b)))
+    # Whitespace is significant: folding collapsed different markdown.
+    expect_false(identical(
+        corteza:::matrix_turn_key(list(role = "user", content = "a\n\nb")),
+        corteza:::matrix_turn_key(list(role = "user", content = "a b"))))
+})
+
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            options(op)
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(c(v, sd), recursive = TRUE)
+        }, add = TRUE)
+
+        mk <- function(n, extra = NULL) {
+            s <- new.env(parent = emptyenv())
+            s$history <- lapply(c(sprintf("turn %d", seq_len(n)), extra),
+                                function(x) list(role = "user", content = x))
+            s
+        }
+        n_files <- function() {
+            length(list.files(file.path(v, "raw"), recursive = TRUE))
+        }
+
+        # 65 distinct turns archive once, then a restart with the same 65
+        # plus one new turn archives only the new one.
+        corteza:::matrix_archive_session(mk(65L), "!long:ex")
+        expect_equal(n_files(), 1L)
+        grown <- mk(65L, "brand new")
+        corteza:::matrix_archive_session(grown, "!long:ex")
+        expect_equal(n_files(), 2L)
+        raw <- list.files(file.path(v, "raw"), recursive = TRUE,
+                          full.names = TRUE)
+        body <- paste(readLines(raw[which.max(file.mtime(raw))],
+                                warn = FALSE), collapse = "\n")
+        expect_true(grepl("brand new", body, fixed = TRUE))
+        expect_false(grepl("turn 1\n", body, fixed = TRUE))
+
+        # A restart whose overlap covers everything seeds the in-process
+        # counter, so later flushes take the fast path instead of
+        # re-aligning.
+        restarted <- mk(65L, "brand new")
+        expect_null(restarted$ingested_through)
+        corteza:::matrix_archive_session(restarted, "!long:ex")
+        expect_equal(restarted$ingested_through, 66L)
+        expect_equal(n_files(), 2L)
     })
 }

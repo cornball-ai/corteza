@@ -188,21 +188,21 @@ matrix_extract_messages <- function(sync_resp, self_id) {
     mx.client::mx_extract_text_events(sync_resp, self_id)
 }
 
-# Identity for one history turn: role plus a bounded, whitespace-folded
-# prefix of the content. Ordering is what disambiguates repeated turns
-# (see matrix_overlap_len), so this only has to be cheap and stable
-# rather than cryptographic, which keeps corteza free of a hashing
-# dependency. Never contains a newline, so the state file is one key
-# per line.
+# Identity for one history turn: a hash of the COMPLETE role and
+# content. An earlier version used a truncated, whitespace-folded prefix
+# to avoid a hashing dependency; that was wrong. Two long turns sharing
+# an opening but diverging later collided, and folding whitespace
+# collapsed materially different markdown. A collision here means a turn
+# is silently never archived, which nothing surfaces, so the identity
+# has to be exact.
 matrix_turn_key <- function(m) {
-    role <- m$role %||% "?"
     text <- if (is.character(m$content)) {
         paste(m$content, collapse = "\n")
     } else {
         as.character(m$content %||% "")
     }
-    text <- gsub("[[:space:]]+", " ", trimws(text))
-    sprintf("%s:%d:%s", role, nchar(text), substr(text, 1L, 96L))
+    digest::digest(list(role = m$role %||% "?", content = text),
+                   algo = "sha256")
 }
 
 matrix_turn_keys <- function(history) {
@@ -216,12 +216,17 @@ matrix_turn_keys <- function(history) {
 # the persisted tail equals the current head.
 #
 # Ordered comparison rather than set membership, because a set cannot
-# tell a replayed "ok" from a second genuine "ok". Capped at max_k so a
-# repetitive tail cannot align far past the backfill window and silently
-# swallow new turns -- under-archiving is the worse failure here, since
-# nothing surfaces it.
-matrix_overlap_len <- function(persisted, current, max_k = 64L) {
-    k <- min(length(persisted), length(current), max_k)
+# tell a replayed "ok" from a second genuine "ok".
+#
+# Deliberately uncapped. An earlier version capped the search, which
+# meant a room with more archived turns than the cap could find no
+# alignment at all and re-archive its entire history -- a far worse
+# failure than the over-matching the cap was meant to prevent. In
+# practice this only runs on the first flush after a restart, where
+# `current` is the bounded backfill window; within a process
+# `ingested_through` is the authority.
+matrix_overlap_len <- function(persisted, current) {
+    k <- min(length(persisted), length(current))
     while (k > 0L) {
         if (identical(utils::tail(persisted, k), utils::head(current, k))) {
             return(k)
@@ -231,13 +236,12 @@ matrix_overlap_len <- function(persisted, current, max_k = 64L) {
     0L
 }
 
-# Per-room archive state. Room ids are not filename-safe, so they are
-# slugged; the trailing length keeps two rooms differing only in
-# punctuation from colliding.
+# Per-room archive state, named by a hash of the COMPLETE room id.
+# Slugging punctuation collided: "!a-b:ex" and "!a_b:ex" produced the
+# same path, letting one room's state suppress another's.
 matrix_archive_state_path <- function(room_id) {
-    slug <- gsub("[^A-Za-z0-9]+", "_", room_id)
     file.path(matrix_signal_dir(), "archive",
-              sprintf("%s-%d.keys", substr(slug, 1L, 80L), nchar(room_id)))
+              paste0(digest::digest(room_id, algo = "sha256"), ".keys"))
 }
 
 matrix_archive_state_read <- function(room_id) {
@@ -255,7 +259,15 @@ matrix_archive_state_write <- function(room_id, keys, cap = 512L) {
     path <- matrix_archive_state_path(room_id)
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     keys <- utils::tail(keys, cap)
-    writeLines(keys, path)
+    # Write-then-rename: a process killed mid-write leaves the previous
+    # state intact rather than a truncated file, which would read back
+    # as a short tail and re-archive everything past it.
+    tmp <- paste0(path, ".tmp")
+    writeLines(keys, tmp)
+    if (!file.rename(tmp, path)) {
+        unlink(tmp)
+        stop("could not update archive state for ", room_id, call. = FALSE)
+    }
     invisible(keys)
 }
 
@@ -311,17 +323,30 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     if (!length(history)) {
         return(invisible(NULL))
     }
-    # The in-memory index cannot survive a restart: startup backfill
-    # refills history from the server while the index resets to zero,
-    # which re-archived the backfilled tail every time the process came
-    # back. Persisted per-room keys are the authority; ingested_through
-    # is kept only so matrix_archive_all can count this process's work.
-    keys <- matrix_turn_keys(history)
-    persisted <- matrix_archive_state_read(room_id)
-    start <- matrix_overlap_len(persisted, keys) + 1L
+    # Two authorities, by design.
+    #
+    # Within a process, `ingested_through` is exact and cheap: we appended
+    # the turns ourselves and know precisely how far archiving got.
+    #
+    # Across a restart it is meaningless -- startup backfill refills
+    # history from the server while the index resets to zero, which is
+    # what re-archived the backfilled tail on every restart. Only then do
+    # we fall back to aligning against the persisted per-room key tail,
+    # and we seed the index from that result so the rest of the process
+    # takes the fast path.
+    known <- session$ingested_through
+    if (is.null(known)) {
+        keys <- matrix_turn_keys(history)
+        known <- matrix_overlap_len(matrix_archive_state_read(room_id), keys)
+        session$ingested_through <- known
+    } else {
+        keys <- matrix_turn_keys(history)
+    }
+    start <- known + 1L
     if (start > length(keys)) {
         return(invisible(NULL))
     }
+    persisted <- matrix_archive_state_read(room_id)
 
     room_name <- if (!is.null(mx_sess)) {
         tryCatch(mx.api::mx_room_name(mx_sess, room_id),
@@ -356,9 +381,10 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
 #'
 #' Walks the per-room session registry and archives any turns that
 #' haven't been ingested yet via the pensar archive ingest.
-#' Each session tracks an \code{ingested_through} watermark so repeated
-#' calls only write new turns. Silent no-op when \code{pensar} is not
-#' installed.
+#' Repeated calls only write new turns. Progress is persisted per room
+#' under \code{CORTEZA_STATE_DIR} as an ordered key tail, so a restarted
+#' process does not re-archive the history its startup backfill pulled
+#' back in. Silent no-op when \code{pensar} is not installed.
 #'
 #' @param sessions A registry environment built by
 #'   \code{matrix_run}/\code{matrix_poll}. Keys are room IDs, values
