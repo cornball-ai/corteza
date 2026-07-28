@@ -355,11 +355,11 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     if (!is.null(out)) {
         matrix_archive_state_write(room_id, c(persisted, ids[fresh]))
         # Consume everything present, not just what was archived: the
-        # rest was already in persisted state. Keeping those queued let
-        # an entry outlive its id in the bounded tail and be archived
-        # twice. The ledger is a queue of unarchived events, so it
-        # cannot outgrow the tail, and the tail only has to cover a
-        # restart backfill window.
+        # rest was already in persisted state. The queue can grow past
+        # the tail's size between flushes -- what it must never do is
+        # hold an already-archived entry long enough for that entry's id
+        # to age out of the tail, which is how one got archived twice.
+        # Draining on every pass is what rules that out.
         session$transcript <- list()
     } else {
         # Ingest failed. Keep only what still needs archiving so a retry

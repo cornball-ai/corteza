@@ -5,10 +5,11 @@
   were never Matrix events, so a restarted process (which rebuilds
   history from the server's visible messages) could not align with what
   it had archived, and tool-using rooms re-archived their whole backfill
-  on every restart. Sessions now keep an append-only transcript of
-  `{event_id, role, content}` written where events are seen or sent, and
-  archival keys on Matrix event ids. Transcripts no longer contain tool
-  turns.
+  on every restart. Sessions now keep a transcript of
+  `{event_id, role, content}`, a queue of pending events written where
+  events are seen or sent and drained once archived. Archival keys on
+  Matrix event ids, recognized against a bounded per-room tail of
+  already-archived ids. Transcripts no longer contain tool turns.
 
 # corteza 0.7.0.8
 
