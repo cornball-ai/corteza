@@ -189,6 +189,52 @@ local({
 })
 
 
+# A cursor is never worth a credential. matrix_save_config() writes
+# whatever list it gets, and `cfg$sync_token <- cursor` on a NULL cfg
+# builds a one-field list, so an adapter that stopped returning its
+# post-sync client would otherwise replace a live bot's matrix.json with
+# {"sync_token": ...}. Before the rewire this could not arise --
+# mx_sync_update() always hands back a client.
+local({
+    iso <- isolate_config(base_cfg())
+    before <- readLines(corteza:::matrix_config_path())
+
+    expect_error(corteza:::matrix_persist_cursor(NULL, "s2"),
+                 "refusing to save")
+    expect_error(corteza:::matrix_persist_cursor(list(sync_token = "s1"), "s2"),
+                 "refusing to save")
+    # The config on disk is untouched.
+    expect_equal(readLines(corteza:::matrix_config_path()), before)
+
+    # No cursor is not an error, just nothing to do.
+    expect_silent(corteza:::matrix_persist_cursor(base_cfg(), NULL))
+    expect_equal(readLines(corteza:::matrix_config_path()), before)
+
+    restore_config(iso)
+})
+
+# matrix_poll() names the short dependency instead of failing obscurely
+# three lines later.
+local({
+    iso <- isolate_config(base_cfg())
+    seams <- list(
+        .sync = function(client, timeout = 0L, ...) {
+            client$sync_token <- "s2"
+            # An adapter that reports neither client nor first_run is
+            # simulated by a sync whose result carries neither.
+            list(sync = list(next_batch = "s2", rooms = list(join = list())),
+                 client = NULL, first_run = NULL)
+        },
+        .extract = function(sync_resp, self_id, ...) list())
+
+    expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
+                 "no client/first_run")
+    expect_equal(read_cursor(), "s1")
+
+    restore_config(iso)
+})
+
+
 # ---------------------------------------------------------------
 # Invariant 3: first_run suppresses the backfill, but still saves
 # ---------------------------------------------------------------

@@ -212,9 +212,21 @@ matrix_chat_client <- function(cfg, ...) {
 # mail. It has to run before matrix_poll()'s first_run early return for
 # the same reason -- the baseline sync's cursor is exactly the one worth
 # keeping.
+#
+# The credential check is not defensive padding. matrix_save_config()
+# writes whatever list it is handed, and `cfg$sync_token <- cursor` on a
+# NULL cfg quietly produces a one-field list, so a caller that lost the
+# config would replace a live bot's matrix.json with {"sync_token": ...}
+# and take its credentials with it. Refuse instead.
 matrix_persist_cursor <- function(cfg, cursor) {
     if (is.null(cursor)) {
         return(invisible(cfg))
+    }
+    have <- vapply(c("server", "token", "user_id"),
+                   function(f) length(cfg[[f]]) > 0L, logical(1))
+    if (!all(have)) {
+        stop("refusing to save a Matrix config missing: ",
+             paste(names(have)[!have], collapse = ", "), call. = FALSE)
     }
     cfg$sync_token <- cursor
     matrix_save_config(cfg)
@@ -1240,6 +1252,16 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # the generic contract does not model, and the crypto path below
     # needs the same object mx.api returned.
     sync <- res$raw
+    # A chat.api whose Matrix adapter predates the post-sync client and
+    # first_run reports neither, and both are load-bearing here: without
+    # the client there is no config to keep syncing (or saving) against,
+    # and a NULL first_run makes the suppression branch below an error.
+    # Say which dependency is short rather than failing three lines on.
+    if (is.null(res$client) || is.null(res$first_run)) {
+        stop("chat.api::chat_poll() returned no client/first_run. ",
+             "corteza needs a chat.api whose Matrix adapter reports both.",
+             call. = FALSE)
+    }
     first_run <- res$first_run
     # The post-sync config: a relogin can have swapped the token
     # mid-poll, and every mx.api call below runs off this cfg.
