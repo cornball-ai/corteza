@@ -190,11 +190,35 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                                       m.emote = "emote", "message"))
 }
 
-# The transport-contract view of corteza's Matrix account. Cursor
-# persistence stays with corteza's own config save; chat.api must not
-# write a second copy.
-matrix_chat_client <- function(cfg) {
-    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = FALSE)
+# The transport-contract view of corteza's Matrix account.
+#
+# save_cursor = FALSE keeps chat.api out of corteza's config file:
+# nothing under the adapter writes it, and matrix_persist_cursor()
+# below is the one place the sync token lands on disk. matrix_client()
+# stamps corteza's own path and app onto the config, so the relogin
+# that chat_poll() runs writes a refreshed token to the right file.
+#
+# `...` reaches chat_matrix(), which exists for its testing seams
+# (.sync, .extract, .send, .media, .typing). Production passes nothing.
+matrix_chat_client <- function(cfg, ...) {
+    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = FALSE, ...)
+}
+
+# Persist the sync cursor chat_poll() handed back.
+#
+# The client is built save_cursor = FALSE, so this is the only write.
+# Drop it and the token never leaves memory: every restart syncs from
+# the last saved cursor and replays that stretch of every room as fresh
+# mail. It has to run before matrix_poll()'s first_run early return for
+# the same reason -- the baseline sync's cursor is exactly the one worth
+# keeping.
+matrix_persist_cursor <- function(cfg, cursor) {
+    if (is.null(cursor)) {
+        return(invisible(cfg))
+    }
+    cfg$sync_token <- cursor
+    matrix_save_config(cfg)
+    invisible(cfg)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
@@ -1200,17 +1224,27 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     matrix_require_mx()
     cfg <- matrix_load_config()
 
-    # Sync and persist the cursor via mx.client. mx_with_relogin
-    # self-heals an invalidated access token: re-login with the stored
-    # password (same device_id, so an E2EE identity survives), persist
-    # the refreshed config, and retry the sync once. Other errors
-    # propagate as before.
-    res <- mx.client::mx_with_relogin(matrix_client(cfg), function(cl) {
-        mx.client::mx_sync_update(cl, timeout = as.integer(timeout))
-    })
-    sync <- res$sync
+    # Receive over the transport contract. chat_poll() runs the sync
+    # inside mx.client::mx_with_relogin(), which self-heals an
+    # invalidated access token: re-login with the stored password (same
+    # device_id, so an E2EE identity survives), persist the refreshed
+    # config, and retry the sync once. Other errors propagate as before.
+    #
+    # timeout crosses the boundary in seconds. corteza counts
+    # milliseconds; the contract counts seconds and converts back at the
+    # mx.api edge.
+    chat <- matrix_chat_client(cfg)
+    res <- chat.api::chat_poll(chat, timeout = timeout / 1000)
+    # raw is the untouched sync response. corteza reads events out of it
+    # itself -- invites, reactions, and m.room.encrypted are all things
+    # the generic contract does not model, and the crypto path below
+    # needs the same object mx.api returned.
+    sync <- res$raw
     first_run <- res$first_run
+    # The post-sync config: a relogin can have swapped the token
+    # mid-poll, and every mx.api call below runs off this cfg.
     cfg <- matrix_plain_cfg(res$client)
+    matrix_persist_cursor(cfg, res$cursor)
     mx_sess <- matrix_mx_session(cfg)
 
     # Accept new invites before we process this sync's messages so the
@@ -1411,14 +1445,14 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         # Show a typing indicator while the model works -- turns run
         # seconds to minutes, and the indicator is the only sign of
-        # life the other side gets. Best-effort: a failed typing call
-        # must never block the reply. 120s cap; Matrix clears it when
-        # the reply event arrives.
-        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, TRUE, timeout = 120000L),
-                 error = function(e) NULL)
+        # life the other side gets. Best-effort: chat_typing() swallows
+        # its own failures and returns FALSE, so a dead indicator can
+        # never block the reply. 120s cap (seconds here, not the
+        # milliseconds mx.api takes); Matrix clears it when the reply
+        # event arrives.
+        chat.api::chat_typing(chat, m$room_id, TRUE, timeout = 120)
         reply <- matrix_run_turn_in_cwd(ingest_body, session)
-        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, FALSE),
-                 error = function(e) NULL)
+        chat.api::chat_typing(chat, m$room_id, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
