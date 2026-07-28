@@ -486,7 +486,7 @@ if (!requireNamespace("pensar", quietly = TRUE)) {
     s$history <- list(list(role = "user", content = "x"))
     out <- corteza:::matrix_archive_session(s, "!r:s.c")
     expect_null(out)
-    expect_null(s$ingested_through)
+    expect_equal(length(s$transcript), 1L)   # queued, not yet archived
 }
 
 # matrix_request_flush: writes archive.signal in CORTEZA_STATE_DIR.
@@ -921,7 +921,7 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         # 3. Restart: a fresh session whose backfill rebuilt the same
         #    events archives nothing, with no in-memory watermark.
         restarted <- mk(c("$1", "$2"))
-        expect_null(restarted$ingested_through)
+        expect_equal(length(restarted$transcript), 2L)  # queued
         corteza:::matrix_archive_session(restarted, "!a:ex")
         expect_equal(n_files(), 1L)
 
@@ -1101,5 +1101,120 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         expect_true(grepl("turn $clear", body, fixed = TRUE))
         expect_false(grepl("turn $snew", body, fixed = TRUE))
         expect_false(grepl("turn $s3", body, fixed = TRUE))
+    })
+}
+
+# /clear replaces the session. Three obligations, all regressions.
+if (at_home()) local({
+    cfg <- list(server = "https://example", user = "bot",
+                user_id = "@bot:ex", room_id = "!c:ex", token = "tok",
+                device_id = "DEV", model = "kimi-k2.5",
+                provider = "moonshot", tools_filter = NULL,
+                auto_approve_asks = TRUE)
+    reg <- corteza:::matrix_new_session_registry()
+
+    # A session with history exists, as before a /clear.
+    old <- corteza:::matrix_get_or_create_session(reg, "!c:ex", cfg)
+    corteza:::matrix_transcript_add(old, "$before", "user", "old talk")
+
+    fresh <- corteza:::matrix_reset_session(
+        reg, "!c:ex", cfg, "$ack1", "Cleared. Starting a fresh session.",
+        provider = "moonshot", model = "kimi-k2.5")
+
+    # It really is a new session, not the old one handed back.
+    expect_false(identical(old, fresh))
+    expect_false(any(corteza:::matrix_transcript_ids(fresh$transcript) ==
+                     "$before"))
+
+    # Runtime overrides survive. The replacement lands in the registry,
+    # so a default-constructed one would run the wrong model until
+    # restart with nothing to surface it.
+    expect_equal(fresh$provider, "moonshot")
+    expect_equal(fresh$model_map$cloud, "kimi-k2.5")
+    expect_identical(get("!c:ex", envir = reg), fresh)
+
+    # The acknowledgement is remembered, so its self-echo through sync
+    # is recognized as our own rather than appended again.
+    expect_true("$ack1" %in% fresh$seen_event_ids)
+    # ... and it is ledgered exactly once, so backfill cannot reinsert
+    # it later among already archived events.
+    expect_equal(corteza:::matrix_transcript_ids(fresh$transcript), "$ack1")
+
+    # A send that failed leaves nothing to remember or replay.
+    reg2 <- corteza:::matrix_new_session_registry()
+    none <- corteza:::matrix_reset_session(reg2, "!c:ex", cfg, NULL, "ack")
+    expect_equal(length(none$transcript), 0L)
+})
+
+# Every pass discards entries already represented in persisted state.
+# Leaving them queued let one outlive its id in the bounded tail and be
+# archived a second time, which is the cap failure returning by another
+# route.
+if (requireNamespace("pensar", quietly = TRUE)) {
+    local({
+        v <- tempfile("vault-")
+        pensar::init_vault(v)
+        op <- options(pensar.vault = v)
+        sd <- tempfile("state-")
+        prev_sd <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+        Sys.setenv(CORTEZA_STATE_DIR = sd)
+        on.exit({
+            options(op)
+            if (is.na(prev_sd)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = prev_sd)
+            }
+            unlink(c(v, sd), recursive = TRUE)
+        }, add = TRUE)
+
+        mk <- function(ids) {
+            s <- new.env(parent = emptyenv())
+            for (i in ids) {
+                corteza:::matrix_transcript_add(s, i, "user", paste("turn", i))
+            }
+            s
+        }
+        n_files <- function() {
+            length(list.files(file.path(v, "raw"), recursive = TRUE))
+        }
+
+        corteza:::matrix_archive_session(mk("$r1"), "!q:ex")
+        expect_equal(n_files(), 1L)
+
+        # Restart replays a known event: nothing archived, and nothing
+        # left queued to age out later.
+        replay <- mk("$r1")
+        corteza:::matrix_archive_session(replay, "!q:ex")
+        expect_equal(n_files(), 1L)
+        expect_equal(length(replay$transcript), 0L)
+
+        # Mixed pass: one known, one new. Both leave the queue.
+        mixed <- mk(c("$r1", "$r2"))
+        corteza:::matrix_archive_session(mixed, "!q:ex")
+        expect_equal(n_files(), 2L)
+        expect_equal(length(mixed$transcript), 0L)
+
+        # Push the known ids out of the bounded tail; the old entry must
+        # not come back as fresh.
+        s <- mk(sprintf("$n%04d", 1:512))
+        corteza:::matrix_archive_session(s, "!q:ex")
+        expect_equal(n_files(), 3L)
+        after <- mk("$r1")
+        corteza:::matrix_archive_session(after, "!q:ex")
+        # $r1 aged out of the tail, so it does archive again -- but the
+        # queue is not what caused it, and it is not archived twice.
+        n <- n_files()
+        corteza:::matrix_archive_session(mk("$r1"), "!q:ex")
+        expect_equal(n_files(), n)
+
+        # A failed ingest keeps only what still needs archiving.
+        options(pensar.vault = file.path(tempfile("gone-"), "nope"))
+        # $r1 was just re-archived, so it is in the tail; $fresh1 is not.
+        retry <- mk(c("$r1", "$fresh1"))
+        suppressMessages(corteza:::matrix_archive_session(retry, "!q:ex"))
+        expect_equal(corteza:::matrix_transcript_ids(retry$transcript),
+                     "$fresh1")
+        options(pensar.vault = v)
     })
 }

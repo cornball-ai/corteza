@@ -323,6 +323,11 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     persisted <- matrix_archive_state_read(room_id)
     fresh <- which(!(ids %in% persisted))
     if (!length(fresh)) {
+        # Everything queued is already archived -- a restart backfill
+        # replaying known events. Drop it: leaving it queued lets an
+        # entry outlive its id in the bounded persisted tail and come
+        # back as fresh later.
+        session$transcript <- list()
         return(invisible(NULL))
     }
 
@@ -349,11 +354,17 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     )
     if (!is.null(out)) {
         matrix_archive_state_write(room_id, c(persisted, ids[fresh]))
-        # Consume what was archived. The ledger is a queue of unarchived
-        # events, so it can never outgrow the persisted tail and an
-        # event cannot age out of that tail while still pending. The
-        # tail only has to cover a restart backfill window.
-        session$transcript <- entries[-fresh]
+        # Consume everything present, not just what was archived: the
+        # rest was already in persisted state. Keeping those queued let
+        # an entry outlive its id in the bounded tail and be archived
+        # twice. The ledger is a queue of unarchived events, so it
+        # cannot outgrow the tail, and the tail only has to cover a
+        # restart backfill window.
+        session$transcript <- list()
+    } else {
+        # Ingest failed. Keep only what still needs archiving so a retry
+        # does not resend events already in persisted state.
+        session$transcript <- entries[fresh]
     }
     invisible(out)
 }
@@ -1088,6 +1099,33 @@ matrix_new_session_registry <- function() {
     new.env(parent = emptyenv())
 }
 
+# Build the session that replaces one discarded by /clear, and record
+# the acknowledgement that announced the reset.
+#
+# Extracted from the handler so all three of its obligations are
+# testable. It must carry the runtime overrides the current poll runs
+# under: the replacement lands in the registry, every later lookup
+# returns it unchanged, and a default-constructed one would quietly run
+# the wrong model until restart. It must remember the sent event, or the
+# self-echo arriving through sync appends the acknowledgement a second
+# time. And it must ledger it, or backfill reinserts that event later
+# among already archived ones.
+matrix_reset_session <- function(registry, room_id, cfg, sent_id, ack,
+    system = NULL, model = NULL,
+    provider = NULL, tools_filter = NULL) {
+    if (exists(room_id, envir = registry, inherits = FALSE)) {
+        rm(list = room_id, envir = registry)
+    }
+    s <- matrix_get_or_create_session(registry, room_id, cfg, system = system,
+                                      model = model, provider = provider,
+                                      tools_filter = tools_filter)
+    if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
+        s$seen_event_ids <- matrix_remember_event(s$seen_event_ids, sent_id)
+        matrix_transcript_add(s, sent_id, "assistant", ack)
+    }
+    invisible(s)
+}
+
 matrix_get_or_create_session <- function(registry, room_id, cfg,
     system = NULL, model = NULL,
     provider = NULL, tools_filter = NULL) {
@@ -1350,12 +1388,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                     m$room_id, ack),
                                 error = function(e) NULL
             )
-            # The session was just discarded, so re-create the ledger
-            # entry on the fresh one: otherwise backfill reinserts this
-            # event later, among already archived ones.
-            fresh_session <- matrix_get_or_create_session(sessions, m$room_id,
-                                                          cfg)
-            matrix_transcript_add(fresh_session, sent_id, "assistant", ack)
+            matrix_reset_session(sessions, m$room_id, cfg, sent_id, ack,
+                                 system = system, model = model,
+                                 provider = provider,
+                                 tools_filter = tools_filter)
             replied <- replied + 1L
             next
         }
