@@ -146,11 +146,11 @@ matrix_send_maybe_encrypted <- function(crypto, cfg, room_id, text,
         return(res$event_id)
     }
     # Plaintext rooms ride the transport contract; encrypted rooms stay
-    # on the mx.crypto path above until chat.api models E2EE
-    chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
-                        markup = if (isTRUE(markdown)) {
-                            "markdown"
-                        } else {
-                            "plain"
-                        })
+    # on the mx.crypto path above until chat.api models E2EE.
+    # matrix_event_id() keeps both branches reporting a missing event id
+    # the same way, as NULL -- the encrypted branch above returns
+    # res$event_id straight through, and matrix_poll()'s bookkeeping
+    # tests what comes back with is.null().
+    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+                                        markup = matrix_markup(markdown)))
 }

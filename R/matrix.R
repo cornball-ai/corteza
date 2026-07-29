@@ -184,57 +184,74 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                         markdown = FALSE) {
     matrix_require_mx()
     cfg <- matrix_load_config()
-    chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
-                        markup = if (isTRUE(markdown)) {
-                            "markdown"
-                        } else {
-                            "plain"
-                        },
-                        kind = switch(msgtype, m.notice = "notice",
-                                      m.emote = "emote", "message"))
+    kind <- matrix_send_kind(msgtype)
+    if (is.na(kind)) {
+        # The contract's kind vocabulary covers m.text, m.notice and
+        # m.emote and nothing else, so an m.image routed through it
+        # arrives on the homeserver as m.text. msgtype is a documented
+        # argument of an exported function, so the ones the contract
+        # cannot carry keep going out the way they always have.
+        return(mx.client::mx_send_text(cfg, text, room = room_id,
+                                       msgtype = msgtype, markdown = markdown))
+    }
+    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+                                        markup = matrix_markup(markdown),
+                                        kind = kind))
+}
+
+# Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
+# contract does not model. Total by construction: a length-0, NA, or
+# non-character msgtype answers NA rather than erroring, which is what
+# the direct mx.client call would have tolerated.
+matrix_send_kind <- function(msgtype) {
+    if (!is.character(msgtype) || length(msgtype) != 1L) {
+        return(NA_character_)
+    }
+    unname(c(m.text = "message", m.notice = "notice", m.emote = "emote")[msgtype])
+}
+
+matrix_markup <- function(markdown) {
+    if (isTRUE(markdown)) {
+        "markdown"
+    } else {
+        "plain"
+    }
+}
+
+# chat_send() reports "no event id" as character(0): it as.character()s
+# whatever the send returned, and mx.client returns NULL when a 200 from
+# the homeserver carries no event_id. Every caller here tests the result
+# with is.null(), which character(0) passes -- and then
+# matrix_remember_event() errors on it mid-batch. Hand back the NULL.
+matrix_event_id <- function(id) {
+    if (!length(id)) {
+        return(NULL)
+    }
+    id
 }
 
 # The transport-contract view of corteza's Matrix account.
 #
-# save_cursor = FALSE keeps chat.api out of corteza's config file:
-# nothing under the adapter writes it, and matrix_persist_cursor()
-# below is the one place the sync token lands on disk. matrix_client()
-# stamps corteza's own path and app onto the config, so the relogin
-# that chat_poll() runs writes a refreshed token to the right file.
+# save_cursor = TRUE is the contract's default and reproduces the
+# pre-contract call exactly: mx.client writes the advanced sync token
+# the moment /sync returns, before anything parses the response.
+# Persisting it afterwards instead, from chat_poll()'s `cursor`, looks
+# equivalent and is not. matrix_run() is a bare repeat loop with no
+# tryCatch -- it is documented to crash so systemd can restart it, and
+# that recovery only works because the restart resumes past the events
+# that killed it. Move the write after the parse and one malformed
+# event becomes a poison pill: crash, restart, re-sync the same batch,
+# crash again, forever.
+#
+# app is left NULL so mx_sync_update falls through to the wrapped
+# config's own attributes, which matrix_client() stamps with corteza's
+# path and app. Naming an app here would file corteza's cursor -- and on
+# relogin its credentials -- under chat.api's namespace.
 #
 # `...` reaches chat_matrix(), which exists for its testing seams
 # (.sync, .extract, .send, .media, .typing). Production passes nothing.
 matrix_chat_client <- function(cfg, ...) {
-    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = FALSE, ...)
-}
-
-# Persist the sync cursor chat_poll() handed back.
-#
-# The client is built save_cursor = FALSE, so this is the only write.
-# Drop it and the token never leaves memory: every restart syncs from
-# the last saved cursor and replays that stretch of every room as fresh
-# mail. It has to run before matrix_poll()'s first_run early return for
-# the same reason -- the baseline sync's cursor is exactly the one worth
-# keeping.
-#
-# The credential check is not defensive padding. matrix_save_config()
-# writes whatever list it is handed, and `cfg$sync_token <- cursor` on a
-# NULL cfg quietly produces a one-field list, so a caller that lost the
-# config would replace a live bot's matrix.json with {"sync_token": ...}
-# and take its credentials with it. Refuse instead.
-matrix_persist_cursor <- function(cfg, cursor) {
-    if (is.null(cursor)) {
-        return(invisible(cfg))
-    }
-    have <- vapply(c("server", "token", "user_id"),
-                   function(f) length(cfg[[f]]) > 0L, logical(1))
-    if (!all(have)) {
-        stop("refusing to save a Matrix config missing: ",
-             paste(names(have)[!have], collapse = ", "), call. = FALSE)
-    }
-    cfg$sync_token <- cursor
-    matrix_save_config(cfg)
-    invisible(cfg)
+    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = TRUE, ...)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
@@ -1268,17 +1285,18 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     }
     first_run <- res$first_run
     # The post-sync config: a relogin can have swapped the token
-    # mid-poll, and every mx.api call below runs off this cfg.
+    # mid-poll, and every mx.api call below runs off this cfg. The
+    # advanced cursor is already on disk -- mx.client wrote it inside
+    # the sync call, which is what makes a crash-restart resume past
+    # whatever it crashed on. See matrix_chat_client().
     cfg <- matrix_plain_cfg(res$client)
-    matrix_persist_cursor(cfg, res$cursor)
     mx_sess <- matrix_mx_session(cfg)
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
     # in this sync won't yet appear in rooms$join; the next sync will
     # pick up their timeline.
-    invites <- matrix_extract_invites(sync, cfg$user_id,
-                                      matrix_operators(cfg))
+    invites <- matrix_extract_invites(sync, cfg$user_id, matrix_operators(cfg))
     if (length(invites)) {
         matrix_accept_invites(cfg, invites)
     }
@@ -1504,7 +1522,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 # events that have been processed. Lets matrix_poll skip duplicates when
 # sync echoes back something the backfill already replayed.
 matrix_remember_event <- function(seen, event_id, cap = 256L) {
-    if (is.null(event_id) || !nzchar(event_id)) {
+    # !length() before nzchar(): nzchar(character(0)) is logical(0), and
+    # `FALSE || logical(0)` is NA, which stops the poll mid-batch.
+    if (is.null(event_id) || !length(event_id) || !nzchar(event_id)) {
         return(seen)
     }
     seen <- c(seen, event_id)

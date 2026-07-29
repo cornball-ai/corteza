@@ -6,8 +6,9 @@ library(tinytest)
 #   1. token-expiry relogin      -- the sync still runs inside
 #                                   mx.client::mx_with_relogin()
 #   2. sync cursor persistence   -- the client is built save_cursor =
-#                                   FALSE, so corteza writes the cursor
-#                                   returned by chat_poll() itself
+#                                   TRUE, so mx.client still writes the
+#                                   advanced cursor inside the sync
+#                                   call, before anything parses it
 #   3. initial-sync suppression  -- first_run survives the trip out of
 #                                   the adapter and still short-circuits
 #                                   matrix_poll()
@@ -128,6 +129,18 @@ read_cursor <- function() {
     corteza:::matrix_load_config()$sync_token
 }
 
+# mx.client::mx_sync_update() writes the advanced cursor itself, inside
+# the sync call, when save = TRUE. Where that write happens relative to
+# the parse is the whole of invariant 2, so every .sync stand-in below
+# puts it in the same place rather than leaving the cursor to a later
+# step that a throw could skip.
+sync_saved <- function(client, save) {
+    if (isTRUE(save)) {
+        corteza:::matrix_save_config(corteza:::matrix_plain_cfg(client))
+    }
+    invisible(client)
+}
+
 
 # ---------------------------------------------------------------
 # Transport client shape: where the invariants are declared
@@ -135,15 +148,16 @@ read_cursor <- function() {
 
 local({
     iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
     cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config())
 
     expect_inherits(cli, "chat_matrix")
     expect_inherits(cli, "chat_client")
 
-    # Invariant 2, the declaration half: chat.api must not write
-    # corteza's config file. matrix_persist_cursor() is the only writer,
-    # and the poll test below proves it runs.
-    expect_false(cli$save_cursor)
+    # Invariant 2, the declaration half: the cursor is written inside
+    # the sync call, as it was before the rewire. Flip this to FALSE and
+    # the write moves after chat_poll()'s parse, where a throw skips it.
+    expect_true(cli$save_cursor)
 
     # Invariant 1, the declaration half: chat_poll() only reaches
     # mx_with_relogin() when this is TRUE.
@@ -162,22 +176,24 @@ local({
     caps <- chat.api::chat_capabilities(cli)
     expect_false(caps$e2ee)
     expect_true(caps$typing)
-
-    restore_config(iso)
 })
 
 
 # ---------------------------------------------------------------
-# Invariant 2: corteza persists the cursor chat_poll() returned
+# Invariant 2: the advanced cursor reaches disk, inside the sync
 # ---------------------------------------------------------------
 
 local({
     iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
     seen_since <- NULL
+    seen_save <- NULL
     seams <- list(
-        .sync = function(client, timeout = 0L, ...) {
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
             seen_since <<- client$sync_token
+            seen_save <<- save
             client$sync_token <- "s2"
+            sync_saved(client, save)
             list(sync = list(next_batch = "s2", rooms = list(join = list())),
                  client = client, first_run = FALSE)
         },
@@ -189,48 +205,57 @@ local({
 
     # The sync resumed from the stored cursor...
     expect_equal(seen_since, "s1")
-    # ...and the new one reached disk. Delete matrix_persist_cursor() and
-    # this stays "s1": nothing under chat.api writes with save_cursor =
-    # FALSE, so the next process would replay from the stale token.
+    # ...the adapter asked mx.client to persist the new one...
+    expect_true(seen_save)
+    # ...and it reached disk.
     expect_equal(read_cursor(), "s2")
-
-    restore_config(iso)
 })
 
 
-# A cursor is never worth a credential. matrix_save_config() writes
-# whatever list it gets, and `cfg$sync_token <- cursor` on a NULL cfg
-# builds a one-field list, so an adapter that stopped returning its
-# post-sync client would otherwise replace a live bot's matrix.json with
-# {"sync_token": ...}. Before the rewire this could not arise --
-# mx_sync_update() always hands back a client.
+# The cursor is durable across a crash, which is the property that makes
+# matrix_run()'s "crash and let systemd restart" recovery work at all.
+# chat_poll() parses the sync into chat_message records before it
+# returns, so anything that throws in there -- a timeline event with no
+# event_id is enough -- happens after the sync and before corteza sees a
+# result. Persist from the returned cursor instead of inside the sync
+# and this batch is re-fetched on every restart, forever.
 local({
-    iso <- isolate_config(base_cfg())
-    before <- readLines(corteza:::matrix_config_path())
+    iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            client$sync_token <- "s2"
+            sync_saved(client, save)
+            list(sync = list(next_batch = "s2", rooms = list(join = list())),
+                 client = client, first_run = FALSE)
+        },
+        # A record the adapter cannot finish building: no ts and no
+        # event_id, so its timestamp lookup subscripts by character(0).
+        # mx_extract_text_events() copies event_id straight off the
+        # event, so a timeline entry without one produces exactly this.
+        .extract = function(sync_resp, self_id, ...) {
+            list(list(room_id = "!room:example", sender = "@ann:example",
+                      body = "hello", msgtype = "m.text", event_id = NULL,
+                      ts = NULL))
+        })
 
-    expect_error(corteza:::matrix_persist_cursor(NULL, "s2"),
-                 "refusing to save")
-    expect_error(corteza:::matrix_persist_cursor(list(sync_token = "s1"), "s2"),
-                 "refusing to save")
-    # The config on disk is untouched.
-    expect_equal(readLines(corteza:::matrix_config_path()), before)
-
-    # No cursor is not an error, just nothing to do.
-    expect_silent(corteza:::matrix_persist_cursor(base_cfg(), NULL))
-    expect_equal(readLines(corteza:::matrix_config_path()), before)
-
-    restore_config(iso)
+    expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)))
+    # The poll died, and the restart will resume past the event that
+    # killed it rather than fetching it again.
+    expect_equal(read_cursor(), "s2")
 })
 
 # matrix_poll() names the short dependency instead of failing obscurely
 # three lines later.
 local({
     iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
     seams <- list(
-        .sync = function(client, timeout = 0L, ...) {
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
             client$sync_token <- "s2"
             # An adapter that reports neither client nor first_run is
-            # simulated by a sync whose result carries neither.
+            # simulated by a sync whose result carries neither. Such an
+            # adapter also predates `save`, so nothing is written.
             list(sync = list(next_batch = "s2", rooms = list(join = list())),
                  client = NULL, first_run = NULL)
         },
@@ -238,9 +263,6 @@ local({
 
     expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
                  "no client/first_run")
-    expect_equal(read_cursor(), "s1")
-
-    restore_config(iso)
 })
 
 
@@ -250,6 +272,7 @@ local({
 
 local({
     iso <- isolate_config(base_cfg(sync_token = NULL))
+    on.exit(restore_config(iso), add = TRUE)
     extracted <- 0L
     orig_extract <- corteza:::matrix_extract_messages
     assignInNamespace("matrix_extract_messages", function(sync_resp, self_id) {
@@ -260,9 +283,10 @@ local({
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
-        .sync = function(client, timeout = 0L, ...) {
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
             first <- is.null(client$sync_token)
             client$sync_token <- "s2"
+            sync_saved(client, save)
             list(sync = sync_with_message(), client = client,
                  first_run = first)
         },
@@ -279,18 +303,17 @@ local({
     expect_true(any(grepl("baseline established", msg)))
 
     # Ordering guard: the baseline cursor still has to be written.
-    # Persisting after the first_run early return leaves the token NULL
-    # forever, so every restart re-establishes a baseline and the bot
-    # never reads a message.
+    # Skip it on a first run and the token stays NULL forever, so every
+    # restart re-establishes a baseline and the bot never reads a
+    # message.
     expect_equal(read_cursor(), "s2")
-
-    restore_config(iso)
 })
 
 # The second poll, now that a cursor exists, is not a first run and does
 # process what it is given.
 local({
     iso <- isolate_config(base_cfg(sync_token = "s2"))
+    on.exit(restore_config(iso), add = TRUE)
     extracted <- 0L
     orig_extract <- corteza:::matrix_extract_messages
     assignInNamespace("matrix_extract_messages", function(sync_resp, self_id) {
@@ -301,8 +324,9 @@ local({
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
-        .sync = function(client, timeout = 0L, ...) {
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
             client$sync_token <- "s3"
+            sync_saved(client, save)
             list(sync = sync_with_message("s3"), client = client,
                  first_run = FALSE)
         },
@@ -312,8 +336,6 @@ local({
     expect_equal(replied, 0L)
     expect_equal(extracted, 1L)
     expect_equal(read_cursor(), "s3")
-
-    restore_config(iso)
 })
 
 
@@ -323,6 +345,7 @@ local({
 
 local({
     iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
 
     # mx_with_relogin() calls mx_client_relogin() inside mx.client's
     # namespace. Stubbing it there keeps the retry offline while leaving
@@ -337,12 +360,13 @@ local({
 
     tokens <- character()
     seams <- list(
-        .sync = function(client, timeout = 0L, ...) {
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
             tokens <<- c(tokens, client$token)
             if (length(tokens) == 1L) {
                 token_rejected()
             }
             client$sync_token <- "s2"
+            sync_saved(client, save)
             list(sync = list(next_batch = "s2", rooms = list(join = list())),
                  client = client, first_run = FALSE)
         },
@@ -368,13 +392,12 @@ local({
     expect_equal(replied, 0L)
     expect_equal(read_cursor(), "s2")
     expect_equal(corteza:::matrix_load_config()$token, "fresh-token")
-
-    restore_config(iso)
 })
 
 # Errors that are not a rejected token still propagate.
 local({
     iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
     seams <- list(
         .sync = function(client, timeout = 0L, ...) {
             stop("homeserver on fire")
@@ -385,8 +408,6 @@ local({
                  "homeserver on fire")
     # A failed sync must not move the cursor.
     expect_equal(read_cursor(), "s1")
-
-    restore_config(iso)
 })
 
 
@@ -399,6 +420,7 @@ local({
 # less than the raw payload loses the room keys.
 local({
     iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
     payload <- sync_with_message()
     captured <- NULL
     orig_decrypt <- corteza:::matrix_crypto_decrypt
@@ -418,8 +440,9 @@ local({
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
-        .sync = function(client, timeout = 0L, ...) {
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
             client$sync_token <- "s2"
+            sync_saved(client, save)
             list(sync = payload, client = client, first_run = FALSE)
         },
         # A non-empty extractor result would still be discarded: corteza
@@ -437,8 +460,6 @@ local({
                                            sessions = list())))
     expect_equal(replied, 0L)
     expect_identical(captured, payload)
-
-    restore_config(iso)
 })
 
 # Encrypted rooms never reach the transport contract. The adapter's
@@ -447,6 +468,7 @@ local({
 # put plaintext on the homeserver.
 local({
     iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
     cfg <- corteza:::matrix_load_config()
 
     enc_calls <- 0L
@@ -493,8 +515,94 @@ local({
         expect_equal(enc_calls, 1L)
         expect_equal(sent, "hi")
     })
+})
 
-    restore_config(iso)
+
+# ---------------------------------------------------------------
+# The exported send contract survives the rewire
+# ---------------------------------------------------------------
+
+# chat.api's `kind` vocabulary is message/notice/emote, which maps onto
+# exactly three msgtypes. matrix_send() is exported with msgtype as a
+# documented argument, so anything outside those three has to keep going
+# out verbatim instead of being laundered through kind and coming back
+# as m.text.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    seen <- list()
+
+    orig_send <- mx.client::mx_send_text
+    assignInNamespace("mx_send_text", function(client, text, room = NULL,
+                                               msgtype = "m.text",
+                                               markdown = FALSE, ...) {
+        seen[[length(seen) + 1L]] <<- list(msgtype = msgtype,
+                                           markdown = markdown)
+        "$direct:example"
+    }, ns = "mx.client")
+    on.exit(assignInNamespace("mx_send_text", orig_send, ns = "mx.client"),
+            add = TRUE)
+
+    seams <- list(.sync = function(...) stop("unused"),
+                  .extract = function(...) stop("unused"))
+    with_seamed_client(seams, {
+        # The three the contract models ride it, and arrive intact.
+        for (mt in c("m.text", "m.notice", "m.emote")) {
+            corteza::matrix_send("x", room_id = "!room:example", msgtype = mt)
+            expect_equal(seen[[length(seen)]]$msgtype, mt)
+        }
+        # The ones it does not model go direct, still intact.
+        for (mt in c("m.image", "m.file", "m.audio")) {
+            corteza::matrix_send("x", room_id = "!room:example", msgtype = mt)
+            expect_equal(seen[[length(seen)]]$msgtype, mt)
+        }
+        # markdown survives both routes.
+        corteza::matrix_send("x", room_id = "!room:example", markdown = TRUE)
+        expect_true(seen[[length(seen)]]$markdown)
+        corteza::matrix_send("x", room_id = "!room:example",
+                             msgtype = "m.image", markdown = TRUE)
+        expect_true(seen[[length(seen)]]$markdown)
+    })
+})
+
+# The event id comes back, and it autoprints. chat_send() returns it
+# invisibly; a user typing matrix_send() at the console saw the id
+# before the rewire and has to keep seeing it.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    seams <- list(.send = function(client, text, room = NULL, ...) {
+                      "$ev:example"
+                  },
+                  .sync = function(...) stop("unused"),
+                  .extract = function(...) stop("unused"))
+    with_seamed_client(seams, {
+        out <- withVisible(corteza::matrix_send("hi", room_id = "!room:example"))
+        expect_equal(out$value, "$ev:example")
+        expect_true(out$visible)
+    })
+})
+
+# A 200 with no event_id in it. mx.client answers NULL, chat_send()
+# as.character()s that into character(0), and every caller here tests
+# the result with is.null() -- which character(0) passes, taking
+# matrix_remember_event() down with it mid-batch. Both send paths hand
+# back a real NULL.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    seams <- list(.send = function(client, text, room = NULL, ...) NULL,
+                  .sync = function(...) stop("unused"),
+                  .extract = function(...) stop("unused"))
+    with_seamed_client(seams, {
+        expect_null(corteza::matrix_send("hi", room_id = "!room:example"))
+        expect_null(corteza:::matrix_send_maybe_encrypted(NULL, cfg,
+                                                          "!room:example", "hi"))
+    })
+    # The guard the poll loop actually uses, and the call it guards.
+    expect_equal(corteza:::matrix_remember_event(character(), character(0)),
+                 character())
 })
 
 
@@ -508,6 +616,7 @@ local({
 # 120ms one) and nobody notices until a bot looks dead mid-turn.
 local({
     iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
     cfg <- corteza:::matrix_load_config()
     seen <- list()
     cli <- corteza:::matrix_chat_client(cfg, .typing = function(session, room_id,
@@ -538,14 +647,15 @@ local({
     })
     expect_silent(ok <- chat.api::chat_typing(boom, "!room:example", TRUE))
     expect_false(ok)
-
-    restore_config(iso)
 })
 
 # matrix_poll() drives typing through the contract, at the 120s cap, and
 # no longer calls mx.api::mx_typing() itself.
 local({
-    src <- paste(deparse(body(corteza::matrix_poll)), collapse = "\n")
+    # width.cutoff at the maximum so deparse does not split an asserted
+    # call across elements and quietly turn a grep into a false pass.
+    src <- paste(deparse(body(corteza::matrix_poll), width.cutoff = 500L),
+                 collapse = "\n")
     expect_true(grepl("chat_typing(chat, m$room_id, TRUE, timeout = 120)", src,
                       fixed = TRUE))
     expect_true(grepl("chat_typing(chat, m$room_id, FALSE)", src, fixed = TRUE))
