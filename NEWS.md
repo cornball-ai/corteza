@@ -1,3 +1,14 @@
+# corteza 0.7.0.10
+
+- **The Matrix message plane rides the chat.api transport contract.**
+  Sends, receives, and the typing indicator go through `chat_send()`,
+  `chat_poll()`, and `chat_typing()` instead of calling mx.client and
+  mx.api directly. Encrypted rooms stay on the mx.crypto path, and
+  corteza still reads invites, reactions, and encrypted events off the
+  raw sync response itself. `chat.api` is a Suggests, gated by the same
+  check as the rest of the Matrix stack, so it is only needed on hosts
+  that enable the channel.
+
 # corteza 0.7.0.9
 
 - **Archives are built from a Matrix-visible event ledger, not from
