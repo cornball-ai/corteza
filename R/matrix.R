@@ -6,9 +6,13 @@
 #
 # mx.api is in Suggests since most users won't enable a Matrix channel.
 # The matrix_* functions hard-stop with an install hint if it's missing.
-
+#
+# chat.api belongs in the same list, not in Imports. Every chat.api call
+# in this package is on a Matrix path already behind this guard, so a
+# user who never enables the channel should not have to install it --
+# and an Imports entry would make it mandatory for everyone.
 matrix_require_mx <- function() {
-    for (pkg in c("mx.api", "mx.client")) {
+    for (pkg in c("mx.api", "mx.client", "chat.api")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
             stop("Matrix integration requires the '", pkg, "' package. ",
                  "Install it from CRAN, or from the cornball-ai GitHub mirror, ",

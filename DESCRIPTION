@@ -28,7 +28,6 @@ Depends:
     R (>= 4.4.0)
 Imports:
     callr,
-    chat.api,
     codetools,
     curl,
     digest,
@@ -38,6 +37,7 @@ Imports:
     processx,
     saber
 Suggests:
+    chat.api,
     clipr,
     fortunes,
     mx.api,

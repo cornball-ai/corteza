@@ -26,9 +26,18 @@ if (!requireNamespace("chat.api", quietly = TRUE)) {
     exit_file("chat.api not available")
 }
 # The adapter grew first_run, the post-sync client, and the seams
-# together. An older chat.api would make every test below fail for the
-# same uninformative reason, so say so once instead.
-if (!all(c(".sync", "relogin") %in% names(formals(chat.api::chat_matrix)))) {
+# together, and chat.api has not bumped its version across that change,
+# so neither DESCRIPTION nor matrix_require_mx() can catch a stale one.
+# An installed-but-too-old chat.api is a broken install, not an
+# unsupported environment: every matrix_poll() on that host dies in the
+# guard at R/matrix.R. Report it as the failure it is, then stop --
+# continuing would bury the one useful result under a cascade of
+# identical ones.
+adapter_ok <- all(c(".sync", "relogin") %in%
+    names(formals(chat.api::chat_matrix)))
+expect_true(adapter_ok,
+            info = "installed chat.api predates the seamed Matrix adapter")
+if (!adapter_ok) {
     exit_file("chat.api predates the seamed Matrix adapter")
 }
 
