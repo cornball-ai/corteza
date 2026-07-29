@@ -11,6 +11,10 @@
 # in this package is on a Matrix path already behind this guard, so a
 # user who never enables the channel should not have to install it --
 # and an Imports entry would make it mandatory for everyone.
+# Minimum chat.api this corteza can drive. Below it, chat_poll() returns
+# no first_run and no post-sync client.
+.CHAT_API_MIN <- "0.0.1.1"
+
 matrix_require_mx <- function() {
     for (pkg in c("mx.api", "mx.client", "chat.api")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -18,6 +22,22 @@ matrix_require_mx <- function() {
                  "Install it from CRAN, or from the cornball-ai GitHub mirror, ",
                  "before calling Matrix functions.", call. = FALSE)
         }
+    }
+    # requireNamespace() checks presence, not version, and a Suggests
+    # floor is a resolution hint rather than a runtime guarantee: a
+    # chat.api already installed on the host still loads however old it
+    # is. Without this the poll gets all the way through /sync, consumes
+    # the cursor, and only then dies on the missing first_run -- the
+    # worst place to discover a stale build, because the work is already
+    # spent and the cursor may not be recoverable.
+    have <- utils::packageVersion("chat.api")
+    if (have < .CHAT_API_MIN) {
+        stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
+             ", but ", have, " is installed. ",
+             "chat_poll() below that version returns no first_run, so a ",
+             "restarted bot would reprocess its whole backfill as new ",
+             "messages. Reinstall chat.api from the cornball-ai mirror.",
+             call. = FALSE)
     }
 }
 

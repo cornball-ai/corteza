@@ -26,12 +26,15 @@ if (!requireNamespace("mx.client", quietly = TRUE)) {
 if (!requireNamespace("chat.api", quietly = TRUE)) {
     exit_file("chat.api not available")
 }
-# The adapter grew first_run, the post-sync client, and the seams
-# together, and chat.api has not bumped its version across that change,
-# so neither DESCRIPTION nor matrix_require_mx() can catch a stale one.
-# An installed-but-too-old chat.api is a broken install, not an
-# unsupported environment: every matrix_poll() on that host dies in the
-# guard at R/matrix.R. Report it as the failure it is, then stop --
+# chat.api 0.0.1.1 bumped its version across the change that added
+# first_run, the post-sync client, and the seams, and
+# matrix_require_mx() now refuses anything older. This check stays
+# because it is more specific than a version comparison: a build that
+# reports a new version without carrying the change -- which is exactly
+# what happened to mx.client on this host -- passes the version gate and
+# fails here. An installed-but-too-old chat.api is a broken install, not
+# an unsupported environment: every matrix_poll() on that host dies in
+# the guard at R/matrix.R. Report it as the failure it is, then stop --
 # continuing would bury the one useful result under a cascade of
 # identical ones.
 adapter_ok <- all(c(".sync", "relogin") %in%
@@ -667,3 +670,20 @@ local({
                       fixed = TRUE))
     expect_false(grepl("mx_sync_update", src, fixed = TRUE))
 })
+
+# matrix_require_mx() is version-aware, not just presence-aware.
+# requireNamespace() returns TRUE for any installed build, and a
+# Suggests floor is a resolution hint rather than a runtime guarantee,
+# so a host carrying an older chat.api would otherwise sync -- spending
+# the cursor -- and only then die on the missing first_run.
+expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.1")
+# The comparison is a version comparison, not a string one: "0.0.1.10"
+# sorts before "0.0.1.9" as text and after it as a version.
+expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
+expect_false(package_version("0.0.1") >= package_version(corteza:::.CHAT_API_MIN))
+# The installed build satisfies it, so the guard passes rather than
+# being vacuously untested.
+expect_true(utils::packageVersion("chat.api") >=
+            package_version(corteza:::.CHAT_API_MIN))
+expect_silent(corteza:::matrix_require_mx())

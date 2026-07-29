@@ -35,7 +35,8 @@ Imports:
     llm.api (>= 0.1.8.1),
     printify,
     processx,
-    saber
+    saber,
+    utils
 Suggests:
     chat.api (>= 0.0.1.1),
     clipr,
