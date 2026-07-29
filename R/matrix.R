@@ -273,9 +273,17 @@ matrix_extract_messages <- function(sync_resp, self_id) {
 # successfully sent, and nowhere else. Backfill produces the same shape
 # from the server, which is what makes restart dedup exact.
 matrix_transcript_add <- function(session, event_id, role, content) {
-    if (is.null(event_id) || !length(event_id) || !nzchar(event_id)) {
+    # A send can create several events (attachments, then the text). Only
+    # one of them is the conversational turn, and it is the last: the
+    # attachments are remembered for echo suppression but are not
+    # transcript entries. Filtering rather than testing also keeps a
+    # vector out of `||`, which errors in R >= 4.3.
+    ids <- as.character(event_id %||% character())
+    ids <- ids[!is.na(ids) & nzchar(ids)]
+    if (!length(ids)) {
         return(invisible(NULL))
     }
+    event_id <- ids[[length(ids)]]
     text <- if (is.character(content)) {
         paste(content, collapse = "\n")
     } else {
@@ -1522,12 +1530,21 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 # events that have been processed. Lets matrix_poll skip duplicates when
 # sync echoes back something the backfill already replayed.
 matrix_remember_event <- function(seen, event_id, cap = 256L) {
-    # !length() before nzchar(): nzchar(character(0)) is logical(0), and
-    # `FALSE || logical(0)` is NA, which stops the poll mid-batch.
-    if (is.null(event_id) || !length(event_id) || !nzchar(event_id)) {
+    # chat_send() returns one id per event it created, so this can be a
+    # vector: a send with attachments yields the media ids and the text
+    # id. Every one of them echoes back through sync, so every one has to
+    # be remembered or the attachments read as somebody else's messages.
+    #
+    # Filter rather than test: `!nzchar()` on a vector is a vector, and
+    # `||` on that is an error in R >= 4.3. nzchar(character(0)) is
+    # logical(0), which the old guard turned into NA and stopped the poll
+    # mid-batch.
+    ids <- as.character(event_id %||% character())
+    ids <- ids[!is.na(ids) & nzchar(ids)]
+    if (!length(ids)) {
         return(seen)
     }
-    seen <- c(seen, event_id)
+    seen <- c(seen, ids)
     if (length(seen) > cap) {
         seen <- tail(seen, cap)
     }

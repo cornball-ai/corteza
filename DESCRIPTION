@@ -37,7 +37,7 @@ Imports:
     processx,
     saber
 Suggests:
-    chat.api,
+    chat.api (>= 0.0.1.1),
     clipr,
     fortunes,
     mx.api,

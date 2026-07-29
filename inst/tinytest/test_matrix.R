@@ -1218,3 +1218,31 @@ if (requireNamespace("pensar", quietly = TRUE)) {
         options(pensar.vault = v)
     })
 }
+
+# A send that created several events hands back several ids. Both
+# consumers must cope: `!nzchar()` on a vector is a vector, and `||` on
+# that errors in R >= 4.3, so the old guards would have stopped the poll.
+local({
+    # Every id is remembered, because every one of them echoes back.
+    seen <- corteza:::matrix_remember_event(character(),
+                                            c("$media1", "$media2", "$text1"))
+    expect_equal(length(seen), 3L)
+    expect_true(all(c("$media1", "$media2", "$text1") %in% seen))
+    # Blanks and NAs are filtered rather than tested.
+    expect_equal(length(corteza:::matrix_remember_event(character(),
+                                                        c("$a", "", NA))), 1L)
+    expect_equal(length(corteza:::matrix_remember_event(character(),
+                                                        character())), 0L)
+    expect_equal(length(corteza:::matrix_remember_event(character(), NULL)), 0L)
+
+    # Only the conversational event becomes a transcript turn: the
+    # attachments are remembered for echo suppression, not archived.
+    s <- new.env(parent = emptyenv())
+    corteza:::matrix_transcript_add(s, c("$media1", "$media2", "$text1"),
+                                    "assistant", "see these")
+    expect_equal(length(s$transcript), 1L)
+    expect_identical(s$transcript[[1L]]$event_id, "$text1")
+    # A vector of blanks is nothing to ledger, not an error.
+    corteza:::matrix_transcript_add(s, c("", NA), "assistant", "x")
+    expect_equal(length(s$transcript), 1L)
+})
