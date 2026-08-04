@@ -539,8 +539,15 @@ local({
     assignInNamespace("mx_send_text", function(client, text, room = NULL,
                                                msgtype = "m.text",
                                                markdown = FALSE, ...) {
+        formatted <- if (isTRUE(markdown)) {
+            mx.client::mx_markdown_to_html(text)
+        } else {
+            NULL
+        }
         seen[[length(seen) + 1L]] <<- list(msgtype = msgtype,
-                                           markdown = markdown)
+                                           markdown = markdown,
+                                           text = text,
+                                           formatted = formatted)
         "$direct:example"
     }, ns = "mx.client")
     on.exit(assignInNamespace("mx_send_text", orig_send, ns = "mx.client"),
@@ -559,12 +566,28 @@ local({
             corteza::matrix_send("x", room_id = "!room:example", msgtype = mt)
             expect_equal(seen[[length(seen)]]$msgtype, mt)
         }
-        # markdown survives both routes.
-        corteza::matrix_send("x", room_id = "!room:example", markdown = TRUE)
-        expect_true(seen[[length(seen)]]$markdown)
-        corteza::matrix_send("x", room_id = "!room:example",
+        # markdown survives both routes, including pipe tables. This is the
+        # executable guard for the Cornelius table-rendering regression: text
+        # m.room.message goes corteza -> chat.api -> mx.client, while msgtypes
+        # outside chat.api's vocabulary still go corteza -> mx.client direct.
+        table_md <- paste(c(
+            "| package | days per submission | latest |",
+            "|---|---:|---:|",
+            "| `llm.api` | 20.8 | 2026-06-26 |",
+            "| `tinyrox` | 52.5 | 2026-06-24 |"
+        ), collapse = "\n")
+        corteza::matrix_send(table_md, room_id = "!room:example",
+                             markdown = TRUE)
+        chat_route <- seen[[length(seen)]]
+        expect_true(chat_route$markdown)
+        expect_true(grepl("<table>", chat_route$formatted, fixed = TRUE))
+        expect_true(grepl("<td><code>llm.api</code></td>",
+                          chat_route$formatted, fixed = TRUE))
+        corteza::matrix_send(table_md, room_id = "!room:example",
                              msgtype = "m.image", markdown = TRUE)
-        expect_true(seen[[length(seen)]]$markdown)
+        direct_route <- seen[[length(seen)]]
+        expect_true(direct_route$markdown)
+        expect_true(grepl("<table>", direct_route$formatted, fixed = TRUE))
     })
 })
 

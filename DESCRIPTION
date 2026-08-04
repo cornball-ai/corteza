@@ -42,7 +42,7 @@ Suggests:
     clipr,
     fortunes,
     mx.api,
-    mx.client,
+    mx.client (>= 0.1.1.2),
     mx.crypto,
     rstudioapi,
     simplermarkdown,
