@@ -3,8 +3,13 @@
 \alias{matrix_run}
 \title{Run the Matrix adapter as a long-poll loop}
 \usage{
-matrix_run(timeout = 30000L, system = NULL, model = NULL, provider = NULL,
-           tools_filter = NULL)
+matrix_run(
+  timeout = 30000L,
+  system = NULL,
+  model = NULL,
+  provider = NULL,
+  tools_filter = NULL
+)
 }
 \arguments{
 \item{timeout}{Integer. Long-poll timeout in milliseconds.}

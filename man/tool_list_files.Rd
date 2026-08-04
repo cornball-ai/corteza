@@ -3,8 +3,13 @@
 \alias{tool_list_files}
 \title{List files in a directory.}
 \usage{
-tool_list_files(path = ".", pattern = NULL, recursive = FALSE,
-                all_files = FALSE, limit = 200L)
+tool_list_files(
+  path = ".",
+  pattern = NULL,
+  recursive = FALSE,
+  all_files = FALSE,
+  limit = 200L
+)
 }
 \arguments{
 \item{path}{(character) Directory to inspect.}

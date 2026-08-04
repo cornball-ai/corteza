@@ -3,9 +3,20 @@
 \alias{matrix_configure}
 \title{Configure the Matrix channel for this host}
 \usage{
-matrix_configure(server, user, password, room, model = NULL,
-                 provider = "anthropic", tools_filter = NULL,
-                 auto_approve_asks = FALSE, bots = NULL, models = NULL)
+matrix_configure(
+  server,
+  user,
+  password,
+  room,
+  model = NULL,
+  provider = "anthropic",
+  tools_filter = NULL,
+  auto_approve_asks = FALSE,
+  bots = NULL,
+  models = NULL,
+  model_badge = c("never", "non_default", "always"),
+  display_name = NULL
+)
 }
 \arguments{
 \item{server}{Character. Homeserver base URL.}
@@ -45,6 +56,21 @@ one human is answered without a mention).}
 uses the default provider). The menu always lists the configured
 default and the live local Ollama inventory; this key adds hosted
 models that can't be discovered automatically.}
+
+\item{model_badge}{Character. When to show which model is answering:
+\code{"never"} (default, current behavior), \code{"non_default"}
+(only while a \code{/model} switch has moved a room session off
+the configured default -- silence means the default, a badge means
+you are spending something else), or \code{"always"}. When active,
+replies get a lightning-bolt first line naming the model and
+provider, and the bot renames itself to \code{"<name> <bolt>
+<model>"} so every message wears the model in its sender line.
+The display name is account-global: with sessions in several
+rooms, the most recent switch wins (the per-reply badge line is
+always room-accurate).}
+
+\item{display_name}{Character or NULL. Base display name the badge
+rename builds on. Defaults to the localpart of the bot's user id.}
 }
 \value{
 The saved configuration, invisibly.

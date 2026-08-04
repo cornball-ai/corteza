@@ -129,6 +129,19 @@ matrix_relogin <- function(cfg) {
 #'   this bot, and they are not counted as humans when deciding whether
 #'   a room gets ungated replies (a room whose only non-bot member is
 #'   one human is answered without a mention).
+#' @param model_badge Character. When to show which model is answering:
+#'   \code{"never"} (default, current behavior), \code{"non_default"}
+#'   (only while a \code{/model} switch has moved a room session off
+#'   the configured default -- silence means the default, a badge means
+#'   you are spending something else), or \code{"always"}. When active,
+#'   replies get a lightning-bolt first line naming the model and
+#'   provider, and the bot renames itself to \code{"<name> <bolt>
+#'   <model>"} so every message wears the model in its sender line.
+#'   The display name is account-global: with sessions in several
+#'   rooms, the most recent switch wins (the per-reply badge line is
+#'   always room-accurate).
+#' @param display_name Character or NULL. Base display name the badge
+#'   rename builds on. Defaults to the localpart of the bot's user id.
 #' @param models Character vector or NULL. Extra entries for the
 #'   \code{/model} menu, each a \code{"model provider"} pair (e.g.
 #'   \code{"claude-sonnet-4-6 anthropic_claude"}; a bare model name
@@ -152,11 +165,14 @@ matrix_relogin <- function(cfg) {
 matrix_configure <- function(server, user, password, room, model = NULL,
                              provider = "anthropic", tools_filter = NULL,
                              auto_approve_asks = FALSE, bots = NULL,
-                             models = NULL) {
+                             models = NULL,
+                             model_badge = c("never", "non_default", "always"),
+                             display_name = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     matrix_require_mx()
     provider <- match.arg(provider, providers)
+    model_badge <- match.arg(model_badge)
     if (!is.null(bots)) {
         bots <- as.character(bots)
         bad <- bots[!grepl("^@.+:.+", bots)]
@@ -179,7 +195,9 @@ matrix_configure <- function(server, user, password, room, model = NULL,
         extra = list(model = model, provider = provider,
                      tools_filter = tools_filter,
                      auto_approve_asks = isTRUE(auto_approve_asks),
-                     bots = bots, models = models))
+                     bots = bots, models = models,
+                     model_badge = model_badge,
+                     display_name = display_name))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
     invisible(matrix_plain_cfg(cfg))
 }
@@ -698,6 +716,93 @@ matrix_apply_model_command <- function(session, cmd, cfg = NULL,
             .sanitize_inline(session$provider %||% "(unchanged)", max_chars = 40L))
 }
 
+# Badge mode from config: "never" (default), "non_default", "always".
+matrix_badge_mode <- function(cfg) {
+    mode <- cfg$model_badge %||% "never"
+    if (mode %in% c("non_default", "always")) {
+        return(mode)
+    }
+    "never"
+}
+
+# Is the session still on the model/provider it was created with?
+# matrix_new_session stamps default_model/default_provider, so only a
+# /model switch makes the live values differ.
+matrix_session_is_default <- function(session) {
+    identical(session$model %||% "", session$default_model %||% "") &&
+        identical(session$provider %||% "", session$default_provider %||% "")
+}
+
+# The model name a badge should display for this session: the explicit
+# session model, else the provider's default.
+matrix_badge_model <- function(session) {
+    session$model %||% default_provider_model(session$provider) %||%
+        "(provider default)"
+}
+
+# First line prepended to replies so the answering model is visible in
+# the message itself. NULL when no badge should show: mode "never", or
+# mode "non_default" while the session is on its configured default --
+# there, silence means the default and a badge means a /model switch is
+# live (and probably spending money).
+matrix_model_badge <- function(session, cfg) {
+    mode <- matrix_badge_mode(cfg)
+    if (identical(mode, "never")) {
+        return(NULL)
+    }
+    if (identical(mode, "non_default") && matrix_session_is_default(session)) {
+        return(NULL)
+    }
+    sprintf("\u26a1 %s (%s)",
+            .sanitize_inline(matrix_badge_model(session), max_chars = 80L),
+            .sanitize_inline(session$provider %||% "(unset)", max_chars = 40L))
+}
+
+# Desired bot display name for the current session state: the base name
+# alone, or "<base> ⚡ <model>" while a badge applies. NULL means
+# leave the profile untouched (mode "never", or no base derivable).
+# session = NULL means "on defaults" (startup, after /clear).
+matrix_badge_displayname <- function(cfg, session = NULL) {
+    mode <- matrix_badge_mode(cfg)
+    if (identical(mode, "never")) {
+        return(NULL)
+    }
+    base <- cfg$display_name %||%
+        sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
+    if (!nzchar(base)) {
+        return(NULL)
+    }
+    on_default <- is.null(session) || matrix_session_is_default(session)
+    if (identical(mode, "non_default") && on_default) {
+        return(base)
+    }
+    model <- if (is.null(session)) {
+        cfg$model %||% default_provider_model(cfg$provider)
+    } else {
+        matrix_badge_model(session)
+    }
+    if (is.null(model) || !nzchar(model)) {
+        return(base)
+    }
+    paste0(base, " \u26a1 ", .sanitize_inline(model, max_chars = 60L))
+}
+
+# Push the desired display name to the bot's Matrix profile, via
+# mx.client's client-level wrapper so a rotated token is refreshed and
+# retried instead of failing the rename. Best-effort beyond that: a
+# failed rename must never block a reply. The display name is
+# account-global, so with sessions in several rooms the most recent
+# switch wins; the per-reply badge line stays room-accurate.
+matrix_update_displayname <- function(cfg, session = NULL) {
+    name <- matrix_badge_displayname(cfg, session)
+    if (is.null(name)) {
+        return(invisible(NULL))
+    }
+    tryCatch(mx.client::mx_set_displayname(matrix_client(cfg), name),
+             error = function(e) NULL)
+    invisible(NULL)
+}
+
 # Does this message mention the bot? Checks the explicit m.mentions
 # field (emitted by Element and most modern clients) first, then falls
 # back to substring matching on the body for @localpart and full MXID.
@@ -1184,6 +1289,10 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # Creation-time defaults, the baseline the model badge compares
+    # against: only a /model switch makes the live values differ.
+    s$default_model <- s$model
+    s$default_provider <- s$provider
     # Event ids of own outbound messages already reflected in $history via
     # turn(). Lets us tell apart "echo of our own reply" (skip) from
     # "out-of-band send by another process" (append as assistant turn) when
@@ -1480,6 +1589,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         model_cmd <- matrix_parse_model_command(m$body)
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd, cfg = cfg)
+            if (!isTRUE(model_cmd$query_only)) {
+                matrix_update_displayname(cfg, session)
+            }
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
                                 error = function(e) NULL
@@ -1504,6 +1616,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
+            # The fresh session starts back on the configured default,
+            # so any badge rename is undone with it.
+            matrix_update_displayname(cfg)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg,
@@ -1530,6 +1645,12 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         chat.api::chat_typing(chat, m$room_id, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
+        }
+        # Stamped after the turn by deterministic code, so no model can
+        # forget or restyle its own badge.
+        badge <- matrix_model_badge(session, cfg)
+        if (!is.null(badge)) {
+            reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
                             matrix_send_maybe_encrypted(crypto, cfg,
@@ -1747,6 +1868,9 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
                 message(sprintf("matrix_run: backfilled %d room session(s)",
                                 n_rooms))
             }
+            # Fresh process, fresh sessions on the configured default:
+            # clear any badge rename left over from a previous run.
+            matrix_update_displayname(cfg)
         }
     }
 

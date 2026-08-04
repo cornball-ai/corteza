@@ -3,8 +3,13 @@
 \alias{tool_spawn_subagent}
 \title{Spawn a specialized subagent for a task.}
 \usage{
-tool_spawn_subagent(task, model = NULL, tools = NULL, preset = NULL,
-                    ctx = list())
+tool_spawn_subagent(
+  task,
+  model = NULL,
+  tools = NULL,
+  preset = NULL,
+  ctx = list()
+)
 }
 \arguments{
 \item{task}{(character) Task description for the subagent.}

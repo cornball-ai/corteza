@@ -3,8 +3,12 @@
 \alias{compact_summarize_slice}
 \title{Summarize the prefix of a history slice via the LLM.}
 \usage{
-compact_summarize_slice(slice, provider = "anthropic", model = NULL,
-                        timeout_seconds = 60L)
+compact_summarize_slice(
+  slice,
+  provider = "anthropic",
+  model = NULL,
+  timeout_seconds = 60L
+)
 }
 \arguments{
 \item{slice}{List of history entries to summarize (the part being

@@ -3,8 +3,14 @@
 \alias{chat}
 \title{Start Interactive Chat}
 \usage{
-chat(provider = NULL, model = NULL, tools = NULL, session = NULL,
-     max_turns = NULL, web_search = NULL)
+chat(
+  provider = NULL,
+  model = NULL,
+  tools = NULL,
+  session = NULL,
+  max_turns = NULL,
+  web_search = NULL
+)
 }
 \arguments{
 \item{provider}{LLM provider: "anthropic", "openai", "moonshot", or
