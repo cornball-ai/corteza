@@ -15,6 +15,11 @@
 # no first_run and no post-sync client.
 .CHAT_API_MIN <- "0.0.1.1"
 
+# Minimum mx.client. Below it mx_set_displayname() does not exist, so
+# the model-badge rename fails inside a best-effort tryCatch and the
+# sender line silently never updates.
+.MX_CLIENT_MIN <- "0.2.0"
+
 matrix_require_mx <- function() {
     for (pkg in c("mx.api", "mx.client", "chat.api")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -38,6 +43,17 @@ matrix_require_mx <- function() {
              "restarted bot would reprocess its whole backfill as new ",
              "messages. Reinstall chat.api from the cornball-ai mirror.",
              call. = FALSE)
+    }
+    # Same reasoning for mx.client: the DESCRIPTION floor is a resolution
+    # hint, and an already-installed copy loads however old it is. A host
+    # on 0.1.1 has no mx_set_displayname(), so the badge rename dies in a
+    # best-effort tryCatch and the sender line quietly never updates.
+    have_mx <- utils::packageVersion("mx.client")
+    if (have_mx < .MX_CLIENT_MIN) {
+        stop("Matrix integration requires mx.client >= ", .MX_CLIENT_MIN,
+             ", but ", have_mx, " is installed. Below that version the ",
+             "model-badge rename has no mx_set_displayname() to call and ",
+             "fails silently. Reinstall mx.client.", call. = FALSE)
     }
 }
 
@@ -762,7 +778,8 @@ matrix_model_badge <- function(session, cfg) {
 # alone, or "<base> ⚡ <model>" while a badge applies. NULL means
 # leave the profile untouched (mode "never", or no base derivable).
 # session = NULL means "on defaults" (startup, after /clear).
-matrix_badge_displayname <- function(cfg, session = NULL) {
+matrix_badge_displayname <- function(cfg, session = NULL, model = NULL,
+                                     provider = NULL) {
     mode <- matrix_badge_mode(cfg)
     if (identical(mode, "never")) {
         return(NULL)
@@ -776,8 +793,14 @@ matrix_badge_displayname <- function(cfg, session = NULL) {
     if (identical(mode, "non_default") && on_default) {
         return(base)
     }
+    # With no session (startup, /clear) the name has to come from what
+    # the next session will actually be created with. That is the runtime
+    # override when matrix_run_init()/matrix_poll() were given one, not
+    # cfg$model -- otherwise the sender line advertises the configured
+    # model while every reply is badged with the override.
     model <- if (is.null(session)) {
-        cfg$model %||% default_provider_model(cfg$provider)
+        model %||% cfg$model %||%
+            default_provider_model(provider %||% cfg$provider)
     } else {
         matrix_badge_model(session)
     }
@@ -793,14 +816,27 @@ matrix_badge_displayname <- function(cfg, session = NULL) {
 # failed rename must never block a reply. The display name is
 # account-global, so with sessions in several rooms the most recent
 # switch wins; the per-reply badge line stays room-accurate.
-matrix_update_displayname <- function(cfg, session = NULL) {
-    name <- matrix_badge_displayname(cfg, session)
+matrix_update_displayname <- function(cfg, session = NULL, model = NULL,
+                                      provider = NULL) {
+    name <- matrix_badge_displayname(cfg, session, model, provider)
     if (is.null(name)) {
-        return(invisible(NULL))
+        return(invisible(cfg))
     }
-    tryCatch(mx.client::mx_set_displayname(matrix_client(cfg), name),
-             error = function(e) NULL)
-    invisible(NULL)
+    ok <- tryCatch({
+        mx.client::mx_set_displayname(matrix_client(cfg), name)
+        TRUE
+    }, error = function(e) FALSE)
+    if (!isTRUE(ok)) {
+        return(invisible(cfg))
+    }
+    # mx_set_displayname() wraps the call in mx_with_relogin(), so a
+    # rejected token is refreshed and persisted -- but it returns only
+    # TRUE, discarding the refreshed client. Re-read the config so the
+    # caller keeps going with the live token. Without this the next send
+    # uses the token the homeserver just rejected, and because
+    # chat_send() does no relogin of its own that reply is swallowed by
+    # the caller's tryCatch with nothing logged.
+    invisible(tryCatch(matrix_load_config(), error = function(e) cfg))
 }
 
 # Does this message mention the bot? Checks the explicit m.mentions
@@ -1590,7 +1626,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd, cfg = cfg)
             if (!isTRUE(model_cmd$query_only)) {
-                matrix_update_displayname(cfg, session)
+                cfg <- matrix_update_displayname(cfg, session)
             }
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
@@ -1616,9 +1652,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
-            # The fresh session starts back on the configured default,
-            # so any badge rename is undone with it.
-            matrix_update_displayname(cfg)
+            # The fresh session starts back on whatever this run was
+            # given, so any badge rename is undone with it.
+            cfg <- matrix_update_displayname(cfg, model = model,
+                                             provider = provider)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg,
@@ -1868,9 +1905,10 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
                 message(sprintf("matrix_run: backfilled %d room session(s)",
                                 n_rooms))
             }
-            # Fresh process, fresh sessions on the configured default:
-            # clear any badge rename left over from a previous run.
-            matrix_update_displayname(cfg)
+            # Fresh process, fresh sessions on whatever this run was
+            # given: clear any badge rename left over from a previous run.
+            cfg <- matrix_update_displayname(cfg, model = model,
+                                             provider = provider)
         }
     }
 
