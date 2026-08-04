@@ -3,8 +3,15 @@
 \alias{subagent_turn_init}
 \title{Initialize the child-side turn session.}
 \usage{
-subagent_turn_init(provider = "anthropic", model = NULL, tools_filter = NULL,
-                   system = NULL, max_turns = 10L, depth = 0L, plan_mode = FALSE)
+subagent_turn_init(
+  provider = "anthropic",
+  model = NULL,
+  tools_filter = NULL,
+  system = NULL,
+  max_turns = 10L,
+  depth = 0L,
+  plan_mode = FALSE
+)
 }
 \arguments{
 \item{provider}{LLM provider name (see [new_session()]).}

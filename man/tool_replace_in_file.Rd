@@ -3,8 +3,13 @@
 \alias{tool_replace_in_file}
 \title{Replace exact text in a file without rewriting the whole file manually.}
 \usage{
-tool_replace_in_file(path, old_text, new_text, all = FALSE,
-                     expected_count = NULL)
+tool_replace_in_file(
+  path,
+  old_text,
+  new_text,
+  all = FALSE,
+  expected_count = NULL
+)
 }
 \arguments{
 \item{path}{(character) Path to the file.}

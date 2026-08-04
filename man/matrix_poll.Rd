@@ -3,8 +3,15 @@
 \alias{matrix_poll}
 \title{One iteration of sync-and-reply}
 \usage{
-matrix_poll(system = NULL, model = NULL, provider = NULL, tools_filter = NULL,
-            timeout = 0L, sessions = NULL, crypto = NULL)
+matrix_poll(
+  system = NULL,
+  model = NULL,
+  provider = NULL,
+  tools_filter = NULL,
+  timeout = 0L,
+  sessions = NULL,
+  crypto = NULL
+)
 }
 \arguments{
 \item{system}{Character or NULL. System prompt override.}

@@ -3,8 +3,14 @@
 \alias{subagent_spawn}
 \title{Spawn a subagent.}
 \usage{
-subagent_spawn(task, model = NULL, tools = NULL, preset = NULL,
-               parent_session = NULL, config = NULL)
+subagent_spawn(
+  task,
+  model = NULL,
+  tools = NULL,
+  preset = NULL,
+  parent_session = NULL,
+  config = NULL
+)
 }
 \arguments{
 \item{task}{Task description (stored for bookkeeping; not yet fed

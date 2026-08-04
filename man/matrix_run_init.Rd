@@ -3,8 +3,12 @@
 \alias{matrix_run_init}
 \title{Initialize the Matrix long-poll state}
 \usage{
-matrix_run_init(system = NULL, model = NULL, provider = NULL,
-                tools_filter = NULL)
+matrix_run_init(
+  system = NULL,
+  model = NULL,
+  provider = NULL,
+  tools_filter = NULL
+)
 }
 \arguments{
 \item{system}{Character or NULL. System prompt override.}

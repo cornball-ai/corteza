@@ -3,8 +3,13 @@
 \alias{tool_git_diff}
 \title{Show git diff for the current repository.}
 \usage{
-tool_git_diff(ref = "HEAD", path = ".", file_path = "", staged = FALSE,
-              context_lines = 3L)
+tool_git_diff(
+  ref = "HEAD",
+  path = ".",
+  file_path = "",
+  staged = FALSE,
+  context_lines = 3L
+)
 }
 \arguments{
 \item{ref}{(character) Diff against this ref.}

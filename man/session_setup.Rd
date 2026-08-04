@@ -3,11 +3,21 @@
 \alias{session_setup}
 \title{Configure and construct a session for any channel}
 \usage{
-session_setup(channel = c("cli", "console", "matrix"), cwd = getwd(),
-              provider = NULL, model = NULL, tools = NULL, system = NULL,
-              approval_cb = NULL, history = NULL, load_project_context = TRUE,
-              validate_api_key = TRUE, verbose = FALSE, max_turns = 50L,
-              web_search = NULL)
+session_setup(
+  channel = c("cli", "console", "matrix"),
+  cwd = getwd(),
+  provider = NULL,
+  model = NULL,
+  tools = NULL,
+  system = NULL,
+  approval_cb = NULL,
+  history = NULL,
+  load_project_context = TRUE,
+  validate_api_key = TRUE,
+  verbose = FALSE,
+  max_turns = 50L,
+  web_search = NULL
+)
 }
 \arguments{
 \item{channel}{Character, one of \code{"cli"}, \code{"console"},

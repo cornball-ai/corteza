@@ -13,6 +13,7 @@ matrix_configure(
   tools_filter = NULL,
   auto_approve_asks = FALSE,
   bots = NULL,
+  models = NULL,
   model_badge = c("never", "non_default", "always"),
   display_name = NULL
 )
@@ -49,6 +50,13 @@ this bot, and they are not counted as humans when deciding whether
 a room gets ungated replies (a room whose only non-bot member is
 one human is answered without a mention).}
 
+\item{models}{Character vector or NULL. Extra entries for the
+\code{/model} menu, each a \code{"model provider"} pair (e.g.
+\code{"claude-sonnet-4-6 anthropic_claude"}; a bare model name
+uses the default provider). The menu always lists the configured
+default and the live local Ollama inventory; this key adds hosted
+models that can't be discovered automatically.}
+
 \item{model_badge}{Character. When to show which model is answering:
 \code{"never"} (default, current behavior), \code{"non_default"}
 (only while a \code{/model} switch has moved a room session off
@@ -74,9 +82,12 @@ the target room, and writes credentials to
 mode 0600. Call once per host. Model, provider, tools_filter, and
 auto_approve_asks are defaults the poll loop uses unless overridden
 at call time.
+}
+\details{
 Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
 that path is still read for backward compatibility, but the next
 \code{matrix_configure()} call writes to the new location.
+
 }
 \examples{
 \dontrun{

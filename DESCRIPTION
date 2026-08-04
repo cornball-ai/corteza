@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime
-Version: 0.7.0.5
+Version: 0.7.1.2
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -30,23 +30,24 @@ Imports:
     callr,
     codetools,
     curl,
+    digest,
     jsonlite,
-    llm.api (>= 0.1.8.1),
+    llm.api (>= 0.1.9),
     printify,
     processx,
-    saber
+    saber,
+    utils
 Suggests:
+    chat.api (>= 0.0.1.1),
     clipr,
     fortunes,
     mx.api,
-    mx.client (>= 0.1.1.1),
+    mx.client (>= 0.2.0),
     mx.crypto,
+    pensar,
     rstudioapi,
     simplermarkdown,
     tinytest
-Remotes:
-    cornball-ai/llm.api,
-    cornball-ai/mx.client
 VignetteBuilder: simplermarkdown
 SystemRequirements: On Windows, Rtools45 (R 4.5.x) or Rtools44 (R 4.4.x)
     is recommended so the 'bash' shell tool is available; minimal
