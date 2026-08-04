@@ -1,16 +1,20 @@
 ## Submission summary
 
-Update of 'corteza' (0.7.0 -> 0.8.0), an agent runtime that lets Large
+Update of 'corteza' (0.7.0 -> 0.7.1), an agent runtime that lets Large
 Language Models (LLMs) drive an R session through a policy-gated
 tool-use loop. Three entry points: an interactive console
 read-eval-print-loop (`chat()`), a shell command-line interface
 (`corteza`), and a Model Context Protocol (MCP) server (`serve()`)
 for external clients like Claude Code or Codex.
 
-Minor bump from the on-CRAN 0.7.0, batching the 0.7.0.1-0.7.0.9 dev
-cycles. It is a minor rather than a patch because it adds features: a
-new provider, provider-native web search, and four new configuration
-keys. No exported functions were added or removed. Four gained optional
+Patch release over the on-CRAN 0.7.0, batching the 0.7.0.1-0.7.0.9 dev
+cycles. Most of it is repair work: Matrix rooms were dropping messages
+the agent should have seen, running without their project context, and
+re-archiving their backfill on every restart. Alongside those it adds
+an `openai_compatible` provider, provider-native web search, and four
+optional configuration keys.
+
+No exported functions were added or removed. Four gained optional
 arguments with defaults preserving the previous behaviour (`chat()`,
 `matrix_configure()`, `new_session()`, `session_setup()`), so existing
 calls are unaffected.
