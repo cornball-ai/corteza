@@ -10,7 +10,10 @@ for external clients like Claude Code or Codex.
 Minor bump from the on-CRAN 0.7.0, batching the 0.7.0.1-0.7.0.9 dev
 cycles. It is a minor rather than a patch because it adds features: a
 new provider, provider-native web search, and four new configuration
-keys. No exported functions were added, removed, or changed.
+keys. No exported functions were added or removed. Four gained optional
+arguments with defaults preserving the previous behaviour (`chat()`,
+`matrix_configure()`, `new_session()`, `session_setup()`), so existing
+calls are unaffected.
 
 Highlights:
 
@@ -56,5 +59,6 @@ release; please process it first.
   credentials are bundled, and nothing is written outside `tempdir()`
   during checks.
 * Optional integrations (Matrix chat via 'mx.api'/'mx.client'/
-  'mx.crypto', clipboard via 'clipr') are in Suggests and guarded at
-  every call site, so the package is fully functional without them.
+  'mx.crypto', knowledge-vault archiving via 'pensar', clipboard via
+  'clipr') are in Suggests and guarded at every call site, so the
+  package is fully functional without them.

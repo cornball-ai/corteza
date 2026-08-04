@@ -42,6 +42,7 @@ Suggests:
     mx.api,
     mx.client,
     mx.crypto,
+    pensar,
     rstudioapi,
     simplermarkdown,
     tinytest
