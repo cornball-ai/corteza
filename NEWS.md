@@ -13,7 +13,7 @@
   at session setup rather than at the first request. `turn()` applies
   the endpoint through `llm.api::llm_base()` scoped to each agent call,
   so a mid-session `/provider` switch or a subagent on another provider
-  cannot inherit it. Requires `llm.api >= 0.1.8.1`. See
+  cannot inherit it. Requires `llm.api >= 0.1.9`. See
   `vignette("configuration")`.
 
 - **Provider-native web search.** The agent loop enables
