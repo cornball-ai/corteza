@@ -1,28 +1,43 @@
-# corteza 0.7.0.9
+# corteza 0.7.1
 
-- **Archives are built from a Matrix-visible event ledger, not from
-  provider history.** History holds tool calls and tool results that
-  were never Matrix events, so a restarted process (which rebuilds
-  history from the server's visible messages) could not align with what
-  it had archived, and tool-using rooms re-archived their whole backfill
-  on every restart. Sessions now keep a transcript of
-  `{event_id, role, content}`, a queue of pending events written where
-  events are seen or sent and drained once archived. Archival keys on
-  Matrix event ids, recognized against a bounded per-room tail of
-  already-archived ids. Transcripts no longer contain tool turns.
+## New
 
-# corteza 0.7.0.8
+- **`openai_compatible` provider for generic OpenAI-compatible
+  endpoints** (#149). Point corteza at OpenRouter, DeepSeek, DeepInfra,
+  a local proxy, or a corporate gateway via a `base_url` config key or
+  the `--base-url` CLI flag (falling back to
+  `OPENAI_COMPATIBLE_BASE_URL`). The model id is passed through
+  untouched and is required; the API key comes from
+  `OPENAI_COMPATIBLE_API_KEY` or `OPENAI_API_KEY`, and a keyless
+  gateway works with neither. A missing endpoint or model is reported
+  at session setup rather than at the first request. `turn()` applies
+  the endpoint through `llm.api::llm_base()` scoped to each agent call,
+  so a mid-session `/provider` switch or a subagent on another provider
+  cannot inherit it. Requires `llm.api >= 0.1.9`. See
+  `vignette("configuration")`.
 
-- **Archive progress is persisted per room instead of tracked in
-  memory.** `matrix_archive_session()` used `ingested_through`, an index
-  into the in-memory session history, which reset on every restart while
-  startup backfill refilled history from the server. Each restart
-  therefore re-archived the backfilled tail. Progress is now an ordered
-  key tail persisted per room under `CORTEZA_STATE_DIR`, advanced only
-  after a successful ingest, so a failed archive retries rather than
-  loses turns.
+- **Provider-native web search.** The agent loop enables
+  `llm.api::agent()`'s server-side web search for the hosted providers
+  that support it (`anthropic`, `anthropic_claude`, `openai`,
+  `openai_codex`, `moonshot`). On by default, no Tavily key required;
+  the model searches inside its own turn. Toggle with `--web-search` /
+  `--no-web-search`, `chat(web_search = )`, or a `web_search` key in
+  `.corteza/config.json`. The Tavily `web_search` tool remains the
+  fallback for local models.
 
-# corteza 0.7.0.7
+- **Matrix `/model` lists available models and switches by number.**
+  Bare `/model` (or `//model` where the client eats single slashes)
+  replies with a numbered menu instead of echoing the current settings:
+  the configured default, the live local Ollama inventory, and any
+  hosted models declared via the new `matrix_configure(models =)` key
+  (`"model provider"` strings, since hosted providers cannot be
+  enumerated remotely). `/model 3` switches the room session to entry
+  3, setting model and provider together, so switching from a phone
+  client never needs a typed model name. The typed form
+  `/model <name> [provider]` is unchanged, and an unreachable Ollama
+  degrades the menu to the configured entries.
+
+## Matrix access control
 
 - **Private conversations and invites are restricted to configured
   operators.** The new `operators` key lists the Matrix ids allowed a
@@ -34,9 +49,37 @@
   are unaffected. Leaving `operators` unset preserves the previous
   behavior.
 
-# corteza 0.7.0.6
+- **Reply gating counts humans, not members.** Rooms whose only non-bot
+  member is one human are answered without a mention; rooms with two or
+  more humans require a mention (replies count, since clients put the
+  replied-to user in `m.mentions`) or an open engagement window: after
+  the bot answers someone, that person's plain messages keep getting
+  replies for 5 minutes, ending early when they address someone else.
+  Other bot accounts are declared via the new `matrix_configure(bots =)`
+  parameter; their messages always require a mention. Room membership is
+  cached per session and refreshed on unknown senders or every 10
+  minutes, replacing the boot-time DM snapshot that left rooms stuck on
+  stale gating after membership changed. With `bots` unset, behavior
+  matches the old member-count rule minus the staleness; during a
+  members-API outage the gate fails open for human senders instead of
+  going silent.
 
-- **Matrix rooms load project context into the room system prompt.**
+## Matrix fixes
+
+- **Non-triggering messages are ingested instead of dropped.** In a room
+  with more than one human, a message that did not warrant a reply was
+  marked seen, given a read receipt, then dropped with a bare `next`:
+  never appended to the session's history and, because it was already
+  marked seen, never reconsidered. The agent genuinely never saw other
+  people's non-mention messages in a busy room, even though it had
+  "read" them. Gated messages are now appended to history as context;
+  the reply gate and its bot-loop protection are unchanged, only
+  ingestion is. Turns are attributed with a `[sender]` prefix in rooms
+  with more than one human (both the live poll and the startup
+  backfill), and known bot senders are labeled even in one-human rooms,
+  so the model can tell speakers apart. A lone-human DM is unchanged.
+
+- **Rooms load project context into the room system prompt.**
   `matrix_new_session()` passed a non-NULL `system` to `session_setup()`
   with `load_project_context = FALSE`, so Matrix bots ran without the
   project briefing, agent context files, `.corteza` `context_files`, and
@@ -44,84 +87,33 @@
   `matrix_room_system()` composes the Matrix identity header with
   `load_context()` for the room cwd.
 
-# corteza 0.7.0.5
+## Archiving
 
-- **Matrix: ingest non-triggering messages instead of dropping them.** In
-  a room with more than one human, a message that didn't warrant a reply
-  was marked seen, given a read receipt, then dropped with a bare `next` —
-  never appended to the session's history and, because it was already
-  marked seen, never reconsidered. The agent genuinely never saw other
-  people's non-mention messages in a busy room, even though it had "read"
-  them. Gated messages are now appended to history as context; the reply
-  gate (and its bot-loop protection) is unchanged, only ingestion is.
-  Turns are attributed with a `[sender]` prefix in rooms with more than
-  one human (both the live poll and the startup backfill), and known bot
-  senders are labeled even in one-human rooms, so the model
-  can tell speakers apart; a lone-human DM is unchanged.
+- **Archives are built from a Matrix-visible event ledger, not from
+  provider history.** History holds tool calls and tool results that
+  were never Matrix events, so a restarted process (which rebuilds
+  history from the server's visible messages) could not align with what
+  it had archived, and tool-using rooms re-archived their whole backfill
+  on every restart. Sessions keep a transcript of
+  `{event_id, role, content}` and a queue of pending events, written
+  where events are seen or sent and drained once archived. Archival keys
+  on Matrix event ids, recognized against a bounded per-room tail of
+  already-archived ids. Transcripts no longer contain tool turns.
 
-- **Matrix archives are keyed by room id, not display name.** Room
-  display names and avatars are mutable Matrix state, so archived
-  transcripts now use the global Matrix room id for `title` and
-  `source`. The room name is retained only as archive-time metadata,
-  which keeps renames from splitting one chat into multiple raw
-  archive identities.
+- **Archive progress is persisted per room instead of tracked in
+  memory.** `matrix_archive_session()` used `ingested_through`, an index
+  into the in-memory session history, which reset on every restart while
+  startup backfill refilled history from the server. Each restart
+  therefore re-archived the backfilled tail. Progress is now an ordered
+  key tail persisted per room under `CORTEZA_STATE_DIR`, advanced only
+  after a successful ingest, so a failed archive retries rather than
+  loses turns.
 
-# corteza 0.7.0.4
-
-- **Matrix `/model` lists available models and switches by number.**
-  Bare `/model` (or `//model` where the client eats single slashes) now
-  replies with a numbered menu instead of just echoing the current
-  settings: the configured default, the live local Ollama inventory,
-  and any hosted models declared via the new
-  `matrix_configure(models =)` key (`"model provider"` strings — hosted
-  providers can't be enumerated remotely). `/model 3` switches the room
-  session to entry 3, setting model and provider together, so switching
-  from a phone client never needs a typed model name. The typed form
-  `/model <name> [provider]` is unchanged, and an unreachable Ollama
-  degrades the menu to the configured entries.
-
-# corteza 0.7.0.3
-
-- **`openai_compatible` provider for generic OpenAI-compatible
-  endpoints** (#149). Point corteza at OpenRouter, DeepSeek, DeepInfra,
-  a local proxy, or a corporate gateway via a `base_url` config key or
-  the `--base-url` CLI flag (falling back to the
-  `OPENAI_COMPATIBLE_BASE_URL` environment variable). The model id is
-  passed through untouched and is required; the API key comes from
-  `OPENAI_COMPATIBLE_API_KEY` or `OPENAI_API_KEY`, and a keyless gateway
-  works with neither. A missing endpoint or model is reported at
-  session setup rather than at the first request. `turn()` applies the
-  endpoint through `llm.api::llm_base()` scoped to each agent call, so a
-  mid-session `/provider` switch or a subagent on another provider can't
-  inherit it. Requires `llm.api >= 0.1.8.1`. See
-  `vignette("configuration")`.
-
-# corteza 0.7.0.2
-
-- **Matrix reply gating counts humans, not members.** Rooms whose only
-  non-bot member is one human are answered without a mention; rooms with
-  two or more humans require a mention (replies count, since clients put
-  the replied-to user in `m.mentions`) or an open engagement window: after
-  the bot answers someone, that person's plain messages keep getting
-  replies for 5 minutes, ending early when they address someone else.
-  Other bot accounts are declared via the new `matrix_configure(bots =)`
-  parameter; their messages always require a mention. Room membership is
-  now cached per session and refreshed on unknown senders or every 10
-  minutes, replacing the boot-time DM snapshot that left rooms stuck on
-  stale gating after membership changed. With `bots` unset, behavior
-  matches the old member-count rule minus the staleness; during a
-  members-API outage the gate fails open for human senders instead of
-  going silent.
-
-# corteza 0.7.0.1
-
-- **Provider-native web search.** The agent loop now enables
-  `llm.api::agent()`'s server-side web search for the hosted providers that
-  support it (`anthropic`, `anthropic_claude`, `openai`, `openai_codex`,
-  `moonshot`). On by default, no Tavily key required; the model searches
-  inside its own turn. Toggle with `--web-search` / `--no-web-search`,
-  `chat(web_search = )`, or a `web_search` key in `.corteza/config.json`.
-  The Tavily `web_search` tool remains the fallback for local models.
+- **Archives are keyed by room id, not display name.** Room display
+  names and avatars are mutable Matrix state, so archived transcripts
+  use the global Matrix room id for `title` and `source`. The room name
+  is retained only as archive-time metadata, which keeps renames from
+  splitting one chat into multiple raw archive identities.
 
 # corteza 0.7.0
 
