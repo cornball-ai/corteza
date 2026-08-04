@@ -1,3 +1,14 @@
+# corteza 0.7.1.3
+
+- **Model badge fixes.** A display-name relogin left the caller holding
+  the rejected token, so the next `/model` acknowledgement was dropped
+  silently; `matrix_update_displayname()` now returns the refreshed
+  config. Startup and `/clear` advertised `cfg$model` rather than the
+  runtime override the next session is built with. The
+  `mx.client >= 0.2.0` floor is now enforced at runtime, not only
+  declared, so a stale installed copy fails loudly instead of losing
+  the rename to a best-effort `tryCatch`.
+
 # corteza 0.7.1.2
 
 - **Opt-in Matrix model badge.** New `matrix_configure(model_badge =)`
