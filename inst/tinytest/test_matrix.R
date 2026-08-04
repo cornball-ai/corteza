@@ -483,10 +483,15 @@ if (requireNamespace("pensar", quietly = TRUE)) {
 # matrix_archive_session: silent no-op when pensar isn't installed.
 if (!requireNamespace("pensar", quietly = TRUE)) {
     s <- new.env(parent = emptyenv())
-    s$history <- list(list(role = "user", content = "x"))
+    corteza:::matrix_transcript_add(s, "$a1", "user", "x")
     out <- corteza:::matrix_archive_session(s, "!r:s.c")
     expect_null(out)
-    expect_equal(length(s$transcript), 1L)   # queued, not yet archived
+    # The no-op must not drain the queue. Entries stay queued so they
+    # can still be archived if pensar turns up later; discarding them
+    # here would lose the turns silently. Seeding history instead of a
+    # transcript, as this test used to, asserted nothing: archival stopped
+    # deriving from history when the event ledger landed.
+    expect_equal(length(s$transcript), 1L)
 }
 
 # matrix_request_flush: writes archive.signal in CORTEZA_STATE_DIR.
