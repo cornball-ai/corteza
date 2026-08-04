@@ -39,8 +39,8 @@ Highlights:
 
 `Imports: llm.api (>= 0.1.9)`. The `openai_compatible` provider applies
 its endpoint through `llm.api::llm_base()` scoped to each agent call,
-which needs that version. llm.api 0.1.9 is submitted alongside this
-release; please process it first.
+which needs that version. llm.api 0.1.9 was published on 2026-08-04 and
+is already on CRAN, so this dependency is satisfied.
 
 ## R CMD check results
 
