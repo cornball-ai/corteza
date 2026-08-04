@@ -398,11 +398,14 @@ matrix_session_to_markdown <- function(session, room_id, room_name = NULL,
 # advance the watermark so the same turns aren't re-ingested. Silent
 # no-op when pensar isn't installed or there's nothing new.
 matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
-    # pensar is an optional cornball-ai companion package not on CRAN.
-    # Per CRAN policy on unpublished Suggests, it cannot be listed in
-    # DESCRIPTION; the dynamic getExportedValue lookup keeps the
-    # archive feature available to users who installed pensar from
-    # GitHub while staying CRAN-clean.
+    # pensar is an optional cornball-ai companion package, declared in
+    # Suggests. The dynamic getExportedValue lookup keeps archiving a
+    # no-op when it is absent rather than erroring at load.
+    #
+    # It used to be off CRAN, which is why it went undeclared. It has
+    # been on CRAN since 0.6.4, and Writing R Extensions requires a
+    # package used from a function body or conditionally in tests to be
+    # declared, so the omission was a bug.
     pensar_ingest <- tryCatch(getExportedValue("pensar", "ingest"),
                               error = function(e) NULL)
     if (is.null(pensar_ingest)) {
