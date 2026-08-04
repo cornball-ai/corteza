@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime
-Version: 0.7.1
+Version: 0.7.1.1
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -35,12 +35,14 @@ Imports:
     llm.api (>= 0.1.9),
     printify,
     processx,
-    saber
+    saber,
+    utils
 Suggests:
+    chat.api (>= 0.0.1.1),
     clipr,
     fortunes,
     mx.api,
-    mx.client,
+    mx.client (>= 0.1.1.2),
     mx.crypto,
     pensar,
     rstudioapi,

@@ -6,14 +6,38 @@
 #
 # mx.api is in Suggests since most users won't enable a Matrix channel.
 # The matrix_* functions hard-stop with an install hint if it's missing.
+#
+# chat.api belongs in the same list, not in Imports. Every chat.api call
+# in this package is on a Matrix path already behind this guard, so a
+# user who never enables the channel should not have to install it --
+# and an Imports entry would make it mandatory for everyone.
+# Minimum chat.api this corteza can drive. Below it, chat_poll() returns
+# no first_run and no post-sync client.
+.CHAT_API_MIN <- "0.0.1.1"
 
 matrix_require_mx <- function() {
-    for (pkg in c("mx.api", "mx.client")) {
+    for (pkg in c("mx.api", "mx.client", "chat.api")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
             stop("Matrix integration requires the '", pkg, "' package. ",
                  "Install it from CRAN, or from the cornball-ai GitHub mirror, ",
                  "before calling Matrix functions.", call. = FALSE)
         }
+    }
+    # requireNamespace() checks presence, not version, and a Suggests
+    # floor is a resolution hint rather than a runtime guarantee: a
+    # chat.api already installed on the host still loads however old it
+    # is. Without this the poll gets all the way through /sync, consumes
+    # the cursor, and only then dies on the missing first_run -- the
+    # worst place to discover a stale build, because the work is already
+    # spent and the cursor may not be recoverable.
+    have <- utils::packageVersion("chat.api")
+    if (have < .CHAT_API_MIN) {
+        stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
+             ", but ", have, " is installed. ",
+             "chat_poll() below that version returns no first_run, so a ",
+             "restarted bot would reprocess its whole backfill as new ",
+             "messages. Reinstall chat.api from the cornball-ai mirror.",
+             call. = FALSE)
     }
 }
 
@@ -180,8 +204,74 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                         markdown = FALSE) {
     matrix_require_mx()
     cfg <- matrix_load_config()
-    mx.client::mx_send_text(cfg, text, room = room_id, msgtype = msgtype,
-                            markdown = markdown)
+    kind <- matrix_send_kind(msgtype)
+    if (is.na(kind)) {
+        # The contract's kind vocabulary covers m.text, m.notice and
+        # m.emote and nothing else, so an m.image routed through it
+        # arrives on the homeserver as m.text. msgtype is a documented
+        # argument of an exported function, so the ones the contract
+        # cannot carry keep going out the way they always have.
+        return(mx.client::mx_send_text(cfg, text, room = room_id,
+                                       msgtype = msgtype, markdown = markdown))
+    }
+    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+                                        markup = matrix_markup(markdown),
+                                        kind = kind))
+}
+
+# Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
+# contract does not model. Total by construction: a length-0, NA, or
+# non-character msgtype answers NA rather than erroring, which is what
+# the direct mx.client call would have tolerated.
+matrix_send_kind <- function(msgtype) {
+    if (!is.character(msgtype) || length(msgtype) != 1L) {
+        return(NA_character_)
+    }
+    unname(c(m.text = "message", m.notice = "notice", m.emote = "emote")[msgtype])
+}
+
+matrix_markup <- function(markdown) {
+    if (isTRUE(markdown)) {
+        "markdown"
+    } else {
+        "plain"
+    }
+}
+
+# chat_send() reports "no event id" as character(0): it as.character()s
+# whatever the send returned, and mx.client returns NULL when a 200 from
+# the homeserver carries no event_id. Every caller here tests the result
+# with is.null(), which character(0) passes -- and then
+# matrix_remember_event() errors on it mid-batch. Hand back the NULL.
+matrix_event_id <- function(id) {
+    if (!length(id)) {
+        return(NULL)
+    }
+    id
+}
+
+# The transport-contract view of corteza's Matrix account.
+#
+# save_cursor = TRUE is the contract's default and reproduces the
+# pre-contract call exactly: mx.client writes the advanced sync token
+# the moment /sync returns, before anything parses the response.
+# Persisting it afterwards instead, from chat_poll()'s `cursor`, looks
+# equivalent and is not. matrix_run() is a bare repeat loop with no
+# tryCatch -- it is documented to crash so systemd can restart it, and
+# that recovery only works because the restart resumes past the events
+# that killed it. Move the write after the parse and one malformed
+# event becomes a poison pill: crash, restart, re-sync the same batch,
+# crash again, forever.
+#
+# app is left NULL so mx_sync_update falls through to the wrapped
+# config's own attributes, which matrix_client() stamps with corteza's
+# path and app. Naming an app here would file corteza's cursor -- and on
+# relogin its credentials -- under chat.api's namespace.
+#
+# `...` reaches chat_matrix(), which exists for its testing seams
+# (.sync, .extract, .send, .media, .typing). Production passes nothing.
+matrix_chat_client <- function(cfg, ...) {
+    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = TRUE, ...)
 }
 
 matrix_extract_messages <- function(sync_resp, self_id) {
@@ -203,9 +293,17 @@ matrix_extract_messages <- function(sync_resp, self_id) {
 # successfully sent, and nowhere else. Backfill produces the same shape
 # from the server, which is what makes restart dedup exact.
 matrix_transcript_add <- function(session, event_id, role, content) {
-    if (is.null(event_id) || !length(event_id) || !nzchar(event_id)) {
+    # A send can create several events (attachments, then the text). Only
+    # one of them is the conversational turn, and it is the last: the
+    # attachments are remembered for echo suppression but are not
+    # transcript entries. Filtering rather than testing also keeps a
+    # vector out of `||`, which errors in R >= 4.3.
+    ids <- as.character(event_id %||% character())
+    ids <- ids[!is.na(ids) & nzchar(ids)]
+    if (!length(ids)) {
         return(invisible(NULL))
     }
+    event_id <- ids[[length(ids)]]
     text <- if (is.character(content)) {
         paste(content, collapse = "\n")
     } else {
@@ -1190,16 +1288,38 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     matrix_require_mx()
     cfg <- matrix_load_config()
 
-    # Sync and persist the cursor via mx.client. mx_with_relogin
-    # self-heals an invalidated access token: re-login with the stored
-    # password (same device_id, so an E2EE identity survives), persist
-    # the refreshed config, and retry the sync once. Other errors
-    # propagate as before.
-    res <- mx.client::mx_with_relogin(matrix_client(cfg), function(cl) {
-        mx.client::mx_sync_update(cl, timeout = as.integer(timeout))
-    })
-    sync <- res$sync
+    # Receive over the transport contract. chat_poll() runs the sync
+    # inside mx.client::mx_with_relogin(), which self-heals an
+    # invalidated access token: re-login with the stored password (same
+    # device_id, so an E2EE identity survives), persist the refreshed
+    # config, and retry the sync once. Other errors propagate as before.
+    #
+    # timeout crosses the boundary in seconds. corteza counts
+    # milliseconds; the contract counts seconds and converts back at the
+    # mx.api edge.
+    chat <- matrix_chat_client(cfg)
+    res <- chat.api::chat_poll(chat, timeout = timeout / 1000)
+    # raw is the untouched sync response. corteza reads events out of it
+    # itself -- invites, reactions, and m.room.encrypted are all things
+    # the generic contract does not model, and the crypto path below
+    # needs the same object mx.api returned.
+    sync <- res$raw
+    # A chat.api whose Matrix adapter predates the post-sync client and
+    # first_run reports neither, and both are load-bearing here: without
+    # the client there is no config to keep syncing (or saving) against,
+    # and a NULL first_run makes the suppression branch below an error.
+    # Say which dependency is short rather than failing three lines on.
+    if (is.null(res$client) || is.null(res$first_run)) {
+        stop("chat.api::chat_poll() returned no client/first_run. ",
+             "corteza needs a chat.api whose Matrix adapter reports both.",
+             call. = FALSE)
+    }
     first_run <- res$first_run
+    # The post-sync config: a relogin can have swapped the token
+    # mid-poll, and every mx.api call below runs off this cfg. The
+    # advanced cursor is already on disk -- mx.client wrote it inside
+    # the sync call, which is what makes a crash-restart resume past
+    # whatever it crashed on. See matrix_chat_client().
     cfg <- matrix_plain_cfg(res$client)
     mx_sess <- matrix_mx_session(cfg)
 
@@ -1207,8 +1327,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # matching JOIN state is in place before any replies go out. Invites
     # in this sync won't yet appear in rooms$join; the next sync will
     # pick up their timeline.
-    invites <- matrix_extract_invites(sync, cfg$user_id,
-                                      matrix_operators(cfg))
+    invites <- matrix_extract_invites(sync, cfg$user_id, matrix_operators(cfg))
     if (length(invites)) {
         matrix_accept_invites(cfg, invites)
     }
@@ -1401,14 +1520,14 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         # Show a typing indicator while the model works -- turns run
         # seconds to minutes, and the indicator is the only sign of
-        # life the other side gets. Best-effort: a failed typing call
-        # must never block the reply. 120s cap; Matrix clears it when
-        # the reply event arrives.
-        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, TRUE, timeout = 120000L),
-                 error = function(e) NULL)
+        # life the other side gets. Best-effort: chat_typing() swallows
+        # its own failures and returns FALSE, so a dead indicator can
+        # never block the reply. 120s cap (seconds here, not the
+        # milliseconds mx.api takes); Matrix clears it when the reply
+        # event arrives.
+        chat.api::chat_typing(chat, m$room_id, TRUE, timeout = 120)
         reply <- matrix_run_turn_in_cwd(ingest_body, session)
-        tryCatch(mx.api::mx_typing(mx_sess, m$room_id, FALSE),
-                 error = function(e) NULL)
+        chat.api::chat_typing(chat, m$room_id, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
@@ -1434,10 +1553,21 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 # events that have been processed. Lets matrix_poll skip duplicates when
 # sync echoes back something the backfill already replayed.
 matrix_remember_event <- function(seen, event_id, cap = 256L) {
-    if (is.null(event_id) || !nzchar(event_id)) {
+    # chat_send() returns one id per event it created, so this can be a
+    # vector: a send with attachments yields the media ids and the text
+    # id. Every one of them echoes back through sync, so every one has to
+    # be remembered or the attachments read as somebody else's messages.
+    #
+    # Filter rather than test: `!nzchar()` on a vector is a vector, and
+    # `||` on that is an error in R >= 4.3. nzchar(character(0)) is
+    # logical(0), which the old guard turned into NA and stopped the poll
+    # mid-batch.
+    ids <- as.character(event_id %||% character())
+    ids <- ids[!is.na(ids) & nzchar(ids)]
+    if (!length(ids)) {
         return(seen)
     }
-    seen <- c(seen, event_id)
+    seen <- c(seen, ids)
     if (length(seen) > cap) {
         seen <- tail(seen, cap)
     }
