@@ -825,20 +825,22 @@ matrix_update_displayname <- function(cfg, session = NULL, model = NULL,
     if (is.null(name)) {
         return(invisible(cfg))
     }
-    ok <- tryCatch({
-        mx.client::mx_set_displayname(matrix_client(cfg), name)
-        TRUE
-    }, error = function(e) FALSE)
-    if (!isTRUE(ok)) {
-        return(invisible(cfg))
-    }
-    # mx_set_displayname() wraps the call in mx_with_relogin(), so a
-    # rejected token is refreshed and persisted -- but it returns only
-    # TRUE, discarding the refreshed client. Re-read the config so the
-    # caller keeps going with the live token. Without this the next send
-    # uses the token the homeserver just rejected, and because
-    # chat_send() does no relogin of its own that reply is swallowed by
-    # the caller's tryCatch with nothing logged.
+    tryCatch(mx.client::mx_set_displayname(matrix_client(cfg), name),
+             error = function(e) NULL)
+    # Re-read whether or not the rename succeeded, because disk is the
+    # authoritative copy either way.
+    #
+    # mx_set_displayname() wraps the call in mx_with_relogin(), which
+    # persists the refreshed client *before* retrying and then returns
+    # only TRUE, discarding it. So a relogin whose retry then fails --
+    # rate limit, transient 5xx -- still leaves the live token on disk.
+    # Gating this reload on success threw that token away and sent the
+    # following acknowledgement on the rejected one, which is the same
+    # silent drop this reload exists to prevent: chat_send() does no
+    # relogin of its own, so the failure dies in the caller's tryCatch
+    # with nothing logged.
+    #
+    # When nothing rotated, the reload returns what we already had.
     invisible(tryCatch(matrix_load_config(), error = function(e) cfg))
 }
 
@@ -1481,7 +1483,6 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # mx_client_session() is pure field validation, so this is free.
     sess_now <- function() matrix_mx_session(cfg)
     chat_now <- function() matrix_chat_client(cfg)
-    mx_sess <- sess_now()
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites

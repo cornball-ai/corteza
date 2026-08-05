@@ -896,3 +896,38 @@ local({
         corteza::matrix_poll(timeout = 0L, sessions = sessions))
     expect_equal(seen_cfg$token, "rotated")
 })
+
+
+# ---------------------------------------------------------------
+# Relogin succeeds, the retry then fails. mx_with_relogin() persists the
+# refreshed client BEFORE retrying, so the live token is on disk even
+# though the call threw. Returning the caller's cfg on the error path
+# discarded it and sent the acknowledgement on the rejected token.
+#
+# The earlier guards only modelled "persist, then succeed", so this path
+# stayed green through two rounds of fixes.
+# ---------------------------------------------------------------
+
+local({
+    cfg0 <- base_cfg(sync_token = "s1")
+    cfg0$model_badge <- "always"
+    cfg0$model <- "qwen3:8b"
+    iso <- isolate_config(cfg0)
+    on.exit(restore_config(iso), add = TRUE)
+
+    orig_set <- mx.client::mx_set_displayname
+    assignInNamespace("mx_set_displayname",
+                      function(client, name, save = TRUE) {
+        # The relogin half: refreshed token reaches disk.
+        c <- corteza:::matrix_load_config()
+        c$token <- "rotated"
+        corteza:::matrix_save_config(c)
+        # The retry half: rate-limited, so the call throws anyway.
+        stop("M_LIMIT_EXCEEDED: slow down")
+    }, ns = "mx.client")
+    on.exit(assignInNamespace("mx_set_displayname", orig_set, ns = "mx.client"),
+            add = TRUE)
+
+    got <- corteza:::matrix_update_displayname(corteza:::matrix_load_config())
+    expect_equal(got$token, "rotated")
+})
