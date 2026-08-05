@@ -11,13 +11,27 @@
 # in this package is on a Matrix path already behind this guard, so a
 # user who never enables the channel should not have to install it --
 # and an Imports entry would make it mandatory for everyone.
-# Minimum chat.api this corteza can drive. Below 0.0.1.1, chat_poll()
-# returns no first_run and no post-sync client. Below 0.0.1.3,
-# chat_matrix() has no e2ee or crypto_store parameter, so building any
-# client at all dies on an unused argument -- and the adapter it does
-# have cannot decrypt or encrypt, which is where corteza's E2EE now
-# lives.
-.CHAT_API_MIN <- "0.0.1.5"
+# Minimum chat.api this corteza can drive, and why each step of it:
+#
+#   0.0.1.1  chat_poll() starts reporting first_run and the post-sync
+#            client. Below it a restart replays its whole backfill.
+#   0.0.1.3  chat_matrix() gains e2ee, so building any client at all
+#            stops dying on an unused argument, and the adapter can
+#            actually encrypt and decrypt -- which is where corteza's
+#            E2EE now lives.
+#   0.0.1.6  the crypto cache is keyed on the device identity alone, so
+#            one device cannot end up with two Olm accounts.
+#   0.0.1.5  the adapter holds an e2ee client's cursor back in memory as
+#            well as on disk when crypto fails. Below it, matrix_poll()
+#            catching that error and polling the same client again skips
+#            the sync whose room keys were lost. And chat_matrix() stops
+#            requiring mx.client to build a cleartext client, which
+#            matters because matrix_chat_client() builds one on every
+#            host with the channel configured.
+#
+# The floor is checked at runtime, not just declared: a Suggests bound is
+# a resolution hint, and an installed copy loads however old it is.
+.CHAT_API_MIN <- "0.0.1.6"
 
 # Minimum mx.client. Below it mx_set_displayname() does not exist, so
 # the model-badge rename fails inside a best-effort tryCatch and the

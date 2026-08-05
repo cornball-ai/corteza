@@ -39,9 +39,13 @@ jobs:
       # whole integration file, so a run could go green having asserted
       # nothing about the transport work at all.
       #
-      # Installed from source rather than the drat so a PR is tested
-      # against the branch it depends on instead of whatever was last
-      # published. Order matters: mx.client imports mx.api.
+      # From each repo's default branch rather than the drat, so what is
+      # tested is what has actually landed upstream instead of whatever
+      # was last published there. A corteza PR that needs an unmerged
+      # upstream change therefore stays red until that change merges,
+      # which is the intent: the verify step below is what says so, in
+      # the one line worth reading. Order matters: mx.client imports
+      # mx.api.
       - name: Install Matrix stack
         run: |
           for pkg in mx.api mx.client chat.api; do
