@@ -19,8 +19,6 @@
 #            stops dying on an unused argument, and the adapter can
 #            actually encrypt and decrypt -- which is where corteza's
 #            E2EE now lives.
-#   0.0.1.6  the crypto cache is keyed on the device identity alone, so
-#            one device cannot end up with two Olm accounts.
 #   0.0.1.5  the adapter holds an e2ee client's cursor back in memory as
 #            well as on disk when crypto fails. Below it, matrix_poll()
 #            catching that error and polling the same client again skips
@@ -28,6 +26,8 @@
 #            requiring mx.client to build a cleartext client, which
 #            matters because matrix_chat_client() builds one on every
 #            host with the channel configured.
+#   0.0.1.6  the crypto cache is keyed on the device identity alone, so
+#            one Matrix device cannot end up with two Olm accounts.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
