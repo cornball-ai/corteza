@@ -17,7 +17,7 @@
 # client at all dies on an unused argument -- and the adapter it does
 # have cannot decrypt or encrypt, which is where corteza's E2EE now
 # lives.
-.CHAT_API_MIN <- "0.0.1.4"
+.CHAT_API_MIN <- "0.0.1.5"
 
 # Minimum mx.client. Below it mx_set_displayname() does not exist, so
 # the model-badge rename fails inside a best-effort tryCatch and the

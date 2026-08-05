@@ -1,4 +1,4 @@
-# corteza 0.7.1.6
+# corteza 0.7.1.7
 
 - **End-to-end encryption moves into the chat.api Matrix adapter.**
   `R/matrix_crypto.R` is gone and `mx.crypto` has left Suggests.
@@ -10,7 +10,7 @@
   `chat_poll()$messages` like any other traffic, so the poll loop stops
   reading `m.room.encrypted` out of the raw sync. `matrix_poll()` drops
   its `crypto` argument and `matrix_run_init()` no longer returns a
-  crypto context. Requires `chat.api >= 0.0.1.4`, enforced at runtime.
+  crypto context. Requires `chat.api >= 0.0.1.5`, enforced at runtime.
 
   corteza names no crypto store. The adapter derives one per Matrix
   device, `(user_id, device_id)`, and records that identity in the store
