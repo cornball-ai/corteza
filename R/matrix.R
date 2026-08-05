@@ -17,7 +17,7 @@
 # client at all dies on an unused argument -- and the adapter it does
 # have cannot decrypt or encrypt, which is where corteza's E2EE now
 # lives.
-.CHAT_API_MIN <- "0.0.1.3"
+.CHAT_API_MIN <- "0.0.1.4"
 
 # Minimum mx.client. Below it mx_set_displayname() does not exist, so
 # the model-badge rename fails inside a best-effort tryCatch and the
@@ -327,6 +327,15 @@ matrix_event_id <- function(id) {
 # both directions of the traffic. corteza used to run that itself in
 # R/matrix_crypto.R and reach around chat_poll()$raw to decrypt.
 #
+# No crypto_store either. The adapter derives one per Matrix device --
+# (user_id, device_id) off this very config -- and records that identity
+# in the store so another device cannot open it. corteza briefly passed
+# its own, keyed on user_id alone, which is the right shape for telling
+# cornelius and tiny apart and the wrong one for an Olm account: an
+# account belongs to a device, so a re-provisioned device_id would have
+# reused the old account, and the sanitization was not injective either.
+# Naming the store here would only be a second place to get that wrong.
+#
 # Building a client is cheap even with e2ee on. chat.api interns one
 # crypto context per identity, so the account is loaded and its one-time
 # keys published once per process no matter how many times this is
@@ -334,35 +343,11 @@ matrix_event_id <- function(id) {
 # the access token that rotates mid-loop is never read from a stale copy.
 #
 # `...` reaches chat_matrix(), which exists for its testing seams
-# (.sync, .extract, .send, .media, .typing, .crypto). Production passes
-# nothing.
+# (.sync, .extract, .send, .media, .typing, .crypto, .save). Production
+# passes nothing.
 matrix_chat_client <- function(cfg, ...) {
-    e2ee <- isTRUE(cfg$e2ee)
     chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = TRUE,
-                          e2ee = e2ee,
-                          crypto_store = if (e2ee) matrix_crypto_store(cfg),
-                          ...)
-}
-
-# Where this bot's Olm account and Megolm sessions live.
-#
-# Keyed on the Matrix user id, which is what an E2EE identity actually
-# belongs to. Two other keys were wrong in different directions.
-# dirname(config)/crypto, which corteza used, tied the identity to
-# wherever the config file sat: point a bot at a moved config and it
-# silently minted a new device and lost every session it had. The app
-# namespace alone is worse, because cornelius and tiny run this same
-# package against different configs, and one store between them has the
-# second bot come up wearing the first's device keys.
-matrix_crypto_store <- function(cfg) {
-    uid <- cfg$user_id %||% ""
-    if (!nzchar(uid)) {
-        stop("E2EE needs a user_id in the Matrix config: the crypto store ",
-             "is keyed on it, and an unkeyed store would be shared by every ",
-             "bot on this host.", call. = FALSE)
-    }
-    file.path(mx.client::mx_crypto_store_dir(app = "corteza"),
-              gsub("[^A-Za-z0-9._-]", "_", uid))
+                          e2ee = isTRUE(cfg$e2ee), ...)
 }
 
 # The record shape this file's poll loop reads, from the contract's

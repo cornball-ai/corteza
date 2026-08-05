@@ -534,10 +534,11 @@ local({
     expect_null(cs$log$store)
 })
 
-# e2ee on: the config flag reaches the adapter, and the store it is given
-# is keyed on the bot's user id. Keying on the app namespace alone would
-# have cornelius and tiny -- same package, different configs -- come up
-# on one Olm account, the second wearing the first's device keys.
+# e2ee on: the config flag reaches the adapter, and nothing else does.
+# corteza names no store. The adapter derives one per Matrix device off
+# this same config and records that identity in it, so the store is
+# unique to (user_id, device_id) without corteza having a second place to
+# get that wrong.
 local({
     iso <- isolate_config(base_cfg(e2ee = TRUE))
     on.exit(restore_config(iso), add = TRUE)
@@ -545,17 +546,22 @@ local({
     cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config(),
                                         .crypto = cs$ops)
     expect_true(chat.api::chat_capabilities(cli)$e2ee)
-    expect_true(is.environment(cli$env$crypto))
-    expect_true(grepl("_bot_example$", cs$log$store))
-    expect_identical(cs$log$store,
-                     corteza:::matrix_crypto_store(corteza:::matrix_load_config()))
+    expect_null(cli$crypto_store)
+    # Built on first use, not at construction: key publication is an
+    # authenticated request, and the stored token may already be rejected
+    # at startup.
+    expect_null(cli$env$crypto)
+    expect_identical(cs$log$inits, 0L)
 })
 
-# A config with no user_id cannot key a store, and an unkeyed one would
-# be shared by every bot on the host. That is an error, not a default.
-expect_error(corteza:::matrix_crypto_store(list(user_id = NULL)),
-             "keyed on it")
-expect_error(corteza:::matrix_crypto_store(list(user_id = "")), "keyed on it")
+# corteza no longer computes a store path at all -- that briefly lived
+# here, keyed on user_id alone, which is the right shape for telling
+# cornelius and tiny apart and the wrong one for an Olm account, since an
+# account belongs to a device.
+expect_false("matrix_crypto_store" %in% ls(asNamespace("corteza"),
+                                           all.names = TRUE))
+expect_false(any(grepl("crypto_store",
+                       deparse(body(corteza:::matrix_chat_client)))))
 
 # Decrypted traffic reaches the poll loop as ordinary messages, with
 # encrypted carried through. corteza used to run its own decrypt off
@@ -826,11 +832,11 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.3")
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.4")
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
-expect_false(package_version("0.0.1.2") >= package_version(corteza:::.CHAT_API_MIN))
+expect_false(package_version("0.0.1.3") >= package_version(corteza:::.CHAT_API_MIN))
 # The installed build satisfies it, so the guard passes rather than
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
@@ -954,14 +960,17 @@ local({
     expect_identical(length(cs$log$sent), 2L)
     expect_identical(cs$log$sent[[1L]]$mx$token, "tok")
     expect_identical(cs$log$sent[[2L]]$mx$token, "rotated")
-    expect_identical(cs$log$store, corteza:::matrix_crypto_store(stale))
+    # corteza names no store, so the adapter derives one from the config's
+    # own device identity.
+    expect_null(cs$log$store)
     # Interning is what makes per-use client building affordable with e2ee
     # on. Two sends built two clients above, and the account was loaded
     # once; without it every send would unpickle it and republish 50
-    # one-time keys. It also survives the token rotation, since the
-    # identity is the store and not the config.
+    # one-time keys. It survives the token rotation, because the identity
+    # is (user_id, device_id) and neither of those rotates.
     expect_identical(cs$log$inits, 1L)
-    with_seamed_client(seams, corteza:::matrix_chat_client(live))
+    with_seamed_client(seams, corteza:::matrix_reply_send(live, "!room:example",
+                                                          "again"))
     expect_identical(cs$log$inits, 1L)
 })
 

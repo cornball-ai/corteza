@@ -620,7 +620,7 @@ expect_false(corteza:::matrix_is_clear_command(NULL))
 
 # 0.3.0 adoption helpers exist with the expected shapes.
 expect_true(is.function(corteza:::matrix_relogin))
-expect_true(is.function(corteza:::matrix_crypto_store))
+expect_true(is.function(corteza:::matrix_reply_send))
 expect_error(corteza:::matrix_relogin(list(server = "https://x")),
              "no stored password")
 

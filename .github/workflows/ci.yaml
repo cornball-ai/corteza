@@ -33,5 +33,48 @@ jobs:
       - name: Dependencies
         run: ./run.sh install_deps
 
+      # The Matrix stack is Suggests, and _R_CHECK_FORCE_SUGGESTS_=false
+      # lets check pass without it -- which it did, silently. Every Matrix
+      # test sits behind a requireNamespace guard that exit_file()s the
+      # whole integration file, so a run could go green having asserted
+      # nothing about the transport work at all.
+      #
+      # Installed from source rather than the drat so a PR is tested
+      # against the branch it depends on instead of whatever was last
+      # published. Order matters: mx.client imports mx.api.
+      - name: Install Matrix stack
+        run: |
+          for pkg in mx.api mx.client chat.api; do
+            git clone --depth 1 "https://github.com/cornball-ai/$pkg.git" "$RUNNER_TEMP/$pkg"
+            R CMD INSTALL "$RUNNER_TEMP/$pkg"
+          done
+
+      # Fail loudly if the stack is absent or too old, rather than letting
+      # the tests skip themselves into a green tick. The floors come from
+      # this checkout's own DESCRIPTION, so they cannot drift from what
+      # the package declares, and corteza is not installed yet at this
+      # point -- run_tests builds and checks it.
+      - name: Verify Matrix stack
+        run: |
+          Rscript -e '
+            d <- read.dcf("DESCRIPTION", "Suggests")[[1L]]
+            want <- trimws(strsplit(d, ",")[[1L]])
+            floor_for <- function(p) {
+              e <- grep(paste0("^", p, "\\b"), want, value = TRUE)
+              m <- regmatches(e, regexpr("[0-9][0-9.-]*", e))
+              if (length(m)) package_version(m) else NULL
+            }
+            for (p in c("mx.api", "mx.client", "chat.api")) {
+              if (!requireNamespace(p, quietly = TRUE))
+                stop("Matrix CI needs ", p, " installed", call. = FALSE)
+              have <- utils::packageVersion(p)
+              floor <- floor_for(p)
+              message(p, " ", have,
+                      if (is.null(floor)) "" else paste0(" (>= ", floor, ")"))
+              if (!is.null(floor) && have < floor)
+                stop(p, " ", have, " is below the ", floor,
+                     " this corteza declares", call. = FALSE)
+            }'
+
       - name: Test
         run: ./run.sh run_tests

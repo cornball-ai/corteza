@@ -1,4 +1,4 @@
-# corteza 0.7.1.5
+# corteza 0.7.1.6
 
 - **End-to-end encryption moves into the chat.api Matrix adapter.**
   `R/matrix_crypto.R` is gone and `mx.crypto` has left Suggests.
@@ -10,12 +10,22 @@
   `chat_poll()$messages` like any other traffic, so the poll loop stops
   reading `m.room.encrypted` out of the raw sync. `matrix_poll()` drops
   its `crypto` argument and `matrix_run_init()` no longer returns a
-  crypto context. Requires `chat.api >= 0.0.1.3`, enforced at runtime.
+  crypto context. Requires `chat.api >= 0.0.1.4`, enforced at runtime.
 
-  The crypto store is keyed on the bot's Matrix user id, replacing
-  `dirname(config)/crypto`. That old key tied the device identity to
-  wherever the config file sat, so a moved config silently minted a new
-  device and lost every Megolm session with it.
+  corteza names no crypto store. The adapter derives one per Matrix
+  device, `(user_id, device_id)`, and records that identity in the store
+  so another device cannot open it. This replaces
+  `dirname(config)/crypto`, which tied the device identity to wherever
+  the config file sat, so a moved config silently minted a new device and
+  lost every Megolm session with it.
+
+- **CI installs and version-checks the Matrix stack.** It is all
+  Suggests, and `_R_CHECK_FORCE_SUGGESTS_=false` let a run pass without
+  any of it -- which it did, silently, because every Matrix test sits
+  behind a `requireNamespace()` guard that skips the whole integration
+  file. The workflow now installs `mx.api`, `mx.client`, and `chat.api`
+  from source and fails if either declared floor is unmet, so the
+  transport tests cannot skip themselves into a green tick.
 
 # corteza 0.7.1.4
 
