@@ -50,31 +50,34 @@ jobs:
           done
 
       # Fail loudly if the stack is absent or too old, rather than letting
-      # the tests skip themselves into a green tick. The floors come from
-      # this checkout's own DESCRIPTION, so they cannot drift from what
-      # the package declares, and corteza is not installed yet at this
-      # point -- run_tests builds and checks it.
+      # the tests skip themselves into a green tick.
+      #
+      # The floors are corteza's own runtime constants, read out of an
+      # installed corteza, rather than parsed from DESCRIPTION. A first
+      # attempt did parse it, and on macOS the parse quietly found no
+      # floors at all and waved 0.0.1.2 through -- a verification step
+      # that can silently check nothing is the same failure this whole
+      # job exists to stop. These are the values matrix_require_mx()
+      # enforces, so if they are wrong the bots are wrong too.
       - name: Verify Matrix stack
         run: |
+          R CMD INSTALL .
           Rscript -e '
-            d <- read.dcf("DESCRIPTION", "Suggests")[[1L]]
-            want <- trimws(strsplit(d, ",")[[1L]])
-            floor_for <- function(p) {
-              e <- grep(paste0("^", p, "\\b"), want, value = TRUE)
-              m <- regmatches(e, regexpr("[0-9][0-9.-]*", e))
-              if (length(m)) package_version(m) else NULL
-            }
-            for (p in c("mx.api", "mx.client", "chat.api")) {
+            for (p in c("mx.api", "mx.client", "chat.api"))
               if (!requireNamespace(p, quietly = TRUE))
                 stop("Matrix CI needs ", p, " installed", call. = FALSE)
+            floors <- c(chat.api = corteza:::.CHAT_API_MIN,
+                        mx.client = corteza:::.MX_CLIENT_MIN)
+            if (!all(nzchar(floors)))
+              stop("could not read corteza runtime floors", call. = FALSE)
+            for (p in names(floors)) {
               have <- utils::packageVersion(p)
-              floor <- floor_for(p)
-              message(p, " ", have,
-                      if (is.null(floor)) "" else paste0(" (>= ", floor, ")"))
-              if (!is.null(floor) && have < floor)
-                stop(p, " ", have, " is below the ", floor,
-                     " this corteza declares", call. = FALSE)
-            }'
+              message(p, " ", have, " (>= ", floors[[p]], ")")
+              if (have < floors[[p]])
+                stop(p, " ", have, " is below the ", floors[[p]],
+                     " this corteza requires", call. = FALSE)
+            }
+            message("mx.api ", utils::packageVersion("mx.api"))'
 
       - name: Test
         run: ./run.sh run_tests
