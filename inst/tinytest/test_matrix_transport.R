@@ -1013,6 +1013,26 @@ local({
     on.exit(assignInNamespace("matrix_reply_send", orig_send,
                               ns = "corteza"), add = TRUE)
 
+    # /clear deletes the room's session and builds a fresh one, and
+    # building one calls session_setup(), which wants a provider API key.
+    # This test is about which config the acknowledgement is sent with,
+    # not about session construction, so the rebuild is stubbed. Without
+    # it the file passes only on a machine that happens to have
+    # credentials in its environment -- which is why CI never saw it: the
+    # whole file used to exit at its requireNamespace guard.
+    orig_new <- corteza:::matrix_new_session
+    assignInNamespace("matrix_new_session", function(cfg, ...) {
+        e <- new.env(parent = emptyenv())
+        e$model <- "qwen3:8b"
+        e$provider <- "ollama"
+        e$history <- list()
+        e$transcript <- list()
+        e$seen_event_ids <- character()
+        e
+    }, ns = "corteza")
+    on.exit(assignInNamespace("matrix_new_session", orig_new, ns = "corteza"),
+            add = TRUE)
+
     sessions <- corteza:::matrix_new_session_registry()
     s <- new.env(parent = emptyenv())
     s$model <- "qwen3:8b"
