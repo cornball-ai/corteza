@@ -710,3 +710,89 @@ expect_false(package_version("0.0.1") >= package_version(corteza:::.CHAT_API_MIN
 expect_true(utils::packageVersion("chat.api") >=
             package_version(corteza:::.CHAT_API_MIN))
 expect_silent(corteza:::matrix_require_mx())
+
+
+# ---------------------------------------------------------------
+# A /model switch renames the bot, and that rename can relogin. The
+# refreshed token has to reach the acknowledgement send.
+#
+# This drives matrix_poll() rather than calling the helpers, because the
+# defect was never in matrix_update_displayname() itself -- it was in the
+# call site not adopting what it returned. Remove the `cfg <-` at the
+# /model branch and this goes red; a test that only calls the helper
+# stays green, which is how the bug survived its first fix.
+# ---------------------------------------------------------------
+
+local({
+    cfg0 <- base_cfg(sync_token = "s1")
+    cfg0$model_badge <- "always"
+    cfg0$model <- "qwen3:8b"
+    cfg0$provider <- "ollama"
+    iso <- isolate_config(cfg0)
+    on.exit(restore_config(iso), add = TRUE)
+
+    # The rename relogins: mx.client persists a refreshed token and hands
+    # back only TRUE, discarding the client it refreshed.
+    orig_set <- mx.client::mx_set_displayname
+    assignInNamespace("mx_set_displayname",
+                      function(client, name, save = TRUE) {
+        c <- corteza:::matrix_load_config()
+        c$token <- "rotated"
+        corteza:::matrix_save_config(c)
+        invisible(TRUE)
+    }, ns = "mx.client")
+    on.exit(assignInNamespace("mx_set_displayname", orig_set, ns = "mx.client"),
+            add = TRUE)
+
+    # Reply gating is a separate concern with its own tests; force the
+    # message through so this asserts token propagation and nothing else.
+    orig_resp <- corteza:::matrix_should_respond
+    assignInNamespace("matrix_should_respond",
+                      function(...) TRUE, ns = "corteza")
+    on.exit(assignInNamespace("matrix_should_respond", orig_resp,
+                              ns = "corteza"), add = TRUE)
+
+    # Capture the config the send is handed.
+    seen_cfg <- NULL
+    orig_send <- corteza:::matrix_send_maybe_encrypted
+    assignInNamespace("matrix_send_maybe_encrypted",
+                      function(crypto, cfg, room_id, text, markdown = FALSE) {
+        seen_cfg <<- cfg
+        "$ack"
+    }, ns = "corteza")
+    on.exit(assignInNamespace("matrix_send_maybe_encrypted", orig_send,
+                              ns = "corteza"), add = TRUE)
+
+    # Pre-seeded registry: no session_setup, no provider calls.
+    sessions <- corteza:::matrix_new_session_registry()
+    s <- new.env(parent = emptyenv())
+    s$model <- "qwen3:8b"
+    s$provider <- "ollama"
+    s$default_model <- "qwen3:8b"
+    s$default_provider <- "ollama"
+    s$history <- list()
+    s$transcript <- list()
+    s$seen_event_ids <- character()
+    assign("!room:example", s, envir = sessions)
+
+    # matrix_poll() re-extracts from res$raw rather than reading
+    # chat_poll()$messages, so the message has to be in the sync itself.
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            ev <- list(type = "m.room.message", event_id = "$m1",
+                       sender = "@human:example",
+                       origin_server_ts = 1700000000000,
+                       content = list(msgtype = "m.text",
+                           body = "/model claude-sonnet-4-6 anthropic_claude"))
+            list(sync = list(next_batch = "s2", rooms = list(join = list(
+                     "!room:example" = list(timeline = list(events = list(ev)))))),
+                 client = client, first_run = FALSE)
+        })
+
+    with_seamed_client(seams,
+        corteza::matrix_poll(timeout = 0L, sessions = sessions))
+
+    # The send ran with the token the rename produced, not the one the
+    # homeserver had just rejected.
+    expect_equal(seen_cfg$token, "rotated")
+})

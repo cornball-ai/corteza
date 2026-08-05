@@ -1396,4 +1396,14 @@ local({
 
 # The mx.client floor is enforced at runtime, not just declared in
 # DESCRIPTION: an installed-but-stale copy has no mx_set_displayname().
-expect_true(utils::packageVersion("mx.client") >= corteza:::.MX_CLIENT_MIN)
+# The floors are enforced at runtime, not merely declared in DESCRIPTION:
+# an installed-but-stale copy loads however old it is. Injecting the
+# versions tests the gate itself rather than what CI happens to have.
+if (requireNamespace("chat.api", quietly = TRUE) &&
+        requireNamespace("mx.client", quietly = TRUE)) {
+    expect_error(corteza:::matrix_require_mx(mx_client_version = "0.1.1"),
+                 "mx.client")
+    expect_error(corteza:::matrix_require_mx(chat_api_version = "0.0.0.1"),
+                 "chat.api")
+    expect_silent(corteza:::matrix_require_mx())
+}

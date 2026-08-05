@@ -20,7 +20,10 @@
 # sender line silently never updates.
 .MX_CLIENT_MIN <- "0.2.0"
 
-matrix_require_mx <- function() {
+# chat_api_version / mx_client_version are injectable so the floors can
+# be tested without a stale package on disk. Leave NULL in production.
+matrix_require_mx <- function(chat_api_version = NULL,
+                              mx_client_version = NULL) {
     for (pkg in c("mx.api", "mx.client", "chat.api")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
             stop("Matrix integration requires the '", pkg, "' package. ",
@@ -35,7 +38,7 @@ matrix_require_mx <- function() {
     # the cursor, and only then dies on the missing first_run -- the
     # worst place to discover a stale build, because the work is already
     # spent and the cursor may not be recoverable.
-    have <- utils::packageVersion("chat.api")
+    have <- chat_api_version %||% utils::packageVersion("chat.api")
     if (have < .CHAT_API_MIN) {
         stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
              ", but ", have, " is installed. ",
@@ -48,7 +51,7 @@ matrix_require_mx <- function() {
     # hint, and an already-installed copy loads however old it is. A host
     # on 0.1.1 has no mx_set_displayname(), so the badge rename dies in a
     # best-effort tryCatch and the sender line quietly never updates.
-    have_mx <- utils::packageVersion("mx.client")
+    have_mx <- mx_client_version %||% utils::packageVersion("mx.client")
     if (have_mx < .MX_CLIENT_MIN) {
         stop("Matrix integration requires mx.client >= ", .MX_CLIENT_MIN,
              ", but ", have_mx, " is installed. Below that version the ",
@@ -1909,6 +1912,12 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
             # given: clear any badge rename left over from a previous run.
             cfg <- matrix_update_displayname(cfg, model = model,
                                              provider = provider)
+            # That rename can relogin, which invalidates the session
+            # built above. Rebuild it, or the archive-flush room-name
+            # lookups spend the whole run on the rejected token and
+            # quietly lose that metadata.
+            mx_sess <- tryCatch(matrix_mx_session(cfg),
+                                error = function(e) mx_sess)
         }
     }
 
