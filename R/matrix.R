@@ -41,10 +41,19 @@
 # a resolution hint, and an installed copy loads however old it is.
 .CHAT_API_MIN <- "0.0.1.9"
 
-# Minimum mx.client. Below it mx_set_displayname() does not exist, so
-# the model-badge rename fails inside a best-effort tryCatch and the
-# sender line silently never updates.
-.MX_CLIENT_MIN <- "0.2.0"
+# Minimum mx.client:
+#
+#   0.2.0    mx_set_displayname() exists. Below it the model-badge rename
+#            fails inside a best-effort tryCatch and the sender line
+#            silently never updates.
+#   0.2.0.2  mx_send_encrypted() no longer reports success for a message
+#            nobody can read: it filters its own device by
+#            (user_id, device_id) rather than device_id alone, refuses to
+#            post when every recipient device was skipped, and treats a
+#            partial /keys/query or /keys/claim as unanswered. corteza
+#            does not call it directly, but every encrypted reply this
+#            loop sends goes through it.
+.MX_CLIENT_MIN <- "0.2.0.2"
 
 # chat_api_version / mx_client_version are injectable so the floors can
 # be tested without a stale package on disk. Leave NULL in production.

@@ -1,4 +1,4 @@
-# corteza 0.7.1.11
+# corteza 0.7.1.12
 
 - **End-to-end encryption moves into the chat.api Matrix adapter.**
   `R/matrix_crypto.R` is gone and `mx.crypto` has left Suggests.
@@ -18,6 +18,15 @@
   `dirname(config)/crypto`, which tied the device identity to wherever
   the config file sat, so a moved config silently minted a new device and
   lost every Megolm session with it.
+
+- **`mx.client` floor raised to 0.2.0.2.** That release stops
+  `mx_send_encrypted()` reporting success for a message nobody can
+  read: it filters its own device by `(user_id, device_id)` rather than
+  `device_id` alone, refuses to post when every recipient device was
+  skipped, and treats a partial `/keys/query` or `/keys/claim` as
+  unanswered rather than as a user with no devices. corteza does not
+  call it directly, but every encrypted reply this loop sends goes
+  through it.
 
 - **CI installs and version-checks the Matrix stack.** It is all
   Suggests, and `_R_CHECK_FORCE_SUGGESTS_=false` let a run pass without
