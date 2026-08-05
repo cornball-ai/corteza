@@ -80,9 +80,18 @@ restore_config <- function(iso) {
 # not cosmetic: jsonlite writes a NULL member as `{}` and reads it back
 # as an empty list, and first_run is decided by is.null() on that field.
 # A config carrying the key at all is therefore never a first run.
-base_cfg <- function(sync_token = "s1", e2ee = FALSE) {
+#
+# user_id is a parameter because chat.api interns one crypto context per
+# identity, and the identity is the store path, which corteza derives
+# from the user id. Two e2ee tests sharing a user id share a context: the
+# second gets the first's encrypted-room set and routes its sends the
+# wrong way. Under R CMD check that is not hypothetical -- tests/tinytest.R
+# pins R_USER_DATA_DIR for the whole run, so the store path no longer
+# varies with the per-test HOME.
+base_cfg <- function(sync_token = "s1", e2ee = FALSE,
+                     user_id = "@bot:example") {
     cfg <- list(server = "https://example", user = "bot", password = "pw",
-                token = "tok", user_id = "@bot:example", device_id = "DEV",
+                token = "tok", user_id = user_id, device_id = "DEV",
                 room_id = "!room:example")
     if (!is.null(sync_token)) {
         cfg$sync_token <- sync_token
@@ -101,10 +110,12 @@ crypto_seam <- function(decrypted = list(), encrypted_rooms = "!secret:example",
     log <- new.env(parent = emptyenv())
     log$sent <- list()
     log$decrypts <- 0L
+    log$inits <- 0L
     ctx <- new.env(parent = emptyenv())
     ctx$encrypted <- encrypted_rooms
     ops <- list(
         init = function(mx, store = NULL, app = NULL) {
+            log$inits <- log$inits + 1L
             log$store <- store
             ctx
         },
@@ -120,6 +131,26 @@ crypto_seam <- function(decrypted = list(), encrypted_rooms = "!secret:example",
             decrypted
         })
     list(ops = ops, log = log)
+}
+
+# A session registry with the named rooms already in it. Any test that
+# lets a message reach the loop needs one: matrix_get_or_create_session()
+# builds a session by asking the homeserver for the room name, which is
+# one of the direct mx.api calls the contract does not model yet.
+seeded_sessions <- function(rooms) {
+    sessions <- corteza:::matrix_new_session_registry()
+    for (rid in rooms) {
+        s <- new.env(parent = emptyenv())
+        s$model <- "qwen3:8b"
+        s$provider <- "ollama"
+        s$default_model <- "qwen3:8b"
+        s$default_provider <- "ollama"
+        s$history <- list()
+        s$transcript <- list()
+        s$seen_event_ids <- character()
+        assign(rid, s, envir = sessions)
+    }
+    sessions
 }
 
 # A sync response with one message from a human, so a test that means to
@@ -386,7 +417,10 @@ local({
                       msgtype = "m.text", is_self = TRUE))
         })
 
-    replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L))
+    replied <- with_seamed_client(
+        seams,
+        corteza::matrix_poll(timeout = 0L,
+                             sessions = seeded_sessions("!room:example")))
     expect_equal(replied, 0L)
     expect_equal(mapped, 1L)
     expect_equal(read_cursor(), "s3")
@@ -481,12 +515,11 @@ expect_false("matrix_send_maybe_encrypted" %in% ls(asNamespace("corteza"),
                                                    all.names = TRUE))
 # ... and matrix_poll() no longer takes a context to be handed one.
 expect_false("crypto" %in% names(formals(corteza::matrix_poll)))
-
-local({
-    iso <- isolate_config(base_cfg(e2ee = TRUE))
-    on.exit(restore_config(iso), add = TRUE)
-    expect_false("crypto" %in% names(corteza::matrix_run_init()))
-})
+# matrix_run_init() no longer builds one. Read off the source rather than
+# from a call: the real function syncs, catches up on invites, and
+# backfills, so calling it here would reach a homeserver.
+expect_false(any(grepl("crypto", deparse(body(corteza::matrix_run_init)))))
+expect_false(any(grepl("crypto", deparse(body(corteza::matrix_run_step)))))
 
 # e2ee off is the default and stays exactly as it was: no crypto context
 # on the client, nothing asked of the store.
@@ -528,7 +561,7 @@ expect_error(corteza:::matrix_crypto_store(list(user_id = "")), "keyed on it")
 # encrypted carried through. corteza used to run its own decrypt off
 # chat_poll()$raw and concatenate the results itself.
 local({
-    iso <- isolate_config(base_cfg(sync_token = "s1", e2ee = TRUE))
+    iso <- isolate_config(base_cfg(sync_token = "s1", e2ee = TRUE, user_id = "@decrypt:example"))
     on.exit(restore_config(iso), add = TRUE)
     seen <- list()
     orig_record <- corteza:::matrix_msg_record
@@ -559,7 +592,11 @@ local({
         },
         .crypto = cs$ops)
 
-    replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L))
+    replied <- with_seamed_client(
+        seams,
+        corteza::matrix_poll(timeout = 0L,
+                             sessions = seeded_sessions(c("!room:example",
+                                                          "!secret:example"))))
     expect_equal(replied, 0L)
     expect_identical(cs$log$decrypts, 1L)
     # Both the cleartext and the decrypted message arrived, in that order.
@@ -578,7 +615,7 @@ local({
 # in step -- which is what used to make a cleartext leak possible, since
 # a room the adapter thought was plain got a plaintext PUT.
 local({
-    iso <- isolate_config(base_cfg(e2ee = TRUE))
+    iso <- isolate_config(base_cfg(e2ee = TRUE, user_id = "@routing:example"))
     on.exit(restore_config(iso), add = TRUE)
     cfg <- corteza:::matrix_load_config()
 
@@ -897,7 +934,7 @@ local({
 # holds no client for exactly this reason: it is built once, and the token
 # rotates under it. Every send has to read the cfg it was called with.
 local({
-    iso <- isolate_config(base_cfg(e2ee = TRUE))
+    iso <- isolate_config(base_cfg(e2ee = TRUE, user_id = "@livecfg:example"))
     on.exit(restore_config(iso), add = TRUE)
     cs <- crypto_seam(encrypted_rooms = "!room:example")
 
@@ -917,6 +954,15 @@ local({
     expect_identical(length(cs$log$sent), 2L)
     expect_identical(cs$log$sent[[1L]]$mx$token, "tok")
     expect_identical(cs$log$sent[[2L]]$mx$token, "rotated")
+    expect_identical(cs$log$store, corteza:::matrix_crypto_store(stale))
+    # Interning is what makes per-use client building affordable with e2ee
+    # on. Two sends built two clients above, and the account was loaded
+    # once; without it every send would unpickle it and republish 50
+    # one-time keys. It also survives the token rotation, since the
+    # identity is the store and not the config.
+    expect_identical(cs$log$inits, 1L)
+    with_seamed_client(seams, corteza:::matrix_chat_client(live))
+    expect_identical(cs$log$inits, 1L)
 })
 
 

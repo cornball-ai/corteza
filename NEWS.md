@@ -23,7 +23,7 @@
   is a Suggests and is not on CRAN, so CRAN could not resolve it and
   the check NOTE listed it with no availability line -- which blocked a
   release. It is now published at
-  <https://cornball-ai.github.io/drat> and declared here, so the NOTE
+  <https://cornball-ai.github.io/drat/> and declared here, so the NOTE
   reports `chat.api yes` against the declared repository, the form
   Writing R Extensions describes for exactly this case.
 
