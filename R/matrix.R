@@ -1159,7 +1159,13 @@ matrix_approval_cb <- function(cfg, room_id = cfg$room_id) {
         if (auto) {
             return(TRUE)
         }
-        matrix_reaction_approval(cfg, call, decision, room_id = room_id)
+        # Re-read rather than use the cfg this closure was built with. A
+        # session outlives many token rotations, and a prompt sent on a
+        # rejected token fails into FALSE -- which the model reads as the
+        # user declining. An approval is rare, interactive, and already
+        # blocking, so a config read costs nothing here.
+        live <- tryCatch(matrix_load_config(), error = function(e) cfg)
+        matrix_reaction_approval(live, call, decision, room_id = room_id)
     }
 }
 
@@ -1469,7 +1475,13 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # the sync call, which is what makes a crash-restart resume past
     # whatever it crashed on. See matrix_chat_client().
     cfg <- matrix_plain_cfg(res$client)
-    mx_sess <- matrix_mx_session(cfg)
+    # Derived at each use, never cached. The token rotates mid-loop --
+    # chat_poll() relogins, and so does a /model or /clear rename -- and
+    # anything built once from cfg silently keeps the rejected one.
+    # mx_client_session() is pure field validation, so this is free.
+    sess_now <- function() matrix_mx_session(cfg)
+    chat_now <- function() matrix_chat_client(cfg)
+    mx_sess <- sess_now()
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
@@ -1548,7 +1560,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # "seen" the message, and clients use receipts for the
         # latest-read marker.
         tryCatch(
-                 mx.api::mx_read_receipt(mx_sess, m$room_id, m$event_id),
+                 mx.api::mx_read_receipt(sess_now(), m$room_id, m$event_id),
                  error = function(e) NULL
         )
         # Rooms with one human: respond freely. More humans: require a
@@ -1571,7 +1583,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
         members <- matrix_room_members_cached(session, m$room_id,
             sender = m$sender,
-            mx_sess = mx_sess, now = now)
+            mx_sess = sess_now(), now = now)
         # Attribute turns when multiple people or another bot could be
         # speaking; the reply gate below is unchanged.
         attribute_sender <- matrix_needs_sender_attribution(members, sender, bots)
@@ -1649,7 +1661,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
             tryCatch(
-                     matrix_archive_session(session, m$room_id, mx_sess),
+                     matrix_archive_session(session, m$room_id, sess_now()),
                      error = function(e) NULL
             )
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
@@ -1680,9 +1692,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # never block the reply. 120s cap (seconds here, not the
         # milliseconds mx.api takes); Matrix clears it when the reply
         # event arrives.
-        chat.api::chat_typing(chat, m$room_id, TRUE, timeout = 120)
+        chat.api::chat_typing(chat_now(), m$room_id, TRUE, timeout = 120)
         reply <- matrix_run_turn_in_cwd(ingest_body, session)
-        chat.api::chat_typing(chat, m$room_id, FALSE)
+        chat.api::chat_typing(chat_now(), m$room_id, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
@@ -1966,8 +1978,13 @@ matrix_run_step <- function(state, timeout = 30000L) {
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns
     # the registry; the schedule lives outside the package.
+    # Derived now, not from state: state$mx_sess was built at startup and
+    # every token rotation since has left it holding a rejected token,
+    # which silently costs the archive its room-name metadata.
+    flush_sess <- tryCatch(matrix_mx_session(matrix_load_config()),
+                           error = function(e) state$mx_sess)
     matrix_handle_flush_signal(state$flush_signal, state$sessions,
-                               state$mx_sess)
+                               flush_sess)
     invisible(replied)
 }
 

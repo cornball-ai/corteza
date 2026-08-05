@@ -682,9 +682,9 @@ local({
     # call across elements and quietly turn a grep into a false pass.
     src <- paste(deparse(body(corteza::matrix_poll), width.cutoff = 500L),
                  collapse = "\n")
-    expect_true(grepl("chat_typing(chat, m$room_id, TRUE, timeout = 120)", src,
+    expect_true(grepl("chat_typing(chat_now(), m$room_id, TRUE, timeout = 120)", src,
                       fixed = TRUE))
-    expect_true(grepl("chat_typing(chat, m$room_id, FALSE)", src, fixed = TRUE))
+    expect_true(grepl("chat_typing(chat_now(), m$room_id, FALSE)", src, fixed = TRUE))
     expect_false(grepl("mx_typing", src, fixed = TRUE))
     # ...and the sync itself is the contract's, not a direct mx.client
     # call. Both invariant-1 and invariant-2 tests above would still pass
@@ -794,5 +794,105 @@ local({
 
     # The send ran with the token the rename produced, not the one the
     # homeserver had just rejected.
+    expect_equal(seen_cfg$token, "rotated")
+})
+
+
+# ---------------------------------------------------------------
+# The encrypted send takes the caller's live cfg, not a copy cached at
+# crypto init. Reintroduce a cached client and this goes red.
+# ---------------------------------------------------------------
+
+if (requireNamespace("mx.client", quietly = TRUE)) {
+    local({
+        seen_client <- NULL
+        orig <- mx.client::mx_send_encrypted
+        assignInNamespace("mx_send_encrypted",
+                          function(client, account, sessions, room_id, content,
+                                   store_dir, recipients = NULL,
+                                   member_ids = NULL) {
+            seen_client <<- client
+            list(event_id = "$enc", sessions = sessions)
+        }, ns = "mx.client")
+        on.exit(assignInNamespace("mx_send_encrypted", orig, ns = "mx.client"),
+                add = TRUE)
+
+
+        crypto <- new.env(parent = emptyenv())
+        crypto$encrypted <- "!room:example"
+        crypto$account <- NULL
+        crypto$sessions <- list()
+        crypto$store <- tempfile()
+
+        live <- base_cfg()
+        live$token <- "rotated"
+
+        corteza:::matrix_send_maybe_encrypted(crypto, live, "!room:example",
+                                              "hi")
+        expect_equal(seen_client$token, "rotated")
+    })
+}
+
+
+# ---------------------------------------------------------------
+# /clear renames too, so it has the same relogin exposure as /model.
+# ---------------------------------------------------------------
+
+local({
+    cfg0 <- base_cfg(sync_token = "s1")
+    cfg0$model_badge <- "always"
+    cfg0$model <- "qwen3:8b"
+    iso <- isolate_config(cfg0)
+    on.exit(restore_config(iso), add = TRUE)
+
+    orig_set <- mx.client::mx_set_displayname
+    assignInNamespace("mx_set_displayname",
+                      function(client, name, save = TRUE) {
+        c <- corteza:::matrix_load_config()
+        c$token <- "rotated"
+        corteza:::matrix_save_config(c)
+        invisible(TRUE)
+    }, ns = "mx.client")
+    on.exit(assignInNamespace("mx_set_displayname", orig_set, ns = "mx.client"),
+            add = TRUE)
+
+    orig_resp <- corteza:::matrix_should_respond
+    assignInNamespace("matrix_should_respond", function(...) TRUE,
+                      ns = "corteza")
+    on.exit(assignInNamespace("matrix_should_respond", orig_resp,
+                              ns = "corteza"), add = TRUE)
+
+    seen_cfg <- NULL
+    orig_send <- corteza:::matrix_send_maybe_encrypted
+    assignInNamespace("matrix_send_maybe_encrypted",
+                      function(crypto, cfg, room_id, text, markdown = FALSE) {
+        seen_cfg <<- cfg
+        "$ack"
+    }, ns = "corteza")
+    on.exit(assignInNamespace("matrix_send_maybe_encrypted", orig_send,
+                              ns = "corteza"), add = TRUE)
+
+    sessions <- corteza:::matrix_new_session_registry()
+    s <- new.env(parent = emptyenv())
+    s$model <- "qwen3:8b"
+    s$provider <- "ollama"
+    s$history <- list()
+    s$transcript <- list()
+    s$seen_event_ids <- character()
+    assign("!room:example", s, envir = sessions)
+
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            ev <- list(type = "m.room.message", event_id = "$c1",
+                       sender = "@human:example",
+                       origin_server_ts = 1700000000000,
+                       content = list(msgtype = "m.text", body = "/clear"))
+            list(sync = list(next_batch = "s2", rooms = list(join = list(
+                     "!room:example" = list(timeline = list(events = list(ev)))))),
+                 client = client, first_run = FALSE)
+        })
+
+    with_seamed_client(seams,
+        corteza::matrix_poll(timeout = 0L, sessions = sessions))
     expect_equal(seen_cfg$token, "rotated")
 })
