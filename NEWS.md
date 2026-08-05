@@ -1,3 +1,22 @@
+# corteza 0.7.1.5
+
+- **End-to-end encryption moves into the chat.api Matrix adapter.**
+  `R/matrix_crypto.R` is gone and `mx.crypto` has left Suggests.
+  corteza no longer builds an Olm account, carries Megolm sessions,
+  tracks which rooms are encrypted, or keeps a second send path for
+  encrypted rooms. Setting `e2ee` in the Matrix config now enables
+  encryption in the adapter, which encrypts and decrypts on both sides
+  of `chat_poll()` / `chat_send()`; decrypted messages arrive in
+  `chat_poll()$messages` like any other traffic, so the poll loop stops
+  reading `m.room.encrypted` out of the raw sync. `matrix_poll()` drops
+  its `crypto` argument and `matrix_run_init()` no longer returns a
+  crypto context. Requires `chat.api >= 0.0.1.3`, enforced at runtime.
+
+  The crypto store is keyed on the bot's Matrix user id, replacing
+  `dirname(config)/crypto`. That old key tied the device identity to
+  wherever the config file sat, so a moved config silently minted a new
+  device and lost every Megolm session with it.
+
 # corteza 0.7.1.4
 
 - **`Additional_repositories` declares the cornball drat.** `chat.api`

@@ -11,9 +11,13 @@
 # in this package is on a Matrix path already behind this guard, so a
 # user who never enables the channel should not have to install it --
 # and an Imports entry would make it mandatory for everyone.
-# Minimum chat.api this corteza can drive. Below it, chat_poll() returns
-# no first_run and no post-sync client.
-.CHAT_API_MIN <- "0.0.1.1"
+# Minimum chat.api this corteza can drive. Below 0.0.1.1, chat_poll()
+# returns no first_run and no post-sync client. Below 0.0.1.3,
+# chat_matrix() has no e2ee or crypto_store parameter, so building any
+# client at all dies on an unused argument -- and the adapter it does
+# have cannot decrypt or encrypt, which is where corteza's E2EE now
+# lives.
+.CHAT_API_MIN <- "0.0.1.3"
 
 # Minimum mx.client. Below it mx_set_displayname() does not exist, so
 # the model-badge rename fails inside a best-effort tryCatch and the
@@ -42,9 +46,9 @@ matrix_require_mx <- function(chat_api_version = NULL,
     if (have < .CHAT_API_MIN) {
         stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
              ", but ", have, " is installed. ",
-             "chat_poll() below that version returns no first_run, so a ",
-             "restarted bot would reprocess its whole backfill as new ",
-             "messages. Reinstall chat.api from the cornball-ai mirror.",
+             "chat_matrix() below that version takes no e2ee argument and ",
+             "its adapter neither encrypts nor decrypts, so every client ",
+             "build fails. Reinstall chat.api from the cornball-ai mirror.",
              call. = FALSE)
     }
     # Same reasoning for mx.client: the DESCRIPTION floor is a resolution
@@ -256,6 +260,19 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                                         kind = kind))
 }
 
+# The poll loop's send. Everything goes through the transport contract,
+# including encrypted rooms: the adapter routes those through Megolm
+# itself, so there is no second path here to keep in step.
+#
+# Separate from the exported matrix_send() because that one reloads the
+# config from disk, and the loop's cfg is the one the poll just refreshed.
+# Returns the event id, or NULL when the homeserver reported none, which
+# is what every caller tests for.
+matrix_reply_send <- function(cfg, room_id, text, markdown = FALSE) {
+    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+                                        markup = matrix_markup(markdown)))
+}
+
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
 # contract does not model. Total by construction: a length-0, NA, or
 # non-character msgtype answers NA rather than erroring, which is what
@@ -305,14 +322,60 @@ matrix_event_id <- function(id) {
 # path and app. Naming an app here would file corteza's cursor -- and on
 # relogin its credentials -- under chat.api's namespace.
 #
+# e2ee comes off the config, and the adapter owns everything behind it:
+# the Olm account, the Megolm sessions, which rooms are encrypted, and
+# both directions of the traffic. corteza used to run that itself in
+# R/matrix_crypto.R and reach around chat_poll()$raw to decrypt.
+#
+# Building a client is cheap even with e2ee on. chat.api interns one
+# crypto context per identity, so the account is loaded and its one-time
+# keys published once per process no matter how many times this is
+# called -- which matters because it is called per use, on purpose, so
+# the access token that rotates mid-loop is never read from a stale copy.
+#
 # `...` reaches chat_matrix(), which exists for its testing seams
-# (.sync, .extract, .send, .media, .typing). Production passes nothing.
+# (.sync, .extract, .send, .media, .typing, .crypto). Production passes
+# nothing.
 matrix_chat_client <- function(cfg, ...) {
-    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = TRUE, ...)
+    e2ee <- isTRUE(cfg$e2ee)
+    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = TRUE,
+                          e2ee = e2ee,
+                          crypto_store = if (e2ee) matrix_crypto_store(cfg),
+                          ...)
 }
 
-matrix_extract_messages <- function(sync_resp, self_id) {
-    mx.client::mx_extract_text_events(sync_resp, self_id)
+# Where this bot's Olm account and Megolm sessions live.
+#
+# Keyed on the Matrix user id, which is what an E2EE identity actually
+# belongs to. Two other keys were wrong in different directions.
+# dirname(config)/crypto, which corteza used, tied the identity to
+# wherever the config file sat: point a bot at a moved config and it
+# silently minted a new device and lost every session it had. The app
+# namespace alone is worse, because cornelius and tiny run this same
+# package against different configs, and one store between them has the
+# second bot come up wearing the first's device keys.
+matrix_crypto_store <- function(cfg) {
+    uid <- cfg$user_id %||% ""
+    if (!nzchar(uid)) {
+        stop("E2EE needs a user_id in the Matrix config: the crypto store ",
+             "is keyed on it, and an unkeyed store would be shared by every ",
+             "bot on this host.", call. = FALSE)
+    }
+    file.path(mx.client::mx_crypto_store_dir(app = "corteza"),
+              gsub("[^A-Za-z0-9._-]", "_", uid))
+}
+
+# The record shape this file's poll loop reads, from the contract's
+# chat_message. Six fields, all one-to-one; the rename to the contract's
+# own names is a later pass, and one mapping in one place beats keeping a
+# second extraction path alive to avoid it.
+#
+# encrypted and sender_verified ride along unused for now. They are the
+# only fields here that a Matrix sync cannot assert on its own.
+matrix_msg_record <- function(m) {
+    list(room_id = m$channel, event_id = m$id, sender = m$sender,
+         body = m$body, is_self = isTRUE(m$self), mentions = m$mentions,
+         encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified)
 }
 
 # The Matrix-visible transcript: an explicit ledger of the events this
@@ -1428,8 +1491,6 @@ matrix_accept_invites <- function(cfg, invites) {
 #'   immediately.
 #' @param sessions Environment from \code{matrix_new_session_registry()}
 #'   keyed by room_id, or NULL to build fresh sessions each call.
-#' @param crypto Optional Matrix crypto context. NULL disables encrypted-event
-#'   handling; matrix_run() supplies a context when E2EE is configured.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples
@@ -1439,8 +1500,7 @@ matrix_accept_invites <- function(cfg, invites) {
 #' }
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
-                        tools_filter = NULL, timeout = 0L, sessions = NULL,
-                        crypto = NULL) {
+                        tools_filter = NULL, timeout = 0L, sessions = NULL) {
     matrix_require_mx()
     cfg <- matrix_load_config()
 
@@ -1455,10 +1515,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # mx.api edge.
     chat <- matrix_chat_client(cfg)
     res <- chat.api::chat_poll(chat, timeout = timeout / 1000)
-    # raw is the untouched sync response. corteza reads events out of it
-    # itself -- invites, reactions, and m.room.encrypted are all things
-    # the generic contract does not model, and the crypto path below
-    # needs the same object mx.api returned.
+    # raw is the untouched sync response, still read here for invites and
+    # reactions -- things the generic contract does not model yet.
+    # m.room.encrypted is no longer one of them: the adapter decrypts and
+    # hands the results back in res$messages like any other traffic.
     sync <- res$raw
     # A chat.api whose Matrix adapter predates the post-sync client and
     # first_run reports neither, and both are load-bearing here: without
@@ -1498,19 +1558,11 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         return(invisible(0L))
     }
 
-    msgs <- matrix_extract_messages(sync, cfg$user_id)
-    # When E2EE is on, decrypt m.room.encrypted events (and recover room
-    # keys from to-device) and fold them in alongside the plaintext ones.
-    if (!is.null(crypto)) {
-        dec <- tryCatch(matrix_crypto_decrypt(crypto, sync, cfg),
-                        error = function(e) {
-            message("matrix_poll: decrypt failed: ", conditionMessage(e))
-            list()
-        })
-        if (length(dec)) {
-            msgs <- c(msgs, dec)
-        }
-    }
+    # The adapter's message list, cleartext and decrypted alike. corteza
+    # used to re-extract from the raw sync and then run its own decrypt
+    # beside it, which meant two paths producing the same records and only
+    # one of them knowing whether a message had been encrypted.
+    msgs <- lapply(res$messages, matrix_msg_record)
     if (!length(msgs)) {
         return(invisible(0L))
     }
@@ -1625,7 +1677,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
+                                matrix_reply_send(cfg, m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1645,7 +1697,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                 cfg <- matrix_update_displayname(cfg, session)
             }
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
+                                matrix_reply_send(cfg, m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1674,8 +1726,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                                              provider = provider)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
-                                matrix_send_maybe_encrypted(crypto, cfg,
-                    m$room_id, ack),
+                                matrix_reply_send(cfg, m$room_id, ack),
                                 error = function(e) NULL
             )
             matrix_reset_session(sessions, m$room_id, cfg, sent_id, ack,
@@ -1706,9 +1757,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            matrix_send_maybe_encrypted(crypto, cfg,
-                m$room_id, reply,
-                markdown = TRUE),
+                            matrix_reply_send(cfg, m$room_id, reply, markdown = TRUE),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
@@ -1854,10 +1903,14 @@ matrix_run_turn_in_cwd <- function(prompt, session) {
 #'
 #' Performs everything \code{\link{matrix_run}} does before its loop:
 #' builds the per-room session registry, catches up on invites that
-#' predate the saved sync token, backfills recent room history into the
-#' registry, and (when the config sets \code{e2ee}) builds the E2EE
-#' crypto context. Returns an opaque state object to drive with
+#' predate the saved sync token, and backfills recent room history into
+#' the registry. Returns an opaque state object to drive with
 #' \code{\link{matrix_run_step}}.
+#'
+#' End-to-end encryption is not set up here. When the config sets
+#' \code{e2ee}, the chat.api Matrix adapter owns the Olm account and
+#' Megolm sessions and both directions of encrypted traffic, so there is
+#' no crypto state for this package to build or carry.
 #'
 #' Use this with \code{matrix_run_step()} when an external loop owns the
 #' main process and needs to interleave the Matrix poll with other work
@@ -1870,8 +1923,8 @@ matrix_run_turn_in_cwd <- function(prompt, session) {
 #' @param tools_filter Character vector or NULL. Tool filter override.
 #'
 #' @return A list holding the session registry, startup session handle,
-#'   crypto context (or NULL), archive-flush signal path, and the saved
-#'   poll options. Pass it to \code{\link{matrix_run_step}}.
+#'   archive-flush signal path, and the saved poll options. Pass it to
+#'   \code{\link{matrix_run_step}}.
 #' @seealso \code{\link{matrix_run_step}}, \code{\link{matrix_run}}
 #' @examples
 #' \dontrun{
@@ -1934,17 +1987,9 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
         }
     }
 
-    crypto <- NULL
-    if (!is.null(cfg) && isTRUE(cfg$e2ee)) {
-        crypto <- tryCatch(matrix_crypto_init(cfg), error = function(e) {
-            message("matrix_run: E2EE init failed: ", conditionMessage(e))
-            NULL
-        })
-    }
-
     flush_signal <- file.path(matrix_signal_dir(), "archive.signal")
 
-    list(sessions = sessions, mx_sess = mx_sess, crypto = crypto,
+    list(sessions = sessions, mx_sess = mx_sess,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
                      provider = provider, tools_filter = tools_filter))
@@ -1955,8 +2000,8 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' Polls \code{/sync} once (blocking up to \code{timeout} ms, returning
 #' early when a message arrives), runs the agent against any new messages
 #' and posts the replies, then services a pending archive-flush signal.
-#' Mutates the session registry and crypto context held in \code{state}
-#' in place, so successive calls accumulate conversation history.
+#' Mutates the session registry held in \code{state} in place, so
+#' successive calls accumulate conversation history.
 #'
 #' @param state A state object from \code{\link{matrix_run_init}}.
 #' @param timeout Integer. Long-poll timeout in milliseconds.
@@ -1974,7 +2019,7 @@ matrix_run_step <- function(state, timeout = 30000L) {
     replied <- matrix_poll(system = o$system, model = o$model,
                            provider = o$provider,
                            tools_filter = o$tools_filter, timeout = timeout,
-                           sessions = state$sessions, crypto = state$crypto)
+                           sessions = state$sessions)
     # Out-of-band archive trigger: another process (e.g. a cornelius
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns

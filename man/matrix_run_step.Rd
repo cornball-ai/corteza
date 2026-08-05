@@ -17,8 +17,8 @@ Invisibly, the integer count of messages replied to this poll.
 Polls \code{/sync} once (blocking up to \code{timeout} ms, returning
 early when a message arrives), runs the agent against any new messages
 and posts the replies, then services a pending archive-flush signal.
-Mutates the session registry and crypto context held in \code{state}
-in place, so successive calls accumulate conversation history.
+Mutates the session registry held in \code{state} in place, so
+successive calls accumulate conversation history.
 }
 \examples{
 \dontrun{
