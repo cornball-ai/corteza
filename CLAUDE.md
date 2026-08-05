@@ -212,6 +212,46 @@ or CLAUDE.md, etc.) plus any files explicitly listed in
 `config$context_files`. The `/context` slash command shows live token
 usage broken into system / tools / history.
 
+## Matrix credentials rotate: derive, never cache
+
+The Matrix access token in `cfg` is **not stable for the life of a
+process**. It rotates whenever `mx.client` relogins, which happens on at
+least two paths:
+
+- `chat_poll()` wraps its sync in `mx_with_relogin()`
+- `mx_set_displayname()` does the same, so every `/model` or `/clear`
+  badge rename is a rotation point
+
+**Rule: anything derived from `cfg` is derived at the point of use, not
+cached.** `matrix_mx_session()` is pure field validation over `cfg` — no
+network, no state — so deriving it per call is free and caching it only
+buys a stale token. `matrix_poll()` does this through local `sess_now()`
+and `chat_now()` helpers.
+
+The failure mode is silent, which is what makes it expensive. A request
+on a rejected token throws, `chat_send()` does no relogin of its own, and
+the surrounding best-effort `tryCatch` converts it to `NULL` or `FALSE`.
+The user sees a `/model` switch that never acknowledged, or an approval
+prompt the model reads as declined.
+
+Two non-obvious specifics, both learned the hard way (four review rounds
+on the model badge, each finding the same defect in a different holder):
+
+1. **`mx_with_relogin()` persists the refreshed client *before* it
+   retries.** So a relogin whose retry then fails — rate limit, transient
+   5xx — still leaves the live token on disk even though the call threw.
+   Never gate adopting a refreshed config on the call succeeding; disk is
+   authoritative either way.
+
+2. **`mx_set_displayname()` returns `invisible(TRUE)`, discarding the
+   refreshed client** (mx.client#18). Until that is fixed, re-read the
+   config after any attempted rename rather than trusting the return.
+
+When reviewing a change in this area, the question is not "did I refresh
+this object" but "can this object exist long enough to go stale". Closures
+count: `matrix_approval_cb()` closed over its session's `cfg` and a
+session outlives many rotations.
+
 ## Things to avoid
 
 - **No `Co-Authored-By` trailers** in commits.
