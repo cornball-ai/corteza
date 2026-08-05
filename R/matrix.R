@@ -34,10 +34,12 @@
 #            invariant surviving a restart.
 #   0.0.1.8  that check tells an unverifiable device record from an
 #            absent one, instead of publishing over a tampered entry.
+#   0.0.1.9  and tells a partial /keys/query from an empty one, so an
+#            unreachable server is not read as a device never seen.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.8"
+.CHAT_API_MIN <- "0.0.1.9"
 
 # Minimum mx.client. Below it mx_set_displayname() does not exist, so
 # the model-badge rename fails inside a best-effort tryCatch and the
