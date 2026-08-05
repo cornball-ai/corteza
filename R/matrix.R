@@ -269,8 +269,8 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
 # Returns the event id, or NULL when the homeserver reported none, which
 # is what every caller tests for.
 matrix_reply_send <- function(cfg, room_id, text, markdown = FALSE) {
-    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
-                                        markup = matrix_markup(markdown)))
+    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id,
+                                        text, markup = matrix_markup(markdown)))
 }
 
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
@@ -410,8 +410,8 @@ matrix_transcript_add <- function(session, event_id, role, content) {
         as.character(content %||% "")
     }
     session$transcript <- c(session$transcript %||% list(),
-                            list(list(event_id = as.character(event_id),
-                                      role = role, content = text)))
+                            list(list(event_id = as.character(event_id), role = role,
+                                      content = text)))
     invisible(NULL)
 }
 
@@ -484,7 +484,11 @@ matrix_session_to_markdown <- function(session, room_id, room_name = NULL,
     }, character(1))
     header <- sprintf("# %s", room_id)
     room_label <- room_name %||% ""
-    room_label <- if (length(room_label)) room_label[[1L]] else ""
+    if (length(room_label)) {
+        room_label <- room_label[[1L]]
+    } else {
+        room_label <- ""
+    }
     room_label <- .sanitize_inline(room_label, max_chars = 100L)
     metadata <- if (nzchar(room_label)) {
         sprintf("Room name at archive time: %s", room_label)
@@ -538,8 +542,7 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
     } else {
         NULL
     }
-    md <- matrix_session_to_markdown(session, room_id, room_name,
-                                     which = fresh)
+    md <- matrix_session_to_markdown(session, room_id, room_name, which = fresh)
     if (is.null(md)) {
         return(invisible(NULL))
     }
@@ -812,14 +815,14 @@ matrix_badge_mode <- function(cfg) {
 # /model switch makes the live values differ.
 matrix_session_is_default <- function(session) {
     identical(session$model %||% "", session$default_model %||% "") &&
-        identical(session$provider %||% "", session$default_provider %||% "")
+    identical(session$provider %||% "", session$default_provider %||% "")
 }
 
 # The model name a badge should display for this session: the explicit
 # session model, else the provider's default.
 matrix_badge_model <- function(session) {
     session$model %||% default_provider_model(session$provider) %||%
-        "(provider default)"
+    "(provider default)"
 }
 
 # First line prepended to replies so the answering model is visible in
@@ -851,7 +854,7 @@ matrix_badge_displayname <- function(cfg, session = NULL, model = NULL,
         return(NULL)
     }
     base <- cfg$display_name %||%
-        sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
+    sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
     if (!nzchar(base)) {
         return(NULL)
     }
@@ -866,7 +869,7 @@ matrix_badge_displayname <- function(cfg, session = NULL, model = NULL,
     # model while every reply is badged with the override.
     model <- if (is.null(session)) {
         model %||% cfg$model %||%
-            default_provider_model(provider %||% cfg$provider)
+        default_provider_model(provider %||% cfg$provider)
     } else {
         matrix_badge_model(session)
     }
@@ -1135,9 +1138,9 @@ matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
 
 matrix_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
     parts <- c(
-        matrix_default_system(cfg, cwd = cwd, description = description,
-                              room_name = room_name),
-        load_context(cwd)
+               matrix_default_system(cfg, cwd = cwd, description = description,
+                                     room_name = room_name),
+               load_context(cwd)
     )
     parts <- parts[!is.na(parts) & nzchar(parts)]
     paste(parts, collapse = "\n\n")
@@ -1431,13 +1434,14 @@ matrix_new_session_registry <- function() {
 # time. And it must ledger it, or backfill reinserts that event later
 # among already archived ones.
 matrix_reset_session <- function(registry, room_id, cfg, sent_id, ack,
-    system = NULL, model = NULL,
-    provider = NULL, tools_filter = NULL) {
+                                 system = NULL, model = NULL,
+                                 provider = NULL, tools_filter = NULL) {
     if (exists(room_id, envir = registry, inherits = FALSE)) {
         rm(list = room_id, envir = registry)
     }
-    s <- matrix_get_or_create_session(registry, room_id, cfg, system = system,
-                                      model = model, provider = provider,
+    s <- matrix_get_or_create_session(registry, room_id, cfg,
+                                      system = system, model = model,
+                                      provider = provider,
                                       tools_filter = tools_filter)
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- matrix_remember_event(s$seen_event_ids, sent_id)
@@ -1723,7 +1727,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
             cfg <- matrix_update_displayname(cfg, model = model,
-                                             provider = provider)
+                provider = provider)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
                                 matrix_reply_send(cfg, m$room_id, ack),
@@ -1951,7 +1955,7 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
             initial <- tryCatch(mx.api::mx_sync(mx_sess, timeout = 0L),
                                 error = function(e) NULL)
             invites <- matrix_extract_invites(initial, cfg$user_id,
-                                              matrix_operators(cfg))
+                matrix_operators(cfg))
             if (length(invites)) {
                 matrix_accept_invites(cfg, invites)
             }
@@ -1977,7 +1981,7 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
             # Fresh process, fresh sessions on whatever this run was
             # given: clear any badge rename left over from a previous run.
             cfg <- matrix_update_displayname(cfg, model = model,
-                                             provider = provider)
+                provider = provider)
             # That rename can relogin, which invalidates the session
             # built above. Rebuild it, or the archive-flush room-name
             # lookups spend the whole run on the rejected token and
@@ -2029,8 +2033,7 @@ matrix_run_step <- function(state, timeout = 30000L) {
     # which silently costs the archive its room-name metadata.
     flush_sess <- tryCatch(matrix_mx_session(matrix_load_config()),
                            error = function(e) state$mx_sess)
-    matrix_handle_flush_signal(state$flush_signal, state$sessions,
-                               flush_sess)
+    matrix_handle_flush_signal(state$flush_signal, state$sessions, flush_sess)
     invisible(replied)
 }
 
