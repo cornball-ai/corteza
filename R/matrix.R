@@ -27,11 +27,15 @@
 #            matters because matrix_chat_client() builds one on every
 #            host with the channel configured.
 #   0.0.1.6  the crypto cache is keyed on the device identity alone, so
-#            one Matrix device cannot end up with two Olm accounts.
+#            one Matrix device cannot end up with two Olm accounts
+#            while a process is running.
+#   0.0.1.7  init checks the account against the keys the homeserver
+#            already holds for the device, which is the half of that
+#            invariant surviving a restart.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.6"
+.CHAT_API_MIN <- "0.0.1.7"
 
 # Minimum mx.client. Below it mx_set_displayname() does not exist, so
 # the model-badge rename fails inside a best-effort tryCatch and the
