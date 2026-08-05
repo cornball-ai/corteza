@@ -33,7 +33,10 @@ matrix_crypto_init <- function(cfg) {
     crypto <- new.env(parent = emptyenv())
     crypto$account <- acct
     crypto$store <- store
-    crypto$client <- cfg
+    # Deliberately no cached client here. The access token rotates --
+    # chat_poll() relogins, and so does the display-name rename -- and a
+    # copy taken at init goes stale the moment it does. Every send takes
+    # the caller's live cfg instead.
     crypto$sessions <- mx.client::mx_crypto_sessions_load(store)
     crypto$encrypted <- matrix_crypto_load_encrypted(store)
     crypto$self_curve <-
@@ -132,7 +135,7 @@ matrix_send_maybe_encrypted <- function(crypto, cfg, room_id, text,
                             error = function(e) character())
         res <- tryCatch(
                         mx.client::mx_send_encrypted(
-                crypto$client, crypto$account, crypto$sessions, room_id,
+                cfg, crypto$account, crypto$sessions, room_id,
                 list(msgtype = "m.text", body = text), crypto$store,
                 member_ids = members),
                         error = function(e) {

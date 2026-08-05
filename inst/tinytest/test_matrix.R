@@ -1337,3 +1337,73 @@ local({
         s, list(model = "qwen3:8b", provider = "ollama", query_only = FALSE))
     expect_true(corteza:::matrix_session_is_default(s))
 })
+
+# ---- badge integration paths (regression guards) ----
+
+# matrix_update_displayname() must hand back a config, and after a
+# successful rename it must be the freshly loaded one. mx_set_displayname()
+# can relogin and persist a new token but returns only TRUE, so a caller
+# that keeps its own cfg goes on using the token the homeserver rejected --
+# and chat_send() does no relogin of its own, so the next reply vanishes
+# into a best-effort tryCatch.
+local({
+    cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
+                provider = "ollama", model_badge = "always")
+
+    orig_client <- corteza:::matrix_client
+    orig_load <- corteza:::matrix_load_config
+    assignInNamespace("matrix_client", function(cfg) cfg, ns = "corteza")
+    assignInNamespace("matrix_load_config",
+                      function() c(cfg, list(token = "refreshed")),
+                      ns = "corteza")
+    on.exit({
+        assignInNamespace("matrix_client", orig_client, ns = "corteza")
+        assignInNamespace("matrix_load_config", orig_load, ns = "corteza")
+    }, add = TRUE)
+
+    if (requireNamespace("mx.client", quietly = TRUE)) {
+        orig_set <- mx.client::mx_set_displayname
+        assignInNamespace("mx_set_displayname",
+                          function(client, name, save = TRUE) invisible(TRUE),
+                          ns = "mx.client")
+        on.exit(assignInNamespace("mx_set_displayname", orig_set,
+                                  ns = "mx.client"), add = TRUE)
+
+        got <- corteza:::matrix_update_displayname(cfg)
+        expect_equal(got$token, "refreshed")   # adopted the reloaded config
+    }
+
+    # "never" mode makes no call at all and returns the config unchanged.
+    quiet <- cfg
+    quiet$model_badge <- "never"
+    expect_equal(corteza:::matrix_update_displayname(quiet), quiet)
+})
+
+# Startup and /clear have no session yet, so the name has to come from
+# the runtime override the next session will be built with. Passing only
+# cfg advertises the configured model while every reply is badged with
+# the override.
+local({
+    cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
+                provider = "ollama", model_badge = "always")
+    expect_equal(corteza:::matrix_badge_displayname(cfg),
+                 "r2j2 ⚡ qwen3:8b")
+    expect_equal(
+        corteza:::matrix_badge_displayname(cfg, model = "claude-sonnet-4-6",
+                                           provider = "anthropic_claude"),
+        "r2j2 ⚡ claude-sonnet-4-6")
+})
+
+# The mx.client floor is enforced at runtime, not just declared in
+# DESCRIPTION: an installed-but-stale copy has no mx_set_displayname().
+# The floors are enforced at runtime, not merely declared in DESCRIPTION:
+# an installed-but-stale copy loads however old it is. Injecting the
+# versions tests the gate itself rather than what CI happens to have.
+if (requireNamespace("chat.api", quietly = TRUE) &&
+        requireNamespace("mx.client", quietly = TRUE)) {
+    expect_error(corteza:::matrix_require_mx(mx_client_version = "0.1.1"),
+                 "mx.client")
+    expect_error(corteza:::matrix_require_mx(chat_api_version = "0.0.0.1"),
+                 "chat.api")
+    expect_silent(corteza:::matrix_require_mx())
+}

@@ -15,7 +15,15 @@
 # no first_run and no post-sync client.
 .CHAT_API_MIN <- "0.0.1.1"
 
-matrix_require_mx <- function() {
+# Minimum mx.client. Below it mx_set_displayname() does not exist, so
+# the model-badge rename fails inside a best-effort tryCatch and the
+# sender line silently never updates.
+.MX_CLIENT_MIN <- "0.2.0"
+
+# chat_api_version / mx_client_version are injectable so the floors can
+# be tested without a stale package on disk. Leave NULL in production.
+matrix_require_mx <- function(chat_api_version = NULL,
+                              mx_client_version = NULL) {
     for (pkg in c("mx.api", "mx.client", "chat.api")) {
         if (!requireNamespace(pkg, quietly = TRUE)) {
             stop("Matrix integration requires the '", pkg, "' package. ",
@@ -30,7 +38,7 @@ matrix_require_mx <- function() {
     # the cursor, and only then dies on the missing first_run -- the
     # worst place to discover a stale build, because the work is already
     # spent and the cursor may not be recoverable.
-    have <- utils::packageVersion("chat.api")
+    have <- chat_api_version %||% utils::packageVersion("chat.api")
     if (have < .CHAT_API_MIN) {
         stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
              ", but ", have, " is installed. ",
@@ -38,6 +46,17 @@ matrix_require_mx <- function() {
              "restarted bot would reprocess its whole backfill as new ",
              "messages. Reinstall chat.api from the cornball-ai mirror.",
              call. = FALSE)
+    }
+    # Same reasoning for mx.client: the DESCRIPTION floor is a resolution
+    # hint, and an already-installed copy loads however old it is. A host
+    # on 0.1.1 has no mx_set_displayname(), so the badge rename dies in a
+    # best-effort tryCatch and the sender line quietly never updates.
+    have_mx <- mx_client_version %||% utils::packageVersion("mx.client")
+    if (have_mx < .MX_CLIENT_MIN) {
+        stop("Matrix integration requires mx.client >= ", .MX_CLIENT_MIN,
+             ", but ", have_mx, " is installed. Below that version the ",
+             "model-badge rename has no mx_set_displayname() to call and ",
+             "fails silently. Reinstall mx.client.", call. = FALSE)
     }
 }
 
@@ -762,7 +781,8 @@ matrix_model_badge <- function(session, cfg) {
 # alone, or "<base> ⚡ <model>" while a badge applies. NULL means
 # leave the profile untouched (mode "never", or no base derivable).
 # session = NULL means "on defaults" (startup, after /clear).
-matrix_badge_displayname <- function(cfg, session = NULL) {
+matrix_badge_displayname <- function(cfg, session = NULL, model = NULL,
+                                     provider = NULL) {
     mode <- matrix_badge_mode(cfg)
     if (identical(mode, "never")) {
         return(NULL)
@@ -776,8 +796,14 @@ matrix_badge_displayname <- function(cfg, session = NULL) {
     if (identical(mode, "non_default") && on_default) {
         return(base)
     }
+    # With no session (startup, /clear) the name has to come from what
+    # the next session will actually be created with. That is the runtime
+    # override when matrix_run_init()/matrix_poll() were given one, not
+    # cfg$model -- otherwise the sender line advertises the configured
+    # model while every reply is badged with the override.
     model <- if (is.null(session)) {
-        cfg$model %||% default_provider_model(cfg$provider)
+        model %||% cfg$model %||%
+            default_provider_model(provider %||% cfg$provider)
     } else {
         matrix_badge_model(session)
     }
@@ -793,14 +819,29 @@ matrix_badge_displayname <- function(cfg, session = NULL) {
 # failed rename must never block a reply. The display name is
 # account-global, so with sessions in several rooms the most recent
 # switch wins; the per-reply badge line stays room-accurate.
-matrix_update_displayname <- function(cfg, session = NULL) {
-    name <- matrix_badge_displayname(cfg, session)
+matrix_update_displayname <- function(cfg, session = NULL, model = NULL,
+                                      provider = NULL) {
+    name <- matrix_badge_displayname(cfg, session, model, provider)
     if (is.null(name)) {
-        return(invisible(NULL))
+        return(invisible(cfg))
     }
     tryCatch(mx.client::mx_set_displayname(matrix_client(cfg), name),
              error = function(e) NULL)
-    invisible(NULL)
+    # Re-read whether or not the rename succeeded, because disk is the
+    # authoritative copy either way.
+    #
+    # mx_set_displayname() wraps the call in mx_with_relogin(), which
+    # persists the refreshed client *before* retrying and then returns
+    # only TRUE, discarding it. So a relogin whose retry then fails --
+    # rate limit, transient 5xx -- still leaves the live token on disk.
+    # Gating this reload on success threw that token away and sent the
+    # following acknowledgement on the rejected one, which is the same
+    # silent drop this reload exists to prevent: chat_send() does no
+    # relogin of its own, so the failure dies in the caller's tryCatch
+    # with nothing logged.
+    #
+    # When nothing rotated, the reload returns what we already had.
+    invisible(tryCatch(matrix_load_config(), error = function(e) cfg))
 }
 
 # Does this message mention the bot? Checks the explicit m.mentions
@@ -1120,7 +1161,13 @@ matrix_approval_cb <- function(cfg, room_id = cfg$room_id) {
         if (auto) {
             return(TRUE)
         }
-        matrix_reaction_approval(cfg, call, decision, room_id = room_id)
+        # Re-read rather than use the cfg this closure was built with. A
+        # session outlives many token rotations, and a prompt sent on a
+        # rejected token fails into FALSE -- which the model reads as the
+        # user declining. An approval is rare, interactive, and already
+        # blocking, so a config read costs nothing here.
+        live <- tryCatch(matrix_load_config(), error = function(e) cfg)
+        matrix_reaction_approval(live, call, decision, room_id = room_id)
     }
 }
 
@@ -1430,7 +1477,12 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # the sync call, which is what makes a crash-restart resume past
     # whatever it crashed on. See matrix_chat_client().
     cfg <- matrix_plain_cfg(res$client)
-    mx_sess <- matrix_mx_session(cfg)
+    # Derived at each use, never cached. The token rotates mid-loop --
+    # chat_poll() relogins, and so does a /model or /clear rename -- and
+    # anything built once from cfg silently keeps the rejected one.
+    # mx_client_session() is pure field validation, so this is free.
+    sess_now <- function() matrix_mx_session(cfg)
+    chat_now <- function() matrix_chat_client(cfg)
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
@@ -1509,7 +1561,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # "seen" the message, and clients use receipts for the
         # latest-read marker.
         tryCatch(
-                 mx.api::mx_read_receipt(mx_sess, m$room_id, m$event_id),
+                 mx.api::mx_read_receipt(sess_now(), m$room_id, m$event_id),
                  error = function(e) NULL
         )
         # Rooms with one human: respond freely. More humans: require a
@@ -1532,7 +1584,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
         members <- matrix_room_members_cached(session, m$room_id,
             sender = m$sender,
-            mx_sess = mx_sess, now = now)
+            mx_sess = sess_now(), now = now)
         # Attribute turns when multiple people or another bot could be
         # speaking; the reply gate below is unchanged.
         attribute_sender <- matrix_needs_sender_attribution(members, sender, bots)
@@ -1590,7 +1642,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd, cfg = cfg)
             if (!isTRUE(model_cmd$query_only)) {
-                matrix_update_displayname(cfg, session)
+                cfg <- matrix_update_displayname(cfg, session)
             }
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg, m$room_id, ack),
@@ -1610,15 +1662,16 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
             tryCatch(
-                     matrix_archive_session(session, m$room_id, mx_sess),
+                     matrix_archive_session(session, m$room_id, sess_now()),
                      error = function(e) NULL
             )
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
                 rm(list = m$room_id, envir = sessions)
             }
-            # The fresh session starts back on the configured default,
-            # so any badge rename is undone with it.
-            matrix_update_displayname(cfg)
+            # The fresh session starts back on whatever this run was
+            # given, so any badge rename is undone with it.
+            cfg <- matrix_update_displayname(cfg, model = model,
+                                             provider = provider)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
                                 matrix_send_maybe_encrypted(crypto, cfg,
@@ -1640,9 +1693,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # never block the reply. 120s cap (seconds here, not the
         # milliseconds mx.api takes); Matrix clears it when the reply
         # event arrives.
-        chat.api::chat_typing(chat, m$room_id, TRUE, timeout = 120)
+        chat.api::chat_typing(chat_now(), m$room_id, TRUE, timeout = 120)
         reply <- matrix_run_turn_in_cwd(ingest_body, session)
-        chat.api::chat_typing(chat, m$room_id, FALSE)
+        chat.api::chat_typing(chat_now(), m$room_id, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
@@ -1868,9 +1921,16 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
                 message(sprintf("matrix_run: backfilled %d room session(s)",
                                 n_rooms))
             }
-            # Fresh process, fresh sessions on the configured default:
-            # clear any badge rename left over from a previous run.
-            matrix_update_displayname(cfg)
+            # Fresh process, fresh sessions on whatever this run was
+            # given: clear any badge rename left over from a previous run.
+            cfg <- matrix_update_displayname(cfg, model = model,
+                                             provider = provider)
+            # That rename can relogin, which invalidates the session
+            # built above. Rebuild it, or the archive-flush room-name
+            # lookups spend the whole run on the rejected token and
+            # quietly lose that metadata.
+            mx_sess <- tryCatch(matrix_mx_session(cfg),
+                                error = function(e) mx_sess)
         }
     }
 
@@ -1919,8 +1979,13 @@ matrix_run_step <- function(state, timeout = 30000L) {
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns
     # the registry; the schedule lives outside the package.
+    # Derived now, not from state: state$mx_sess was built at startup and
+    # every token rotation since has left it holding a rejected token,
+    # which silently costs the archive its room-name metadata.
+    flush_sess <- tryCatch(matrix_mx_session(matrix_load_config()),
+                           error = function(e) state$mx_sess)
     matrix_handle_flush_signal(state$flush_signal, state$sessions,
-                               state$mx_sess)
+                               flush_sess)
     invisible(replied)
 }
 
