@@ -1,3 +1,13 @@
+# corteza 0.7.1.4
+
+- **`Additional_repositories` declares the cornball drat.** `chat.api`
+  is a Suggests and is not on CRAN, so CRAN could not resolve it and
+  the check NOTE listed it with no availability line -- which blocked a
+  release. It is now published at
+  <https://cornball-ai.github.io/drat> and declared here, so the NOTE
+  reports `chat.api yes` against the declared repository, the form
+  Writing R Extensions describes for exactly this case.
+
 # corteza 0.7.1.3
 
 - **Model badge fixes.** A display-name relogin left the caller holding
