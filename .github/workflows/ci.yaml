@@ -33,5 +33,55 @@ jobs:
       - name: Dependencies
         run: ./run.sh install_deps
 
+      # The Matrix stack is Suggests, and _R_CHECK_FORCE_SUGGESTS_=false
+      # lets check pass without it -- which it did, silently. Every Matrix
+      # test sits behind a requireNamespace guard that exit_file()s the
+      # whole integration file, so a run could go green having asserted
+      # nothing about the transport work at all.
+      #
+      # From each repo's default branch rather than the drat, so what is
+      # tested is what has actually landed upstream instead of whatever
+      # was last published there. A corteza PR that needs an unmerged
+      # upstream change therefore stays red until that change merges,
+      # which is the intent: the verify step below is what says so, in
+      # the one line worth reading. Order matters: mx.client imports
+      # mx.api.
+      - name: Install Matrix stack
+        run: |
+          for pkg in mx.api mx.client chat.api; do
+            git clone --depth 1 "https://github.com/cornball-ai/$pkg.git" "$RUNNER_TEMP/$pkg"
+            R CMD INSTALL "$RUNNER_TEMP/$pkg"
+          done
+
+      # Fail loudly if the stack is absent or too old, rather than letting
+      # the tests skip themselves into a green tick.
+      #
+      # The floors are corteza's own runtime constants, read out of an
+      # installed corteza, rather than parsed from DESCRIPTION. A first
+      # attempt did parse it, and on macOS the parse quietly found no
+      # floors at all and waved 0.0.1.2 through -- a verification step
+      # that can silently check nothing is the same failure this whole
+      # job exists to stop. These are the values matrix_require_mx()
+      # enforces, so if they are wrong the bots are wrong too.
+      - name: Verify Matrix stack
+        run: |
+          R CMD INSTALL .
+          Rscript -e '
+            for (p in c("mx.api", "mx.client", "chat.api"))
+              if (!requireNamespace(p, quietly = TRUE))
+                stop("Matrix CI needs ", p, " installed", call. = FALSE)
+            floors <- c(chat.api = corteza:::.CHAT_API_MIN,
+                        mx.client = corteza:::.MX_CLIENT_MIN)
+            if (!all(nzchar(floors)))
+              stop("could not read corteza runtime floors", call. = FALSE)
+            for (p in names(floors)) {
+              have <- utils::packageVersion(p)
+              message(p, " ", have, " (>= ", floors[[p]], ")")
+              if (have < floors[[p]])
+                stop(p, " ", have, " is below the ", floors[[p]],
+                     " this corteza requires", call. = FALSE)
+            }
+            message("mx.api ", utils::packageVersion("mx.api"))'
+
       - name: Test
         run: ./run.sh run_tests

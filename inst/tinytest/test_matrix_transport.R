@@ -12,9 +12,11 @@ library(tinytest)
 #   3. initial-sync suppression  -- first_run survives the trip out of
 #                                   the adapter and still short-circuits
 #                                   matrix_poll()
-#   4. E2EE behaviour unchanged  -- encrypted rooms stay on the
-#                                   mx.crypto path, and the crypto
-#                                   decrypt step still gets the raw sync
+#   4. E2EE goes through the      -- the adapter owns the Olm account and
+#      adapter                      both directions of encrypted traffic.
+#                                   corteza builds no crypto state and
+#                                   has no second send path. It used to
+#                                   run mx.crypto itself off $raw.
 #
 # Everything here runs offline. Nothing hits a homeserver: the sync is
 # supplied through chat_matrix()'s .sync/.extract seams, reached via
@@ -78,14 +80,77 @@ restore_config <- function(iso) {
 # not cosmetic: jsonlite writes a NULL member as `{}` and reads it back
 # as an empty list, and first_run is decided by is.null() on that field.
 # A config carrying the key at all is therefore never a first run.
-base_cfg <- function(sync_token = "s1") {
+#
+# user_id is a parameter because chat.api interns one crypto context per
+# identity, and the identity is the store path, which corteza derives
+# from the user id. Two e2ee tests sharing a user id share a context: the
+# second gets the first's encrypted-room set and routes its sends the
+# wrong way. Under R CMD check that is not hypothetical -- tests/tinytest.R
+# pins R_USER_DATA_DIR for the whole run, so the store path no longer
+# varies with the per-test HOME.
+base_cfg <- function(sync_token = "s1", e2ee = FALSE,
+                     user_id = "@bot:example") {
     cfg <- list(server = "https://example", user = "bot", password = "pw",
-                token = "tok", user_id = "@bot:example", device_id = "DEV",
+                token = "tok", user_id = user_id, device_id = "DEV",
                 room_id = "!room:example")
     if (!is.null(sync_token)) {
         cfg$sync_token <- sync_token
     }
+    if (isTRUE(e2ee)) {
+        cfg$e2ee <- TRUE
+    }
     cfg
+}
+
+# A .crypto seam for chat.api's adapter, so the E2EE paths run here
+# without mx.crypto or a Rust toolchain. `decrypted` is what the adapter
+# will report as having come out of an encrypted room.
+crypto_seam <- function(decrypted = list(), encrypted_rooms = "!secret:example",
+                        event_id = "$enc:example") {
+    log <- new.env(parent = emptyenv())
+    log$sent <- list()
+    log$decrypts <- 0L
+    log$inits <- 0L
+    ctx <- new.env(parent = emptyenv())
+    ctx$encrypted <- encrypted_rooms
+    ops <- list(
+        init = function(mx, store = NULL, app = NULL) {
+            log$inits <- log$inits + 1L
+            log$store <- store
+            ctx
+        },
+        encrypted = function(crypto, mx, room_id) room_id %in% crypto$encrypted,
+        send = function(crypto, mx, room_id, text, ...) {
+            log$sent[[length(log$sent) + 1L]] <- list(room_id = room_id,
+                                                      text = text, mx = mx,
+                                                      extra = list(...))
+            event_id
+        },
+        decrypt = function(crypto, sync, mx) {
+            log$decrypts <- log$decrypts + 1L
+            decrypted
+        })
+    list(ops = ops, log = log)
+}
+
+# A session registry with the named rooms already in it. Any test that
+# lets a message reach the loop needs one: matrix_get_or_create_session()
+# builds a session by asking the homeserver for the room name, which is
+# one of the direct mx.api calls the contract does not model yet.
+seeded_sessions <- function(rooms) {
+    sessions <- corteza:::matrix_new_session_registry()
+    for (rid in rooms) {
+        s <- new.env(parent = emptyenv())
+        s$model <- "qwen3:8b"
+        s$provider <- "ollama"
+        s$default_model <- "qwen3:8b"
+        s$default_provider <- "ollama"
+        s$history <- list()
+        s$transcript <- list()
+        s$seen_event_ids <- character()
+        assign(rid, s, envir = sessions)
+    }
+    sessions
 }
 
 # A sync response with one message from a human, so a test that means to
@@ -173,12 +238,15 @@ local({
     expect_equal(attr(cli$env$mx, "app"), "corteza")
     expect_equal(attr(cli$env$mx, "path"), corteza:::matrix_config_path())
 
-    # Invariant 4, the declaration half: the adapter does not claim
-    # encryption, which is why matrix_send_maybe_encrypted() keeps its
-    # own mx.crypto branch.
+    # Invariant 4, the declaration half. This config does not set e2ee,
+    # so the client holds no crypto context and says so. The flag answers
+    # for the client, not for whether mx.crypto is installed: a TRUE here
+    # would invite a send into an encrypted room that goes out in the
+    # clear.
     caps <- chat.api::chat_capabilities(cli)
     expect_false(caps$e2ee)
     expect_true(caps$typing)
+    expect_null(cli$env$crypto)
 })
 
 
@@ -276,13 +344,17 @@ local({
 local({
     iso <- isolate_config(base_cfg(sync_token = NULL))
     on.exit(restore_config(iso), add = TRUE)
-    extracted <- 0L
-    orig_extract <- corteza:::matrix_extract_messages
-    assignInNamespace("matrix_extract_messages", function(sync_resp, self_id) {
-        extracted <<- extracted + 1L
-        orig_extract(sync_resp, self_id)
+    # matrix_msg_record() is corteza's first look at a message, and it
+    # runs past the first_run gate. Counting it is what makes suppression
+    # observable: the adapter extracts either way, so counting its
+    # extractor would prove nothing.
+    mapped <- 0L
+    orig_record <- corteza:::matrix_msg_record
+    assignInNamespace("matrix_msg_record", function(m) {
+        mapped <<- mapped + 1L
+        orig_record(m)
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_extract_messages", orig_extract,
+    on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
@@ -293,16 +365,20 @@ local({
             list(sync = sync_with_message(), client = client,
                  first_run = first)
         },
-        .extract = function(sync_resp, self_id, ...) list())
+        .extract = function(sync_resp, self_id, ...) {
+            list(list(event_id = "$ev1:example", room_id = "!room:example",
+                      sender = "@ann:example", body = "hello",
+                      msgtype = "m.text", is_self = FALSE))
+        })
 
     msg <- capture.output(
         replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
         type = "message")
 
-    # The sync carried a real human message. Suppression is the only
-    # reason it went unprocessed.
+    # The sync carried a real human message and the adapter handed it
+    # over. Suppression is the only reason it went unprocessed.
     expect_equal(replied, 0L)
-    expect_equal(extracted, 0L)
+    expect_equal(mapped, 0L)
     expect_true(any(grepl("baseline established", msg)))
 
     # Ordering guard: the baseline cursor still has to be written.
@@ -317,13 +393,13 @@ local({
 local({
     iso <- isolate_config(base_cfg(sync_token = "s2"))
     on.exit(restore_config(iso), add = TRUE)
-    extracted <- 0L
-    orig_extract <- corteza:::matrix_extract_messages
-    assignInNamespace("matrix_extract_messages", function(sync_resp, self_id) {
-        extracted <<- extracted + 1L
-        list()
+    mapped <- 0L
+    orig_record <- corteza:::matrix_msg_record
+    assignInNamespace("matrix_msg_record", function(m) {
+        mapped <<- mapped + 1L
+        orig_record(m)
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_extract_messages", orig_extract,
+    on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
@@ -333,11 +409,20 @@ local({
             list(sync = sync_with_message("s3"), client = client,
                  first_run = FALSE)
         },
-        .extract = function(sync_resp, self_id, ...) list())
+        # is_self so the loop records it and moves on: this test is about
+        # whether the message was taken up at all, not about answering it.
+        .extract = function(sync_resp, self_id, ...) {
+            list(list(event_id = "$ev1:example", room_id = "!room:example",
+                      sender = "@bot:example", body = "hello",
+                      msgtype = "m.text", is_self = TRUE))
+        })
 
-    replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L))
+    replied <- with_seamed_client(
+        seams,
+        corteza::matrix_poll(timeout = 0L,
+                             sessions = seeded_sessions("!room:example")))
     expect_equal(replied, 0L)
-    expect_equal(extracted, 1L)
+    expect_equal(mapped, 1L)
     expect_equal(read_cursor(), "s3")
 })
 
@@ -415,107 +500,155 @@ local({
 
 
 # ---------------------------------------------------------------
-# Invariant 4: E2EE behaviour unchanged
+# Invariant 4: E2EE goes through the adapter
 # ---------------------------------------------------------------
 
-# The decrypt step still receives the untouched sync response. chat.api
-# models neither m.room.encrypted nor to-device traffic, so anything
-# less than the raw payload loses the room keys.
+# corteza manages no crypto state. The old architecture is gone, and
+# these assertions are what stop it coming back: a reintroduced
+# R/matrix_crypto.R, or a matrix_run_init() that builds a context and
+# threads it into the poll, fails here.
+expect_false("matrix_crypto_init" %in% ls(asNamespace("corteza"),
+                                          all.names = TRUE))
+expect_false("matrix_crypto_decrypt" %in% ls(asNamespace("corteza"),
+                                             all.names = TRUE))
+expect_false("matrix_send_maybe_encrypted" %in% ls(asNamespace("corteza"),
+                                                   all.names = TRUE))
+# ... and matrix_poll() no longer takes a context to be handed one.
+expect_false("crypto" %in% names(formals(corteza::matrix_poll)))
+# matrix_run_init() no longer builds one. Read off the source rather than
+# from a call: the real function syncs, catches up on invites, and
+# backfills, so calling it here would reach a homeserver.
+expect_false(any(grepl("crypto", deparse(body(corteza::matrix_run_init)))))
+expect_false(any(grepl("crypto", deparse(body(corteza::matrix_run_step)))))
+
+# e2ee off is the default and stays exactly as it was: no crypto context
+# on the client, nothing asked of the store.
 local({
-    iso <- isolate_config(base_cfg(sync_token = "s1"))
+    iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    payload <- sync_with_message()
-    captured <- NULL
-    orig_decrypt <- corteza:::matrix_crypto_decrypt
-    assignInNamespace("matrix_crypto_decrypt", function(crypto, sync, cfg) {
-        captured <<- sync
-        list()
+    cs <- crypto_seam()
+    cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config(),
+                                        .crypto = cs$ops)
+    expect_null(cli$env$crypto)
+    expect_false(chat.api::chat_capabilities(cli)$e2ee)
+    expect_null(cs$log$store)
+})
+
+# e2ee on: the config flag reaches the adapter, and nothing else does.
+# corteza names no store. The adapter derives one per Matrix device off
+# this same config and records that identity in it, so the store is
+# unique to (user_id, device_id) without corteza having a second place to
+# get that wrong.
+local({
+    iso <- isolate_config(base_cfg(e2ee = TRUE))
+    on.exit(restore_config(iso), add = TRUE)
+    cs <- crypto_seam()
+    cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config(),
+                                        .crypto = cs$ops)
+    expect_true(chat.api::chat_capabilities(cli)$e2ee)
+    expect_null(cli$crypto_store)
+    # Built on first use, not at construction: key publication is an
+    # authenticated request, and the stored token may already be rejected
+    # at startup.
+    expect_null(cli$env$crypto)
+    expect_identical(cs$log$inits, 0L)
+})
+
+# corteza no longer computes a store path at all -- that briefly lived
+# here, keyed on user_id alone, which is the right shape for telling
+# cornelius and tiny apart and the wrong one for an Olm account, since an
+# account belongs to a device.
+expect_false("matrix_crypto_store" %in% ls(asNamespace("corteza"),
+                                           all.names = TRUE))
+expect_false(any(grepl("crypto_store",
+                       deparse(body(corteza:::matrix_chat_client)))))
+
+# Decrypted traffic reaches the poll loop as ordinary messages, with
+# encrypted carried through. corteza used to run its own decrypt off
+# chat_poll()$raw and concatenate the results itself.
+local({
+    iso <- isolate_config(base_cfg(sync_token = "s1", e2ee = TRUE, user_id = "@decrypt:example"))
+    on.exit(restore_config(iso), add = TRUE)
+    seen <- list()
+    orig_record <- corteza:::matrix_msg_record
+    assignInNamespace("matrix_msg_record", function(m) {
+        rec <- orig_record(m)
+        seen[[length(seen) + 1L]] <<- rec
+        rec
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_crypto_decrypt", orig_decrypt,
-                              ns = "corteza"), add = TRUE)
-    # Stop short of the turn machinery: this test is about what the
-    # decrypt step is handed, not about answering the message.
-    orig_extract <- corteza:::matrix_extract_messages
-    assignInNamespace("matrix_extract_messages", function(sync_resp, self_id) {
-        list()
-    }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_extract_messages", orig_extract,
+    on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
+    cs <- crypto_seam(decrypted = list(
+        list(room_id = "!secret:example", event_id = "$enc1:example",
+             sender = "@bot:example", body = "shh", msgtype = "m.text",
+             sender_verified = TRUE, is_self = TRUE)))
     seams <- list(
         .sync = function(client, timeout = 0L, save = TRUE, ...) {
             client$sync_token <- "s2"
             sync_saved(client, save)
-            list(sync = payload, client = client, first_run = FALSE)
+            list(sync = sync_with_message(), client = client,
+                 first_run = FALSE)
         },
-        # A non-empty extractor result would still be discarded: corteza
-        # reads events off the raw sync itself.
+        # is_self on both, so the loop takes each one up and moves on.
         .extract = function(sync_resp, self_id, ...) {
             list(list(event_id = "$ev1:example", room_id = "!room:example",
-                      sender = "@ann:example", body = "hello",
-                      msgtype = "m.text", is_self = FALSE))
-        })
+                      sender = "@bot:example", body = "hello",
+                      msgtype = "m.text", is_self = TRUE))
+        },
+        .crypto = cs$ops)
 
     replied <- with_seamed_client(
         seams,
         corteza::matrix_poll(timeout = 0L,
-                             crypto = list(encrypted = character(),
-                                           sessions = list())))
+                             sessions = seeded_sessions(c("!room:example",
+                                                          "!secret:example"))))
     expect_equal(replied, 0L)
-    expect_identical(captured, payload)
+    expect_identical(cs$log$decrypts, 1L)
+    # Both the cleartext and the decrypted message arrived, in that order.
+    expect_identical(length(seen), 2L)
+    expect_identical(seen[[1L]]$event_id, "$ev1:example")
+    expect_false(seen[[1L]]$encrypted)
+    expect_identical(seen[[2L]]$event_id, "$enc1:example")
+    expect_identical(seen[[2L]]$room_id, "!secret:example")
+    expect_identical(seen[[2L]]$body, "shh")
+    expect_true(seen[[2L]]$encrypted)
+    expect_true(seen[[2L]]$sender_verified)
 })
 
-# Encrypted rooms never reach the transport contract. The adapter's
-# chat_send() PUTs a cleartext m.room.message whatever the room's
-# encryption state says, so routing an encrypted room through it would
-# put plaintext on the homeserver.
+# Encrypted rooms go out through the transport contract now, and the
+# adapter routes them to Megolm. corteza has no second send path to keep
+# in step -- which is what used to make a cleartext leak possible, since
+# a room the adapter thought was plain got a plaintext PUT.
 local({
-    iso <- isolate_config(base_cfg())
+    iso <- isolate_config(base_cfg(e2ee = TRUE, user_id = "@routing:example"))
     on.exit(restore_config(iso), add = TRUE)
     cfg <- corteza:::matrix_load_config()
 
-    enc_calls <- 0L
-    orig_enc <- mx.client::mx_send_encrypted
-    assignInNamespace("mx_send_encrypted", function(...) {
-        enc_calls <<- enc_calls + 1L
-        list(event_id = "$enc:example", sessions = list())
-    }, ns = "mx.client")
-    on.exit(assignInNamespace("mx_send_encrypted", orig_enc, ns = "mx.client"),
-            add = TRUE)
-
-    orig_members <- mx.api::mx_room_members
-    assignInNamespace("mx_room_members", function(...) "@ann:example",
-                      ns = "mx.api")
-    on.exit(assignInNamespace("mx_room_members", orig_members, ns = "mx.api"),
-            add = TRUE)
-
     sent <- character()
+    cs <- crypto_seam()
     seams <- list(
         .send = function(client, text, room = NULL, ...) {
             sent <<- c(sent, text)
             "$plain:example"
         },
         .sync = function(...) stop("unused"),
-        .extract = function(...) stop("unused"))
-
-    crypto <- list(encrypted = "!secret:example", sessions = list(),
-                   account = NULL, self_curve = NULL, store = NULL,
-                   client = NULL)
+        .extract = function(...) stop("unused"),
+        .crypto = cs$ops)
 
     with_seamed_client(seams, {
-        # Encrypted room: mx.crypto, and chat.api is never called.
-        eid <- corteza:::matrix_send_maybe_encrypted(crypto, cfg,
-                                                     "!secret:example", "shh")
+        # Encrypted room: the contract call goes through, and the adapter
+        # sends it encrypted rather than in the clear.
+        eid <- corteza:::matrix_reply_send(cfg, "!secret:example", "shh")
         expect_equal(eid, "$enc:example")
-        expect_equal(enc_calls, 1L)
+        expect_identical(length(cs$log$sent), 1L)
+        expect_identical(cs$log$sent[[1L]]$text, "shh")
         expect_equal(length(sent), 0L)
 
-        # Plaintext room: the transport contract, and mx.crypto is not
-        # touched.
-        pid <- corteza:::matrix_send_maybe_encrypted(crypto, cfg,
-                                                     "!room:example", "hi")
+        # Plaintext room on the same client: cleartext, and no Megolm.
+        pid <- corteza:::matrix_reply_send(cfg, "!room:example", "hi")
         expect_equal(pid, "$plain:example")
-        expect_equal(enc_calls, 1L)
+        expect_identical(length(cs$log$sent), 1L)
         expect_equal(sent, "hi")
     })
 })
@@ -623,8 +756,7 @@ local({
                   .extract = function(...) stop("unused"))
     with_seamed_client(seams, {
         expect_null(corteza::matrix_send("hi", room_id = "!room:example"))
-        expect_null(corteza:::matrix_send_maybe_encrypted(NULL, cfg,
-                                                          "!room:example", "hi"))
+        expect_null(corteza:::matrix_reply_send(cfg, "!room:example", "hi"))
     })
     # The guard the poll loop actually uses, and the call it guards.
     expect_equal(corteza:::matrix_remember_event(character(), character(0)),
@@ -700,11 +832,11 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.1")
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.9")
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
-expect_false(package_version("0.0.1") >= package_version(corteza:::.CHAT_API_MIN))
+expect_false(package_version("0.0.1.8") >= package_version(corteza:::.CHAT_API_MIN))
 # The installed build satisfies it, so the guard passes rather than
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
@@ -754,13 +886,13 @@ local({
 
     # Capture the config the send is handed.
     seen_cfg <- NULL
-    orig_send <- corteza:::matrix_send_maybe_encrypted
-    assignInNamespace("matrix_send_maybe_encrypted",
-                      function(crypto, cfg, room_id, text, markdown = FALSE) {
+    orig_send <- corteza:::matrix_reply_send
+    assignInNamespace("matrix_reply_send",
+                      function(cfg, room_id, text, markdown = FALSE) {
         seen_cfg <<- cfg
         "$ack"
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_send_maybe_encrypted", orig_send,
+    on.exit(assignInNamespace("matrix_reply_send", orig_send,
                               ns = "corteza"), add = TRUE)
 
     # Pre-seeded registry: no session_setup, no provider calls.
@@ -775,8 +907,8 @@ local({
     s$seen_event_ids <- character()
     assign("!room:example", s, envir = sessions)
 
-    # matrix_poll() re-extracts from res$raw rather than reading
-    # chat_poll()$messages, so the message has to be in the sync itself.
+    # The adapter extracts the messages matrix_poll() reads, so the
+    # message still has to be in the sync the .sync seam returns.
     seams <- list(
         .sync = function(client, timeout = 0L, save = TRUE, ...) {
             ev <- list(type = "m.room.message", event_id = "$m1",
@@ -803,35 +935,44 @@ local({
 # crypto init. Reintroduce a cached client and this goes red.
 # ---------------------------------------------------------------
 
-if (requireNamespace("mx.client", quietly = TRUE)) {
-    local({
-        seen_client <- NULL
-        orig <- mx.client::mx_send_encrypted
-        assignInNamespace("mx_send_encrypted",
-                          function(client, account, sessions, room_id, content,
-                                   store_dir, recipients = NULL,
-                                   member_ids = NULL) {
-            seen_client <<- client
-            list(event_id = "$enc", sessions = sessions)
-        }, ns = "mx.client")
-        on.exit(assignInNamespace("mx_send_encrypted", orig, ns = "mx.client"),
-                add = TRUE)
+# The Olm account is interned per identity and outlives any one client,
+# so the danger is a config interned along with it. The crypto context
+# holds no client for exactly this reason: it is built once, and the token
+# rotates under it. Every send has to read the cfg it was called with.
+local({
+    iso <- isolate_config(base_cfg(e2ee = TRUE, user_id = "@livecfg:example"))
+    on.exit(restore_config(iso), add = TRUE)
+    cs <- crypto_seam(encrypted_rooms = "!room:example")
 
+    stale <- corteza:::matrix_load_config()
+    live <- stale
+    live$token <- "rotated"
 
-        crypto <- new.env(parent = emptyenv())
-        crypto$encrypted <- "!room:example"
-        crypto$account <- NULL
-        crypto$sessions <- list()
-        crypto$store <- tempfile()
-
-        live <- base_cfg()
-        live$token <- "rotated"
-
-        corteza:::matrix_send_maybe_encrypted(crypto, live, "!room:example",
-                                              "hi")
-        expect_equal(seen_client$token, "rotated")
+    seams <- list(.sync = function(...) stop("unused"),
+                  .extract = function(...) stop("unused"),
+                  .crypto = cs$ops)
+    with_seamed_client(seams, {
+        # Build once against the pre-rotation config, which is what
+        # interns the context, then send against the rotated one.
+        corteza:::matrix_reply_send(stale, "!room:example", "before")
+        corteza:::matrix_reply_send(live, "!room:example", "after")
     })
-}
+    expect_identical(length(cs$log$sent), 2L)
+    expect_identical(cs$log$sent[[1L]]$mx$token, "tok")
+    expect_identical(cs$log$sent[[2L]]$mx$token, "rotated")
+    # corteza names no store, so the adapter derives one from the config's
+    # own device identity.
+    expect_null(cs$log$store)
+    # Interning is what makes per-use client building affordable with e2ee
+    # on. Two sends built two clients above, and the account was loaded
+    # once; without it every send would unpickle it and republish 50
+    # one-time keys. It survives the token rotation, because the identity
+    # is (user_id, device_id) and neither of those rotates.
+    expect_identical(cs$log$inits, 1L)
+    with_seamed_client(seams, corteza:::matrix_reply_send(live, "!room:example",
+                                                          "again"))
+    expect_identical(cs$log$inits, 1L)
+})
 
 
 # ---------------------------------------------------------------
@@ -863,14 +1004,34 @@ local({
                               ns = "corteza"), add = TRUE)
 
     seen_cfg <- NULL
-    orig_send <- corteza:::matrix_send_maybe_encrypted
-    assignInNamespace("matrix_send_maybe_encrypted",
-                      function(crypto, cfg, room_id, text, markdown = FALSE) {
+    orig_send <- corteza:::matrix_reply_send
+    assignInNamespace("matrix_reply_send",
+                      function(cfg, room_id, text, markdown = FALSE) {
         seen_cfg <<- cfg
         "$ack"
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_send_maybe_encrypted", orig_send,
+    on.exit(assignInNamespace("matrix_reply_send", orig_send,
                               ns = "corteza"), add = TRUE)
+
+    # /clear deletes the room's session and builds a fresh one, and
+    # building one calls session_setup(), which wants a provider API key.
+    # This test is about which config the acknowledgement is sent with,
+    # not about session construction, so the rebuild is stubbed. Without
+    # it the file passes only on a machine that happens to have
+    # credentials in its environment -- which is why CI never saw it: the
+    # whole file used to exit at its requireNamespace guard.
+    orig_new <- corteza:::matrix_new_session
+    assignInNamespace("matrix_new_session", function(cfg, ...) {
+        e <- new.env(parent = emptyenv())
+        e$model <- "qwen3:8b"
+        e$provider <- "ollama"
+        e$history <- list()
+        e$transcript <- list()
+        e$seen_event_ids <- character()
+        e
+    }, ns = "corteza")
+    on.exit(assignInNamespace("matrix_new_session", orig_new, ns = "corteza"),
+            add = TRUE)
 
     sessions <- corteza:::matrix_new_session_registry()
     s <- new.env(parent = emptyenv())

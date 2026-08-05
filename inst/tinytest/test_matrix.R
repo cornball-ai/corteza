@@ -91,34 +91,43 @@ if (at_home()) local({
   expect_true(s2$approval_cb(list(), list()))
 })
 
-# matrix_extract_messages walks all joined rooms.
+# matrix_msg_record maps the contract's chat_message onto the record the
+# poll loop reads. Walking every joined room, and tagging the bot's own
+# events rather than dropping them, is now the adapter's job -- corteza
+# used to duplicate that with its own extractor.
 local({
-  sync <- list(rooms = list(join = list(
-    `!dm:ex` = list(timeline = list(events = list(
-      list(type = "m.room.message", sender = "@troy:ex",
-           event_id = "$e1",
-           content = list(msgtype = "m.text", body = "hi from dm"))
-    ))),
-    `!vault:ex` = list(timeline = list(events = list(
-      list(type = "m.room.message", sender = "@troy:ex",
-           event_id = "$e2",
-           content = list(msgtype = "m.text", body = "hi from vault")),
-      list(type = "m.room.message", sender = "@bot:ex",
-           event_id = "$e3",
-           content = list(msgtype = "m.text", body = "bot echo"))
-    )))
-  )))
-  out <- corteza:::matrix_extract_messages(sync, "@bot:ex")
+  m <- list(id = "$e1", channel = "!dm:ex", sender = "@troy:ex",
+            body = "hi from dm", self = FALSE, mentions = "@bot:ex",
+            kind = "message", ts = Sys.time(), encrypted = FALSE,
+            sender_verified = NULL)
+  r <- corteza:::matrix_msg_record(m)
+  expect_equal(r$event_id, "$e1")
+  expect_equal(r$room_id, "!dm:ex")
+  expect_equal(r$sender, "@troy:ex")
+  expect_equal(r$body, "hi from dm")
+  expect_equal(r$mentions, "@bot:ex")
+  expect_false(r$encrypted)
   # Self events are kept (tagged is_self) so matrix_poll can append them
   # to history as assistant turns; the filter happens at dispatch time.
-  expect_equal(length(out), 3L)
-  rooms <- vapply(out, function(m) m$room_id, character(1L))
-  expect_true(all(c("!dm:ex", "!vault:ex") %in% rooms))
-  bodies <- vapply(out, function(m) m$body, character(1L))
-  expect_true("bot echo" %in% bodies)
-  is_self <- vapply(out, function(m) isTRUE(m$is_self), logical(1L))
-  expect_equal(sum(is_self), 1L)
-  expect_equal(out[is_self][[1L]]$body, "bot echo")
+  expect_false(r$is_self)
+  m$self <- TRUE
+  expect_true(corteza:::matrix_msg_record(m)$is_self)
+  # A NULL self is FALSE, not NULL: the loop branches on it with
+  # isTRUE(), but a NULL in the record would read as "unknown" to any
+  # later consumer that does not.
+  m$self <- NULL
+  expect_false(corteza:::matrix_msg_record(m)$is_self)
+
+  # An encrypted message carries both flags. sender_verified stays NULL
+  # on cleartext, where there is no device binding to report, and FALSE
+  # on encrypted traffic whose sender did not bind to a verified device.
+  enc <- list(id = "$e2", channel = "!secret:ex", sender = "@troy:ex",
+              body = "shh", self = FALSE, encrypted = TRUE,
+              sender_verified = FALSE)
+  er <- corteza:::matrix_msg_record(enc)
+  expect_true(er$encrypted)
+  expect_false(er$sender_verified)
+  expect_null(corteza:::matrix_msg_record(m)$sender_verified)
 })
 
 # matrix_extract_invites returns the room IDs pending acceptance.
@@ -611,7 +620,7 @@ expect_false(corteza:::matrix_is_clear_command(NULL))
 
 # 0.3.0 adoption helpers exist with the expected shapes.
 expect_true(is.function(corteza:::matrix_relogin))
-expect_true(is.function(corteza:::matrix_crypto_scan_rooms))
+expect_true(is.function(corteza:::matrix_reply_send))
 expect_error(corteza:::matrix_relogin(list(server = "https://x")),
              "no stored password")
 

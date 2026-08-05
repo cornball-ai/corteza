@@ -1,10 +1,48 @@
+# corteza 0.7.1.12
+
+- **End-to-end encryption moves into the chat.api Matrix adapter.**
+  `R/matrix_crypto.R` is gone and `mx.crypto` has left Suggests.
+  corteza no longer builds an Olm account, carries Megolm sessions,
+  tracks which rooms are encrypted, or keeps a second send path for
+  encrypted rooms. Setting `e2ee` in the Matrix config now enables
+  encryption in the adapter, which encrypts and decrypts on both sides
+  of `chat_poll()` / `chat_send()`; decrypted messages arrive in
+  `chat_poll()$messages` like any other traffic, so the poll loop stops
+  reading `m.room.encrypted` out of the raw sync. `matrix_poll()` drops
+  its `crypto` argument and `matrix_run_init()` no longer returns a
+  crypto context. Requires `chat.api >= 0.0.1.9`, enforced at runtime.
+
+  corteza names no crypto store. The adapter derives one per Matrix
+  device, `(user_id, device_id)`, and records that identity in the store
+  so another device cannot open it. This replaces
+  `dirname(config)/crypto`, which tied the device identity to wherever
+  the config file sat, so a moved config silently minted a new device and
+  lost every Megolm session with it.
+
+- **`mx.client` floor raised to 0.2.0.2.** That release stops
+  `mx_send_encrypted()` reporting success for a message nobody can
+  read: it filters its own device by `(user_id, device_id)` rather than
+  `device_id` alone, refuses to post when every recipient device was
+  skipped, and treats a partial `/keys/query` or `/keys/claim` as
+  unanswered rather than as a user with no devices. corteza does not
+  call it directly, but every encrypted reply this loop sends goes
+  through it.
+
+- **CI installs and version-checks the Matrix stack.** It is all
+  Suggests, and `_R_CHECK_FORCE_SUGGESTS_=false` let a run pass without
+  any of it -- which it did, silently, because every Matrix test sits
+  behind a `requireNamespace()` guard that skips the whole integration
+  file. The workflow now installs `mx.api`, `mx.client`, and `chat.api`
+  from source and fails if either declared floor is unmet, so the
+  transport tests cannot skip themselves into a green tick.
+
 # corteza 0.7.1.4
 
 - **`Additional_repositories` declares the cornball drat.** `chat.api`
   is a Suggests and is not on CRAN, so CRAN could not resolve it and
   the check NOTE listed it with no availability line -- which blocked a
   release. It is now published at
-  <https://cornball-ai.github.io/drat> and declared here, so the NOTE
+  <https://cornball-ai.github.io/drat/> and declared here, so the NOTE
   reports `chat.api yes` against the declared repository, the form
   Writing R Extensions describes for exactly this case.
 

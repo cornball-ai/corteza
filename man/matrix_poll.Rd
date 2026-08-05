@@ -9,8 +9,7 @@ matrix_poll(
   provider = NULL,
   tools_filter = NULL,
   timeout = 0L,
-  sessions = NULL,
-  crypto = NULL
+  sessions = NULL
 )
 }
 \arguments{
@@ -27,9 +26,6 @@ immediately.}
 
 \item{sessions}{Environment from \code{matrix_new_session_registry()}
 keyed by room_id, or NULL to build fresh sessions each call.}
-
-\item{crypto}{Optional Matrix crypto context. NULL disables encrypted-event
-handling; matrix_run() supplies a context when E2EE is configured.}
 }
 \value{
 An integer count of messages replied to, invisibly.
