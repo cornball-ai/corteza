@@ -1,3 +1,31 @@
+# corteza 0.7.1.14
+
+- **Room metadata rides the transport contract.** `mx_room_name()`,
+  `mx_room_topic()` and `mx_room_members()` are gone from the Matrix
+  loop, replaced by `chat_channel_info()` and `chat_members()`. Three of
+  the nine remaining direct mx.api calls go with them.
+
+  `matrix_new_session()` made three state reads and fetched the topic
+  twice: once inside `matrix_room_cwd()` for the working directory, and
+  again for the room description. It makes one now, and
+  `matrix_room_cwd()` takes the topic rather than fetching one.
+
+  `matrix_archive_session()`, `matrix_archive_all()` and
+  `matrix_handle_flush_signal()` take a `chat` client where they took an
+  `mx_sess`; `matrix_room_members_cached()` likewise. `matrix_archive_all()`
+  is exported, so that is a signature change.
+
+  A failed member lookup still keeps the previous cache rather than
+  emptying it. `chat_members()` raises instead of returning `character()`
+  precisely so the two can be told apart -- an empty room and an
+  unanswerable question are different, and only one of them means the
+  room emptied.
+
+  Also drops the unused `mx_sess` parameter from
+  `matrix_default_system()`, which no caller passed.
+
+  Requires `chat.api >= 0.0.1.13`, enforced at runtime.
+
 # corteza 0.7.1.13
 
 - **Reaction approval rides the transport contract.**

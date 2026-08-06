@@ -150,11 +150,6 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
         assignInNamespace("matrix_chat_client", stub, ns = "corteza")
         stub
     }
-    restore_client <- function() {
-        assignInNamespace("matrix_chat_client",
-                          get("matrix_chat_client",
-                              envir = asNamespace("corteza")), ns = "corteza")
-    }
     cfg <- list(server = "https://ex.invalid", user = "bot", token = "tok",
                 user_id = "@bot:ex", device_id = "DEV",
                 room_id = "!default:ex")
@@ -362,4 +357,139 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
     expect_true(grepl("chat_poll", src, fixed = TRUE))
     expect_true(grepl("chat_react", src, fixed = TRUE))
     expect_true(grepl("save_cursor = FALSE", src, fixed = TRUE))
+}
+
+# --- Channel metadata through the contract ---
+# Four call sites used to make five state lookups between them, with the
+# topic fetched twice for one session. They now share one verb.
+
+if (requireNamespace("chat.api", quietly = TRUE) &&
+    "chat_channel_info" %in% getNamespaceExports("chat.api")) {
+
+    info_of <- corteza:::matrix_channel_info
+
+    # No client is a real path: archiving from a registry with no live
+    # transport. It answers empty rather than erroring.
+    expect_identical(info_of(NULL, "!r:ex"),
+                     list(id = "!r:ex", name = NULL, topic = NULL))
+    # So is no room.
+    expect_null(info_of(structure(list(), class = "chat_nothing"), NULL)$name)
+
+    # "Cannot ask" is absorbed here, once, rather than at four call sites
+    # that would each have to remember. Every caller wants the same
+    # answer from it -- fall back to a default -- so the distinction the
+    # contract draws between an error and a NULL field is collapsed
+    # deliberately, in one place.
+    local({
+        cl <- structure(list(), class = c("chat_boom", "chat_client"))
+        registerS3method("chat_channel_info", "chat_boom",
+                         function(client, channel, ...) stop("403"),
+                         envir = asNamespace("chat.api"))
+        expect_identical(info_of(cl, "!r:ex"),
+                         list(id = "!r:ex", name = NULL, topic = NULL))
+    })
+
+    # A real answer comes through untouched.
+    local({
+        cl <- structure(list(), class = c("chat_ok", "chat_client"))
+        registerS3method("chat_channel_info", "chat_ok",
+                         function(client, channel, ...) {
+                             list(id = channel, name = "The Lab",
+                                  topic = "~/lab | a place")
+                         }, envir = asNamespace("chat.api"))
+        expect_identical(corteza:::matrix_room_name(cl, "!r:ex"), "The Lab")
+        expect_identical(info_of(cl, "!r:ex")$topic, "~/lab | a place")
+    })
+
+    # --- matrix_room_cwd takes a topic, not a session ---
+    # It used to fetch one itself, which was the third state read for a
+    # single session and the second read of the same topic.
+    local({
+        cfg <- list(user_id = "@bot:ex", user = "bot")
+        default <- corteza:::matrix_default_cwd(cfg)
+        # No topic is the default.
+        expect_identical(corteza:::matrix_room_cwd(cfg, NULL), default)
+        # A topic with no cwd part is the default too.
+        expect_identical(corteza:::matrix_room_cwd(cfg, "just a description"),
+                         default)
+        # A cwd that does not exist falls back, and says so.
+        expect_message(
+            got <- corteza:::matrix_room_cwd(cfg, "/nonexistent/xyzzy | d"),
+            "does not exist")
+        expect_identical(got, default)
+        # A cwd that does exist is used.
+        d <- tempfile("roomcwd"); dir.create(d)
+        on.exit(unlink(d, recursive = TRUE))
+        expect_identical(corteza:::matrix_room_cwd(cfg, paste0(d, " | desc")),
+                         d)
+        # The signature no longer takes a session.
+        expect_false("mx_sess" %in% names(formals(corteza:::matrix_room_cwd)))
+        expect_true("topic" %in% names(formals(corteza:::matrix_room_cwd)))
+    })
+
+    # --- The members cache reads chat_members() ---
+    local({
+        cl <- structure(list(), class = c("chat_mem", "chat_client"))
+        asked <- character()
+        registerS3method("chat_members", "chat_mem",
+                         function(client, channel, ...) {
+                             asked <<- c(asked, channel)
+                             c("@a:ex", "@b:ex")
+                         }, envir = asNamespace("chat.api"))
+        s <- new.env(parent = emptyenv())
+        got <- corteza:::matrix_room_members_cached(s, "!r:ex", chat = cl)
+        expect_identical(got, c("@a:ex", "@b:ex"))
+        expect_identical(asked, "!r:ex")
+        # Cached on the second call, not re-fetched.
+        corteza:::matrix_room_members_cached(s, "!r:ex", chat = cl)
+        expect_identical(length(asked), 1L)
+    })
+
+    # A failed lookup keeps the previous cache rather than emptying it.
+    # chat_members() raises rather than returning character() precisely
+    # so this can tell the two apart.
+    local({
+        cl <- structure(list(), class = c("chat_memfail", "chat_client"))
+        registerS3method("chat_members", "chat_memfail",
+                         function(client, channel, ...) stop("403"),
+                         envir = asNamespace("chat.api"))
+        s <- new.env(parent = emptyenv())
+        s$members <- c("@a:ex")
+        s$members_at <- Sys.time() - 10000
+        expect_identical(
+            corteza:::matrix_room_members_cached(s, "!r:ex", chat = cl),
+            "@a:ex")
+    })
+
+    # No client at all yields no members rather than an error.
+    local({
+        s <- new.env(parent = emptyenv())
+        expect_identical(
+            corteza:::matrix_room_members_cached(s, "!r:ex", chat = NULL),
+            character())
+    })
+
+    # --- corteza no longer reads room metadata off mx.api ---
+    src <- paste(vapply(c("matrix_archive_session", "matrix_room_cwd",
+                          "matrix_room_members_cached", "matrix_new_session"),
+                        function(f) paste(deparse(body(get(f,
+                            envir = asNamespace("corteza")))), collapse = " "),
+                        character(1)), collapse = " ")
+    for (gone in c("mx_room_name", "mx_room_topic", "mx_room_members")) {
+        expect_false(grepl(gone, src, fixed = TRUE), info = gone)
+    }
+    # And matrix_new_session asks once, not three times.
+    ns <- paste(deparse(body(corteza:::matrix_new_session)), collapse = " ")
+    expect_identical(lengths(regmatches(ns,
+                                        gregexpr("matrix_channel_info", ns)))[[1]],
+                     1L)
+    # The topic it got is the one the cwd is derived from. Asserted on
+    # the source because reaching matrix_new_session() for real runs
+    # session_setup(), which wants a provider API key -- and the wiring
+    # is the whole point: passing NULL here would silently send every
+    # room back to the default directory while the single lookup above
+    # still looked correct.
+    expect_true(grepl("matrix_room_cwd(cfg, info$topic)", ns, fixed = TRUE))
+    expect_true(grepl("room_name = info$name", ns, fixed = TRUE))
+    expect_true(grepl("matrix_parse_topic(info$topic)", ns, fixed = TRUE))
 }
