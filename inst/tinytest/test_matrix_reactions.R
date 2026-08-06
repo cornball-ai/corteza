@@ -150,11 +150,6 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
         assignInNamespace("matrix_chat_client", stub, ns = "corteza")
         stub
     }
-    restore_client <- function() {
-        assignInNamespace("matrix_chat_client",
-                          get("matrix_chat_client",
-                              envir = asNamespace("chat.api")), ns = "corteza")
-    }
     cfg <- list(server = "https://ex.invalid", user = "bot", token = "tok",
                 user_id = "@bot:ex", device_id = "DEV",
                 room_id = "!default:ex")
