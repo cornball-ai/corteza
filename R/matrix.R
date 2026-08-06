@@ -36,10 +36,13 @@
 #            absent one, instead of publishing over a tampered entry.
 #   0.0.1.9  and tells a partial /keys/query from an empty one, so an
 #            unreachable server is not read as a device never seen.
+#   0.0.1.12 chat_react() and chat_poll()$reactions exist, which is what
+#            matrix_reaction_approval() drives instead of its own
+#            mx_react calls and private mx_sync loop.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.9"
+.CHAT_API_MIN <- "0.0.1.12"
 
 # Minimum mx.client:
 #
@@ -53,7 +56,9 @@
 #            partial /keys/query or /keys/claim as unanswered. corteza
 #            does not call it directly, but every encrypted reply this
 #            loop sends goes through it.
-.MX_CLIENT_MIN <- "0.2.0.2"
+#   0.2.0.3  mx_extract_reactions() exists, which is what chat.api reads
+#            to fill chat_poll()$reactions.
+.MX_CLIENT_MIN <- "0.2.0.3"
 
 # chat_api_version / mx_client_version are injectable so the floors can
 # be tested without a stale package on disk. Leave NULL in production.
@@ -338,7 +343,12 @@ matrix_event_id <- function(id) {
 # The transport-contract view of corteza's Matrix account.
 #
 # save_cursor = TRUE is the contract's default and reproduces the
-# pre-contract call exactly: mx.client writes the advanced sync token
+# pre-contract call exactly, and FALSE is for the one caller that must
+# not touch it: matrix_reaction_approval() runs its own short poll loop
+# on a private cursor, and persisting that would move the bot's real
+# position and skip every message the approval took to answer.
+#
+# With TRUE, mx.client writes the advanced sync token
 # the moment /sync returns, before anything parses the response.
 # Persisting it afterwards instead, from chat_poll()'s `cursor`, looks
 # equivalent and is not. matrix_run() is a bare repeat loop with no
@@ -376,8 +386,9 @@ matrix_event_id <- function(id) {
 # `...` reaches chat_matrix(), which exists for its testing seams
 # (.sync, .extract, .send, .media, .typing, .crypto, .save). Production
 # passes nothing.
-matrix_chat_client <- function(cfg, ...) {
-    chat.api::chat_matrix(mx = matrix_client(cfg), save_cursor = TRUE,
+matrix_chat_client <- function(cfg, save_cursor = TRUE, ...) {
+    chat.api::chat_matrix(mx = matrix_client(cfg),
+                          save_cursor = isTRUE(save_cursor),
                           e2ee = isTRUE(cfg$e2ee), ...)
 }
 
@@ -1253,9 +1264,61 @@ matrix_approval_cb <- function(cfg, room_id = cfg$room_id) {
     }
 }
 
+# Which reaction keys mean yes and which mean no. corteza's policy, not
+# the transport's: mx.client ships mx_extract_reaction_verdict() with
+# these baked in, and reading the contract's reaction records instead
+# keeps the vocabulary next to the prompt that teaches a user which
+# emoji to tap.
+#
+# Built here rather than in a signature default so the astral-plane
+# glyphs never reach an .Rd \usage block, where LaTeX cannot typeset
+# them and the PDF manual fails R CMD check --as-cran.
+matrix_approve_keys <- function(cfg) {
+    cfg$approve_keys %||%
+    c(intToUtf8(0x1F44D), intToUtf8(0x2705), "y", "yes", "ok")
+}
+
+matrix_deny_keys <- function(cfg) {
+    cfg$deny_keys %||%
+    c(intToUtf8(0x1F44E), intToUtf8(0x274C), "n", "no", "nope")
+}
+
+# First verdict wins, in the order the homeserver reported them.
+#
+# Self reactions are skipped, and that is load-bearing rather than
+# tidiness: this loop seeds its own thumbs-up and thumbs-down so the user
+# can tap instead of type, and counting those would approve every request
+# the instant it was asked.
+#
+# The room is checked too. The prompt goes to the session's room, which
+# is not the config's default room in any room but one.
+matrix_reaction_verdict <- function(reactions, room_id, target, approve_keys,
+                                    deny_keys) {
+    for (r in reactions) {
+        if (isTRUE(r$self) ||
+            !identical(r$channel, room_id) ||
+            !identical(r$target, target)) {
+            next
+        }
+        if (r$key %in% approve_keys) {
+            return(TRUE)
+        }
+        if (r$key %in% deny_keys) {
+            return(FALSE)
+        }
+    }
+    NULL
+}
+
 # Blocking reaction-based approval. Returns TRUE / FALSE. Never errors
 # for run-time issues (network blip, user declines, timeout) — those
 # all fall through to FALSE so the LLM sees a clean "declined" string.
+#
+# The poll loop here is private and deliberately separate from the bot's:
+# it runs on its own cursor, from a client built save_cursor = FALSE, so
+# nothing it reads moves the position matrix_poll() resumes from. Sharing
+# one cursor would have every approval silently eat the messages that
+# arrived while the user was deciding.
 matrix_reaction_approval <- function(cfg, call, decision,
                                      room_id = cfg$room_id,
                                      timeout_sec = NULL) {
@@ -1265,50 +1328,68 @@ matrix_reaction_approval <- function(cfg, call, decision,
     }
     timeout_sec <- as.integer(timeout_sec)
 
-    mx_sess <- matrix_mx_session(cfg)
-    msg <- matrix_approval_prompt(call, decision, timeout_sec)
+    chat <- tryCatch(matrix_chat_client(cfg, save_cursor = FALSE),
+                     error = function(e) NULL)
+    if (is.null(chat)) {
+        return(FALSE)
+    }
 
-    eid <- tryCatch(mx.api::mx_send(mx_sess, room_id, msg),
+    # Baseline before the prompt, not after it. The old order sent the
+    # prompt first and then took a baseline, so a reaction placed in
+    # between landed in the baseline sync and was discarded with it --
+    # the fastest tap was the one most likely to be lost. Nothing can
+    # react to an event that does not exist yet, so a cursor taken first
+    # cannot miss a verdict.
+    base <- tryCatch(chat.api::chat_poll(chat, timeout = 0),
+                     error = function(e) NULL)
+    if (is.null(base)) {
+        return(FALSE)
+    }
+    since <- base$cursor
+
+    msg <- matrix_approval_prompt(call, decision, timeout_sec)
+    eid <- tryCatch(matrix_event_id(chat.api::chat_send(chat, room_id, msg)),
                     error = function(e) NULL)
     if (is.null(eid)) {
         return(FALSE)
     }
-
-    # Add our own 👍 and 👎 reactions so the user can tap either one
-    # instead of typing the emoji. (mx_react errors are best-effort.)
-    tryCatch(mx.api::mx_react(mx_sess, room_id, eid, "\U0001F44D"),
-             error = function(e) NULL)
-    tryCatch(mx.api::mx_react(mx_sess, room_id, eid, "\U0001F44E"),
-             error = function(e) NULL)
-
-    baseline <- tryCatch(
-                         mx.api::mx_sync(mx_sess, timeout = 0L),
-                         error = function(e) NULL
-    )
-    if (is.null(baseline)) {
-        return(FALSE)
+    # Seed both reactions so the user can tap rather than type.
+    # Best-effort: a room where the bot cannot react is still one where
+    # the user can type "yes".
+    for (k in c(intToUtf8(0x1F44D), intToUtf8(0x1F44E))) {
+        tryCatch(chat.api::chat_react(chat, room_id, eid, k),
+                 error = function(e) NULL)
     }
-    since <- baseline$next_batch
 
+    approve_keys <- matrix_approve_keys(cfg)
+    deny_keys <- matrix_deny_keys(cfg)
     deadline <- Sys.time() + timeout_sec
     while (Sys.time() < deadline) {
-        remaining_ms <- max(
-                            as.integer((as.numeric(deadline) - as.numeric(Sys.time())) * 1000),
-                            1L
+        remaining <- max(as.numeric(deadline) - as.numeric(Sys.time()), 1)
+        res <- tryCatch(
+                        chat.api::chat_poll(chat, since = since,
+                timeout = min(remaining, 30)),
+                        error = function(e) NULL
         )
-        sync <- tryCatch(
-                         mx.api::mx_sync(mx_sess, since = since,
-                timeout = min(remaining_ms, 30000L)),
-                         error = function(e) NULL
-        )
-        if (is.null(sync)) {
+        if (is.null(res)) {
             return(FALSE)
         }
-        since <- sync$next_batch
-
-        verdict <- matrix_extract_reaction_verdict(
-            sync, cfg$room_id, cfg$user_id, eid
-        )
+        # Advance first, unconditionally. An iteration that returns only
+        # unrelated traffic -- someone else's reaction, an ordinary
+        # message -- still has to move the cursor, or the next poll asks
+        # for the same batch and the loop spins until the deadline
+        # without ever seeing the verdict that arrives after it.
+        since <- res$cursor
+        # A first_run here would mean the cursor was lost and the
+        # homeserver sent a backfill window instead of new traffic. Its
+        # reactions are history, not an answer to a prompt sent seconds
+        # ago, so they are not read -- but the cursor still advanced
+        # above, so the next poll is live.
+        if (isTRUE(res$first_run)) {
+            next
+        }
+        verdict <- matrix_reaction_verdict(res$reactions, room_id, eid,
+            approve_keys, deny_keys)
         if (!is.null(verdict)) {
             return(verdict)
         }
@@ -1346,15 +1427,6 @@ matrix_approval_prompt <- function(call, decision, timeout_sec) {
                                         max_chars = 120L),
             timeout_sec
     )
-}
-
-# Scan a sync response's timeline for a reaction on event_id from a
-# user other than the bot. Returns TRUE (👍), FALSE (👎), or NULL (no
-# verdict yet).
-matrix_extract_reaction_verdict <- function(sync_resp, room_id, self_id,
-    target_event_id) {
-    mx.client::mx_extract_reaction_verdict(sync_resp, room_id, self_id,
-        target_event_id)
 }
 
 # Build a fresh corteza session from a Matrix config. Does not fetch any
