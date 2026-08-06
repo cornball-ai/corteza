@@ -1,3 +1,36 @@
+# corteza 0.7.1.13
+
+- **Reaction approval rides the transport contract.**
+  `matrix_reaction_approval()` no longer calls `mx.api::mx_react()` or
+  runs its own private `mx_sync` loop; it uses `chat_react()` and
+  `chat_poll()$reactions`. Two of the four direct mx.api sites are gone
+  with it. The approve/deny vocabulary stays in corteza, where the prompt
+  that teaches a user which emoji to tap also lives, and is now
+  overridable per config via `approve_keys` / `deny_keys`.
+
+  Three bugs fixed on the way:
+
+  - **Approvals outside the default room could only time out.** The
+    prompt went to the session's room but the verdict was read from
+    `cfg$room_id`, so in every room but one no tap was ever seen.
+  - **The fastest tap was the one most likely to be lost.** The baseline
+    cursor was taken *after* the prompt was sent, so a reaction placed in
+    between landed in the baseline sync and was discarded with it. The
+    baseline is taken first now; nothing can react to an event that does
+    not exist yet.
+  - The poll loop runs on a client built `save_cursor = FALSE`, so its
+    private cursor cannot be written over the bot's own position. This
+    was not reachable before -- the old loop drove `mx_sync` directly and
+    never touched the stored token -- but it becomes possible the moment
+    the loop goes through `chat_poll()`, and it is the failure that would
+    have silently eaten every message sent while a user was deciding.
+
+  `mx_extract_reaction_verdict()`'s corteza wrapper is deleted: it
+  delegated the approve/deny vocabulary to the transport package.
+
+  Requires `chat.api >= 0.0.1.12` and `mx.client >= 0.2.0.3`, both
+  enforced at runtime.
+
 # corteza 0.7.1.12
 
 - **End-to-end encryption moves into the chat.api Matrix adapter.**
