@@ -3,7 +3,7 @@
 \alias{matrix_archive_all}
 \title{Flush all in-memory matrix sessions to the pensar vault}
 \usage{
-matrix_archive_all(sessions, mx_sess = NULL)
+matrix_archive_all(sessions, chat = NULL)
 }
 \arguments{
 \item{sessions}{A registry environment built by
@@ -11,7 +11,7 @@ matrix_archive_all(sessions, mx_sess = NULL)
 are session environments carrying \code{$transcript}, the
 Matrix-visible event ledger.}
 
-\item{mx_sess}{Optional Matrix session for room-name lookups. When
+\item{chat}{Optional chat.api client for room-name lookups. When
 NULL, the room ID is used as the source identifier.}
 }
 \value{

@@ -39,10 +39,13 @@
 #   0.0.1.12 chat_react() and chat_poll()$reactions exist, which is what
 #            matrix_reaction_approval() drives instead of its own
 #            mx_react calls and private mx_sync loop.
+#   0.0.1.13 chat_channel_info() and chat_members() exist, which replace
+#            this file's direct mx_room_name, mx_room_topic and
+#            mx_room_members calls.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.12"
+.CHAT_API_MIN <- "0.0.1.13"
 
 # Minimum mx.client:
 #
@@ -392,6 +395,27 @@ matrix_chat_client <- function(cfg, save_cursor = TRUE, ...) {
                           e2ee = isTRUE(cfg$e2ee), ...)
 }
 
+# A room's descriptive metadata, or an empty answer.
+#
+# chat_channel_info() distinguishes "there is no name" (NULL field) from
+# "I cannot ask" (an error), and both mean the same thing to every caller
+# here: fall back to a default. So the error is absorbed once, in one
+# place, rather than at four call sites that would each have to
+# remember. A NULL chat is the no-transport case -- archiving from a
+# registry with no live client, which is a real path.
+matrix_channel_info <- function(chat, room_id) {
+    empty <- list(id = room_id, name = NULL, topic = NULL)
+    if (is.null(chat) || is.null(room_id)) {
+        return(empty)
+    }
+    tryCatch(chat.api::chat_channel_info(chat, room_id),
+             error = function(e) empty)
+}
+
+matrix_room_name <- function(chat, room_id) {
+    matrix_channel_info(chat, room_id)$name
+}
+
 # The record shape this file's poll loop reads, from the contract's
 # chat_message. Six fields, all one-to-one; the rename to the contract's
 # own names is a later pass, and one mapping in one place beats keeping a
@@ -528,7 +552,7 @@ matrix_session_to_markdown <- function(session, room_id, room_name = NULL,
 # Archive new turns from one room's session to the pensar vault and
 # advance the watermark so the same turns aren't re-ingested. Silent
 # no-op when pensar isn't installed or there's nothing new.
-matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
+matrix_archive_session <- function(session, room_id, chat = NULL) {
     # pensar is an optional cornball-ai companion package, declared in
     # Suggests. The dynamic getExportedValue lookup keeps archiving a
     # no-op when it is absent rather than erroring at load.
@@ -563,12 +587,7 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
         return(invisible(NULL))
     }
 
-    room_name <- if (!is.null(mx_sess)) {
-        tryCatch(mx.api::mx_room_name(mx_sess, room_id),
-                 error = function(e) NULL)
-    } else {
-        NULL
-    }
+    room_name <- matrix_room_name(chat, room_id)
     md <- matrix_session_to_markdown(session, room_id, room_name, which = fresh)
     if (is.null(md)) {
         return(invisible(NULL))
@@ -613,7 +632,7 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
 #'   \code{matrix_run}/\code{matrix_poll}. Keys are room IDs, values
 #'   are session environments carrying \code{$transcript}, the
 #'   Matrix-visible event ledger.
-#' @param mx_sess Optional Matrix session for room-name lookups. When
+#' @param chat Optional chat.api client for room-name lookups. When
 #'   NULL, the room ID is used as the source identifier.
 #'
 #' @return Integer count of rooms ingested, invisibly.
@@ -625,7 +644,7 @@ matrix_archive_session <- function(session, room_id, mx_sess = NULL) {
 #' matrix_archive_all(reg)
 #' }
 #' @export
-matrix_archive_all <- function(sessions, mx_sess = NULL) {
+matrix_archive_all <- function(sessions, chat = NULL) {
     if (!is.environment(sessions)) {
         stop("sessions must be an environment registry", call. = FALSE)
     }
@@ -637,7 +656,7 @@ matrix_archive_all <- function(sessions, mx_sess = NULL) {
         # turn out to be already archived leaves state changed while
         # ingesting nothing, which reported archived rooms that were
         # never written.
-        if (!is.null(matrix_archive_session(s, room_id, mx_sess))) {
+        if (!is.null(matrix_archive_session(s, room_id, chat))) {
             n <- n + 1L
         }
     }
@@ -970,14 +989,18 @@ matrix_known_bots <- function(cfg) {
 # (character() when never fetched); the next message retries. fetch and
 # now are injectable for tests.
 matrix_room_members_cached <- function(session, room_id, sender = NULL,
-                                       mx_sess = NULL, fetch = NULL,
+                                       chat = NULL, fetch = NULL,
                                        now = Sys.time(), ttl = 600) {
     if (is.null(fetch)) {
         fetch <- function(rid) {
-            if (is.null(mx_sess)) {
+            if (is.null(chat)) {
                 return(NULL)
             }
-            tryCatch(mx.api::mx_room_members(mx_sess, rid),
+            # NULL on failure, not character(): the caller keeps its
+            # previous cache on NULL, and an empty vector would read as
+            # a room that had emptied. chat_members() raises rather than
+            # returning character() for exactly that reason.
+            tryCatch(chat.api::chat_members(chat, rid),
                      error = function(e) NULL)
         }
     }
@@ -1115,9 +1138,8 @@ matrix_extract_invites <- function(sync_resp, self_id = NULL,
     rooms[keep]
 }
 
-matrix_default_system <- function(cfg, room_id = NULL, mx_sess = NULL,
-                                  cwd = NULL, description = NULL,
-                                  room_name = NULL) {
+matrix_default_system <- function(cfg, room_id = NULL, cwd = NULL,
+                                  description = NULL, room_name = NULL) {
     base <- sprintf("You are %s, a helpful assistant for %s.", cfg$user_id,
                     cfg$user)
     parts <- c(base,
@@ -1213,14 +1235,16 @@ matrix_parse_topic <- function(topic) {
 # Effective cwd for a room: topic-supplied path if present and valid,
 # otherwise the agent's default workspace. Never returns a non-
 # existent directory.
-matrix_room_cwd <- function(cfg, room_id, mx_sess = NULL) {
+# Takes the topic rather than fetching one. matrix_new_session() already
+# has it -- name and topic arrive together from a single
+# chat_channel_info() call -- and re-reading it here was the third state
+# lookup for one session, which is the round trip this verb exists to
+# save.
+matrix_room_cwd <- function(cfg, topic = NULL) {
     default_dir <- matrix_default_cwd(cfg)
-    if (is.null(room_id) || is.null(mx_sess)) {
+    if (is.null(topic)) {
         return(default_dir)
     }
-
-    topic <- tryCatch(mx.api::mx_room_topic(mx_sess, room_id),
-                      error = function(e) NULL)
     parsed <- matrix_parse_topic(topic)
     if (is.null(parsed$cwd)) {
         return(default_dir)
@@ -1451,29 +1475,18 @@ matrix_new_session <- function(cfg, system = NULL, model = NULL,
         tools_filter <- NULL
     }
 
-    mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
-    room_cwd <- matrix_room_cwd(cfg, room_id, mx_sess)
+    # One lookup for both fields. This was three state reads, and the
+    # topic was one of them twice: matrix_room_cwd() fetched it for the
+    # cwd, and the block below fetched it again for the description.
+    chat <- tryCatch(matrix_chat_client(cfg), error = function(e) NULL)
+    info <- matrix_channel_info(chat, room_id)
+    room_cwd <- matrix_room_cwd(cfg, info$topic)
 
     if (is.null(system)) {
-        room_name <- if (!is.null(mx_sess) && !is.null(room_id)) {
-            tryCatch(mx.api::mx_room_name(mx_sess, room_id),
-                     error = function(e) NULL)
-        } else {
-            NULL
-        }
-        topic_raw <- if (!is.null(mx_sess) && !is.null(room_id)) {
-            tryCatch(mx.api::mx_room_topic(mx_sess, room_id),
-                     error = function(e) NULL)
-        } else {
-            NULL
-        }
-        parsed <- matrix_parse_topic(topic_raw)
-        system <- matrix_room_system(
-                                     cfg,
-                                     cwd = room_cwd,
+        parsed <- matrix_parse_topic(info$topic)
+        system <- matrix_room_system(cfg, cwd = room_cwd,
                                      description = parsed$description,
-                                     room_name = room_name
-        )
+                                     room_name = info$name)
     }
 
     s <- session_setup(
@@ -1728,7 +1741,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
         members <- matrix_room_members_cached(session, m$room_id,
             sender = m$sender,
-            mx_sess = sess_now(), now = now)
+            chat = chat_now(), now = now)
         # Attribute turns when multiple people or another bot could be
         # speaking; the reply gate below is unchanged.
         attribute_sender <- matrix_needs_sender_attribution(members, sender, bots)
@@ -1806,7 +1819,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
             tryCatch(
-                     matrix_archive_session(session, m$room_id, sess_now()),
+                     matrix_archive_session(session, m$room_id, chat_now()),
                      error = function(e) NULL
             )
             if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
@@ -2116,12 +2129,12 @@ matrix_run_step <- function(state, timeout = 30000L) {
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns
     # the registry; the schedule lives outside the package.
-    # Derived now, not from state: state$mx_sess was built at startup and
-    # every token rotation since has left it holding a rejected token,
-    # which silently costs the archive its room-name metadata.
-    flush_sess <- tryCatch(matrix_mx_session(matrix_load_config()),
-                           error = function(e) state$mx_sess)
-    matrix_handle_flush_signal(state$flush_signal, state$sessions, flush_sess)
+    # Derived now, not from state: a client built at startup holds a
+    # token every rotation since has invalidated, which silently costs
+    # the archive its room-name metadata.
+    flush_chat <- tryCatch(matrix_chat_client(matrix_load_config()),
+                           error = function(e) NULL)
+    matrix_handle_flush_signal(state$flush_signal, state$sessions, flush_chat)
     invisible(replied)
 }
 
@@ -2208,12 +2221,12 @@ matrix_request_flush <- function() {
 # Flush sessions to pensar when the signal file exists. Removes the
 # file on success so each touch fires exactly one flush. Errors are
 # logged, never raised — the long-poll loop must keep running.
-matrix_handle_flush_signal <- function(flush_signal, sessions, mx_sess = NULL) {
+matrix_handle_flush_signal <- function(flush_signal, sessions, chat = NULL) {
     if (!file.exists(flush_signal)) {
         return(invisible(0L))
     }
     n <- tryCatch(
-                  matrix_archive_all(sessions, mx_sess),
+                  matrix_archive_all(sessions, chat),
                   error = function(e) {
         message("matrix_run: flush failed: ", conditionMessage(e))
         -1L
