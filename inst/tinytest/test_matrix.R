@@ -615,10 +615,16 @@ expect_false(corteza:::matrix_is_clear_command(""))
 expect_false(corteza:::matrix_is_clear_command(NULL))
 
 # 0.3.0 adoption helpers exist with the expected shapes.
-expect_true(is.function(corteza:::matrix_relogin))
 expect_true(is.function(corteza:::matrix_reply_send))
-expect_error(corteza:::matrix_relogin(list(server = "https://x")),
-             "no stored password")
+# matrix_relogin() is gone. Refreshing a token is chat_relogin(), and it
+# puts the result back on the client rather than handing it out --
+# corteza had no way to relogin that did not leave two copies of a
+# credential and a file to keep them in step.
+expect_false(exists("matrix_relogin", envir = asNamespace("corteza"),
+                    inherits = FALSE))
+# It takes the loop's client, not a config. Rebuilding a client per send
+# was how a rotated token used to reach the next reply.
+expect_identical(names(formals(corteza:::matrix_reply_send))[1L], "chat")
 
 # The matrix loop is split into init/step exports so an external
 # scheduler can own the main process; matrix_run wraps them. All three
@@ -1362,35 +1368,39 @@ local({
 # ---- badge integration paths (regression guards) ----
 
 # matrix_update_displayname() must hand back a config, and after a
-# successful rename it must be the freshly loaded one. mx_set_displayname()
-# can relogin and persist a new token but returns only TRUE, so a caller
-# that keeps its own cfg goes on using the token the homeserver rejected --
-# and chat_send() does no relogin of its own, so the next reply vanishes
-# into a best-effort tryCatch.
+# successful rename it must be the freshly loaded one. The rename can
+# relogin and persist a new token while reporting only TRUE, so a caller
+# that keeps its own cfg goes on using the token the homeserver rejected
+# -- and chat_send() does no relogin of its own, so the next reply
+# vanishes into a best-effort tryCatch.
 local({
     cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
                 provider = "ollama", model_badge = "always")
 
-    orig_client <- corteza:::matrix_client
     orig_load <- corteza:::matrix_load_config
-    assignInNamespace("matrix_client", function(cfg) cfg, ns = "corteza")
     assignInNamespace("matrix_load_config",
                       function() c(cfg, list(token = "refreshed")),
                       ns = "corteza")
-    on.exit({
-        assignInNamespace("matrix_client", orig_client, ns = "corteza")
-        assignInNamespace("matrix_load_config", orig_load, ns = "corteza")
-    }, add = TRUE)
+    on.exit(assignInNamespace("matrix_load_config", orig_load, ns = "corteza"),
+            add = TRUE)
 
-    if (requireNamespace("mx.client", quietly = TRUE)) {
-        orig_set <- mx.client::mx_set_displayname
-        assignInNamespace("mx_set_displayname",
-                          function(client, name, save = TRUE) invisible(TRUE),
-                          ns = "mx.client")
-        on.exit(assignInNamespace("mx_set_displayname", orig_set,
-                                  ns = "mx.client"), add = TRUE)
-
-        got <- corteza:::matrix_update_displayname(cfg)
+    if (requireNamespace("chat.api", quietly = TRUE)) {
+        # A client whose rename is seamed. corteza no longer reaches for
+        # mx_set_displayname itself -- the rename is chat_set_identity(),
+        # and the adapter is what knows it can rotate a token.
+        seen <- NULL
+        chat <- chat.api::chat_matrix(
+            mx = list(server = "https://ex.invalid", user = "bot",
+                      token = "tok", user_id = "@r2j2:cornball.ai",
+                      device_id = "DEV1"),
+            .sync = function(...) NULL, .extract = function(...) list(),
+            .send = function(...) "$1", .media = function(...) NULL,
+            .identity = function(client, name, ...) {
+                seen <<- name
+                invisible(TRUE)
+            })
+        got <- corteza:::matrix_update_displayname(cfg, chat = chat)
+        expect_true(!is.null(seen))
         expect_equal(got$token, "refreshed")   # adopted the reloaded config
     }
 
@@ -1415,16 +1425,33 @@ local({
         "r2j2 ⚡ claude-sonnet-4-6")
 })
 
-# The mx.client floor is enforced at runtime, not just declared in
-# DESCRIPTION: an installed-but-stale copy has no mx_set_displayname().
-# The floors are enforced at runtime, not merely declared in DESCRIPTION:
-# an installed-but-stale copy loads however old it is. Injecting the
-# versions tests the gate itself rather than what CI happens to have.
-if (requireNamespace("chat.api", quietly = TRUE) &&
-        requireNamespace("mx.client", quietly = TRUE)) {
-    expect_error(corteza:::matrix_require_mx(mx_client_version = "0.1.1"),
-                 "mx.client")
+# The chat.api floor is enforced at runtime, not merely declared in
+# DESCRIPTION: an installed-but-stale copy loads however old it is.
+# Injecting the version tests the gate itself rather than what CI
+# happens to have.
+if (requireNamespace("chat.api", quietly = TRUE)) {
     expect_error(corteza:::matrix_require_mx(chat_api_version = "0.0.0.1"),
                  "chat.api")
     expect_silent(corteza:::matrix_require_mx())
 }
+# One dependency, and only one. corteza checked mx.api and mx.client here
+# too, and carried its own mx.client floor, back when it called them --
+# repeating a downstream package's requirements is asserting facts only
+# that package can keep true.
+expect_identical(names(formals(corteza:::matrix_require_mx)),
+                 "chat_api_version")
+expect_false(exists(".MX_CLIENT_MIN", envir = asNamespace("corteza"),
+                    inherits = FALSE))
+# The runtime has no mx.* calls left at all. This is the plan's finish
+# line, and a grep is the only thing that can hold it: any one of them
+# would work perfectly on a host that happens to have the package.
+local({
+    src <- unlist(lapply(ls(asNamespace("corteza"), all.names = TRUE),
+                         function(n) {
+        obj <- get(n, envir = asNamespace("corteza"))
+        if (is.function(obj)) deparse(body(obj)) else character()
+    }))
+    expect_false(any(grepl("mx.api", src, fixed = TRUE)))
+    expect_false(any(grepl("mx.client", src, fixed = TRUE)))
+    expect_false(any(grepl("mx.crypto", src, fixed = TRUE)))
+})

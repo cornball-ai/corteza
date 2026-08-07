@@ -323,17 +323,25 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     seams <- list(
         .sync = function(client, timeout = 0L, save = TRUE, ...) {
-            client$sync_token <- "s2"
-            # An adapter that reports neither client nor first_run is
-            # simulated by a sync whose result carries neither. Such an
-            # adapter also predates `save`, so nothing is written.
             list(sync = list(next_batch = "s2", rooms = list(join = list())),
-                 client = NULL, first_run = NULL)
+                 client = client, first_run = FALSE)
         },
         .extract = function(sync_resp, self_id, ...) list())
 
+    # Stubbed at chat_poll(), not at the .sync seam. The seam cannot
+    # reach this any more: the adapter normalizes first_run with
+    # isTRUE(), so a sync that omits it still produces FALSE. What the
+    # guard is for is a chat.api old enough not to report the field at
+    # all, and that is what this simulates.
+    orig_poll <- chat.api::chat_poll
+    assignInNamespace("chat_poll", function(client, ...) {
+        list(messages = list(), cursor = "s2", reactions = list(),
+             invites = list())
+    }, ns = "chat.api")
+    on.exit(assignInNamespace("chat_poll", orig_poll, ns = "chat.api"),
+            add = TRUE)
     expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
-                 "no client/first_run")
+                 "no first_run")
 })
 
 
@@ -639,14 +647,14 @@ local({
     with_seamed_client(seams, {
         # Encrypted room: the contract call goes through, and the adapter
         # sends it encrypted rather than in the clear.
-        eid <- corteza:::matrix_reply_send(cfg, "!secret:example", "shh")
+        eid <- corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!secret:example", "shh")
         expect_equal(eid, "$enc:example")
         expect_identical(length(cs$log$sent), 1L)
         expect_identical(cs$log$sent[[1L]]$text, "shh")
         expect_equal(length(sent), 0L)
 
         # Plaintext room on the same client: cleartext, and no Megolm.
-        pid <- corteza:::matrix_reply_send(cfg, "!room:example", "hi")
+        pid <- corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!room:example", "hi")
         expect_equal(pid, "$plain:example")
         expect_identical(length(cs$log$sent), 1L)
         expect_equal(sent, "hi")
@@ -756,7 +764,7 @@ local({
                   .extract = function(...) stop("unused"))
     with_seamed_client(seams, {
         expect_null(corteza::matrix_send("hi", room_id = "!room:example"))
-        expect_null(corteza:::matrix_reply_send(cfg, "!room:example", "hi"))
+        expect_null(corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!room:example", "hi"))
     })
     # The guard the poll loop actually uses, and the call it guards.
     expect_equal(corteza:::matrix_remember_event(character(), character(0)),
@@ -832,11 +840,11 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.15")
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.16")
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
-expect_false(package_version("0.0.1.14") >= package_version(corteza:::.CHAT_API_MIN))
+expect_false(package_version("0.0.1.15") >= package_version(corteza:::.CHAT_API_MIN))
 # The installed build satisfies it, so the guard passes rather than
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
@@ -884,12 +892,14 @@ local({
     on.exit(assignInNamespace("matrix_should_respond", orig_resp,
                               ns = "corteza"), add = TRUE)
 
-    # Capture the config the send is handed.
+    # Capture the client the send is handed. It is the client now, not a
+    # config: the rename puts the refreshed credentials back on the
+    # object that performed it, so there is one copy instead of two.
     seen_cfg <- NULL
     orig_send <- corteza:::matrix_reply_send
     assignInNamespace("matrix_reply_send",
-                      function(cfg, room_id, text, markdown = FALSE) {
-        seen_cfg <<- cfg
+                      function(chat, room_id, text, markdown = FALSE) {
+        seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_reply_send", orig_send,
@@ -954,8 +964,8 @@ local({
     with_seamed_client(seams, {
         # Build once against the pre-rotation config, which is what
         # interns the context, then send against the rotated one.
-        corteza:::matrix_reply_send(stale, "!room:example", "before")
-        corteza:::matrix_reply_send(live, "!room:example", "after")
+        corteza:::matrix_reply_send(corteza:::matrix_chat_client(stale), "!room:example", "before")
+        corteza:::matrix_reply_send(corteza:::matrix_chat_client(live), "!room:example", "after")
     })
     expect_identical(length(cs$log$sent), 2L)
     expect_identical(cs$log$sent[[1L]]$mx$token, "tok")
@@ -969,7 +979,7 @@ local({
     # one-time keys. It survives the token rotation, because the identity
     # is (user_id, device_id) and neither of those rotates.
     expect_identical(cs$log$inits, 1L)
-    with_seamed_client(seams, corteza:::matrix_reply_send(live, "!room:example",
+    with_seamed_client(seams, corteza:::matrix_reply_send(corteza:::matrix_chat_client(live), "!room:example",
                                                           "again"))
     expect_identical(cs$log$inits, 1L)
 })
@@ -1006,8 +1016,8 @@ local({
     seen_cfg <- NULL
     orig_send <- corteza:::matrix_reply_send
     assignInNamespace("matrix_reply_send",
-                      function(cfg, room_id, text, markdown = FALSE) {
-        seen_cfg <<- cfg
+                      function(chat, room_id, text, markdown = FALSE) {
+        seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_reply_send", orig_send,
