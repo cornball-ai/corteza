@@ -97,16 +97,38 @@ rooms_activity_observer <- function(acc, chat = NULL, channel = NULL) {
 # message was already finalized, and the next turn's first tool call
 # would silently edit the previous turn's trail.
 #
+# Can this client replace a message it has already sent?
+#
+# Asked before the first frame, not discovered on the second. An
+# encrypted Matrix room refuses edits -- the replacement text would ride
+# in an ordinary event -- so a trail posted there would put up "Ran a
+# command", have every update after it rejected, and leave that first
+# frame on screen for the rest of the turn. The observer catches those
+# errors, so nothing would be logged and nothing would look wrong: the
+# room would simply be lying about what the agent had done.
+rooms_activity_live <- function(chat) {
+    isTRUE(tryCatch(chat.api::chat_capabilities(chat)$edits,
+                    error = function(e) FALSE))
+}
+
 # The final flush goes through rooms_activity_flush() rather than the
 # observer's gate, so it ignores the interval floor: the last frame is
 # the one a reader is left looking at, and stopping five seconds short
 # of the truth to save an event is the wrong trade. It still skips a
 # frame identical to the last, which is the common case on a turn whose
 # final tool call was a while ago.
+#
+# Where edits are refused there are no intermediate frames at all, only
+# that final one. A room that cannot be kept current gets one accurate
+# message instead of a stale one, which is the whole difference between
+# a summary and a lie.
 rooms_with_activity <- function(session, chat, channel, expr) {
     acc <- rooms_activity_new()
     before <- session$on_tool
-    add_observer(session, rooms_activity_observer(acc, chat, channel))
+    live <- rooms_activity_live(chat)
+    add_observer(session, rooms_activity_observer(acc,
+            chat = if (live) chat else NULL,
+            channel = if (live) channel else NULL))
     on.exit({
         session$on_tool <- before
         if (length(acc$events)) {

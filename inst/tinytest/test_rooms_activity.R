@@ -245,3 +245,84 @@ local({
                                                send = send, edit = edit))
     expect_equal(calls, 2L)
 })
+
+# ---- A room that cannot be kept current gets one message, not a lie ----
+# An encrypted Matrix room refuses edits: the replacement text would
+# ride in an ordinary event. A trail posted there would put up "Ran a
+# command", have every update rejected, and leave that first frame on
+# screen for the rest of the turn. The observer swallows those errors,
+# so nothing is logged and nothing looks wrong -- the room just says
+# something untrue.
+if (requireNamespace("chat.api", quietly = TRUE)) {
+    # Loopback edits, so a trail there is live.
+    expect_true(corteza:::rooms_activity_live(chat.api::chat_loopback()))
+    # An adapter whose capabilities cannot even be read is treated as
+    # "cannot": posting frames that may never be updatable is the
+    # failure this check exists to prevent.
+    expect_false(corteza:::rooms_activity_live(
+        structure(list(), class = c("chat_nothing", "chat_client"))))
+    expect_false(corteza:::rooms_activity_live(NULL))
+}
+
+# No live client, no frames during the turn -- only the final one, which
+# is accurate because it is written after everything happened.
+local({
+    session <- new.env(parent = emptyenv())
+    session$on_tool <- list()
+    flushes <- list()
+    orig_live <- corteza:::rooms_activity_live
+    orig_flush <- corteza:::rooms_activity_flush
+    assignInNamespace("rooms_activity_live", function(chat) FALSE,
+                      ns = "corteza")
+    assignInNamespace("rooms_activity_flush",
+                      function(acc, chat, channel, ...) {
+        flushes[[length(flushes) + 1L]] <<-
+            corteza:::rooms_activity_text(acc$events)
+        invisible(TRUE)
+    }, ns = "corteza")
+    on.exit({
+        assignInNamespace("rooms_activity_live", orig_live, ns = "corteza")
+        assignInNamespace("rooms_activity_flush", orig_flush, ns = "corteza")
+    }, add = TRUE)
+
+    corteza:::rooms_with_activity(session, "chat", "!r:ex", function() {
+        obs <- session$on_tool[[1L]]
+        obs(ev("bash"))
+        obs(ev("read_file"))
+        expect_equal(length(flushes), 0L)
+        "reply"
+    })
+    # One message, written once, saying what actually happened.
+    expect_equal(length(flushes), 1L)
+    expect_equal(flushes[[1L]], "Ran a command, read a file")
+})
+
+# With edits available the first tool call posts straight away, which is
+# the whole point of the live path.
+local({
+    session <- new.env(parent = emptyenv())
+    session$on_tool <- list()
+    flushes <- 0L
+    orig_live <- corteza:::rooms_activity_live
+    orig_flush <- corteza:::rooms_activity_flush
+    assignInNamespace("rooms_activity_live", function(chat) TRUE,
+                      ns = "corteza")
+    assignInNamespace("rooms_activity_flush",
+                      function(acc, chat, channel, ...) {
+        flushes <<- flushes + 1L
+        acc$last_text <- corteza:::rooms_activity_text(acc$events)
+        acc$last_at <- Sys.time()
+        acc$message_id <- "$a1"
+        invisible(TRUE)
+    }, ns = "corteza")
+    on.exit({
+        assignInNamespace("rooms_activity_live", orig_live, ns = "corteza")
+        assignInNamespace("rooms_activity_flush", orig_flush, ns = "corteza")
+    }, add = TRUE)
+
+    corteza:::rooms_with_activity(session, "chat", "!r:ex", function() {
+        session$on_tool[[1L]](ev("bash"))
+        expect_equal(flushes, 1L)
+        "reply"
+    })
+})
