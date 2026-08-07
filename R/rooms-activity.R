@@ -89,14 +89,6 @@ rooms_activity_observer <- function(acc, chat = NULL, channel = NULL) {
     }
 }
 
-# Run `expr` with the activity trail attached to `session`, then detach
-# it and show the final state.
-#
-# Attached per turn and removed after, because a session outlives the
-# turn: a leftover observer would keep appending to an accumulator whose
-# message was already finalized, and the next turn's first tool call
-# would silently edit the previous turn's trail.
-#
 # Can this client replace a message it has already sent?
 #
 # Asked before the first frame, not discovered on the second. An
@@ -111,6 +103,14 @@ rooms_activity_live <- function(chat) {
                     error = function(e) FALSE))
 }
 
+# Run `expr` with the activity trail attached to `session`, then detach
+# it and show the final state.
+#
+# Attached per turn and removed after, because a session outlives the
+# turn: a leftover observer would keep appending to an accumulator whose
+# message was already finalized, and the next turn's first tool call
+# would silently edit the previous turn's trail.
+#
 # The final flush goes through rooms_activity_flush() rather than the
 # observer's gate, so it ignores the interval floor: the last frame is
 # the one a reader is left looking at, and stopping five seconds short
