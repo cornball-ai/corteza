@@ -33,13 +33,31 @@ for (old in deprecated) {
 # before 1.0.0 removes it.
 local({
     for (old in deprecated) {
+        new <- sub("^matrix_", "bot_", old)
         body_src <- paste(deparse(body(get(old, envir = ns))), collapse = " ")
-        expect_true(grepl(".Deprecated", body_src, fixed = TRUE), info = old)
-        # Naming the replacement, not just "deprecated". A warning that
-        # does not say what to call instead costs the reader a grep.
-        expect_true(grepl(sub("^matrix_", "bot_", old), body_src, fixed = TRUE),
-                    info = old)
+        # The exact call, not just the string appearing somewhere. A
+        # looser grep is satisfied by the forwarding call two lines
+        # down, so it passes just as happily on a bare .Deprecated()
+        # whose warning says "deprecated" and nothing about what to use
+        # instead -- which costs every reader of it a grep.
+        expect_true(grepl(sprintf('.Deprecated("%s")', new), body_src,
+                          fixed = TRUE), info = old)
     }
+})
+
+# What the caller actually sees. The check above is structural; this is
+# the warning text arriving in a session, which is the whole point of
+# keeping these around rather than deleting them.
+local({
+    orig <- corteza:::bot_request_flush
+    assignInNamespace("bot_request_flush", function() invisible(NULL),
+                      ns = "corteza")
+    on.exit(assignInNamespace("bot_request_flush", orig, ns = "corteza"),
+            add = TRUE)
+    w <- tryCatch(corteza::matrix_request_flush(),
+                  warning = function(e) conditionMessage(e))
+    expect_true(grepl("matrix_request_flush", w, fixed = TRUE))
+    expect_true(grepl("bot_request_flush", w, fixed = TRUE))
 })
 
 # The forwarding actually happens. Everything else here is structural;
