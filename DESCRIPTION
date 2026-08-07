@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime
-Version: 0.7.1.17
+Version: 0.7.1.18
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -39,7 +39,7 @@ Imports:
     saber,
     utils
 Suggests:
-    chat.api (>= 0.0.1.16),
+    chat.api (>= 0.0.1.17),
     clipr,
     fortunes,
     mx.client (>= 0.2.0.4),

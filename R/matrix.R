@@ -57,7 +57,7 @@
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.16"
+.CHAT_API_MIN <- "0.0.1.17"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -1919,8 +1919,13 @@ matrix_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         # newest-first paging inside the adapter, which is where the
         # direction was asked for -- this loop used to rev() the chunk
         # itself and every other consumer had to remember to.
+        #
+        # One page, and its $cursor goes unread on purpose. Backfill
+        # wants the tail of the conversation, not the room's whole
+        # history: `limit` is the window, and paging further back would
+        # grow a restart's context without bound.
         msgs <- tryCatch(chat.api::chat_history(chat, rid,
-                limit = as.integer(limit)),
+                limit = as.integer(limit))$messages,
                          error = function(e) NULL)
         if (is.null(msgs) || !length(msgs)) {
             next
