@@ -1,7 +1,7 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{matrix_run}
 \alias{matrix_run}
-\title{Run the Matrix adapter as a long-poll loop}
+\title{Deprecated: use bot_run()}
 \usage{
 matrix_run(
   timeout = 30000L,
@@ -23,24 +23,16 @@ matrix_run(
 \item{tools_filter}{Character vector or NULL. Tool filter override.}
 }
 \value{
-Never returns under normal operation. Crashes on fatal error
-  so systemd can restart.
+See \code{\link{bot_run}}.
 }
 \description{
-Creates one session up front and reuses it across polls so conversation
-history accumulates within the process lifetime. Intended as the entry
-point for a systemd user unit. A thin wrapper over
-\code{\link{matrix_run_init}} plus a \code{\link{matrix_run_step}}
-loop; call those two directly when an external scheduler needs to own
-the main process.
+Deprecated: use bot_run()
 }
 \examples{
 \dontrun{
-# Run the Matrix bot loop -- typically launched by a systemd unit
-# rather than from an interactive R session.
-matrix_run()
+matrix_run()  # use bot_run()
 }
 }
 \seealso{
-\code{\link{matrix_run_init}}, \code{\link{matrix_run_step}}
+\code{\link{bot_run}}
 }

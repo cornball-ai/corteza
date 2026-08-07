@@ -11,7 +11,7 @@ library(tinytest)
 #                                   call, before anything parses it
 #   3. initial-sync suppression  -- first_run survives the trip out of
 #                                   the adapter and still short-circuits
-#                                   matrix_poll()
+#                                   bot_poll()
 #   4. E2EE goes through the      -- the adapter owns the Olm account and
 #      adapter                      both directions of encrypted traffic.
 #                                   corteza builds no crypto state and
@@ -20,7 +20,7 @@ library(tinytest)
 #
 # Everything here runs offline. Nothing hits a homeserver: the sync is
 # supplied through chat_matrix()'s .sync/.extract seams, reached via
-# matrix_chat_client()'s `...`.
+# bot_chat_client()'s `...`.
 
 if (!requireNamespace("mx.client", quietly = TRUE)) {
     exit_file("mx.client not available")
@@ -30,13 +30,13 @@ if (!requireNamespace("chat.api", quietly = TRUE)) {
 }
 # chat.api 0.0.1.1 bumped its version across the change that added
 # first_run, the post-sync client, and the seams, and
-# matrix_require_mx() now refuses anything older. This check stays
+# bot_require_mx() now refuses anything older. This check stays
 # because it is more specific than a version comparison: a build that
 # reports a new version without carrying the change -- which is exactly
 # what happened to mx.client on this host -- passes the version gate and
 # fails here. An installed-but-too-old chat.api is a broken install, not
-# an unsupported environment: every matrix_poll() on that host dies in
-# the guard at R/matrix.R. Report it as the failure it is, then stop --
+# an unsupported environment: every bot_poll() on that host dies in
+# the guard at R/bot.R. Report it as the failure it is, then stop --
 # continuing would bury the one useful result under a cascade of
 # identical ones.
 adapter_ok <- all(c(".sync", "relogin") %in%
@@ -47,7 +47,7 @@ if (!adapter_ok) {
     exit_file("chat.api predates the seamed Matrix adapter")
 }
 
-# Point every config-path input at a tempdir. matrix_config_path()
+# Point every config-path input at a tempdir. bot_config_path()
 # consults CORTEZA_MATRIX_CONFIG first, then tools::R_user_dir(), which
 # reads R_USER_CONFIG_DIR and XDG_CONFIG_HOME before HOME. Miss one and
 # a test writes over a running bot's live credentials.
@@ -60,7 +60,7 @@ isolate_config <- function(cfg) {
               XDG_CONFIG_HOME = file.path(tmp_home, "config"))
     orig <- Sys.getenv(names(vars), unset = NA)
     do.call(Sys.setenv, as.list(vars))
-    corteza:::matrix_save_config(cfg)
+    corteza:::bot_save_config(cfg)
     list(home = tmp_home, orig = orig)
 }
 
@@ -134,11 +134,11 @@ crypto_seam <- function(decrypted = list(), encrypted_rooms = "!secret:example",
 }
 
 # A session registry with the named rooms already in it. Any test that
-# lets a message reach the loop needs one: matrix_get_or_create_session()
+# lets a message reach the loop needs one: bot_get_or_create_session()
 # builds a session by asking the homeserver for the room name, which is
 # one of the direct mx.api calls the contract does not model yet.
 seeded_sessions <- function(rooms) {
-    sessions <- corteza:::matrix_new_session_registry()
+    sessions <- corteza:::bot_new_session_registry()
     for (rid in rooms) {
         s <- new.env(parent = emptyenv())
         s$model <- "qwen3:8b"
@@ -168,16 +168,16 @@ sync_with_message <- function(next_batch = "s2") {
          )))))
 }
 
-# Swap matrix_chat_client() for one that layers seams onto the real
+# Swap bot_chat_client() for one that layers seams onto the real
 # wrapper. Calling the captured original is what keeps save_cursor =
 # FALSE and relogin = TRUE under test instead of re-declaring them here.
 with_seamed_client <- function(seams, expr) {
-    orig <- corteza:::matrix_chat_client
+    orig <- corteza:::bot_chat_client
     stub <- function(cfg, ...) {
         do.call(orig, c(list(cfg), seams, list(...)))
     }
-    assignInNamespace("matrix_chat_client", stub, ns = "corteza")
-    on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"),
+    assignInNamespace("bot_chat_client", stub, ns = "corteza")
+    on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"),
             add = TRUE)
     force(expr)
 }
@@ -194,7 +194,7 @@ token_rejected <- function() {
 }
 
 read_cursor <- function() {
-    corteza:::matrix_load_config()$sync_token
+    corteza:::bot_load_config()$sync_token
 }
 
 # mx.client::mx_sync_update() writes the advanced cursor itself, inside
@@ -204,7 +204,7 @@ read_cursor <- function() {
 # step that a throw could skip.
 sync_saved <- function(client, save) {
     if (isTRUE(save)) {
-        corteza:::matrix_save_config(corteza:::matrix_plain_cfg(client))
+        corteza:::bot_save_config(corteza:::bot_plain_cfg(client))
     }
     invisible(client)
 }
@@ -217,7 +217,7 @@ sync_saved <- function(client, save) {
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config())
+    cli <- corteza:::bot_chat_client(corteza:::bot_load_config())
 
     expect_inherits(cli, "chat_matrix")
     expect_inherits(cli, "chat_client")
@@ -236,7 +236,7 @@ local({
     # corteza's credentials under chat.api's namespace.
     expect_null(cli$app)
     expect_equal(attr(cli$env$mx, "app"), "corteza")
-    expect_equal(attr(cli$env$mx, "path"), corteza:::matrix_config_path())
+    expect_equal(attr(cli$env$mx, "path"), corteza:::bot_config_path())
 
     # Invariant 4, the declaration half. This config does not set e2ee,
     # so the client holds no crypto context and says so. The flag answers
@@ -271,7 +271,7 @@ local({
         .extract = function(sync_resp, self_id, ...) list())
 
     expect_equal(read_cursor(), "s1")
-    replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L))
+    replied <- with_seamed_client(seams, corteza::bot_poll(timeout = 0L))
     expect_equal(replied, 0L)
 
     # The sync resumed from the stored cursor...
@@ -284,7 +284,7 @@ local({
 
 
 # The cursor is durable across a crash, which is the property that makes
-# matrix_run()'s "crash and let systemd restart" recovery work at all.
+# bot_run()'s "crash and let systemd restart" recovery work at all.
 # chat_poll() parses the sync into chat_message records before it
 # returns, so anything that throws in there -- a timeline event with no
 # event_id is enough -- happens after the sync and before corteza sees a
@@ -310,13 +310,13 @@ local({
                       ts = NULL))
         })
 
-    expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)))
+    expect_error(with_seamed_client(seams, corteza::bot_poll(timeout = 0L)))
     # The poll died, and the restart will resume past the event that
     # killed it rather than fetching it again.
     expect_equal(read_cursor(), "s2")
 })
 
-# matrix_poll() names the short dependency instead of failing obscurely
+# bot_poll() names the short dependency instead of failing obscurely
 # three lines later.
 local({
     iso <- isolate_config(base_cfg())
@@ -340,7 +340,7 @@ local({
     }, ns = "chat.api")
     on.exit(assignInNamespace("chat_poll", orig_poll, ns = "chat.api"),
             add = TRUE)
-    expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
+    expect_error(with_seamed_client(seams, corteza::bot_poll(timeout = 0L)),
                  "no first_run")
 })
 
@@ -352,17 +352,17 @@ local({
 local({
     iso <- isolate_config(base_cfg(sync_token = NULL))
     on.exit(restore_config(iso), add = TRUE)
-    # matrix_msg_record() is corteza's first look at a message, and it
+    # bot_msg_record() is corteza's first look at a message, and it
     # runs past the first_run gate. Counting it is what makes suppression
     # observable: the adapter extracts either way, so counting its
     # extractor would prove nothing.
     mapped <- 0L
-    orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+    orig_record <- corteza:::bot_msg_record
+    assignInNamespace("bot_msg_record", function(m, addressed = FALSE) {
         mapped <<- mapped + 1L
         orig_record(m, addressed)
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_msg_record", orig_record,
+    on.exit(assignInNamespace("bot_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
@@ -380,7 +380,7 @@ local({
         })
 
     msg <- capture.output(
-        replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
+        replied <- with_seamed_client(seams, corteza::bot_poll(timeout = 0L)),
         type = "message")
 
     # The sync carried a real human message and the adapter handed it
@@ -402,12 +402,12 @@ local({
     iso <- isolate_config(base_cfg(sync_token = "s2"))
     on.exit(restore_config(iso), add = TRUE)
     mapped <- 0L
-    orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+    orig_record <- corteza:::bot_msg_record
+    assignInNamespace("bot_msg_record", function(m, addressed = FALSE) {
         mapped <<- mapped + 1L
         orig_record(m, addressed)
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_msg_record", orig_record,
+    on.exit(assignInNamespace("bot_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
     seams <- list(
@@ -427,7 +427,7 @@ local({
 
     replied <- with_seamed_client(
         seams,
-        corteza::matrix_poll(timeout = 0L,
+        corteza::bot_poll(timeout = 0L,
                              sessions = seeded_sessions("!room:example")))
     expect_equal(replied, 0L)
     expect_equal(mapped, 1L)
@@ -469,7 +469,7 @@ local({
         .extract = function(sync_resp, self_id, ...) list())
 
     msg <- capture.output(
-        replied <- with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
+        replied <- with_seamed_client(seams, corteza::bot_poll(timeout = 0L)),
         type = "message")
 
     # Two attempts: the rejected one and the retry.
@@ -487,7 +487,7 @@ local({
     # both reached corteza's config file.
     expect_equal(replied, 0L)
     expect_equal(read_cursor(), "s2")
-    expect_equal(corteza:::matrix_load_config()$token, "fresh-token")
+    expect_equal(corteza:::bot_load_config()$token, "fresh-token")
 })
 
 # Errors that are not a rejected token still propagate.
@@ -500,7 +500,7 @@ local({
         },
         .extract = function(sync_resp, self_id, ...) list())
 
-    expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
+    expect_error(with_seamed_client(seams, corteza::bot_poll(timeout = 0L)),
                  "homeserver on fire")
     # A failed sync must not move the cursor.
     expect_equal(read_cursor(), "s1")
@@ -513,21 +513,21 @@ local({
 
 # corteza manages no crypto state. The old architecture is gone, and
 # these assertions are what stop it coming back: a reintroduced
-# R/matrix_crypto.R, or a matrix_run_init() that builds a context and
+# R/matrix_crypto.R, or a bot_run_init() that builds a context and
 # threads it into the poll, fails here.
-expect_false("matrix_crypto_init" %in% ls(asNamespace("corteza"),
+expect_false("bot_crypto_init" %in% ls(asNamespace("corteza"),
                                           all.names = TRUE))
-expect_false("matrix_crypto_decrypt" %in% ls(asNamespace("corteza"),
+expect_false("bot_crypto_decrypt" %in% ls(asNamespace("corteza"),
                                              all.names = TRUE))
-expect_false("matrix_send_maybe_encrypted" %in% ls(asNamespace("corteza"),
+expect_false("bot_send_maybe_encrypted" %in% ls(asNamespace("corteza"),
                                                    all.names = TRUE))
-# ... and matrix_poll() no longer takes a context to be handed one.
-expect_false("crypto" %in% names(formals(corteza::matrix_poll)))
-# matrix_run_init() no longer builds one. Read off the source rather than
+# ... and bot_poll() no longer takes a context to be handed one.
+expect_false("crypto" %in% names(formals(corteza::bot_poll)))
+# bot_run_init() no longer builds one. Read off the source rather than
 # from a call: the real function syncs, catches up on invites, and
 # backfills, so calling it here would reach a homeserver.
-expect_false(any(grepl("crypto", deparse(body(corteza::matrix_run_init)))))
-expect_false(any(grepl("crypto", deparse(body(corteza::matrix_run_step)))))
+expect_false(any(grepl("crypto", deparse(body(corteza::bot_run_init)))))
+expect_false(any(grepl("crypto", deparse(body(corteza::bot_run_step)))))
 
 # e2ee off is the default and stays exactly as it was: no crypto context
 # on the client, nothing asked of the store.
@@ -535,7 +535,7 @@ local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
     cs <- crypto_seam()
-    cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config(),
+    cli <- corteza:::bot_chat_client(corteza:::bot_load_config(),
                                         .crypto = cs$ops)
     expect_null(cli$env$crypto)
     expect_false(chat.api::chat_capabilities(cli)$e2ee)
@@ -551,7 +551,7 @@ local({
     iso <- isolate_config(base_cfg(e2ee = TRUE))
     on.exit(restore_config(iso), add = TRUE)
     cs <- crypto_seam()
-    cli <- corteza:::matrix_chat_client(corteza:::matrix_load_config(),
+    cli <- corteza:::bot_chat_client(corteza:::bot_load_config(),
                                         .crypto = cs$ops)
     expect_true(chat.api::chat_capabilities(cli)$e2ee)
     expect_null(cli$crypto_store)
@@ -566,10 +566,10 @@ local({
 # here, keyed on user_id alone, which is the right shape for telling
 # cornelius and tiny apart and the wrong one for an Olm account, since an
 # account belongs to a device.
-expect_false("matrix_crypto_store" %in% ls(asNamespace("corteza"),
+expect_false("bot_crypto_store" %in% ls(asNamespace("corteza"),
                                            all.names = TRUE))
 expect_false(any(grepl("crypto_store",
-                       deparse(body(corteza:::matrix_chat_client)))))
+                       deparse(body(corteza:::bot_chat_client)))))
 
 # Decrypted traffic reaches the poll loop as ordinary messages, with
 # encrypted carried through. corteza used to run its own decrypt off
@@ -578,13 +578,13 @@ local({
     iso <- isolate_config(base_cfg(sync_token = "s1", e2ee = TRUE, user_id = "@decrypt:example"))
     on.exit(restore_config(iso), add = TRUE)
     seen <- list()
-    orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+    orig_record <- corteza:::bot_msg_record
+    assignInNamespace("bot_msg_record", function(m, addressed = FALSE) {
         rec <- orig_record(m, addressed)
         seen[[length(seen) + 1L]] <<- rec
         rec
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_msg_record", orig_record,
+    on.exit(assignInNamespace("bot_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
     cs <- crypto_seam(decrypted = list(
@@ -608,7 +608,7 @@ local({
 
     replied <- with_seamed_client(
         seams,
-        corteza::matrix_poll(timeout = 0L,
+        corteza::bot_poll(timeout = 0L,
                              sessions = seeded_sessions(c("!room:example",
                                                           "!secret:example"))))
     expect_equal(replied, 0L)
@@ -631,7 +631,7 @@ local({
 local({
     iso <- isolate_config(base_cfg(e2ee = TRUE, user_id = "@routing:example"))
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
+    cfg <- corteza:::bot_load_config()
 
     sent <- character()
     cs <- crypto_seam()
@@ -647,14 +647,14 @@ local({
     with_seamed_client(seams, {
         # Encrypted room: the contract call goes through, and the adapter
         # sends it encrypted rather than in the clear.
-        eid <- corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!secret:example", "shh")
+        eid <- corteza:::bot_reply_send(corteza:::bot_chat_client(cfg), "!secret:example", "shh")
         expect_equal(eid, "$enc:example")
         expect_identical(length(cs$log$sent), 1L)
         expect_identical(cs$log$sent[[1L]]$text, "shh")
         expect_equal(length(sent), 0L)
 
         # Plaintext room on the same client: cleartext, and no Megolm.
-        pid <- corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!room:example", "hi")
+        pid <- corteza:::bot_reply_send(corteza:::bot_chat_client(cfg), "!room:example", "hi")
         expect_equal(pid, "$plain:example")
         expect_identical(length(cs$log$sent), 1L)
         expect_equal(sent, "hi")
@@ -667,7 +667,7 @@ local({
 # ---------------------------------------------------------------
 
 # chat.api's `kind` vocabulary is message/notice/emote, which maps onto
-# exactly three msgtypes. matrix_send() is exported with msgtype as a
+# exactly three msgtypes. bot_send() is exported with msgtype as a
 # documented argument, so anything outside those three has to keep going
 # out verbatim instead of being laundered through kind and coming back
 # as m.text.
@@ -699,12 +699,12 @@ local({
     with_seamed_client(seams, {
         # The three the contract models ride it, and arrive intact.
         for (mt in c("m.text", "m.notice", "m.emote")) {
-            corteza::matrix_send("x", room_id = "!room:example", msgtype = mt)
+            corteza::bot_send("x", room_id = "!room:example", msgtype = mt)
             expect_equal(seen[[length(seen)]]$msgtype, mt)
         }
         # The ones it does not model go direct, still intact.
         for (mt in c("m.image", "m.file", "m.audio")) {
-            corteza::matrix_send("x", room_id = "!room:example", msgtype = mt)
+            corteza::bot_send("x", room_id = "!room:example", msgtype = mt)
             expect_equal(seen[[length(seen)]]$msgtype, mt)
         }
         # markdown survives both routes, including pipe tables. This is the
@@ -717,14 +717,14 @@ local({
             "| `llm.api` | 20.8 | 2026-06-26 |",
             "| `tinyrox` | 52.5 | 2026-06-24 |"
         ), collapse = "\n")
-        corteza::matrix_send(table_md, room_id = "!room:example",
+        corteza::bot_send(table_md, room_id = "!room:example",
                              markdown = TRUE)
         chat_route <- seen[[length(seen)]]
         expect_true(chat_route$markdown)
         expect_true(grepl("<table>", chat_route$formatted, fixed = TRUE))
         expect_true(grepl("<td><code>llm.api</code></td>",
                           chat_route$formatted, fixed = TRUE))
-        corteza::matrix_send(table_md, room_id = "!room:example",
+        corteza::bot_send(table_md, room_id = "!room:example",
                              msgtype = "m.image", markdown = TRUE)
         direct_route <- seen[[length(seen)]]
         expect_true(direct_route$markdown)
@@ -733,7 +733,7 @@ local({
 })
 
 # The event id comes back, and it autoprints. chat_send() returns it
-# invisibly; a user typing matrix_send() at the console saw the id
+# invisibly; a user typing bot_send() at the console saw the id
 # before the rewire and has to keep seeing it.
 local({
     iso <- isolate_config(base_cfg())
@@ -744,7 +744,7 @@ local({
                   .sync = function(...) stop("unused"),
                   .extract = function(...) stop("unused"))
     with_seamed_client(seams, {
-        out <- withVisible(corteza::matrix_send("hi", room_id = "!room:example"))
+        out <- withVisible(corteza::bot_send("hi", room_id = "!room:example"))
         expect_equal(out$value, "$ev:example")
         expect_true(out$visible)
     })
@@ -753,21 +753,21 @@ local({
 # A 200 with no event_id in it. mx.client answers NULL, chat_send()
 # as.character()s that into character(0), and every caller here tests
 # the result with is.null() -- which character(0) passes, taking
-# matrix_remember_event() down with it mid-batch. Both send paths hand
+# bot_remember_event() down with it mid-batch. Both send paths hand
 # back a real NULL.
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
+    cfg <- corteza:::bot_load_config()
     seams <- list(.send = function(client, text, room = NULL, ...) NULL,
                   .sync = function(...) stop("unused"),
                   .extract = function(...) stop("unused"))
     with_seamed_client(seams, {
-        expect_null(corteza::matrix_send("hi", room_id = "!room:example"))
-        expect_null(corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!room:example", "hi"))
+        expect_null(corteza::bot_send("hi", room_id = "!room:example"))
+        expect_null(corteza:::bot_reply_send(corteza:::bot_chat_client(cfg), "!room:example", "hi"))
     })
     # The guard the poll loop actually uses, and the call it guards.
-    expect_equal(corteza:::matrix_remember_event(character(), character(0)),
+    expect_equal(corteza:::bot_remember_event(character(), character(0)),
                  character())
 })
 
@@ -783,9 +783,9 @@ local({
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
+    cfg <- corteza:::bot_load_config()
     seen <- list()
-    cli <- corteza:::matrix_chat_client(cfg, .typing = function(session, room_id,
+    cli <- corteza:::bot_chat_client(cfg, .typing = function(session, room_id,
                                                                typing = TRUE,
                                                                timeout = 30000L) {
         seen[[length(seen) + 1L]] <<- list(room = room_id, on = typing,
@@ -808,19 +808,19 @@ local({
     # A dead indicator is swallowed, never propagated: the pre-rewire
     # code wrapped each call in tryCatch, and dropping that wrapper is
     # only safe because the adapter absorbs the failure itself.
-    boom <- corteza:::matrix_chat_client(cfg, .typing = function(...) {
+    boom <- corteza:::bot_chat_client(cfg, .typing = function(...) {
         stop("no typing for you")
     })
     expect_silent(ok <- chat.api::chat_typing(boom, "!room:example", TRUE))
     expect_false(ok)
 })
 
-# matrix_poll() drives typing through the contract, at the 120s cap, and
+# bot_poll() drives typing through the contract, at the 120s cap, and
 # no longer calls mx.api::mx_typing() itself.
 local({
     # width.cutoff at the maximum so deparse does not split an asserted
     # call across elements and quietly turn a grep into a false pass.
-    src <- paste(deparse(body(corteza::matrix_poll), width.cutoff = 500L),
+    src <- paste(deparse(body(corteza::bot_poll), width.cutoff = 500L),
                  collapse = "\n")
     expect_true(grepl("chat_typing(chat_now(), m$room_id, TRUE, timeout = 120)", src,
                       fixed = TRUE))
@@ -834,7 +834,7 @@ local({
     expect_false(grepl("mx_sync_update", src, fixed = TRUE))
 })
 
-# matrix_require_mx() is version-aware, not just presence-aware.
+# bot_require_mx() is version-aware, not just presence-aware.
 # requireNamespace() returns TRUE for any installed build, and a
 # Suggests floor is a resolution hint rather than a runtime guarantee,
 # so a host carrying an older chat.api would otherwise sync -- spending
@@ -849,15 +849,15 @@ expect_false(package_version("0.0.1.16") >= package_version(corteza:::.CHAT_API_
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
             package_version(corteza:::.CHAT_API_MIN))
-expect_silent(corteza:::matrix_require_mx())
+expect_silent(corteza:::bot_require_mx())
 
 
 # ---------------------------------------------------------------
 # A /model switch renames the bot, and that rename can relogin. The
 # refreshed token has to reach the acknowledgement send.
 #
-# This drives matrix_poll() rather than calling the helpers, because the
-# defect was never in matrix_update_displayname() itself -- it was in the
+# This drives bot_poll() rather than calling the helpers, because the
+# defect was never in bot_update_displayname() itself -- it was in the
 # call site not adopting what it returned. Remove the `cfg <-` at the
 # /model branch and this goes red; a test that only calls the helper
 # stays green, which is how the bug survived its first fix.
@@ -876,9 +876,9 @@ local({
     orig_set <- mx.client::mx_set_displayname
     assignInNamespace("mx_set_displayname",
                       function(client, name, save = TRUE) {
-        c <- corteza:::matrix_load_config()
+        c <- corteza:::bot_load_config()
         c$token <- "rotated"
-        corteza:::matrix_save_config(c)
+        corteza:::bot_save_config(c)
         invisible(TRUE)
     }, ns = "mx.client")
     on.exit(assignInNamespace("mx_set_displayname", orig_set, ns = "mx.client"),
@@ -886,27 +886,27 @@ local({
 
     # Reply gating is a separate concern with its own tests; force the
     # message through so this asserts token propagation and nothing else.
-    orig_resp <- corteza:::matrix_should_respond
-    assignInNamespace("matrix_should_respond",
+    orig_resp <- corteza:::bot_should_respond
+    assignInNamespace("bot_should_respond",
                       function(...) TRUE, ns = "corteza")
-    on.exit(assignInNamespace("matrix_should_respond", orig_resp,
+    on.exit(assignInNamespace("bot_should_respond", orig_resp,
                               ns = "corteza"), add = TRUE)
 
     # Capture the client the send is handed. It is the client now, not a
     # config: the rename puts the refreshed credentials back on the
     # object that performed it, so there is one copy instead of two.
     seen_cfg <- NULL
-    orig_send <- corteza:::matrix_reply_send
-    assignInNamespace("matrix_reply_send",
+    orig_send <- corteza:::bot_reply_send
+    assignInNamespace("bot_reply_send",
                       function(chat, room_id, text, markdown = FALSE) {
         seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_reply_send", orig_send,
+    on.exit(assignInNamespace("bot_reply_send", orig_send,
                               ns = "corteza"), add = TRUE)
 
     # Pre-seeded registry: no session_setup, no provider calls.
-    sessions <- corteza:::matrix_new_session_registry()
+    sessions <- corteza:::bot_new_session_registry()
     s <- new.env(parent = emptyenv())
     s$model <- "qwen3:8b"
     s$provider <- "ollama"
@@ -917,7 +917,7 @@ local({
     s$seen_event_ids <- character()
     assign("!room:example", s, envir = sessions)
 
-    # The adapter extracts the messages matrix_poll() reads, so the
+    # The adapter extracts the messages bot_poll() reads, so the
     # message still has to be in the sync the .sync seam returns.
     seams <- list(
         .sync = function(client, timeout = 0L, save = TRUE, ...) {
@@ -932,7 +932,7 @@ local({
         })
 
     with_seamed_client(seams,
-        corteza::matrix_poll(timeout = 0L, sessions = sessions))
+        corteza::bot_poll(timeout = 0L, sessions = sessions))
 
     # The send ran with the token the rename produced, not the one the
     # homeserver had just rejected.
@@ -954,7 +954,7 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     cs <- crypto_seam(encrypted_rooms = "!room:example")
 
-    stale <- corteza:::matrix_load_config()
+    stale <- corteza:::bot_load_config()
     live <- stale
     live$token <- "rotated"
 
@@ -964,8 +964,8 @@ local({
     with_seamed_client(seams, {
         # Build once against the pre-rotation config, which is what
         # interns the context, then send against the rotated one.
-        corteza:::matrix_reply_send(corteza:::matrix_chat_client(stale), "!room:example", "before")
-        corteza:::matrix_reply_send(corteza:::matrix_chat_client(live), "!room:example", "after")
+        corteza:::bot_reply_send(corteza:::bot_chat_client(stale), "!room:example", "before")
+        corteza:::bot_reply_send(corteza:::bot_chat_client(live), "!room:example", "after")
     })
     expect_identical(length(cs$log$sent), 2L)
     expect_identical(cs$log$sent[[1L]]$mx$token, "tok")
@@ -979,7 +979,7 @@ local({
     # one-time keys. It survives the token rotation, because the identity
     # is (user_id, device_id) and neither of those rotates.
     expect_identical(cs$log$inits, 1L)
-    with_seamed_client(seams, corteza:::matrix_reply_send(corteza:::matrix_chat_client(live), "!room:example",
+    with_seamed_client(seams, corteza:::bot_reply_send(corteza:::bot_chat_client(live), "!room:example",
                                                           "again"))
     expect_identical(cs$log$inits, 1L)
 })
@@ -999,28 +999,28 @@ local({
     orig_set <- mx.client::mx_set_displayname
     assignInNamespace("mx_set_displayname",
                       function(client, name, save = TRUE) {
-        c <- corteza:::matrix_load_config()
+        c <- corteza:::bot_load_config()
         c$token <- "rotated"
-        corteza:::matrix_save_config(c)
+        corteza:::bot_save_config(c)
         invisible(TRUE)
     }, ns = "mx.client")
     on.exit(assignInNamespace("mx_set_displayname", orig_set, ns = "mx.client"),
             add = TRUE)
 
-    orig_resp <- corteza:::matrix_should_respond
-    assignInNamespace("matrix_should_respond", function(...) TRUE,
+    orig_resp <- corteza:::bot_should_respond
+    assignInNamespace("bot_should_respond", function(...) TRUE,
                       ns = "corteza")
-    on.exit(assignInNamespace("matrix_should_respond", orig_resp,
+    on.exit(assignInNamespace("bot_should_respond", orig_resp,
                               ns = "corteza"), add = TRUE)
 
     seen_cfg <- NULL
-    orig_send <- corteza:::matrix_reply_send
-    assignInNamespace("matrix_reply_send",
+    orig_send <- corteza:::bot_reply_send
+    assignInNamespace("bot_reply_send",
                       function(chat, room_id, text, markdown = FALSE) {
         seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_reply_send", orig_send,
+    on.exit(assignInNamespace("bot_reply_send", orig_send,
                               ns = "corteza"), add = TRUE)
 
     # /clear deletes the room's session and builds a fresh one, and
@@ -1030,8 +1030,8 @@ local({
     # it the file passes only on a machine that happens to have
     # credentials in its environment -- which is why CI never saw it: the
     # whole file used to exit at its requireNamespace guard.
-    orig_new <- corteza:::matrix_new_session
-    assignInNamespace("matrix_new_session", function(cfg, ...) {
+    orig_new <- corteza:::bot_new_session
+    assignInNamespace("bot_new_session", function(cfg, ...) {
         e <- new.env(parent = emptyenv())
         e$model <- "qwen3:8b"
         e$provider <- "ollama"
@@ -1040,10 +1040,10 @@ local({
         e$seen_event_ids <- character()
         e
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_new_session", orig_new, ns = "corteza"),
+    on.exit(assignInNamespace("bot_new_session", orig_new, ns = "corteza"),
             add = TRUE)
 
-    sessions <- corteza:::matrix_new_session_registry()
+    sessions <- corteza:::bot_new_session_registry()
     s <- new.env(parent = emptyenv())
     s$model <- "qwen3:8b"
     s$provider <- "ollama"
@@ -1064,7 +1064,7 @@ local({
         })
 
     with_seamed_client(seams,
-        corteza::matrix_poll(timeout = 0L, sessions = sessions))
+        corteza::bot_poll(timeout = 0L, sessions = sessions))
     expect_equal(seen_cfg$token, "rotated")
 })
 
@@ -1090,16 +1090,16 @@ local({
     assignInNamespace("mx_set_displayname",
                       function(client, name, save = TRUE) {
         # The relogin half: refreshed token reaches disk.
-        c <- corteza:::matrix_load_config()
+        c <- corteza:::bot_load_config()
         c$token <- "rotated"
-        corteza:::matrix_save_config(c)
+        corteza:::bot_save_config(c)
         # The retry half: rate-limited, so the call throws anyway.
         stop("M_LIMIT_EXCEEDED: slow down")
     }, ns = "mx.client")
     on.exit(assignInNamespace("mx_set_displayname", orig_set, ns = "mx.client"),
             add = TRUE)
 
-    got <- corteza:::matrix_update_displayname(corteza:::matrix_load_config())
+    got <- corteza:::bot_update_displayname(corteza:::bot_load_config())
     expect_equal(got$token, "rotated")
 })
 
@@ -1110,12 +1110,12 @@ local({
 # The last thing this loop read off the raw sync. With invites arriving
 # as records, res$raw goes unread entirely -- which was the point of the
 # whole migration.
-expect_false(any(grepl("res$raw", deparse(body(corteza::matrix_poll)),
+expect_false(any(grepl("res$raw", deparse(body(corteza::bot_poll)),
                        fixed = TRUE)))
 # ... and the sender walk is gone: mx.client owns the invite_state shape.
-expect_false("matrix_invite_inviters" %in% ls(asNamespace("corteza"),
+expect_false("bot_invite_inviters" %in% ls(asNamespace("corteza"),
                                               all.names = TRUE))
-expect_false("matrix_extract_invites" %in% ls(asNamespace("corteza"),
+expect_false("bot_extract_invites" %in% ls(asNamespace("corteza"),
                                               all.names = TRUE))
 
 if ("chat_invite" %in% getNamespaceExports("chat.api")) {
@@ -1145,11 +1145,11 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
                 joined <<- c(joined, room_id)
                 room_id
             })
-        cfg <- corteza:::matrix_load_config()
+        cfg <- corteza:::bot_load_config()
         cfg$operators <- "@troy:example"
-        corteza:::matrix_save_config(cfg)
+        corteza:::bot_save_config(cfg)
         suppressMessages(with_seamed_client(
-            seams, corteza::matrix_poll(timeout = 0L,
+            seams, corteza::bot_poll(timeout = 0L,
                                         sessions = seeded_sessions(character()))))
         expect_identical(joined, "!new:example")
     })
@@ -1176,11 +1176,11 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
                 joined <<- c(joined, room_id)
                 room_id
             })
-        cfg <- corteza:::matrix_load_config()
+        cfg <- corteza:::bot_load_config()
         cfg$operators <- "@troy:example"
-        corteza:::matrix_save_config(cfg)
+        corteza:::bot_save_config(cfg)
         msgs <- capture.output(with_seamed_client(
-            seams, corteza::matrix_poll(timeout = 0L,
+            seams, corteza::bot_poll(timeout = 0L,
                                         sessions = seeded_sessions(character()))),
             type = "message")
         expect_identical(joined, character())
@@ -1196,7 +1196,7 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
             if (channel == "!b:ex") stop("M_FORBIDDEN")
             channel
         }, envir = asNamespace("chat.api"))
-        joined <- suppressMessages(corteza:::matrix_accept_invites(
+        joined <- suppressMessages(corteza:::bot_accept_invites(
             structure(list(), class = c("chat_j", "chat_client")),
             c("!a:ex", "!b:ex", "!c:ex")))
         expect_identical(tried, c("!a:ex", "!b:ex", "!c:ex"))
@@ -1205,7 +1205,7 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
 }
 
 # "Were we addressed" is the adapter's answer now, not a regex in this
-# package. matrix_poll() asks chat.api::chat_addressed() once per message
+# package. bot_poll() asks chat.api::chat_addressed() once per message
 # while the contract's chat_message is still in hand, and carries the
 # verdict onto the record the reply gate reads. corteza used to split the
 # Matrix user id on its colon and look for "@localpart" itself.
@@ -1213,13 +1213,13 @@ local({
     iso <- isolate_config(base_cfg(sync_token = "s1"))
     on.exit(restore_config(iso), add = TRUE)
     seen <- list()
-    orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+    orig_record <- corteza:::bot_msg_record
+    assignInNamespace("bot_msg_record", function(m, addressed = FALSE) {
         rec <- orig_record(m, addressed)
         seen[[length(seen) + 1L]] <<- rec
         rec
     }, ns = "corteza")
-    on.exit(assignInNamespace("matrix_msg_record", orig_record,
+    on.exit(assignInNamespace("bot_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
 
     # is_self on all four, so each is ingested and the loop moves on
@@ -1247,7 +1247,7 @@ local({
 
     replied <- with_seamed_client(
         seams,
-        corteza::matrix_poll(timeout = 0L,
+        corteza::bot_poll(timeout = 0L,
                              sessions = seeded_sessions("!room:example")))
     expect_equal(replied, 0L)
     expect_identical(length(seen), 4L)
@@ -1296,7 +1296,7 @@ local({
         })
 
     replied <- with_seamed_client(
-        seams, corteza::matrix_poll(timeout = 0L, sessions = sessions))
+        seams, corteza::bot_poll(timeout = 0L, sessions = sessions))
     expect_equal(replied, 0L)
     expect_identical(length(session$transcript), 1L)
     # Unprefixed: one human in the room, so there is nobody to
@@ -1322,9 +1322,9 @@ hist_ev <- function(id, body, sender = "@ann:example", msgtype = "m.text",
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
+    cfg <- corteza:::bot_load_config()
 
-    chat <- corteza:::matrix_chat_client(
+    chat <- corteza:::bot_chat_client(
         cfg,
         .sync = function(...) stop("unused"),
         .extract = function(...) stop("unused"),
@@ -1340,7 +1340,7 @@ local({
         })
 
     sessions <- seeded_sessions("!room:example")
-    n <- corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    n <- corteza:::bot_backfill_sessions(chat, sessions, cfg)
     expect_equal(n, 1L)
 
     s <- get("!room:example", envir = sessions)
@@ -1369,8 +1369,8 @@ local({
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
-    chat <- corteza:::matrix_chat_client(
+    cfg <- corteza:::bot_load_config()
+    chat <- corteza:::bot_chat_client(
         cfg,
         .sync = function(...) stop("unused"),
         .extract = function(...) stop("unused"),
@@ -1380,7 +1380,7 @@ local({
                               hist_ev("$1", "hey", sender = "@ann:example")))
         })
     sessions <- seeded_sessions("!room:example")
-    corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    corteza:::bot_backfill_sessions(chat, sessions, cfg)
     s <- get("!room:example", envir = sessions)
     expect_identical(s$history[[1L]]$content, "[@ann:example] hey")
     expect_identical(s$history[[2L]]$content, "[@bob:example] hi")
@@ -1393,8 +1393,8 @@ local({
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
-    chat <- corteza:::matrix_chat_client(
+    cfg <- corteza:::bot_load_config()
+    chat <- corteza:::bot_chat_client(
         cfg,
         .sync = function(...) stop("unused"),
         .extract = function(...) stop("unused"),
@@ -1406,7 +1406,7 @@ local({
                 hist_ev("$1", "real message")))
         })
     sessions <- seeded_sessions("!room:example")
-    corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    corteza:::bot_backfill_sessions(chat, sessions, cfg)
     s <- get("!room:example", envir = sessions)
     expect_identical(length(s$history), 1L)
     expect_identical(s$history[[1L]]$content, "real message")
@@ -1421,12 +1421,12 @@ local({
 local({
     iso <- isolate_config(base_cfg())
     on.exit(restore_config(iso), add = TRUE)
-    cfg <- corteza:::matrix_load_config()
-    chat <- corteza:::matrix_chat_client(
+    cfg <- corteza:::bot_load_config()
+    chat <- corteza:::bot_chat_client(
         cfg,
         .sync = function(...) stop("unused"),
         .extract = function(...) stop("unused"),
         .channels = function(session) stop("M_UNKNOWN"))
-    expect_equal(corteza:::matrix_backfill_sessions(
-        chat, corteza:::matrix_new_session_registry(), cfg), 0L)
+    expect_equal(corteza:::bot_backfill_sessions(
+        chat, corteza:::bot_new_session_registry(), cfg), 0L)
 })
