@@ -323,17 +323,25 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     seams <- list(
         .sync = function(client, timeout = 0L, save = TRUE, ...) {
-            client$sync_token <- "s2"
-            # An adapter that reports neither client nor first_run is
-            # simulated by a sync whose result carries neither. Such an
-            # adapter also predates `save`, so nothing is written.
             list(sync = list(next_batch = "s2", rooms = list(join = list())),
-                 client = NULL, first_run = NULL)
+                 client = client, first_run = FALSE)
         },
         .extract = function(sync_resp, self_id, ...) list())
 
+    # Stubbed at chat_poll(), not at the .sync seam. The seam cannot
+    # reach this any more: the adapter normalizes first_run with
+    # isTRUE(), so a sync that omits it still produces FALSE. What the
+    # guard is for is a chat.api old enough not to report the field at
+    # all, and that is what this simulates.
+    orig_poll <- chat.api::chat_poll
+    assignInNamespace("chat_poll", function(client, ...) {
+        list(messages = list(), cursor = "s2", reactions = list(),
+             invites = list())
+    }, ns = "chat.api")
+    on.exit(assignInNamespace("chat_poll", orig_poll, ns = "chat.api"),
+            add = TRUE)
     expect_error(with_seamed_client(seams, corteza::matrix_poll(timeout = 0L)),
-                 "no client/first_run")
+                 "no first_run")
 })
 
 
@@ -350,9 +358,9 @@ local({
     # extractor would prove nothing.
     mapped <- 0L
     orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m) {
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
         mapped <<- mapped + 1L
-        orig_record(m)
+        orig_record(m, addressed)
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
@@ -395,9 +403,9 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     mapped <- 0L
     orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m) {
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
         mapped <<- mapped + 1L
-        orig_record(m)
+        orig_record(m, addressed)
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
@@ -571,8 +579,8 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     seen <- list()
     orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m) {
-        rec <- orig_record(m)
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+        rec <- orig_record(m, addressed)
         seen[[length(seen) + 1L]] <<- rec
         rec
     }, ns = "corteza")
@@ -639,14 +647,14 @@ local({
     with_seamed_client(seams, {
         # Encrypted room: the contract call goes through, and the adapter
         # sends it encrypted rather than in the clear.
-        eid <- corteza:::matrix_reply_send(cfg, "!secret:example", "shh")
+        eid <- corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!secret:example", "shh")
         expect_equal(eid, "$enc:example")
         expect_identical(length(cs$log$sent), 1L)
         expect_identical(cs$log$sent[[1L]]$text, "shh")
         expect_equal(length(sent), 0L)
 
         # Plaintext room on the same client: cleartext, and no Megolm.
-        pid <- corteza:::matrix_reply_send(cfg, "!room:example", "hi")
+        pid <- corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!room:example", "hi")
         expect_equal(pid, "$plain:example")
         expect_identical(length(cs$log$sent), 1L)
         expect_equal(sent, "hi")
@@ -756,7 +764,7 @@ local({
                   .extract = function(...) stop("unused"))
     with_seamed_client(seams, {
         expect_null(corteza::matrix_send("hi", room_id = "!room:example"))
-        expect_null(corteza:::matrix_reply_send(cfg, "!room:example", "hi"))
+        expect_null(corteza:::matrix_reply_send(corteza:::matrix_chat_client(cfg), "!room:example", "hi"))
     })
     # The guard the poll loop actually uses, and the call it guards.
     expect_equal(corteza:::matrix_remember_event(character(), character(0)),
@@ -832,11 +840,11 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.14")
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.17")
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
-expect_false(package_version("0.0.1.13") >= package_version(corteza:::.CHAT_API_MIN))
+expect_false(package_version("0.0.1.16") >= package_version(corteza:::.CHAT_API_MIN))
 # The installed build satisfies it, so the guard passes rather than
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
@@ -884,12 +892,14 @@ local({
     on.exit(assignInNamespace("matrix_should_respond", orig_resp,
                               ns = "corteza"), add = TRUE)
 
-    # Capture the config the send is handed.
+    # Capture the client the send is handed. It is the client now, not a
+    # config: the rename puts the refreshed credentials back on the
+    # object that performed it, so there is one copy instead of two.
     seen_cfg <- NULL
     orig_send <- corteza:::matrix_reply_send
     assignInNamespace("matrix_reply_send",
-                      function(cfg, room_id, text, markdown = FALSE) {
-        seen_cfg <<- cfg
+                      function(chat, room_id, text, markdown = FALSE) {
+        seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_reply_send", orig_send,
@@ -954,8 +964,8 @@ local({
     with_seamed_client(seams, {
         # Build once against the pre-rotation config, which is what
         # interns the context, then send against the rotated one.
-        corteza:::matrix_reply_send(stale, "!room:example", "before")
-        corteza:::matrix_reply_send(live, "!room:example", "after")
+        corteza:::matrix_reply_send(corteza:::matrix_chat_client(stale), "!room:example", "before")
+        corteza:::matrix_reply_send(corteza:::matrix_chat_client(live), "!room:example", "after")
     })
     expect_identical(length(cs$log$sent), 2L)
     expect_identical(cs$log$sent[[1L]]$mx$token, "tok")
@@ -969,7 +979,7 @@ local({
     # one-time keys. It survives the token rotation, because the identity
     # is (user_id, device_id) and neither of those rotates.
     expect_identical(cs$log$inits, 1L)
-    with_seamed_client(seams, corteza:::matrix_reply_send(live, "!room:example",
+    with_seamed_client(seams, corteza:::matrix_reply_send(corteza:::matrix_chat_client(live), "!room:example",
                                                           "again"))
     expect_identical(cs$log$inits, 1L)
 })
@@ -1006,8 +1016,8 @@ local({
     seen_cfg <- NULL
     orig_send <- corteza:::matrix_reply_send
     assignInNamespace("matrix_reply_send",
-                      function(cfg, room_id, text, markdown = FALSE) {
-        seen_cfg <<- cfg
+                      function(chat, room_id, text, markdown = FALSE) {
+        seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_reply_send", orig_send,
@@ -1193,3 +1203,230 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
         expect_identical(joined, c("!a:ex", "!c:ex"))
     })
 }
+
+# "Were we addressed" is the adapter's answer now, not a regex in this
+# package. matrix_poll() asks chat.api::chat_addressed() once per message
+# while the contract's chat_message is still in hand, and carries the
+# verdict onto the record the reply gate reads. corteza used to split the
+# Matrix user id on its colon and look for "@localpart" itself.
+local({
+    iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
+    seen <- list()
+    orig_record <- corteza:::matrix_msg_record
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+        rec <- orig_record(m, addressed)
+        seen[[length(seen) + 1L]] <<- rec
+        rec
+    }, ns = "corteza")
+    on.exit(assignInNamespace("matrix_msg_record", orig_record,
+                              ns = "corteza"), add = TRUE)
+
+    # is_self on all four, so each is ingested and the loop moves on
+    # without reaching a model. The gate is tested directly elsewhere;
+    # what is proved here is that the flag arrives, and with the right
+    # value, on a real trip through the adapter.
+    ev <- function(id, body, mentions = NULL) {
+        list(event_id = id, room_id = "!room:example",
+             sender = "@bot:example", body = body, msgtype = "m.text",
+             is_self = TRUE, mentions = mentions)
+    }
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            client$sync_token <- "s2"
+            sync_saved(client, save)
+            list(sync = sync_with_message(), client = client,
+                 first_run = FALSE)
+        },
+        .extract = function(sync_resp, self_id, ...) {
+            list(ev("$1:example", "just chatting"),
+                 ev("$2:example", "@bot hello"),
+                 ev("$3:example", "nothing", mentions = list("@bot:example")),
+                 ev("$4:example", "ask @bot.deploy instead"))
+        })
+
+    replied <- with_seamed_client(
+        seams,
+        corteza::matrix_poll(timeout = 0L,
+                             sessions = seeded_sessions("!room:example")))
+    expect_equal(replied, 0L)
+    expect_identical(length(seen), 4L)
+    expect_false(seen[[1L]]$addressed)
+    # The transport's plain-text form, which this package no longer knows.
+    expect_true(seen[[2L]]$addressed)
+    # The declared m.mentions list, which it never needed to.
+    expect_true(seen[[3L]]$addressed)
+    # A longer localpart is somebody else. The old \\b boundary called
+    # this a mention of @bot and the wrong bot answered.
+    expect_false(seen[[4L]]$addressed)
+})
+
+# self_id comes from chat_whoami(), and it is load-bearing beyond the
+# mention gate: it is the bot's own entry in the known-bots list, which
+# is what stops the bot from counting itself as one of the room's humans.
+# Get it wrong and a two-member room reads as two humans, so every
+# incoming message is ingested with a "[sender]" attribution prefix it
+# should not have -- and the model's context quietly changes shape.
+local({
+    cfg <- base_cfg(sync_token = "s1")
+    # Operators keeps the lone human from being answered outright, so
+    # this exercises the ingest path without reaching a model.
+    cfg$operators <- "@troy:example"
+    iso <- isolate_config(cfg)
+    on.exit(restore_config(iso), add = TRUE)
+
+    sessions <- seeded_sessions("!room:example")
+    session <- get("!room:example", envir = sessions)
+    # Seeded so the loop does not fetch: the member list is the input
+    # under test, not the thing being tested.
+    session$members <- c("@bot:example", "@ann:example")
+    session$members_at <- Sys.time()
+
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            client$sync_token <- "s2"
+            sync_saved(client, save)
+            list(sync = sync_with_message(), client = client,
+                 first_run = FALSE)
+        },
+        .extract = function(sync_resp, self_id, ...) {
+            list(list(event_id = "$h1:example", room_id = "!room:example",
+                      sender = "@ann:example", body = "just chatting",
+                      msgtype = "m.text", is_self = FALSE))
+        })
+
+    replied <- with_seamed_client(
+        seams, corteza::matrix_poll(timeout = 0L, sessions = sessions))
+    expect_equal(replied, 0L)
+    expect_identical(length(session$transcript), 1L)
+    # Unprefixed: one human in the room, so there is nobody to
+    # distinguish them from. A self_id that did not match the bot's own
+    # account would make this "[@ann:example] just chatting".
+    expect_identical(session$transcript[[1L]]$content, "just chatting")
+})
+
+# ---------------------------------------------------------------
+# Startup backfill. In-memory history is process-local and dies on
+# restart, so this is what a fresh process knows about the conversation
+# it is walking into. It reads chat_channels() and chat_history() now --
+# the last two direct mx.api calls in this package.
+# ---------------------------------------------------------------
+
+hist_ev <- function(id, body, sender = "@ann:example", msgtype = "m.text",
+                    ts = 1700000000000) {
+    list(type = "m.room.message", event_id = id, sender = sender,
+         origin_server_ts = ts,
+         content = list(msgtype = msgtype, body = body))
+}
+
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) "!room:example",
+        # Newest-first, the way Matrix pages backwards. The adapter is
+        # what flips it, which is the point: this loop used to rev() the
+        # chunk itself.
+        .history = function(session, room_id, ...) {
+            list(chunk = list(
+                hist_ev("$3", "and third", ts = 3000),
+                hist_ev("$2", "second", sender = "@bot:example", ts = 2000),
+                hist_ev("$1", "first", ts = 1000)))
+        })
+
+    sessions <- seeded_sessions("!room:example")
+    n <- corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    expect_equal(n, 1L)
+
+    s <- get("!room:example", envir = sessions)
+    expect_identical(length(s$history), 3L)
+    # Chronological. A reversed transcript reads plausibly enough that
+    # nothing errors and the model just gets the conversation backwards.
+    expect_identical(vapply(s$history, function(h) h$content, character(1)),
+                     c("first", "second", "and third"))
+    # The bot's own traffic comes back as its own turns. Without that a
+    # restart re-reads every reply it ever sent as somebody talking to
+    # it.
+    expect_identical(vapply(s$history, function(h) h$role, character(1)),
+                     c("user", "assistant", "user"))
+    # One human in the window, so no attribution prefix.
+    expect_false(any(grepl("[@ann:example]", 
+                           vapply(s$history, function(h) h$content,
+                                  character(1)), fixed = TRUE)))
+    # Every event is marked seen, so the first live sync after this does
+    # not answer messages the backfill already ingested.
+    expect_true(all(c("$1", "$2", "$3") %in% s$seen_event_ids))
+    expect_identical(length(s$transcript), 3L)
+})
+
+# Two humans in the window: senders are labelled, so the model can tell
+# them apart. Mirrors the live path's attribution rule.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) "!room:example",
+        .history = function(session, room_id, ...) {
+            list(chunk = list(hist_ev("$2", "hi", sender = "@bob:example"),
+                              hist_ev("$1", "hey", sender = "@ann:example")))
+        })
+    sessions <- seeded_sessions("!room:example")
+    corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    s <- get("!room:example", envir = sessions)
+    expect_identical(s$history[[1L]]$content, "[@ann:example] hey")
+    expect_identical(s$history[[2L]]$content, "[@bob:example] hi")
+})
+
+# A notice is not a conversational turn. chat_history() has already
+# dropped the msgtypes the contract has no word for, so this is the
+# notice/emote filter -- and ingesting one would put the bot's own
+# automated output back into the prompt as if a human had said it.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) "!room:example",
+        .history = function(session, room_id, ...) {
+            list(chunk = list(
+                hist_ev("$2", "cat.png", msgtype = "m.image"),
+                hist_ev("$n", "system notice", msgtype = "m.notice"),
+                hist_ev("$1", "real message")))
+        })
+    sessions <- seeded_sessions("!room:example")
+    corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    s <- get("!room:example", envir = sessions)
+    expect_identical(length(s$history), 1L)
+    expect_identical(s$history[[1L]]$content, "real message")
+    # The image never reached this package: an m.image routed through the
+    # contract's kind vocabulary would arrive as a text message whose
+    # body is a filename.
+    expect_false("$2" %in% s$seen_event_ids)
+})
+
+# An unreachable homeserver backfills nothing rather than failing the
+# whole startup. A bot with no history is still a working bot.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) stop("M_UNKNOWN"))
+    expect_equal(corteza:::matrix_backfill_sessions(
+        chat, corteza:::matrix_new_session_registry(), cfg), 0L)
+})

@@ -56,13 +56,20 @@ jobs:
       # Fail loudly if the stack is absent or too old, rather than letting
       # the tests skip themselves into a green tick.
       #
-      # The floors are corteza's own runtime constants, read out of an
+      # One floor, because corteza has one runtime dependency here: it
+      # calls neither mx.api nor mx.client any more, and carrying their
+      # floors would be corteza asserting facts only chat.api can keep
+      # true. mx.client is still installed above and still checked for
+      # presence -- the integration tests stub it to drive a real relogin
+      # through the whole stack, and a runner without it skips them.
+      #
+      # The floor is corteza's own runtime constant, read out of an
       # installed corteza, rather than parsed from DESCRIPTION. A first
       # attempt did parse it, and on macOS the parse quietly found no
       # floors at all and waved 0.0.1.2 through -- a verification step
       # that can silently check nothing is the same failure this whole
-      # job exists to stop. These are the values matrix_require_mx()
-      # enforces, so if they are wrong the bots are wrong too.
+      # job exists to stop. It is the value matrix_require_mx() enforces,
+      # so if it is wrong the bots are wrong too.
       - name: Verify Matrix stack
         run: |
           R CMD INSTALL .
@@ -70,18 +77,16 @@ jobs:
             for (p in c("mx.api", "mx.client", "chat.api"))
               if (!requireNamespace(p, quietly = TRUE))
                 stop("Matrix CI needs ", p, " installed", call. = FALSE)
-            floors <- c(chat.api = corteza:::.CHAT_API_MIN,
-                        mx.client = corteza:::.MX_CLIENT_MIN)
-            if (!all(nzchar(floors)))
-              stop("could not read corteza runtime floors", call. = FALSE)
-            for (p in names(floors)) {
-              have <- utils::packageVersion(p)
-              message(p, " ", have, " (>= ", floors[[p]], ")")
-              if (have < floors[[p]])
-                stop(p, " ", have, " is below the ", floors[[p]],
-                     " this corteza requires", call. = FALSE)
-            }
-            message("mx.api ", utils::packageVersion("mx.api"))'
+            floor <- corteza:::.CHAT_API_MIN
+            if (!length(floor) || !nzchar(floor))
+              stop("could not read corteza chat.api floor", call. = FALSE)
+            have <- utils::packageVersion("chat.api")
+            message("chat.api ", have, " (>= ", floor, ")")
+            if (have < floor)
+              stop("chat.api ", have, " is below the ", floor,
+                   " this corteza requires", call. = FALSE)
+            message("mx.api ", utils::packageVersion("mx.api"))
+            message("mx.client ", utils::packageVersion("mx.client"))'
 
       - name: Test
         run: ./run.sh run_tests

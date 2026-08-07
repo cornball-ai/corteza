@@ -162,36 +162,25 @@ if (at_home()) local({
   expect_equal(s3$room_id, "!vault:ex")
 })
 
-# Mention detection: explicit m.mentions takes precedence.
+# Mention detection lives in chat.api now: chat_addressed() reads both
+# the declared mentions and the transport's own plain-text form, and
+# matrix_msg_record() carries its answer onto the record as `addressed`.
+# The @localpart splitting this file used to do is gone with it. What is
+# tested here is that the flag reaches the reply gate; whether "@bot"
+# counts as a mention is the adapter's question and is tested there.
 local({
-  msg <- list(body = "hey",
-              mentions = list("@cornelius:cornball.ai"))
-  expect_true(corteza:::matrix_message_mentions_self(
-    msg, "@cornelius:cornball.ai"))
-  expect_false(corteza:::matrix_message_mentions_self(
-    msg, "@other:cornball.ai"))
-})
-
-# Mention detection: fallback to @localpart substring.
-local({
-  expect_true(corteza:::matrix_message_mentions_self(
-    list(body = "hey @cornelius what do you think?"),
-    "@cornelius:cornball.ai"))
-  expect_true(corteza:::matrix_message_mentions_self(
-    list(body = "@CORNELIUS help"),
-    "@cornelius:cornball.ai"))
-  expect_true(corteza:::matrix_message_mentions_self(
-    list(body = "please @cornelius:cornball.ai"),
-    "@cornelius:cornball.ai"))
-  # Bare "cornelius" without @ is not a mention.
-  expect_false(corteza:::matrix_message_mentions_self(
-    list(body = "cornelius is great"),
-    "@cornelius:cornball.ai"))
-  expect_false(corteza:::matrix_message_mentions_self(
-    list(body = "hello world"),
-    "@cornelius:cornball.ai"))
-  expect_false(corteza:::matrix_message_mentions_self(
-    list(body = ""), "@cornelius:cornball.ai"))
+  m <- chat.api::chat_message(id = "$1", channel = "!r:ex",
+                              sender = "@ann:ex", body = "hey @bot",
+                              ts = Sys.time(), mentions = "@bot:ex")
+  expect_true(corteza:::matrix_msg_record(m, addressed = TRUE)$addressed)
+  expect_false(corteza:::matrix_msg_record(m, addressed = FALSE)$addressed)
+  # Defaults to FALSE, never NULL: the gate below tests it with isTRUE,
+  # and a record built without an answer must read as "not addressed"
+  # rather than as an error at the comparison.
+  expect_false(corteza:::matrix_msg_record(m)$addressed)
+  # Declared mentions still ride along separately -- the engagement
+  # window reads them to notice a sender turning away from the bot.
+  expect_equal(corteza:::matrix_msg_record(m)$mentions, "@bot:ex")
 })
 
 # matrix_should_respond: one human + the bot -> respond without a
@@ -214,9 +203,8 @@ local({
     list(body = "hi", sender = "@otherbot:ex"), "@bot:ex", members,
     bots = bots))
   expect_true(corteza:::matrix_should_respond(
-    list(body = "hi", sender = "@otherbot:ex",
-         mentions = list("@bot:ex")), "@bot:ex", members,
-    bots = bots))
+    list(body = "hi", sender = "@otherbot:ex", addressed = TRUE),
+    "@bot:ex", members, bots = bots))
   # Without the bots list the same room counts 2 humans -> gated (the
   # old 3-member group behavior).
   expect_false(corteza:::matrix_should_respond(
@@ -230,7 +218,13 @@ local({
     list(body = "chatter among humans", sender = "@troy:ex"),
     "@bot:ex", members))
   expect_true(corteza:::matrix_should_respond(
-    list(body = "@bot what?", sender = "@troy:ex"),
+    list(body = "@bot what?", sender = "@troy:ex", addressed = TRUE),
+    "@bot:ex", members))
+  # The body is not re-read here. A message the adapter did not call
+  # addressed stays gated however Matrix-shaped its text looks, which is
+  # the whole point of asking the transport instead of guessing.
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "@bot what?", sender = "@troy:ex", addressed = FALSE),
     "@bot:ex", members))
 })
 
@@ -300,16 +294,19 @@ local({
 # matrix_known_bots: always includes self, unlists config shapes,
 # drops empties.
 local({
-  expect_equal(corteza:::matrix_known_bots(list(user_id = "@bot:ex")),
-               "@bot:ex")
+  expect_equal(corteza:::matrix_known_bots(list(), "@bot:ex"), "@bot:ex")
   expect_equal(
-    corteza:::matrix_known_bots(list(user_id = "@bot:ex",
-                                     bots = c("@a:ex", "@bot:ex"))),
+    corteza:::matrix_known_bots(list(bots = c("@a:ex", "@bot:ex")), "@bot:ex"),
     c("@bot:ex", "@a:ex"))
   expect_equal(
-    corteza:::matrix_known_bots(list(user_id = "@bot:ex",
-                                     bots = list("@a:ex", ""))),
+    corteza:::matrix_known_bots(list(bots = list("@a:ex", "")), "@bot:ex"),
     c("@bot:ex", "@a:ex"))
+  # self_id comes from chat_whoami(), not from cfg. A cfg that still
+  # carries user_id does not get a say -- otherwise the two could
+  # disagree and the bot would fail to recognise its own traffic.
+  expect_equal(
+    corteza:::matrix_known_bots(list(user_id = "@stale:ex"), "@bot:ex"),
+    "@bot:ex")
 })
 
 # matrix_room_members_cached: fetches when cold, skips when the sender
@@ -618,10 +615,16 @@ expect_false(corteza:::matrix_is_clear_command(""))
 expect_false(corteza:::matrix_is_clear_command(NULL))
 
 # 0.3.0 adoption helpers exist with the expected shapes.
-expect_true(is.function(corteza:::matrix_relogin))
 expect_true(is.function(corteza:::matrix_reply_send))
-expect_error(corteza:::matrix_relogin(list(server = "https://x")),
-             "no stored password")
+# matrix_relogin() is gone. Refreshing a token is chat_relogin(), and it
+# puts the result back on the client rather than handing it out --
+# corteza had no way to relogin that did not leave two copies of a
+# credential and a file to keep them in step.
+expect_false(exists("matrix_relogin", envir = asNamespace("corteza"),
+                    inherits = FALSE))
+# It takes the loop's client, not a config. Rebuilding a client per send
+# was how a rotated token used to reach the next reply.
+expect_identical(names(formals(corteza:::matrix_reply_send))[1L], "chat")
 
 # The matrix loop is split into init/step exports so an external
 # scheduler can own the main process; matrix_run wraps them. All three
@@ -820,7 +823,10 @@ local({
 
     ops <- "@troy:ex"
     msg_plain <- list(body = "hi", sender = "@jorge:ex")
-    msg_ping <- list(body = "@bot:ex hi", sender = "@jorge:ex")
+    # addressed is the adapter's verdict, carried on the record. The body
+    # is here for readability only; nothing below reads it.
+    msg_ping <- list(body = "@bot:ex hi", sender = "@jorge:ex",
+                     addressed = TRUE)
     solo <- c("@bot:ex", "@jorge:ex")
 
     # One human, not an operator: silence, even when mentioned. A
@@ -1362,35 +1368,39 @@ local({
 # ---- badge integration paths (regression guards) ----
 
 # matrix_update_displayname() must hand back a config, and after a
-# successful rename it must be the freshly loaded one. mx_set_displayname()
-# can relogin and persist a new token but returns only TRUE, so a caller
-# that keeps its own cfg goes on using the token the homeserver rejected --
-# and chat_send() does no relogin of its own, so the next reply vanishes
-# into a best-effort tryCatch.
+# successful rename it must be the freshly loaded one. The rename can
+# relogin and persist a new token while reporting only TRUE, so a caller
+# that keeps its own cfg goes on using the token the homeserver rejected
+# -- and chat_send() does no relogin of its own, so the next reply
+# vanishes into a best-effort tryCatch.
 local({
     cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
                 provider = "ollama", model_badge = "always")
 
-    orig_client <- corteza:::matrix_client
     orig_load <- corteza:::matrix_load_config
-    assignInNamespace("matrix_client", function(cfg) cfg, ns = "corteza")
     assignInNamespace("matrix_load_config",
                       function() c(cfg, list(token = "refreshed")),
                       ns = "corteza")
-    on.exit({
-        assignInNamespace("matrix_client", orig_client, ns = "corteza")
-        assignInNamespace("matrix_load_config", orig_load, ns = "corteza")
-    }, add = TRUE)
+    on.exit(assignInNamespace("matrix_load_config", orig_load, ns = "corteza"),
+            add = TRUE)
 
-    if (requireNamespace("mx.client", quietly = TRUE)) {
-        orig_set <- mx.client::mx_set_displayname
-        assignInNamespace("mx_set_displayname",
-                          function(client, name, save = TRUE) invisible(TRUE),
-                          ns = "mx.client")
-        on.exit(assignInNamespace("mx_set_displayname", orig_set,
-                                  ns = "mx.client"), add = TRUE)
-
-        got <- corteza:::matrix_update_displayname(cfg)
+    if (requireNamespace("chat.api", quietly = TRUE)) {
+        # A client whose rename is seamed. corteza no longer reaches for
+        # mx_set_displayname itself -- the rename is chat_set_identity(),
+        # and the adapter is what knows it can rotate a token.
+        seen <- NULL
+        chat <- chat.api::chat_matrix(
+            mx = list(server = "https://ex.invalid", user = "bot",
+                      token = "tok", user_id = "@r2j2:cornball.ai",
+                      device_id = "DEV1"),
+            .sync = function(...) NULL, .extract = function(...) list(),
+            .send = function(...) "$1", .media = function(...) NULL,
+            .identity = function(client, name, ...) {
+                seen <<- name
+                invisible(TRUE)
+            })
+        got <- corteza:::matrix_update_displayname(cfg, chat = chat)
+        expect_true(!is.null(seen))
         expect_equal(got$token, "refreshed")   # adopted the reloaded config
     }
 
@@ -1415,16 +1425,33 @@ local({
         "r2j2 ⚡ claude-sonnet-4-6")
 })
 
-# The mx.client floor is enforced at runtime, not just declared in
-# DESCRIPTION: an installed-but-stale copy has no mx_set_displayname().
-# The floors are enforced at runtime, not merely declared in DESCRIPTION:
-# an installed-but-stale copy loads however old it is. Injecting the
-# versions tests the gate itself rather than what CI happens to have.
-if (requireNamespace("chat.api", quietly = TRUE) &&
-        requireNamespace("mx.client", quietly = TRUE)) {
-    expect_error(corteza:::matrix_require_mx(mx_client_version = "0.1.1"),
-                 "mx.client")
+# The chat.api floor is enforced at runtime, not merely declared in
+# DESCRIPTION: an installed-but-stale copy loads however old it is.
+# Injecting the version tests the gate itself rather than what CI
+# happens to have.
+if (requireNamespace("chat.api", quietly = TRUE)) {
     expect_error(corteza:::matrix_require_mx(chat_api_version = "0.0.0.1"),
                  "chat.api")
     expect_silent(corteza:::matrix_require_mx())
 }
+# One dependency, and only one. corteza checked mx.api and mx.client here
+# too, and carried its own mx.client floor, back when it called them --
+# repeating a downstream package's requirements is asserting facts only
+# that package can keep true.
+expect_identical(names(formals(corteza:::matrix_require_mx)),
+                 "chat_api_version")
+expect_false(exists(".MX_CLIENT_MIN", envir = asNamespace("corteza"),
+                    inherits = FALSE))
+# The runtime has no mx.* calls left at all. This is the plan's finish
+# line, and a grep is the only thing that can hold it: any one of them
+# would work perfectly on a host that happens to have the package.
+local({
+    src <- unlist(lapply(ls(asNamespace("corteza"), all.names = TRUE),
+                         function(n) {
+        obj <- get(n, envir = asNamespace("corteza"))
+        if (is.function(obj)) deparse(body(obj)) else character()
+    }))
+    expect_false(any(grepl("mx.api", src, fixed = TRUE)))
+    expect_false(any(grepl("mx.client", src, fixed = TRUE)))
+    expect_false(any(grepl("mx.crypto", src, fixed = TRUE)))
+})

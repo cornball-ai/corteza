@@ -44,86 +44,70 @@
 #            mx_room_members calls.
 #   0.0.1.14 chat_poll()$invites and chat_join() exist, which is what
 #            finally makes res$raw unread here.
+#   0.0.1.15 chat_whoami() and chat_addressed() exist, and the mention
+#            gate reads their answer instead of splitting a Matrix user
+#            id on its colon. Below this the poll dies on the missing
+#            export -- after the sync has already consumed the cursor,
+#            which is the reason this check runs up front.
+#   0.0.1.16 the state verbs (chat_channels, chat_history, chat_pending,
+#            chat_mark_read) and the credential ones (chat_matrix_config,
+#            chat_config_save, chat_matrix_configure, chat_set_identity)
+#            exist. This is the version at which corteza stopped calling
+#            mx.api and mx.client at all.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.14"
+.CHAT_API_MIN <- "0.0.1.17"
 
-# Minimum mx.client:
+# One dependency, checked once. corteza used to require mx.api and
+# mx.client here too, and carry its own mx.client version floor, because
+# it called both directly. It calls neither now: the Matrix transport
+# reaches this package only through chat.api, and which transport
+# packages that adapter needs -- and at what version -- is its
+# declaration to make. Repeating it here is corteza asserting facts
+# about chat.api's internals that only chat.api can keep true.
 #
-#   0.2.0    mx_set_displayname() exists. Below it the model-badge rename
-#            fails inside a best-effort tryCatch and the sender line
-#            silently never updates.
-#   0.2.0.2  mx_send_encrypted() no longer reports success for a message
-#            nobody can read: it filters its own device by
-#            (user_id, device_id) rather than device_id alone, refuses to
-#            post when every recipient device was skipped, and treats a
-#            partial /keys/query or /keys/claim as unanswered. corteza
-#            does not call it directly, but every encrypted reply this
-#            loop sends goes through it.
-#   0.2.0.3  mx_extract_reactions() exists, which is what chat.api reads
-#            to fill chat_poll()$reactions.
-#   0.2.0.4  mx_extract_invite_records() exists, which carries the
-#            sender chat.api puts on a chat_invite().
-.MX_CLIENT_MIN <- "0.2.0.4"
-
-# chat_api_version / mx_client_version are injectable so the floors can
-# be tested without a stale package on disk. Leave NULL in production.
-matrix_require_mx <- function(chat_api_version = NULL,
-                              mx_client_version = NULL) {
-    for (pkg in c("mx.api", "mx.client", "chat.api")) {
-        if (!requireNamespace(pkg, quietly = TRUE)) {
-            stop("Matrix integration requires the '", pkg, "' package. ",
-                 "Install it from CRAN, or from the cornball-ai GitHub mirror, ",
-                 "before calling Matrix functions.", call. = FALSE)
-        }
+# chat_api_version is injectable so the floor can be tested without a
+# stale package on disk. Leave NULL in production.
+matrix_require_mx <- function(chat_api_version = NULL) {
+    if (!requireNamespace("chat.api", quietly = TRUE)) {
+        stop("Matrix integration requires the 'chat.api' package. ",
+             "Install it from the cornball-ai GitHub mirror, or from the ",
+             "cornball drat, before calling Matrix functions.", call. = FALSE)
     }
     # requireNamespace() checks presence, not version, and a Suggests
     # floor is a resolution hint rather than a runtime guarantee: a
     # chat.api already installed on the host still loads however old it
     # is. Without this the poll gets all the way through /sync, consumes
-    # the cursor, and only then dies on the missing first_run -- the
-    # worst place to discover a stale build, because the work is already
-    # spent and the cursor may not be recoverable.
+    # the cursor, and only then dies on a missing verb -- the worst place
+    # to discover a stale build, because the work is already spent and
+    # the cursor may not be recoverable.
     have <- chat_api_version %||% utils::packageVersion("chat.api")
     if (have < .CHAT_API_MIN) {
         stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
-             ", but ", have, " is installed. ",
-             "chat_matrix() below that version takes no e2ee argument and ",
-             "its adapter neither encrypts nor decrypts, so every client ",
-             "build fails. Reinstall chat.api from the cornball-ai mirror.",
-             call. = FALSE)
-    }
-    # Same reasoning for mx.client: the DESCRIPTION floor is a resolution
-    # hint, and an already-installed copy loads however old it is. A host
-    # on 0.1.1 has no mx_set_displayname(), so the badge rename dies in a
-    # best-effort tryCatch and the sender line quietly never updates.
-    have_mx <- mx_client_version %||% utils::packageVersion("mx.client")
-    if (have_mx < .MX_CLIENT_MIN) {
-        stop("Matrix integration requires mx.client >= ", .MX_CLIENT_MIN,
-             ", but ", have_mx, " is installed. Below that version the ",
-             "model-badge rename has no mx_set_displayname() to call and ",
-             "fails silently. Reinstall mx.client.", call. = FALSE)
+             ", but ", have, " is installed. Reinstall chat.api from the ",
+             "cornball-ai mirror.", call. = FALSE)
     }
 }
 
-# Config persistence, session construction, and the markdown->HTML
-# converter live in mx.client now; these are thin corteza-side adapters
-# over it. The "corteza" app namespace plus the CORTEZA_MATRIX_CONFIG
-# override reproduce the historical paths exactly:
-# R_user_dir("corteza","config")/matrix.json, with a legacy fallback to
-# ~/.corteza/matrix.json (mx.client special-cases the "corteza" app for
-# that legacy path).
+# Config persistence goes through chat.api, which owns the transport's
+# credentials and hands back a chat_config carrying corteza's own fields
+# (bots, operators, model preferences) alongside them. The "corteza" app
+# namespace plus the CORTEZA_MATRIX_CONFIG override reproduce the
+# historical paths exactly: R_user_dir("corteza","config")/matrix.json,
+# with a legacy fallback to ~/.corteza/matrix.json.
 matrix_config_path <- function() {
-    mx.client::mx_client_config_path("corteza",
-                                     env_var = "CORTEZA_MATRIX_CONFIG")
+    chat.api::chat_matrix_config_path("corteza",
+                                      env_var = "CORTEZA_MATRIX_CONFIG")
 }
 
 matrix_legacy_config_path <- function() {
-    mx.client::mx_client_legacy_config_path("corteza")
+    chat.api::chat_matrix_config_path("corteza", legacy = TRUE)
 }
 
-# Hand corteza's downstream a plain list, as fromJSON did before.
+# Strip the chat_config class and its bookkeeping attributes. Callers
+# that only read fields do not need it, and the loop reassigns cfg in
+# places where a class would have to be maintained by hand.
 matrix_plain_cfg <- function(cfg) {
     cfg <- unclass(cfg)
     attr(cfg, "path") <- NULL
@@ -131,33 +115,15 @@ matrix_plain_cfg <- function(cfg) {
     cfg
 }
 
-# Wrap a plain cfg back into an mx.client config carrying corteza's
-# save path, so mx.client's persisting helpers (relogin, sync cursor)
-# write to the right file.
-matrix_client <- function(cfg) {
-    mx.client::mx_client_from_config(cfg, path = matrix_config_path(),
-                                     app = "corteza")
-}
-
 matrix_load_config <- function() {
-    matrix_plain_cfg(mx.client::mx_client_load(app = "corteza",
+    matrix_plain_cfg(chat.api::chat_matrix_config(app = "corteza",
             env_var = "CORTEZA_MATRIX_CONFIG"))
 }
 
 matrix_save_config <- function(cfg) {
-    mx.client::mx_client_save(cfg, app = "corteza", path = matrix_config_path())
+    chat.api::chat_config_save(cfg, app = "corteza",
+                               path = matrix_config_path())
     invisible(cfg)
-}
-
-matrix_mx_session <- function(cfg) {
-    mx.client::mx_client_session(cfg)
-}
-
-# Re-login with the stored password and persist the refreshed token to
-# corteza's config path. mx.client reuses the device_id so the device
-# (and any E2EE identity bound to it) survives the rotation.
-matrix_relogin <- function(cfg) {
-    matrix_plain_cfg(mx.client::mx_client_relogin(matrix_client(cfg)))
 }
 
 #' Configure the Matrix channel for this host
@@ -255,7 +221,7 @@ matrix_configure <- function(server, user, password, room, model = NULL,
         }
     }
 
-    cfg <- mx.client::mx_client_configure(
+    cfg <- chat.api::chat_matrix_configure(
         server, user, password, room,
         app = "corteza", path = matrix_config_path(),
         extra = list(model = model, provider = provider,
@@ -288,17 +254,18 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
                         markdown = FALSE) {
     matrix_require_mx()
     cfg <- matrix_load_config()
+    # The contract's kind vocabulary covers m.text, m.notice and m.emote.
+    # A msgtype outside it -- m.image, m.file -- is passed as the kind
+    # itself, which the Matrix adapter forwards as a msgtype. msgtype is
+    # a documented argument of an exported function, so the ones the
+    # contract has no word for still reach the homeserver as themselves
+    # rather than arriving as text.
     kind <- matrix_send_kind(msgtype)
     if (is.na(kind)) {
-        # The contract's kind vocabulary covers m.text, m.notice and
-        # m.emote and nothing else, so an m.image routed through it
-        # arrives on the homeserver as m.text. msgtype is a documented
-        # argument of an exported function, so the ones the contract
-        # cannot carry keep going out the way they always have.
-        return(mx.client::mx_send_text(cfg, text, room = room_id,
-                                       msgtype = msgtype, markdown = markdown))
+        kind <- msgtype
     }
-    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id, text,
+    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id,
+                                        text,
                                         markup = matrix_markup(markdown),
                                         kind = kind))
 }
@@ -307,13 +274,21 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
 # including encrypted rooms: the adapter routes those through Megolm
 # itself, so there is no second path here to keep in step.
 #
-# Separate from the exported matrix_send() because that one reloads the
-# config from disk, and the loop's cfg is the one the poll just refreshed.
+# Separate from the exported matrix_send() because that one loads a
+# config and builds a client of its own; this takes the loop's.
+#
+# It takes the client rather than a config on purpose. Rebuilding one
+# per send was how a rotated token used to reach the next reply: the
+# rename wrote it to disk, the loop re-read it, and every send
+# reconstructed a client from that copy. Nothing rotates a token outside
+# the adapter now, so the client that performed the rotation is the one
+# holding the result, and there is only ever one of it.
+#
 # Returns the event id, or NULL when the homeserver reported none, which
 # is what every caller tests for.
-matrix_reply_send <- function(cfg, room_id, text, markdown = FALSE) {
-    matrix_event_id(chat.api::chat_send(matrix_chat_client(cfg), room_id,
-                                        text, markup = matrix_markup(markdown)))
+matrix_reply_send <- function(chat, room_id, text, markdown = FALSE) {
+    matrix_event_id(chat.api::chat_send(chat, room_id, text,
+                                        markup = matrix_markup(markdown)))
 }
 
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
@@ -366,7 +341,7 @@ matrix_event_id <- function(id) {
 # crash again, forever.
 #
 # app is left NULL so mx_sync_update falls through to the wrapped
-# config's own attributes, which matrix_client() stamps with corteza's
+# config's own attributes, which matrix_cfg_object() stamps with corteza's
 # path and app. Naming an app here would file corteza's cursor -- and on
 # relogin its credentials -- under chat.api's namespace.
 #
@@ -394,9 +369,17 @@ matrix_event_id <- function(id) {
 # (.sync, .extract, .send, .media, .typing, .crypto, .save). Production
 # passes nothing.
 matrix_chat_client <- function(cfg, save_cursor = TRUE, ...) {
-    chat.api::chat_matrix(mx = matrix_client(cfg),
+    chat.api::chat_matrix(mx = matrix_cfg_object(cfg),
                           save_cursor = isTRUE(save_cursor),
                           e2ee = isTRUE(cfg$e2ee), ...)
+}
+
+# A plain cfg wrapped back into a chat_config carrying corteza's app and
+# save path, so the persisting paths behind the adapter -- the sync
+# cursor, a relogin's refreshed token -- write to corteza's file rather
+# than to chat.api's namespace.
+matrix_cfg_object <- function(cfg) {
+    chat.api::chat_config(cfg, app = "corteza", path = matrix_config_path())
 }
 
 # A room's descriptive metadata, or an empty answer.
@@ -427,10 +410,19 @@ matrix_room_name <- function(chat, room_id) {
 #
 # encrypted and sender_verified ride along unused for now. They are the
 # only fields here that a Matrix sync cannot assert on its own.
-matrix_msg_record <- function(m) {
+#
+# addressed is the adapter's answer to "does this message address the
+# bot", asked here and carried on the record so the reply gate does not
+# need the chat client. Computed rather than derived from mentions: the
+# declared-mention list is only half the signal, and the other half is
+# the transport's own plain-text convention -- which is exactly what
+# this file used to reimplement by splitting a Matrix user id on its
+# colon.
+matrix_msg_record <- function(m, addressed = FALSE) {
     list(room_id = m$channel, event_id = m$id, sender = m$sender,
          body = m$body, is_self = isTRUE(m$self), mentions = m$mentions,
-         encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified)
+         encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
+         addressed = isTRUE(addressed))
 }
 
 # The Matrix-visible transcript: an explicit ledger of the events this
@@ -936,54 +928,38 @@ matrix_badge_displayname <- function(cfg, session = NULL, model = NULL,
 # account-global, so with sessions in several rooms the most recent
 # switch wins; the per-reply badge line stays room-accurate.
 matrix_update_displayname <- function(cfg, session = NULL, model = NULL,
-                                      provider = NULL) {
+                                      provider = NULL, chat = NULL) {
     name <- matrix_badge_displayname(cfg, session, model, provider)
     if (is.null(name)) {
         return(invisible(cfg))
     }
-    tryCatch(mx.client::mx_set_displayname(matrix_client(cfg), name),
-             error = function(e) NULL)
-    # Re-read whether or not the rename succeeded, because disk is the
+    chat <- chat %||% matrix_chat_client(cfg)
+    tryCatch(chat.api::chat_set_identity(chat, name), error = function(e) NULL)
+    # Re-read whether the rename succeeded or not, because disk is the
     # authoritative copy either way.
     #
-    # mx_set_displayname() wraps the call in mx_with_relogin(), which
-    # persists the refreshed client *before* retrying and then returns
-    # only TRUE, discarding it. So a relogin whose retry then fails --
-    # rate limit, transient 5xx -- still leaves the live token on disk.
-    # Gating this reload on success threw that token away and sent the
-    # following acknowledgement on the rejected one, which is the same
-    # silent drop this reload exists to prevent: chat_send() does no
-    # relogin of its own, so the failure dies in the caller's tryCatch
-    # with nothing logged.
+    # The rename can relogin, and a relogin persists the refreshed token
+    # before retrying -- so a retry that then fails (rate limit,
+    # transient 5xx) still leaves the live token on disk. Gating this
+    # reload on success threw that token away and sent the following
+    # acknowledgement on the rejected one.
+    #
+    # chat_set_identity() also puts the refreshed credentials back on
+    # `chat`, so anything reusing that object is already current. This
+    # reload is for the plain cfg the rest of the loop carries, which
+    # the adapter cannot reach into.
     #
     # When nothing rotated, the reload returns what we already had.
     invisible(tryCatch(matrix_load_config(), error = function(e) cfg))
 }
 
-# Does this message mention the bot? Checks the explicit m.mentions
-# field (emitted by Element and most modern clients) first, then falls
-# back to substring matching on the body for @localpart and full MXID.
-matrix_message_mentions_self <- function(msg, self_id) {
-    mentions <- msg$mentions
-    if (length(mentions) && any(self_id %in% unlist(mentions))) {
-        return(TRUE)
-    }
-    body <- msg$body %||% ""
-    if (!nzchar(body)) {
-        return(FALSE)
-    }
-    if (grepl(self_id, body, fixed = TRUE)) {
-        return(TRUE)
-    }
-    localpart <- sub("^@", "", sub(":.*$", "", self_id))
-    grepl(sprintf("@%s\\b", localpart), body, perl = TRUE, ignore.case = TRUE)
-}
-
-# Known bot accounts for gating: the configured `bots` list from the
-# Matrix config plus the bot itself.
-matrix_known_bots <- function(cfg) {
+# Known bot accounts for gating: the configured `bots` list plus the bot
+# itself. self_id is passed rather than read off cfg because the config's
+# field name for it is the transport's -- a Slack config has no user_id
+# -- and chat.api::chat_whoami() is where that question belongs.
+matrix_known_bots <- function(cfg, self_id) {
     bots <- as.character(unlist(cfg$bots, use.names = FALSE))
-    unique(c(cfg$user_id, bots[nzchar(bots)]))
+    unique(c(self_id, bots[nzchar(bots)]))
 }
 
 # Cached joined-member list for a room's session. Refetched when the
@@ -1067,7 +1043,7 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
     bots <- unique(c(self_id, bots))
     sender <- msg$sender %||% ""
     if (sender %in% bots) {
-        return(matrix_message_mentions_self(msg, self_id))
+        return(isTRUE(msg$addressed))
     }
     # The sender demonstrably posts in this room, so count them even when
     # the cached member list hasn't caught up or the fetch failed. Unknown
@@ -1083,7 +1059,7 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
         # the usual mention/engagement terms.
         return(length(operators) == 0L || all(humans %in% operators))
     }
-    if (matrix_message_mentions_self(msg, self_id)) {
+    if (isTRUE(msg$addressed)) {
         return(TRUE)
     }
     !is.null(engaged_until) &&
@@ -1622,11 +1598,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     matrix_require_mx()
     cfg <- matrix_load_config()
 
-    # Receive over the transport contract. chat_poll() runs the sync
-    # inside mx.client::mx_with_relogin(), which self-heals an
-    # invalidated access token: re-login with the stored password (same
-    # device_id, so an E2EE identity survives), persist the refreshed
-    # config, and retry the sync once. Other errors propagate as before.
+    # Receive over the transport contract. The adapter self-heals an
+    # invalidated access token: re-login on the same device (so an E2EE
+    # identity survives), persist the refreshed credentials, retry the
+    # sync once. Other errors propagate as before.
     #
     # timeout crosses the boundary in seconds. corteza counts
     # milliseconds; the contract counts seconds and converts back at the
@@ -1638,29 +1613,30 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # field is still there as chat.api's escape hatch for whatever the
     # contract does not model, and corteza no longer needs the hatch.
     #
-    # A chat.api whose Matrix adapter predates the post-sync client and
-    # first_run reports neither, and both are load-bearing here: without
-    # the client there is no config to keep syncing (or saving) against,
-    # and a NULL first_run makes the suppression branch below an error.
-    # Say which dependency is short rather than failing three lines on.
-    if (is.null(res$client) || is.null(res$first_run)) {
-        stop("chat.api::chat_poll() returned no client/first_run. ",
-             "corteza needs a chat.api whose Matrix adapter reports both.",
-             call. = FALSE)
+    # A chat.api whose Matrix adapter predates first_run does not report
+    # it, and a NULL first_run makes the suppression branch below an
+    # error. Say which dependency is short rather than failing three
+    # lines on.
+    if (is.null(res$first_run)) {
+        stop("chat.api::chat_poll() returned no first_run. corteza needs a ",
+             "chat.api whose Matrix adapter reports it.", call. = FALSE)
     }
     first_run <- res$first_run
-    # The post-sync config: a relogin can have swapped the token
-    # mid-poll, and every mx.api call below runs off this cfg. The
-    # advanced cursor is already on disk -- mx.client wrote it inside
-    # the sync call, which is what makes a crash-restart resume past
-    # whatever it crashed on. See matrix_chat_client().
-    cfg <- matrix_plain_cfg(res$client)
-    # Derived at each use, never cached. The token rotates mid-loop --
-    # chat_poll() relogins, and so does a /model or /clear rename -- and
-    # anything built once from cfg silently keeps the rejected one.
-    # mx_client_session() is pure field validation, so this is free.
-    sess_now <- function() matrix_mx_session(cfg)
-    chat_now <- function() matrix_chat_client(cfg)
+    # `chat` is the one client for this poll, and it stays current on its
+    # own: a relogin inside chat_poll() or chat_set_identity() leaves the
+    # refreshed credentials on it. corteza used to take the post-sync
+    # config out of chat_poll()$client and rebuild a client per use,
+    # because it had two ways of rotating a token and only the file they
+    # shared kept them in step.
+    #
+    # cfg stays as the policy snapshot it always was -- bots, operators,
+    # model defaults. Those do not rotate. It is reassigned only by the
+    # rename path, which re-reads it from disk.
+    chat_now <- function() chat
+    # Who this bot is, asked of the adapter rather than read out of the
+    # config. cfg$user_id is a Matrix field name, and every use of it
+    # here is a comparison the transport is better placed to make.
+    self_id <- chat.api::chat_whoami(chat)$id
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
@@ -1680,7 +1656,13 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # used to re-extract from the raw sync and then run its own decrypt
     # beside it, which meant two paths producing the same records and only
     # one of them knowing whether a message had been encrypted.
-    msgs <- lapply(res$messages, matrix_msg_record)
+    #
+    # "Were we addressed" is asked of the adapter here, once per message,
+    # while the contract's own chat_message is still in hand. Below this
+    # line there are only corteza records, and the answer travels on them.
+    msgs <- lapply(res$messages, function(m) {
+        matrix_msg_record(m, addressed = chat.api::chat_addressed(chat, m))
+    })
     if (!length(msgs)) {
         return(invisible(0L))
     }
@@ -1692,7 +1674,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     }
 
     replied <- 0L
-    bots <- matrix_known_bots(cfg)
+    bots <- matrix_known_bots(cfg, self_id)
     for (m in msgs) {
         session <- matrix_get_or_create_session(sessions, m$room_id, cfg,
             system = system, model = model, provider = provider,
@@ -1729,11 +1711,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         # Read receipt runs even when we don't reply: the bot has still
         # "seen" the message, and clients use receipts for the
-        # latest-read marker.
-        tryCatch(
-                 mx.api::mx_read_receipt(sess_now(), m$room_id, m$event_id),
-                 error = function(e) NULL
-        )
+        # latest-read marker. chat_mark_read() answers FALSE rather than
+        # raising, so there is no tryCatch to write here.
+        chat.api::chat_mark_read(chat, m$room_id, m$event_id)
         # Rooms with one human: respond freely. More humans: require a
         # mention (replies count) or an open engagement window. Messages
         # from known bot accounts always require a mention.
@@ -1743,7 +1723,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # A message that mentions others but not us is the sender turning
         # away from the bot; close their window.
         if (nzchar(sender) && length(m$mentions) &&
-            !(cfg$user_id %in% unlist(m$mentions))) {
+            !(self_id %in% unlist(m$mentions))) {
             engaged[[sender]] <- NULL
             session$engaged <- engaged
         }
@@ -1763,7 +1743,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
         matrix_transcript_add(session, m$event_id, "user", ingest_body)
-        if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
+        if (!matrix_should_respond(m, self_id, members, bots = bots,
                                    engaged_until = engaged_until,
                                    now = now,
                                    operators = matrix_operators(cfg))) {
@@ -1795,7 +1775,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                matrix_reply_send(cfg, m$room_id, ack),
+                                matrix_reply_send(chat, m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1812,10 +1792,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(model_cmd)) {
             ack <- matrix_apply_model_command(session, model_cmd, cfg = cfg)
             if (!isTRUE(model_cmd$query_only)) {
-                cfg <- matrix_update_displayname(cfg, session)
+                cfg <- matrix_update_displayname(cfg, session, chat = chat)
             }
             sent_id <- tryCatch(
-                                matrix_reply_send(cfg, m$room_id, ack),
+                                matrix_reply_send(chat, m$room_id, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1840,11 +1820,11 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             }
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
-            cfg <- matrix_update_displayname(cfg, model = model,
+            cfg <- matrix_update_displayname(cfg, model = model, chat = chat,
                 provider = provider)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
-                                matrix_reply_send(cfg, m$room_id, ack),
+                                matrix_reply_send(chat, m$room_id, ack),
                                 error = function(e) NULL
             )
             matrix_reset_session(sessions, m$room_id, cfg, sent_id, ack,
@@ -1875,7 +1855,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            matrix_reply_send(cfg, m$room_id, reply, markdown = TRUE),
+                            matrix_reply_send(chat, m$room_id, reply, markdown = TRUE),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
@@ -1926,22 +1906,30 @@ matrix_remember_event <- function(seen, event_id, cap = 256L) {
 # history shape that turn() consumes on the next live message.
 #
 # @return Integer count of rooms backfilled, invisibly.
-matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
+matrix_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                                      model = NULL, provider = NULL,
                                      tools_filter = NULL, limit = 30L) {
-    rooms <- tryCatch(mx.api::mx_rooms(mx_sess),
+    rooms <- tryCatch(chat.api::chat_channels(chat),
                       error = function(e) character())
+    self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
+                        error = function(e) NA_character_)
     n <- 0L
     for (rid in rooms) {
-        msgs <- tryCatch(
-                         mx.api::mx_messages(mx_sess, rid, dir = "b",
-                limit = as.integer(limit)),
-                         error = function(e) NULL
-        )
-        if (is.null(msgs) || !length(msgs$chunk)) {
+        # Already chronological. chat_history() flips the platform's
+        # newest-first paging inside the adapter, which is where the
+        # direction was asked for -- this loop used to rev() the chunk
+        # itself and every other consumer had to remember to.
+        #
+        # One page, and its $cursor goes unread on purpose. Backfill
+        # wants the tail of the conversation, not the room's whole
+        # history: `limit` is the window, and paging further back would
+        # grow a restart's context without bound.
+        msgs <- tryCatch(chat.api::chat_history(chat, rid,
+                limit = as.integer(limit))$messages,
+                         error = function(e) NULL)
+        if (is.null(msgs) || !length(msgs)) {
             next
         }
-        chunk <- rev(msgs$chunk) # API returns newest-first; flip
         session <- matrix_get_or_create_session(
             sessions, rid, cfg,
             system = system, model = model,
@@ -1951,25 +1939,25 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
         # rooms, and label known bot senders even in one-human rooms.
         # Membership is not fetched during backfill, so multi-human is
         # inferred from the distinct human senders in this window.
-        room_bots <- matrix_known_bots(cfg)
+        room_bots <- matrix_known_bots(cfg, self_id)
         human_senders <- setdiff(
-                                 unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
+                                 unique(vapply(msgs, function(m) m$sender %||% "", character(1))),
                                  c(room_bots, "")
         )
         multi_human <- length(human_senders) > 1L
         added <- 0L
-        for (ev in chunk) {
-            if (!isTRUE(ev$type == "m.room.message")) {
+        for (m in msgs) {
+            # Only ordinary messages carry a turn. chat_history() has
+            # already dropped the msgtypes the contract has no word for,
+            # so this is the notice/emote filter and nothing else.
+            if (!identical(m$kind, "message")) {
                 next
             }
-            if (!isTRUE(ev$content$msgtype == "m.text")) {
-                next
-            }
-            body <- ev$content$body
+            body <- m$body
             if (is.null(body) || !nzchar(body)) {
                 next
             }
-            is_self <- isTRUE(ev$sender == cfg$user_id)
+            is_self <- isTRUE(m$self)
             if (is_self) {
                 role <- "assistant"
             } else {
@@ -1978,16 +1966,16 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
             content <- if (is_self) {
                 body
             } else {
-                matrix_ingest_body(ev$sender, body,
-                                   multi_human || ev$sender %in% room_bots)
+                matrix_ingest_body(m$sender, body,
+                                   multi_human || m$sender %in% room_bots)
             }
             session$history <- c(
                                  session$history %||% list(),
                                  list(list(role = role, content = content))
             )
-            matrix_transcript_add(session, ev$event_id, role, content)
+            matrix_transcript_add(session, m$id, role, content)
             session$seen_event_ids <- matrix_remember_event(
-                session$seen_event_ids, ev$event_id
+                session$seen_event_ids, m$id
             )
             added <- added + 1L
         }
@@ -2055,31 +2043,29 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
                             tools_filter = NULL) {
     matrix_require_mx()
     sessions <- matrix_new_session_registry()
-    mx_sess <- NULL
+    chat <- NULL
 
     # Catch up on pending invites that predate the saved sync token.
-    # Conduit (and some other Matrix servers) only surfaces invites
-    # that arrived after the `since` token, so if the bot was offline
-    # when an invite was issued, the long-poll loop will never see it.
-    # A full (no-since) sync on startup grabs current invite state.
+    # Conduit (and some other Matrix servers) only surfaces invites that
+    # arrived after the `since` token, so if the bot was offline when an
+    # invite was issued the long-poll loop will never see it.
     cfg <- tryCatch(matrix_load_config(), error = function(e) NULL)
     if (!is.null(cfg)) {
-        mx_sess <- tryCatch(matrix_mx_session(cfg), error = function(e) NULL)
-        if (!is.null(mx_sess)) {
-            initial <- tryCatch(mx.api::mx_sync(mx_sess, timeout = 0L),
-                                error = function(e) NULL)
-            # Still off a raw sync: this is the startup catch-up, which
-            # needs a full no-since sync to see invites issued while the
-            # bot was down, and chat_poll() only ever resumes from a
-            # cursor. It goes through the same gate as the poll loop, so
-            # the operator policy is written once.
-            invites <- matrix_allowed_invites(
-                lapply(mx.client::mx_extract_invite_records(initial,
-                        cfg$user_id),
-                       function(r) list(channel = r$room_id, inviter = r$inviter)),
-                matrix_operators(cfg))
+        chat <- tryCatch(matrix_chat_client(cfg), error = function(e) NULL)
+        if (!is.null(chat)) {
+            # chat_pending(), not a raw no-since sync. An invitation is
+            # standing state rather than an event at a moment, and this
+            # is the verb for reading state -- it does not touch the
+            # cursor, so asking cannot cost this process the replay
+            # position it just loaded.
+            #
+            # Same gate as the poll loop, so the operator policy is
+            # written once.
+            pending <- tryCatch(chat.api::chat_pending(chat)$invites,
+                                error = function(e) list())
+            invites <- matrix_allowed_invites(pending, matrix_operators(cfg))
             if (length(invites)) {
-                matrix_accept_invites(matrix_chat_client(cfg), invites)
+                matrix_accept_invites(chat, invites)
             }
             # Backfill: in-memory session history is process-local and dies
             # on restart, so a fresh process loses every prior reply and
@@ -2087,7 +2073,7 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
             # the last ~30 messages per joined room and replay them into
             # the session registry so context survives crashes / deploys.
             n_rooms <- tryCatch(
-                                matrix_backfill_sessions(mx_sess, sessions, cfg,
+                                matrix_backfill_sessions(chat, sessions, cfg,
                     system = system, model = model,
                     provider = provider,
                     tools_filter = tools_filter),
@@ -2102,20 +2088,21 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
             }
             # Fresh process, fresh sessions on whatever this run was
             # given: clear any badge rename left over from a previous run.
+            #
+            # That rename can relogin. Nothing needs rebuilding for it
+            # any more: chat_set_identity() puts the refreshed
+            # credentials back on `chat`, which is the same object the
+            # rest of this run uses. It used to invalidate a separately
+            # built mx session, and forgetting to rebuild that one cost
+            # the run its archive-flush room names.
             cfg <- matrix_update_displayname(cfg, model = model,
-                provider = provider)
-            # That rename can relogin, which invalidates the session
-            # built above. Rebuild it, or the archive-flush room-name
-            # lookups spend the whole run on the rejected token and
-            # quietly lose that metadata.
-            mx_sess <- tryCatch(matrix_mx_session(cfg),
-                                error = function(e) mx_sess)
+                provider = provider, chat = chat)
         }
     }
 
     flush_signal <- file.path(matrix_signal_dir(), "archive.signal")
 
-    list(sessions = sessions, mx_sess = mx_sess,
+    list(sessions = sessions, chat = chat,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
                      provider = provider, tools_filter = tools_filter))
