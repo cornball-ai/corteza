@@ -1250,3 +1250,47 @@ local({
     # this a mention of @bot and the wrong bot answered.
     expect_false(seen[[4L]]$addressed)
 })
+
+# self_id comes from chat_whoami(), and it is load-bearing beyond the
+# mention gate: it is the bot's own entry in the known-bots list, which
+# is what stops the bot from counting itself as one of the room's humans.
+# Get it wrong and a two-member room reads as two humans, so every
+# incoming message is ingested with a "[sender]" attribution prefix it
+# should not have -- and the model's context quietly changes shape.
+local({
+    cfg <- base_cfg(sync_token = "s1")
+    # Operators keeps the lone human from being answered outright, so
+    # this exercises the ingest path without reaching a model.
+    cfg$operators <- "@troy:example"
+    iso <- isolate_config(cfg)
+    on.exit(restore_config(iso), add = TRUE)
+
+    sessions <- seeded_sessions("!room:example")
+    session <- get("!room:example", envir = sessions)
+    # Seeded so the loop does not fetch: the member list is the input
+    # under test, not the thing being tested.
+    session$members <- c("@bot:example", "@ann:example")
+    session$members_at <- Sys.time()
+
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            client$sync_token <- "s2"
+            sync_saved(client, save)
+            list(sync = sync_with_message(), client = client,
+                 first_run = FALSE)
+        },
+        .extract = function(sync_resp, self_id, ...) {
+            list(list(event_id = "$h1:example", room_id = "!room:example",
+                      sender = "@ann:example", body = "just chatting",
+                      msgtype = "m.text", is_self = FALSE))
+        })
+
+    replied <- with_seamed_client(
+        seams, corteza::matrix_poll(timeout = 0L, sessions = sessions))
+    expect_equal(replied, 0L)
+    expect_identical(length(session$transcript), 1L)
+    # Unprefixed: one human in the room, so there is nobody to
+    # distinguish them from. A self_id that did not match the bot's own
+    # account would make this "[@ann:example] just chatting".
+    expect_identical(session$transcript[[1L]]$content, "just chatting")
+})
