@@ -130,20 +130,19 @@ local({
   expect_null(corteza:::matrix_msg_record(m)$sender_verified)
 })
 
-# matrix_extract_invites returns the room IDs pending acceptance.
+# matrix_allowed_invites gates chat.api invite records. The room ids come
+# from the record now; walking invite_state for the sender was corteza
+# holding Matrix sync-shape knowledge two packages from the sync.
 local({
-  sync <- list(rooms = list(invite = list(
-    `!newroom:ex` = list(invite_state = list()),
-    `!another:ex` = list(invite_state = list())
-  )))
-  invites <- corteza:::matrix_extract_invites(sync)
-  expect_equal(sort(invites), c("!another:ex", "!newroom:ex"))
-
-  # No pending invites -> character(0)
-  expect_equal(
-    corteza:::matrix_extract_invites(list(rooms = list(join = list()))),
-    character()
-  )
+  inv <- function(channel, inviter = NA_character_) {
+    list(channel = channel, inviter = inviter)
+  }
+  invites <- list(inv("!newroom:ex"), inv("!another:ex"))
+  # No operators configured: everything is accepted, as before.
+  expect_equal(corteza:::matrix_allowed_invites(invites),
+               c("!newroom:ex", "!another:ex"))
+  # Nothing pending -> character(0), not NULL.
+  expect_equal(corteza:::matrix_allowed_invites(list()), character())
 })
 
 # The session registry hands out the same session for the same room.
@@ -849,28 +848,41 @@ local({
 })
 
 local({
-    invite_ev <- function(sender) {
-        list(invite_state = list(events = list(
-            list(type = "m.room.member", state_key = "@bot:ex",
-                 sender = sender, content = list(membership = "invite")))))
-    }
-    sync <- list(rooms = list(invite = list(
-        "!ok:ex" = invite_ev("@troy:ex"),
-        "!bad:ex" = invite_ev("@jorge:ex"),
-        "!blank:ex" = list(invite_state = list(events = list())))))
+    inv <- function(channel, inviter) list(channel = channel,
+                                           inviter = inviter)
+    invites <- list(inv("!ok:ex", "@troy:ex"),
+                    inv("!bad:ex", "@jorge:ex"),
+                    # The homeserver sent no membership event we could
+                    # read, so who invited us is unknown.
+                    inv("!blank:ex", NA_character_))
 
     # No operators configured: every invite is accepted, as before.
-    expect_equal(corteza:::matrix_extract_invites(sync, "@bot:ex"),
+    expect_equal(corteza:::matrix_allowed_invites(invites),
                  c("!ok:ex", "!bad:ex", "!blank:ex"))
 
-    # Configured: only the operator's invite survives, and an invite
-    # with no determinable inviter is refused rather than guessed at.
+    # Configured: only the operator's invite survives, and one whose
+    # sender could not be determined is refused rather than guessed at.
     got <- suppressMessages(
-        corteza:::matrix_extract_invites(sync, "@bot:ex", "@troy:ex"))
+        corteza:::matrix_allowed_invites(invites, "@troy:ex"))
     expect_equal(got, "!ok:ex")
 
-    expect_identical(corteza:::matrix_invite_inviters(sync, "@bot:ex")[["!bad:ex"]],
-                     "@jorge:ex")
+    # The two refusals are reported differently. Both decline, but a
+    # sender we do not trust and a question the homeserver did not
+    # answer are not the same event to whoever reads the log.
+    msgs <- capture.output(
+        corteza:::matrix_allowed_invites(invites, "@troy:ex"),
+        type = "message")
+    expect_true(any(grepl("!bad:ex from @jorge:ex", msgs)))
+    expect_true(any(grepl("!blank:ex from an unknown sender", msgs)))
+
+    # An operator list that matches nobody accepts nothing.
+    expect_equal(suppressMessages(
+        corteza:::matrix_allowed_invites(invites, "@nobody:ex")), character())
+
+    # A NULL inviter is treated as unknown, not as a match.
+    expect_equal(suppressMessages(corteza:::matrix_allowed_invites(
+        list(list(channel = "!x:ex", inviter = NULL)), "@troy:ex")),
+        character())
 })
 
 # The Matrix-visible transcript is an explicit ledger, not a projection

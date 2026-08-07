@@ -42,10 +42,12 @@
 #   0.0.1.13 chat_channel_info() and chat_members() exist, which replace
 #            this file's direct mx_room_name, mx_room_topic and
 #            mx_room_members calls.
+#   0.0.1.14 chat_poll()$invites and chat_join() exist, which is what
+#            finally makes res$raw unread here.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.13"
+.CHAT_API_MIN <- "0.0.1.14"
 
 # Minimum mx.client:
 #
@@ -61,7 +63,9 @@
 #            loop sends goes through it.
 #   0.2.0.3  mx_extract_reactions() exists, which is what chat.api reads
 #            to fill chat_poll()$reactions.
-.MX_CLIENT_MIN <- "0.2.0.3"
+#   0.2.0.4  mx_extract_invite_records() exists, which carries the
+#            sender chat.api puts on a chat_invite().
+.MX_CLIENT_MIN <- "0.2.0.4"
 
 # chat_api_version / mx_client_version are injectable so the floors can
 # be tested without a stale package on disk. Leave NULL in production.
@@ -1094,46 +1098,39 @@ matrix_operators <- function(cfg) {
     ops[!is.na(ops) & nzchar(ops)]
 }
 
-# Who invited the bot to each pending-invite room, read from the
-# stripped invite_state the server sends alongside the invite. Named by
-# room id; NA when no matching membership event is present.
-matrix_invite_inviters <- function(sync_resp, self_id) {
-    invited <- sync_resp$rooms$invite
-    out <- character()
-    for (rid in names(invited)) {
-        who <- NA_character_
-        for (ev in invited[[rid]]$invite_state$events) {
-            if (isTRUE(ev$type == "m.room.member") &&
-                isTRUE(ev$state_key == self_id) &&
-                isTRUE(ev$content$membership == "invite")) {
-                who <- ev$sender %||% NA_character_
-                break
-            }
-        }
-        out[[rid]] <- who
-    }
-    out
-}
-
-# Pending invites from a sync response: character vector of room_ids
-# the bot has been invited to but not yet joined.
+# Which pending invites to accept, from chat.api's invite records.
 #
 # With operators configured, an invite is only accepted when an operator
 # issued it. Auto-joining anyone's invite hands a stranger a session
 # with a tool-using agent, and refusing at the door is cheaper than
-# staying silent once inside. An invite whose inviter cannot be
-# determined is refused rather than guessed at.
-matrix_extract_invites <- function(sync_resp, self_id = NULL,
-                                   operators = character()) {
-    rooms <- mx.client::mx_extract_invites(sync_resp)
-    if (!length(rooms) || !length(operators)) {
+# staying silent once inside.
+#
+# An invite whose sender cannot be determined is refused too, and
+# reported differently. chat_invite() carries NA for that, which is not
+# the same as a sender who is simply not on the list: one is someone we
+# do not trust, the other is a question the homeserver did not answer.
+# Both refuse; only the second is worth reading twice.
+#
+# Reading the sender used to mean walking the stripped invite_state
+# here, which put Matrix sync-shape knowledge two packages away from the
+# sync. mx.client owns that now and the record carries it.
+matrix_allowed_invites <- function(invites, operators = character()) {
+    if (!length(invites)) {
+        return(character())
+    }
+    rooms <- vapply(invites, function(i) as.character(i$channel), character(1))
+    if (!length(operators)) {
         return(rooms)
     }
-    inviters <- matrix_invite_inviters(sync_resp, self_id)[rooms]
-    keep <- !is.na(inviters) & inviters %in% operators
-    for (rid in rooms[!keep]) {
+    who <- vapply(invites, function(i) {
+        v <- i$inviter
+        if (is.null(v) || !length(v)) NA_character_ else as.character(v)[[1L]]
+    }, character(1))
+    keep <- !is.na(who) & who %in% operators
+    for (i in which(!keep)) {
         message(sprintf("matrix: refusing invite to %s from %s (not an operator)",
-                        rid, inviters[[rid]] %||% "unknown"))
+                        rooms[[i]],
+                if (is.na(who[[i]])) "an unknown sender" else who[[i]]))
     }
     rooms[keep]
 }
@@ -1564,12 +1561,28 @@ matrix_get_or_create_session <- function(registry, room_id, cfg,
     s
 }
 
-# Auto-join any rooms the bot has been invited to. Best-effort: mx.client
-# logs failures to stderr without aborting the poll.
-matrix_accept_invites <- function(cfg, invites) {
-    joined <- mx.client::mx_accept_invites(cfg, invites)
-    for (rid in joined) {
-        message(sprintf("matrix: joined %s", rid))
+# Auto-join any rooms the bot has been invited to.
+#
+# Best-effort per room: one room the bot cannot join -- a server that
+# has since revoked the invite, a room it was kicked from between the
+# sync and the join -- must not abort the poll and take the other
+# invites with it. chat_join() raises so that each failure is visible;
+# swallowing them one at a time here is what keeps the loop going.
+matrix_accept_invites <- function(chat, invites) {
+    joined <- character()
+    for (rid in invites) {
+        ok <- tryCatch({
+            chat.api::chat_join(chat, rid)
+            TRUE
+        }, error = function(e) {
+            message(sprintf("matrix: failed to join %s: %s", rid,
+                            conditionMessage(e)))
+            FALSE
+        })
+        if (ok) {
+            joined <- c(joined, rid)
+            message(sprintf("matrix: joined %s", rid))
+        }
     }
     invisible(joined)
 }
@@ -1620,11 +1633,11 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # mx.api edge.
     chat <- matrix_chat_client(cfg)
     res <- chat.api::chat_poll(chat, timeout = timeout / 1000)
-    # raw is the untouched sync response, still read here for invites and
-    # reactions -- things the generic contract does not model yet.
-    # m.room.encrypted is no longer one of them: the adapter decrypts and
-    # hands the results back in res$messages like any other traffic.
-    sync <- res$raw
+    # res$raw goes unread. Everything this loop needs now arrives as a
+    # record: messages, decrypted messages, reactions, invitations. The
+    # field is still there as chat.api's escape hatch for whatever the
+    # contract does not model, and corteza no longer needs the hatch.
+    #
     # A chat.api whose Matrix adapter predates the post-sync client and
     # first_run reports neither, and both are load-bearing here: without
     # the client there is no config to keep syncing (or saving) against,
@@ -1653,9 +1666,9 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # matching JOIN state is in place before any replies go out. Invites
     # in this sync won't yet appear in rooms$join; the next sync will
     # pick up their timeline.
-    invites <- matrix_extract_invites(sync, cfg$user_id, matrix_operators(cfg))
+    invites <- matrix_allowed_invites(res$invites, matrix_operators(cfg))
     if (length(invites)) {
-        matrix_accept_invites(cfg, invites)
+        matrix_accept_invites(chat_now(), invites)
     }
 
     if (first_run) {
@@ -2055,10 +2068,18 @@ matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(mx_sess)) {
             initial <- tryCatch(mx.api::mx_sync(mx_sess, timeout = 0L),
                                 error = function(e) NULL)
-            invites <- matrix_extract_invites(initial, cfg$user_id,
+            # Still off a raw sync: this is the startup catch-up, which
+            # needs a full no-since sync to see invites issued while the
+            # bot was down, and chat_poll() only ever resumes from a
+            # cursor. It goes through the same gate as the poll loop, so
+            # the operator policy is written once.
+            invites <- matrix_allowed_invites(
+                lapply(mx.client::mx_extract_invite_records(initial,
+                        cfg$user_id),
+                       function(r) list(channel = r$room_id, inviter = r$inviter)),
                 matrix_operators(cfg))
             if (length(invites)) {
-                matrix_accept_invites(cfg, invites)
+                matrix_accept_invites(matrix_chat_client(cfg), invites)
             }
             # Backfill: in-memory session history is process-local and dies
             # on restart, so a fresh process loses every prior reply and
