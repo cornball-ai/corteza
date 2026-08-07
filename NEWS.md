@@ -1,3 +1,48 @@
+# corteza 0.7.1.19
+
+- **`matrix_*` is now `bot_*`, and `R/matrix.R` is `R/bot.R`.** corteza
+  reaches every transport through the `chat.api` contract and makes no
+  `mx.api` or `mx.client` call of its own, so the prefix named a coupling
+  that no longer exists. Of the 74 functions renamed, roughly 20 were ever
+  transport; the rest are agent behaviour that had been wearing a Matrix
+  prefix since the day it was written.
+
+  The eight exported names stay as wrappers that warn and forward:
+  `matrix_configure`, `matrix_send`, `matrix_poll`, `matrix_run`,
+  `matrix_run_init`, `matrix_run_step`, `matrix_archive_all`,
+  `matrix_request_flush`. Nothing about behaviour differs. They are
+  scheduled for removal at 1.0.0.
+
+- **Message records use the contract's field names**: `room_id` is
+  `channel`, `event_id` is `id`, matching `chat.api::chat_message()`.
+  `cfg$room_id` is unchanged -- it is a key in a JSON file on disk, and
+  renaming it would be a config migration rather than a rename.
+
+# corteza 0.7.1.18
+
+- **The last `mx.*` calls are gone.** Credentials and current-state reads
+  go through `chat.api`: `chat_matrix_config()`, `chat_config_save()`,
+  `chat_matrix_configure()` and `chat_set_identity()` for the credential
+  lifecycle, `chat_channels()`, `chat_history()`, `chat_pending()` and
+  `chat_mark_read()` for the state the poll cursor cannot answer.
+
+  The startup invite catch-up was the last raw sync, and it was raw
+  precisely because an invitation is standing state that a cursor cannot
+  deliver. `chat_pending()` is the verb for it.
+
+  `mx.api` leaves Suggests, and `matrix_require_mx()` checks `chat.api`
+  alone: repeating a downstream package's own requirements is asserting
+  facts only that package can keep true. `mx.client` stays in Suggests
+  because the integration tests stub it to drive a real relogin through
+  the whole stack.
+
+- **`chat_poll()` no longer returns `$client`.** corteza used to take the
+  post-sync config out of it and rebuild a client per send, because a
+  `/model` rename could rotate the access token and the config file the
+  two shared was the only thing keeping them in step.
+  `chat_set_identity()` leaves the rotation on the client that performed
+  it, so there is one client for the poll and every send after it.
+
 # corteza 0.7.1.15
 
 - **Invitations ride the transport contract, and `res$raw` goes unread.**
