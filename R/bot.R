@@ -417,8 +417,8 @@ bot_room_name <- function(chat, room_id) {
 # this file used to reimplement by splitting a Matrix user id on its
 # colon.
 bot_msg_record <- function(m, addressed = FALSE) {
-    list(room_id = m$channel, event_id = m$id, sender = m$sender,
-         body = m$body, is_self = isTRUE(m$self), mentions = m$mentions,
+    list(channel = m$channel, id = m$id, sender = m$sender, body = m$body,
+         is_self = isTRUE(m$self), mentions = m$mentions,
          encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
          addressed = isTRUE(addressed))
 }
@@ -1672,7 +1672,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     replied <- 0L
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
-        session <- bot_get_or_create_session(sessions, m$room_id, cfg,
+        session <- bot_get_or_create_session(sessions, m$channel, cfg,
             system = system, model = model, provider = provider,
             tools_filter = tools_filter)
 
@@ -1681,14 +1681,14 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # sibling process like cornelius's briefing (append as assistant
         # turn so the next user message has the right context).
         if (isTRUE(m$is_self)) {
-            if (!(m$event_id %in% session$seen_event_ids)) {
+            if (!(m$id %in% session$seen_event_ids)) {
                 session$history <- c(
                                      session$history %||% list(),
                                      list(list(role = "assistant", content = m$body))
                 )
-                bot_transcript_add(session, m$event_id, "assistant", m$body)
+                bot_transcript_add(session, m$id, "assistant", m$body)
                 session$seen_event_ids <- bot_remember_event(
-                    session$seen_event_ids, m$event_id
+                    session$seen_event_ids, m$id
                 )
             }
             next
@@ -1696,20 +1696,20 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         # Already in history (typically from startup backfill that also
         # caught this event). Skip — replying again would duplicate work.
-        if (m$event_id %in% session$seen_event_ids) {
+        if (m$id %in% session$seen_event_ids) {
             next
         }
         # Mark before any side-effect path runs so a future backfill or
         # re-delivery that catches the same event short-circuits cleanly.
         session$seen_event_ids <- bot_remember_event(
-            session$seen_event_ids, m$event_id
+            session$seen_event_ids, m$id
         )
 
         # Read receipt runs even when we don't reply: the bot has still
         # "seen" the message, and clients use receipts for the
         # latest-read marker. chat_mark_read() answers FALSE rather than
         # raising, so there is no tryCatch to write here.
-        chat.api::chat_mark_read(chat, m$room_id, m$event_id)
+        chat.api::chat_mark_read(chat, m$channel, m$id)
         # Rooms with one human: respond freely. More humans: require a
         # mention (replies count) or an open engagement window. Messages
         # from known bot accounts always require a mention.
@@ -1728,7 +1728,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         } else {
             engaged_until <- NULL
         }
-        members <- bot_room_members_cached(session, m$room_id,
+        members <- bot_room_members_cached(session, m$channel,
             sender = m$sender,
             chat = chat_now(), now = now)
         # Attribute turns when multiple people or another bot could be
@@ -1738,7 +1738,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
-        bot_transcript_add(session, m$event_id, "user", ingest_body)
+        bot_transcript_add(session, m$id, "user", ingest_body)
         if (!bot_should_respond(m, self_id, members, bots = bots,
                                 engaged_until = engaged_until,
                                 now = now,
@@ -1771,7 +1771,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$room_id, ack),
+                                bot_reply_send(chat, m$channel, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1791,7 +1791,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 cfg <- bot_update_displayname(cfg, session, chat = chat)
             }
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$room_id, ack),
+                                bot_reply_send(chat, m$channel, ack),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1808,11 +1808,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
             tryCatch(
-                     bot_archive_session(session, m$room_id, chat_now()),
+                     bot_archive_session(session, m$channel, chat_now()),
                      error = function(e) NULL
             )
-            if (exists(m$room_id, envir = sessions, inherits = FALSE)) {
-                rm(list = m$room_id, envir = sessions)
+            if (exists(m$channel, envir = sessions, inherits = FALSE)) {
+                rm(list = m$channel, envir = sessions)
             }
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
@@ -1820,10 +1820,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 provider = provider)
             ack <- "Cleared. Starting a fresh session."
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$room_id, ack),
+                                bot_reply_send(chat, m$channel, ack),
                                 error = function(e) NULL
             )
-            bot_reset_session(sessions, m$room_id, cfg, sent_id, ack,
+            bot_reset_session(sessions, m$channel, cfg, sent_id, ack,
                               system = system, model = model,
                               provider = provider,
                               tools_filter = tools_filter)
@@ -1838,9 +1838,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # never block the reply. 120s cap (seconds here, not the
         # milliseconds mx.api takes); Matrix clears it when the reply
         # event arrives.
-        chat.api::chat_typing(chat_now(), m$room_id, TRUE, timeout = 120)
+        chat.api::chat_typing(chat_now(), m$channel, TRUE, timeout = 120)
         reply <- bot_run_turn_in_cwd(ingest_body, session)
-        chat.api::chat_typing(chat_now(), m$room_id, FALSE)
+        chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
         }
@@ -1851,7 +1851,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            bot_reply_send(chat, m$room_id, reply, markdown = TRUE),
+                            bot_reply_send(chat, m$channel, reply, markdown = TRUE),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {

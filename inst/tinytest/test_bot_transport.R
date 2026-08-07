@@ -615,10 +615,10 @@ local({
     expect_identical(cs$log$decrypts, 1L)
     # Both the cleartext and the decrypted message arrived, in that order.
     expect_identical(length(seen), 2L)
-    expect_identical(seen[[1L]]$event_id, "$ev1:example")
+    expect_identical(seen[[1L]]$id, "$ev1:example")
     expect_false(seen[[1L]]$encrypted)
-    expect_identical(seen[[2L]]$event_id, "$enc1:example")
-    expect_identical(seen[[2L]]$room_id, "!secret:example")
+    expect_identical(seen[[2L]]$id, "$enc1:example")
+    expect_identical(seen[[2L]]$channel, "!secret:example")
     expect_identical(seen[[2L]]$body, "shh")
     expect_true(seen[[2L]]$encrypted)
     expect_true(seen[[2L]]$sender_verified)
@@ -822,9 +822,9 @@ local({
     # call across elements and quietly turn a grep into a false pass.
     src <- paste(deparse(body(corteza::bot_poll), width.cutoff = 500L),
                  collapse = "\n")
-    expect_true(grepl("chat_typing(chat_now(), m$room_id, TRUE, timeout = 120)", src,
+    expect_true(grepl("chat_typing(chat_now(), m$channel, TRUE, timeout = 120)", src,
                       fixed = TRUE))
-    expect_true(grepl("chat_typing(chat_now(), m$room_id, FALSE)", src, fixed = TRUE))
+    expect_true(grepl("chat_typing(chat_now(), m$channel, FALSE)", src, fixed = TRUE))
     expect_false(grepl("mx_typing", src, fixed = TRUE))
     # ...and the sync itself is the contract's, not a direct mx.client
     # call. Both invariant-1 and invariant-2 tests above would still pass

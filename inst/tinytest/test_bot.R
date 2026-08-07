@@ -101,8 +101,14 @@ local({
             kind = "message", ts = Sys.time(), encrypted = FALSE,
             sender_verified = NULL)
   r <- corteza:::bot_msg_record(m)
-  expect_equal(r$event_id, "$e1")
-  expect_equal(r$room_id, "!dm:ex")
+  # The contract's field names, not Matrix's. This record used to
+  # rename channel to room_id and id to event_id on the way in, which
+  # meant every line of the loop below read as Matrix-specific whether
+  # or not it was.
+  expect_equal(r$id, "$e1")
+  expect_equal(r$channel, "!dm:ex")
+  expect_false("event_id" %in% names(r))
+  expect_false("room_id" %in% names(r))
   expect_equal(r$sender, "@troy:ex")
   expect_equal(r$body, "hi from dm")
   expect_equal(r$mentions, "@bot:ex")
