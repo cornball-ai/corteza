@@ -1304,3 +1304,129 @@ local({
     # account would make this "[@ann:example] just chatting".
     expect_identical(session$transcript[[1L]]$content, "just chatting")
 })
+
+# ---------------------------------------------------------------
+# Startup backfill. In-memory history is process-local and dies on
+# restart, so this is what a fresh process knows about the conversation
+# it is walking into. It reads chat_channels() and chat_history() now --
+# the last two direct mx.api calls in this package.
+# ---------------------------------------------------------------
+
+hist_ev <- function(id, body, sender = "@ann:example", msgtype = "m.text",
+                    ts = 1700000000000) {
+    list(type = "m.room.message", event_id = id, sender = sender,
+         origin_server_ts = ts,
+         content = list(msgtype = msgtype, body = body))
+}
+
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) "!room:example",
+        # Newest-first, the way Matrix pages backwards. The adapter is
+        # what flips it, which is the point: this loop used to rev() the
+        # chunk itself.
+        .history = function(session, room_id, ...) {
+            list(chunk = list(
+                hist_ev("$3", "and third", ts = 3000),
+                hist_ev("$2", "second", sender = "@bot:example", ts = 2000),
+                hist_ev("$1", "first", ts = 1000)))
+        })
+
+    sessions <- seeded_sessions("!room:example")
+    n <- corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    expect_equal(n, 1L)
+
+    s <- get("!room:example", envir = sessions)
+    expect_identical(length(s$history), 3L)
+    # Chronological. A reversed transcript reads plausibly enough that
+    # nothing errors and the model just gets the conversation backwards.
+    expect_identical(vapply(s$history, function(h) h$content, character(1)),
+                     c("first", "second", "and third"))
+    # The bot's own traffic comes back as its own turns. Without that a
+    # restart re-reads every reply it ever sent as somebody talking to
+    # it.
+    expect_identical(vapply(s$history, function(h) h$role, character(1)),
+                     c("user", "assistant", "user"))
+    # One human in the window, so no attribution prefix.
+    expect_false(any(grepl("[@ann:example]", 
+                           vapply(s$history, function(h) h$content,
+                                  character(1)), fixed = TRUE)))
+    # Every event is marked seen, so the first live sync after this does
+    # not answer messages the backfill already ingested.
+    expect_true(all(c("$1", "$2", "$3") %in% s$seen_event_ids))
+    expect_identical(length(s$transcript), 3L)
+})
+
+# Two humans in the window: senders are labelled, so the model can tell
+# them apart. Mirrors the live path's attribution rule.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) "!room:example",
+        .history = function(session, room_id, ...) {
+            list(chunk = list(hist_ev("$2", "hi", sender = "@bob:example"),
+                              hist_ev("$1", "hey", sender = "@ann:example")))
+        })
+    sessions <- seeded_sessions("!room:example")
+    corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    s <- get("!room:example", envir = sessions)
+    expect_identical(s$history[[1L]]$content, "[@ann:example] hey")
+    expect_identical(s$history[[2L]]$content, "[@bob:example] hi")
+})
+
+# A notice is not a conversational turn. chat_history() has already
+# dropped the msgtypes the contract has no word for, so this is the
+# notice/emote filter -- and ingesting one would put the bot's own
+# automated output back into the prompt as if a human had said it.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) "!room:example",
+        .history = function(session, room_id, ...) {
+            list(chunk = list(
+                hist_ev("$2", "cat.png", msgtype = "m.image"),
+                hist_ev("$n", "system notice", msgtype = "m.notice"),
+                hist_ev("$1", "real message")))
+        })
+    sessions <- seeded_sessions("!room:example")
+    corteza:::matrix_backfill_sessions(chat, sessions, cfg)
+    s <- get("!room:example", envir = sessions)
+    expect_identical(length(s$history), 1L)
+    expect_identical(s$history[[1L]]$content, "real message")
+    # The image never reached this package: an m.image routed through the
+    # contract's kind vocabulary would arrive as a text message whose
+    # body is a filename.
+    expect_false("$2" %in% s$seen_event_ids)
+})
+
+# An unreachable homeserver backfills nothing rather than failing the
+# whole startup. A bot with no history is still a working bot.
+local({
+    iso <- isolate_config(base_cfg())
+    on.exit(restore_config(iso), add = TRUE)
+    cfg <- corteza:::matrix_load_config()
+    chat <- corteza:::matrix_chat_client(
+        cfg,
+        .sync = function(...) stop("unused"),
+        .extract = function(...) stop("unused"),
+        .channels = function(session) stop("M_UNKNOWN"))
+    expect_equal(corteza:::matrix_backfill_sessions(
+        chat, corteza:::matrix_new_session_registry(), cfg), 0L)
+})
