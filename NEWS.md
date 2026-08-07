@@ -1,3 +1,32 @@
+# corteza 0.7.1.15
+
+- **Invitations ride the transport contract, and `res$raw` goes unread.**
+  The poll loop reads `chat_poll()$invites` and joins with `chat_join()`.
+  That was the last thing it took off the raw sync response, so the
+  migration's stated finish line is reached: every message, decrypted
+  message, reaction and invitation now arrives as a record.
+
+  `matrix_invite_inviters()` is deleted. Reading who sent an invitation
+  meant walking the stripped `invite_state`, which put Matrix sync-shape
+  knowledge two packages away from the sync; `mx.client` owns it now and
+  the record carries it.
+
+  The operator gate is unchanged in behaviour and clearer in reporting: an
+  invitation from someone not on the list and one whose sender the
+  homeserver never named both refuse, and now say which is which.
+
+  One invite that cannot be joined no longer risks the others. `chat_join()`
+  raises so each failure is visible, and `matrix_accept_invites()` catches
+  per room so a revoked invitation cannot take the whole poll with it.
+
+  The startup catch-up still reads a raw sync. It needs a full no-since
+  sync to see invitations issued while the bot was down, and `chat_poll()`
+  only ever resumes from a cursor -- so it stays until the contract grows
+  a verb for that. It goes through the same gate, so the operator policy
+  is written once.
+
+  Requires `chat.api >= 0.0.1.14` and `mx.client >= 0.2.0.4`.
+
 # corteza 0.7.1.14
 
 - **Room metadata rides the transport contract.** `mx_room_name()`,

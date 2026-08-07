@@ -832,11 +832,11 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.13")
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.14")
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
-expect_false(package_version("0.0.1.12") >= package_version(corteza:::.CHAT_API_MIN))
+expect_false(package_version("0.0.1.13") >= package_version(corteza:::.CHAT_API_MIN))
 # The installed build satisfies it, so the guard passes rather than
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
@@ -1092,3 +1092,104 @@ local({
     got <- corteza:::matrix_update_displayname(corteza:::matrix_load_config())
     expect_equal(got$token, "rotated")
 })
+
+# ---------------------------------------------------------------
+# Invitations come from chat_poll(), not from $raw
+# ---------------------------------------------------------------
+
+# The last thing this loop read off the raw sync. With invites arriving
+# as records, res$raw goes unread entirely -- which was the point of the
+# whole migration.
+expect_false(any(grepl("res$raw", deparse(body(corteza::matrix_poll)),
+                       fixed = TRUE)))
+# ... and the sender walk is gone: mx.client owns the invite_state shape.
+expect_false("matrix_invite_inviters" %in% ls(asNamespace("corteza"),
+                                              all.names = TRUE))
+expect_false("matrix_extract_invites" %in% ls(asNamespace("corteza"),
+                                              all.names = TRUE))
+
+if ("chat_invite" %in% getNamespaceExports("chat.api")) {
+    invite_rec <- function(channel, inviter) {
+        chat.api::chat_invite(channel = channel, inviter = inviter)
+    }
+
+    # An operator's invite is joined, through chat_join().
+    local({
+        iso <- isolate_config(base_cfg())
+        on.exit(restore_config(iso), add = TRUE)
+        joined <- character()
+        seams <- list(
+            .sync = function(client, timeout = 0L, save = TRUE, ...) {
+                sync_saved(client, save)
+                client$sync_token <- "s2"
+                list(sync = list(rooms = list(invite = list(
+                         `!new:example` = list(invite_state = list(events = list(
+                             list(type = "m.room.member",
+                                  state_key = "@bot:example",
+                                  sender = "@troy:example",
+                                  content = list(membership = "invite")))))))),
+                     client = client, first_run = FALSE)
+            },
+            .extract = function(...) list(),
+            .join = function(session, room_id) {
+                joined <<- c(joined, room_id)
+                room_id
+            })
+        cfg <- corteza:::matrix_load_config()
+        cfg$operators <- "@troy:example"
+        corteza:::matrix_save_config(cfg)
+        suppressMessages(with_seamed_client(
+            seams, corteza::matrix_poll(timeout = 0L,
+                                        sessions = seeded_sessions(character()))))
+        expect_identical(joined, "!new:example")
+    })
+
+    # A stranger's invite is refused, and nothing is joined.
+    local({
+        iso <- isolate_config(base_cfg())
+        on.exit(restore_config(iso), add = TRUE)
+        joined <- character()
+        seams <- list(
+            .sync = function(client, timeout = 0L, save = TRUE, ...) {
+                sync_saved(client, save)
+                client$sync_token <- "s2"
+                list(sync = list(rooms = list(invite = list(
+                         `!bad:example` = list(invite_state = list(events = list(
+                             list(type = "m.room.member",
+                                  state_key = "@bot:example",
+                                  sender = "@stranger:example",
+                                  content = list(membership = "invite")))))))),
+                     client = client, first_run = FALSE)
+            },
+            .extract = function(...) list(),
+            .join = function(session, room_id) {
+                joined <<- c(joined, room_id)
+                room_id
+            })
+        cfg <- corteza:::matrix_load_config()
+        cfg$operators <- "@troy:example"
+        corteza:::matrix_save_config(cfg)
+        msgs <- capture.output(with_seamed_client(
+            seams, corteza::matrix_poll(timeout = 0L,
+                                        sessions = seeded_sessions(character()))),
+            type = "message")
+        expect_identical(joined, character())
+        expect_true(any(grepl("refusing invite", msgs)))
+    })
+
+    # A join that fails does not take the others with it: one revoked
+    # invite must not stop the loop or the rooms beside it.
+    local({
+        tried <- character()
+        registerS3method("chat_join", "chat_j", function(client, channel, ...) {
+            tried <<- c(tried, channel)
+            if (channel == "!b:ex") stop("M_FORBIDDEN")
+            channel
+        }, envir = asNamespace("chat.api"))
+        joined <- suppressMessages(corteza:::matrix_accept_invites(
+            structure(list(), class = c("chat_j", "chat_client")),
+            c("!a:ex", "!b:ex", "!c:ex")))
+        expect_identical(tried, c("!a:ex", "!b:ex", "!c:ex"))
+        expect_identical(joined, c("!a:ex", "!c:ex"))
+    })
+}
