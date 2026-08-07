@@ -214,3 +214,34 @@ local({
         function() stop("turn blew up")), "turn blew up")
     expect_equal(length(session$on_tool), 0L)
 })
+
+# A frame identical to the last one is skipped, wherever it comes from.
+# The final flush bypasses the interval floor to get the last state out,
+# and on a turn whose final tool call was a while ago that state is
+# already on screen -- without this every turn ends by spending a
+# permanent event re-sending its own text.
+local({
+    calls <- 0L
+    send <- function(...) {
+        calls <<- calls + 1L
+        "$a1"
+    }
+    edit <- function(...) {
+        calls <<- calls + 1L
+        "$a1"
+    }
+    acc <- feed(ev("bash"))
+    expect_true(corteza:::rooms_activity_flush(acc, NULL, "!r:ex",
+                                               send = send, edit = edit))
+    expect_equal(calls, 1L)
+    # Nothing has happened since, so there is nothing to say.
+    expect_false(corteza:::rooms_activity_flush(acc, NULL, "!r:ex",
+                                                send = send, edit = edit))
+    expect_equal(calls, 1L)
+    # One more tool call and there is.
+    obs <- corteza:::rooms_activity_observer(acc)
+    obs(ev("read_file"))
+    expect_true(corteza:::rooms_activity_flush(acc, NULL, "!r:ex",
+                                               send = send, edit = edit))
+    expect_equal(calls, 2L)
+})

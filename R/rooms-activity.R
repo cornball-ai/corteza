@@ -97,10 +97,12 @@ rooms_activity_observer <- function(acc, chat = NULL, channel = NULL) {
 # message was already finalized, and the next turn's first tool call
 # would silently edit the previous turn's trail.
 #
-# The final flush ignores the interval floor. The floor exists to spend
-# the rate-limit budget well during a turn, and the last frame is the
-# one a reader is left looking at -- stopping five seconds short of the
-# truth to save an event is the wrong trade.
+# The final flush goes through rooms_activity_flush() rather than the
+# observer's gate, so it ignores the interval floor: the last frame is
+# the one a reader is left looking at, and stopping five seconds short
+# of the truth to save an event is the wrong trade. It still skips a
+# frame identical to the last, which is the common case on a turn whose
+# final tool call was a while ago.
 rooms_with_activity <- function(session, chat, channel, expr) {
     acc <- rooms_activity_new()
     before <- session$on_tool
@@ -108,7 +110,6 @@ rooms_with_activity <- function(session, chat, channel, expr) {
     on.exit({
         session$on_tool <- before
         if (length(acc$events)) {
-            acc$last_text <- NULL
             rooms_activity_flush(acc, chat, channel)
         }
     }, add = TRUE)
@@ -241,6 +242,14 @@ rooms_activity_flush <- function(acc, chat, channel, now = Sys.time(),
                                  send = NULL, edit = NULL) {
     text <- rooms_activity_text(acc$events)
     if (!nzchar(text)) {
+        return(invisible(FALSE))
+    }
+    # Already said. The observer's gate would have caught this, but the
+    # final flush deliberately bypasses that gate to get the last frame
+    # out -- and on a turn whose last tool call was more than the floor
+    # ago, the last frame is already on screen. Without this, every turn
+    # ends by spending a permanent event re-sending its own text.
+    if (identical(text, acc$last_text)) {
         return(invisible(FALSE))
     }
     html <- rooms_activity_html(acc$events)
