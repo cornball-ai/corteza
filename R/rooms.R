@@ -1,16 +1,22 @@
-# Matrix channel adapter.
+# The agent's life in chat rooms.
 #
-# Exposes the corteza agent over a Matrix room via the mx.api package.
-# The bot long-polls /sync so incoming messages are handled with
-# sub-second latency; no cron or webhook plumbing required.
+# Everything corteza does as a participant rather than as something a
+# human is typing at: the long-poll loop, whether to answer, ingesting
+# what it does not answer, per-room sessions, the transcript ledger,
+# archiving, startup backfill, and the in-room slash commands. R/chat.R
+# is the other surface -- a person at a terminal -- and shares nothing
+# with this but the agent underneath.
 #
-# mx.api is in Suggests since most users won't enable a Matrix channel.
-# The bot_* functions hard-stop with an install hint if it's missing.
+# Transport is chat.api's, entirely. This file names no protocol and
+# calls no transport package: which one a room is on is a fact about the
+# client chat.api hands back, and the only thing here that knows Matrix
+# exists is the config that says so. The bot_* functions hard-stop with
+# an install hint when chat.api is missing.
 #
-# chat.api belongs in the same list, not in Imports. Every chat.api call
-# in this package is on a Matrix path already behind this guard, so a
-# user who never enables the channel should not have to install it --
-# and an Imports entry would make it mandatory for everyone.
+# chat.api is in Suggests, not Imports. Every call to it in this package
+# is behind that guard, so a user who never enables a chat channel
+# should not have to install it -- and an Imports entry would make it
+# mandatory for everyone.
 # Minimum chat.api this corteza can drive, and why each step of it:
 #
 #   0.0.1.1  chat_poll() starts reporting first_run and the post-sync

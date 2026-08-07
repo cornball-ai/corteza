@@ -36,7 +36,7 @@ if (!requireNamespace("chat.api", quietly = TRUE)) {
 # what happened to mx.client on this host -- passes the version gate and
 # fails here. An installed-but-too-old chat.api is a broken install, not
 # an unsupported environment: every bot_poll() on that host dies in
-# the guard at R/bot.R. Report it as the failure it is, then stop --
+# the guard at R/rooms.R. Report it as the failure it is, then stop --
 # continuing would bury the one useful result under a cascade of
 # identical ones.
 adapter_ok <- all(c(".sync", "relogin") %in%

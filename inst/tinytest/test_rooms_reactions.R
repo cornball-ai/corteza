@@ -87,7 +87,7 @@ expect_false("bot_extract_reaction_verdict" %in%
 # --- The approval loop ---
 # Driven through chat.api's seams, so nothing here reaches a homeserver.
 # bot_chat_client() is swapped for one that layers them on, the same
-# way test_bot_transport.R does.
+# way test_rooms_transport.R does.
 
 if (requireNamespace("mx.client", quietly = TRUE)) {
 

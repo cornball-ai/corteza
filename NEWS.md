@@ -1,6 +1,6 @@
 # corteza 0.7.1.19
 
-- **`matrix_*` is now `bot_*`, and `R/matrix.R` is `R/bot.R`.** corteza
+- **`matrix_*` is now `bot_*`, and `R/matrix.R` is `R/rooms.R`.** corteza
   reaches every transport through the `chat.api` contract and makes no
   `mx.api` or `mx.client` call of its own, so the prefix named a coupling
   that no longer exists. Of the 74 functions renamed, roughly 20 were ever
