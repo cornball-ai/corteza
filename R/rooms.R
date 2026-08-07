@@ -1845,7 +1845,18 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # milliseconds mx.api takes); Matrix clears it when the reply
         # event arrives.
         chat.api::chat_typing(chat_now(), m$channel, TRUE, timeout = 120)
-        reply <- bot_run_turn_in_cwd(ingest_body, session)
+        # The activity trail. A terminal shows tool calls as they run;
+        # a room used to show nothing between the typing indicator and
+        # the reply, so a turn that took four minutes was
+        # indistinguishable from one that had hung.
+        #
+        # The observer is registered per turn and removed after, because
+        # a session outlives the turn and a leftover one would keep
+        # writing into an accumulator whose message has already been
+        # finalized.
+        reply <- rooms_with_activity(session, chat, m$channel, function() {
+            bot_run_turn_in_cwd(ingest_body, session)
+        })
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
