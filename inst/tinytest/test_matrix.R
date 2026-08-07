@@ -162,36 +162,25 @@ if (at_home()) local({
   expect_equal(s3$room_id, "!vault:ex")
 })
 
-# Mention detection: explicit m.mentions takes precedence.
+# Mention detection lives in chat.api now: chat_addressed() reads both
+# the declared mentions and the transport's own plain-text form, and
+# matrix_msg_record() carries its answer onto the record as `addressed`.
+# The @localpart splitting this file used to do is gone with it. What is
+# tested here is that the flag reaches the reply gate; whether "@bot"
+# counts as a mention is the adapter's question and is tested there.
 local({
-  msg <- list(body = "hey",
-              mentions = list("@cornelius:cornball.ai"))
-  expect_true(corteza:::matrix_message_mentions_self(
-    msg, "@cornelius:cornball.ai"))
-  expect_false(corteza:::matrix_message_mentions_self(
-    msg, "@other:cornball.ai"))
-})
-
-# Mention detection: fallback to @localpart substring.
-local({
-  expect_true(corteza:::matrix_message_mentions_self(
-    list(body = "hey @cornelius what do you think?"),
-    "@cornelius:cornball.ai"))
-  expect_true(corteza:::matrix_message_mentions_self(
-    list(body = "@CORNELIUS help"),
-    "@cornelius:cornball.ai"))
-  expect_true(corteza:::matrix_message_mentions_self(
-    list(body = "please @cornelius:cornball.ai"),
-    "@cornelius:cornball.ai"))
-  # Bare "cornelius" without @ is not a mention.
-  expect_false(corteza:::matrix_message_mentions_self(
-    list(body = "cornelius is great"),
-    "@cornelius:cornball.ai"))
-  expect_false(corteza:::matrix_message_mentions_self(
-    list(body = "hello world"),
-    "@cornelius:cornball.ai"))
-  expect_false(corteza:::matrix_message_mentions_self(
-    list(body = ""), "@cornelius:cornball.ai"))
+  m <- chat.api::chat_message(id = "$1", channel = "!r:ex",
+                              sender = "@ann:ex", body = "hey @bot",
+                              ts = Sys.time(), mentions = "@bot:ex")
+  expect_true(corteza:::matrix_msg_record(m, addressed = TRUE)$addressed)
+  expect_false(corteza:::matrix_msg_record(m, addressed = FALSE)$addressed)
+  # Defaults to FALSE, never NULL: the gate below tests it with isTRUE,
+  # and a record built without an answer must read as "not addressed"
+  # rather than as an error at the comparison.
+  expect_false(corteza:::matrix_msg_record(m)$addressed)
+  # Declared mentions still ride along separately -- the engagement
+  # window reads them to notice a sender turning away from the bot.
+  expect_equal(corteza:::matrix_msg_record(m)$mentions, "@bot:ex")
 })
 
 # matrix_should_respond: one human + the bot -> respond without a
@@ -214,9 +203,8 @@ local({
     list(body = "hi", sender = "@otherbot:ex"), "@bot:ex", members,
     bots = bots))
   expect_true(corteza:::matrix_should_respond(
-    list(body = "hi", sender = "@otherbot:ex",
-         mentions = list("@bot:ex")), "@bot:ex", members,
-    bots = bots))
+    list(body = "hi", sender = "@otherbot:ex", addressed = TRUE),
+    "@bot:ex", members, bots = bots))
   # Without the bots list the same room counts 2 humans -> gated (the
   # old 3-member group behavior).
   expect_false(corteza:::matrix_should_respond(
@@ -230,7 +218,13 @@ local({
     list(body = "chatter among humans", sender = "@troy:ex"),
     "@bot:ex", members))
   expect_true(corteza:::matrix_should_respond(
-    list(body = "@bot what?", sender = "@troy:ex"),
+    list(body = "@bot what?", sender = "@troy:ex", addressed = TRUE),
+    "@bot:ex", members))
+  # The body is not re-read here. A message the adapter did not call
+  # addressed stays gated however Matrix-shaped its text looks, which is
+  # the whole point of asking the transport instead of guessing.
+  expect_false(corteza:::matrix_should_respond(
+    list(body = "@bot what?", sender = "@troy:ex", addressed = FALSE),
     "@bot:ex", members))
 })
 
@@ -300,16 +294,19 @@ local({
 # matrix_known_bots: always includes self, unlists config shapes,
 # drops empties.
 local({
-  expect_equal(corteza:::matrix_known_bots(list(user_id = "@bot:ex")),
-               "@bot:ex")
+  expect_equal(corteza:::matrix_known_bots(list(), "@bot:ex"), "@bot:ex")
   expect_equal(
-    corteza:::matrix_known_bots(list(user_id = "@bot:ex",
-                                     bots = c("@a:ex", "@bot:ex"))),
+    corteza:::matrix_known_bots(list(bots = c("@a:ex", "@bot:ex")), "@bot:ex"),
     c("@bot:ex", "@a:ex"))
   expect_equal(
-    corteza:::matrix_known_bots(list(user_id = "@bot:ex",
-                                     bots = list("@a:ex", ""))),
+    corteza:::matrix_known_bots(list(bots = list("@a:ex", "")), "@bot:ex"),
     c("@bot:ex", "@a:ex"))
+  # self_id comes from chat_whoami(), not from cfg. A cfg that still
+  # carries user_id does not get a say -- otherwise the two could
+  # disagree and the bot would fail to recognise its own traffic.
+  expect_equal(
+    corteza:::matrix_known_bots(list(user_id = "@stale:ex"), "@bot:ex"),
+    "@bot:ex")
 })
 
 # matrix_room_members_cached: fetches when cold, skips when the sender
@@ -820,7 +817,10 @@ local({
 
     ops <- "@troy:ex"
     msg_plain <- list(body = "hi", sender = "@jorge:ex")
-    msg_ping <- list(body = "@bot:ex hi", sender = "@jorge:ex")
+    # addressed is the adapter's verdict, carried on the record. The body
+    # is here for readability only; nothing below reads it.
+    msg_ping <- list(body = "@bot:ex hi", sender = "@jorge:ex",
+                     addressed = TRUE)
     solo <- c("@bot:ex", "@jorge:ex")
 
     # One human, not an operator: silence, even when mentioned. A

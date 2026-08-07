@@ -44,10 +44,15 @@
 #            mx_room_members calls.
 #   0.0.1.14 chat_poll()$invites and chat_join() exist, which is what
 #            finally makes res$raw unread here.
+#   0.0.1.15 chat_whoami() and chat_addressed() exist, and the mention
+#            gate reads their answer instead of splitting a Matrix user
+#            id on its colon. Below this the poll dies on the missing
+#            export -- after the sync has already consumed the cursor,
+#            which is the reason this check runs up front.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.14"
+.CHAT_API_MIN <- "0.0.1.15"
 
 # Minimum mx.client:
 #
@@ -427,10 +432,19 @@ matrix_room_name <- function(chat, room_id) {
 #
 # encrypted and sender_verified ride along unused for now. They are the
 # only fields here that a Matrix sync cannot assert on its own.
-matrix_msg_record <- function(m) {
+#
+# addressed is the adapter's answer to "does this message address the
+# bot", asked here and carried on the record so the reply gate does not
+# need the chat client. Computed rather than derived from mentions: the
+# declared-mention list is only half the signal, and the other half is
+# the transport's own plain-text convention -- which is exactly what
+# this file used to reimplement by splitting a Matrix user id on its
+# colon.
+matrix_msg_record <- function(m, addressed = FALSE) {
     list(room_id = m$channel, event_id = m$id, sender = m$sender,
          body = m$body, is_self = isTRUE(m$self), mentions = m$mentions,
-         encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified)
+         encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
+         addressed = isTRUE(addressed))
 }
 
 # The Matrix-visible transcript: an explicit ledger of the events this
@@ -960,30 +974,13 @@ matrix_update_displayname <- function(cfg, session = NULL, model = NULL,
     invisible(tryCatch(matrix_load_config(), error = function(e) cfg))
 }
 
-# Does this message mention the bot? Checks the explicit m.mentions
-# field (emitted by Element and most modern clients) first, then falls
-# back to substring matching on the body for @localpart and full MXID.
-matrix_message_mentions_self <- function(msg, self_id) {
-    mentions <- msg$mentions
-    if (length(mentions) && any(self_id %in% unlist(mentions))) {
-        return(TRUE)
-    }
-    body <- msg$body %||% ""
-    if (!nzchar(body)) {
-        return(FALSE)
-    }
-    if (grepl(self_id, body, fixed = TRUE)) {
-        return(TRUE)
-    }
-    localpart <- sub("^@", "", sub(":.*$", "", self_id))
-    grepl(sprintf("@%s\\b", localpart), body, perl = TRUE, ignore.case = TRUE)
-}
-
-# Known bot accounts for gating: the configured `bots` list from the
-# Matrix config plus the bot itself.
-matrix_known_bots <- function(cfg) {
+# Known bot accounts for gating: the configured `bots` list plus the bot
+# itself. self_id is passed rather than read off cfg because the config's
+# field name for it is the transport's -- a Slack config has no user_id
+# -- and chat.api::chat_whoami() is where that question belongs.
+matrix_known_bots <- function(cfg, self_id) {
     bots <- as.character(unlist(cfg$bots, use.names = FALSE))
-    unique(c(cfg$user_id, bots[nzchar(bots)]))
+    unique(c(self_id, bots[nzchar(bots)]))
 }
 
 # Cached joined-member list for a room's session. Refetched when the
@@ -1067,7 +1064,7 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
     bots <- unique(c(self_id, bots))
     sender <- msg$sender %||% ""
     if (sender %in% bots) {
-        return(matrix_message_mentions_self(msg, self_id))
+        return(isTRUE(msg$addressed))
     }
     # The sender demonstrably posts in this room, so count them even when
     # the cached member list hasn't caught up or the fetch failed. Unknown
@@ -1083,7 +1080,7 @@ matrix_should_respond <- function(msg, self_id, members, bots = character(),
         # the usual mention/engagement terms.
         return(length(operators) == 0L || all(humans %in% operators))
     }
-    if (matrix_message_mentions_self(msg, self_id)) {
+    if (isTRUE(msg$addressed)) {
         return(TRUE)
     }
     !is.null(engaged_until) &&
@@ -1661,6 +1658,10 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # mx_client_session() is pure field validation, so this is free.
     sess_now <- function() matrix_mx_session(cfg)
     chat_now <- function() matrix_chat_client(cfg)
+    # Who this bot is, asked of the adapter rather than read out of the
+    # config. cfg$user_id is a Matrix field name, and every use of it
+    # here is a comparison the transport is better placed to make.
+    self_id <- chat.api::chat_whoami(chat)$id
 
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
@@ -1680,7 +1681,13 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     # used to re-extract from the raw sync and then run its own decrypt
     # beside it, which meant two paths producing the same records and only
     # one of them knowing whether a message had been encrypted.
-    msgs <- lapply(res$messages, matrix_msg_record)
+    #
+    # "Were we addressed" is asked of the adapter here, once per message,
+    # while the contract's own chat_message is still in hand. Below this
+    # line there are only corteza records, and the answer travels on them.
+    msgs <- lapply(res$messages, function(m) {
+        matrix_msg_record(m, addressed = chat.api::chat_addressed(chat, m))
+    })
     if (!length(msgs)) {
         return(invisible(0L))
     }
@@ -1692,7 +1699,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
     }
 
     replied <- 0L
-    bots <- matrix_known_bots(cfg)
+    bots <- matrix_known_bots(cfg, self_id)
     for (m in msgs) {
         session <- matrix_get_or_create_session(sessions, m$room_id, cfg,
             system = system, model = model, provider = provider,
@@ -1743,7 +1750,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # A message that mentions others but not us is the sender turning
         # away from the bot; close their window.
         if (nzchar(sender) && length(m$mentions) &&
-            !(cfg$user_id %in% unlist(m$mentions))) {
+            !(self_id %in% unlist(m$mentions))) {
             engaged[[sender]] <- NULL
             session$engaged <- engaged
         }
@@ -1763,7 +1770,7 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
         matrix_transcript_add(session, m$event_id, "user", ingest_body)
-        if (!matrix_should_respond(m, cfg$user_id, members, bots = bots,
+        if (!matrix_should_respond(m, self_id, members, bots = bots,
                                    engaged_until = engaged_until,
                                    now = now,
                                    operators = matrix_operators(cfg))) {
@@ -1951,7 +1958,11 @@ matrix_backfill_sessions <- function(mx_sess, sessions, cfg, system = NULL,
         # rooms, and label known bot senders even in one-human rooms.
         # Membership is not fetched during backfill, so multi-human is
         # inferred from the distinct human senders in this window.
-        room_bots <- matrix_known_bots(cfg)
+        # cfg$user_id, not chat_whoami(): this function drives mx.api
+        # directly and has no chat client. It goes when the backfill
+        # contract does, and the coupling is spelled out here rather than
+        # hidden in a default argument.
+        room_bots <- matrix_known_bots(cfg, cfg$user_id)
         human_senders <- setdiff(
                                  unique(vapply(chunk, function(ev) ev$sender %||% "", character(1))),
                                  c(room_bots, "")

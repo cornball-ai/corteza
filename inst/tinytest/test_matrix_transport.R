@@ -350,9 +350,9 @@ local({
     # extractor would prove nothing.
     mapped <- 0L
     orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m) {
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
         mapped <<- mapped + 1L
-        orig_record(m)
+        orig_record(m, addressed)
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
@@ -395,9 +395,9 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     mapped <- 0L
     orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m) {
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
         mapped <<- mapped + 1L
-        orig_record(m)
+        orig_record(m, addressed)
     }, ns = "corteza")
     on.exit(assignInNamespace("matrix_msg_record", orig_record,
                               ns = "corteza"), add = TRUE)
@@ -571,8 +571,8 @@ local({
     on.exit(restore_config(iso), add = TRUE)
     seen <- list()
     orig_record <- corteza:::matrix_msg_record
-    assignInNamespace("matrix_msg_record", function(m) {
-        rec <- orig_record(m)
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+        rec <- orig_record(m, addressed)
         seen[[length(seen) + 1L]] <<- rec
         rec
     }, ns = "corteza")
@@ -832,11 +832,11 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.14")
+expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.15")
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
-expect_false(package_version("0.0.1.13") >= package_version(corteza:::.CHAT_API_MIN))
+expect_false(package_version("0.0.1.14") >= package_version(corteza:::.CHAT_API_MIN))
 # The installed build satisfies it, so the guard passes rather than
 # being vacuously untested.
 expect_true(utils::packageVersion("chat.api") >=
@@ -1193,3 +1193,60 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
         expect_identical(joined, c("!a:ex", "!c:ex"))
     })
 }
+
+# "Were we addressed" is the adapter's answer now, not a regex in this
+# package. matrix_poll() asks chat.api::chat_addressed() once per message
+# while the contract's chat_message is still in hand, and carries the
+# verdict onto the record the reply gate reads. corteza used to split the
+# Matrix user id on its colon and look for "@localpart" itself.
+local({
+    iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
+    seen <- list()
+    orig_record <- corteza:::matrix_msg_record
+    assignInNamespace("matrix_msg_record", function(m, addressed = FALSE) {
+        rec <- orig_record(m, addressed)
+        seen[[length(seen) + 1L]] <<- rec
+        rec
+    }, ns = "corteza")
+    on.exit(assignInNamespace("matrix_msg_record", orig_record,
+                              ns = "corteza"), add = TRUE)
+
+    # is_self on all four, so each is ingested and the loop moves on
+    # without reaching a model. The gate is tested directly elsewhere;
+    # what is proved here is that the flag arrives, and with the right
+    # value, on a real trip through the adapter.
+    ev <- function(id, body, mentions = NULL) {
+        list(event_id = id, room_id = "!room:example",
+             sender = "@bot:example", body = body, msgtype = "m.text",
+             is_self = TRUE, mentions = mentions)
+    }
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            client$sync_token <- "s2"
+            sync_saved(client, save)
+            list(sync = sync_with_message(), client = client,
+                 first_run = FALSE)
+        },
+        .extract = function(sync_resp, self_id, ...) {
+            list(ev("$1:example", "just chatting"),
+                 ev("$2:example", "@bot hello"),
+                 ev("$3:example", "nothing", mentions = list("@bot:example")),
+                 ev("$4:example", "ask @bot.deploy instead"))
+        })
+
+    replied <- with_seamed_client(
+        seams,
+        corteza::matrix_poll(timeout = 0L,
+                             sessions = seeded_sessions("!room:example")))
+    expect_equal(replied, 0L)
+    expect_identical(length(seen), 4L)
+    expect_false(seen[[1L]]$addressed)
+    # The transport's plain-text form, which this package no longer knows.
+    expect_true(seen[[2L]]$addressed)
+    # The declared m.mentions list, which it never needed to.
+    expect_true(seen[[3L]]$addressed)
+    # A longer localpart is somebody else. The old \\b boundary called
+    # this a mention of @bot and the wrong bot answered.
+    expect_false(seen[[4L]]$addressed)
+})
