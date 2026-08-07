@@ -1,7 +1,7 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{matrix_run_init}
 \alias{matrix_run_init}
-\title{Initialize the Matrix long-poll state}
+\title{Deprecated: use bot_run_init()}
 \usage{
 matrix_run_init(
   system = NULL,
@@ -20,36 +20,16 @@ matrix_run_init(
 \item{tools_filter}{Character vector or NULL. Tool filter override.}
 }
 \value{
-A list holding the session registry, startup session handle,
-  archive-flush signal path, and the saved poll options. Pass it to
-  \code{\link{matrix_run_step}}.
+See \code{\link{bot_run_init}}.
 }
 \description{
-Performs everything \code{\link{matrix_run}} does before its loop:
-builds the per-room session registry, catches up on invites that
-predate the saved sync token, and backfills recent room history into
-the registry. Returns an opaque state object to drive with
-\code{\link{matrix_run_step}}.
-}
-\details{
-End-to-end encryption is not set up here. When the config sets
-\code{e2ee}, the chat.api Matrix adapter owns the Olm account and
-Megolm sessions and both directions of encrypted traffic, so there is
-no crypto state for this package to build or carry.
-
-Use this with \code{matrix_run_step()} when an external loop owns the
-main process and needs to interleave the Matrix poll with other work
-(a scheduler, a multiplexer, an embedding host). For a standalone bot,
-call \code{\link{matrix_run}}, which wraps both.
-
+Deprecated: use bot_run_init()
 }
 \examples{
 \dontrun{
-# Drive the loop yourself instead of calling matrix_run():
-state <- matrix_run_init()
-repeat matrix_run_step(state, timeout = 30000L)
+matrix_run_init()  # use bot_run_init()
 }
 }
 \seealso{
-\code{\link{matrix_run_step}}, \code{\link{matrix_run}}
+\code{\link{bot_run_init}}
 }

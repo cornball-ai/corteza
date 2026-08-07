@@ -196,12 +196,12 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 
 ### Channels
 
-#### Matrix
+#### Chat channel
 
-Matrix channel requires `mx.api` (Suggests). Configured via a separate helper, not the main JSON config.
+The chat channel requires `chat.api` (Suggests), which carries the transport adapters. Configured via a separate helper, not the main JSON config.
 
 ```r
-corteza::matrix_configure(
+corteza::bot_configure(
   server = "https://matrix.example.com",
   user = "corteza_bot",
   password = "verysecure",
@@ -338,18 +338,18 @@ The session is an environment that carries history, the active provider/model, a
 
 ## systemd service
 
-`matrix_run()` is designed for a systemd user unit.
+`bot_run()` is designed for a systemd user unit.
 
 `~/.config/systemd/user/corteza-matrix.service`:
 
 ```ini
 [Unit]
-Description=corteza Matrix bot
+Description=corteza chat bot
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=Rscript -e 'corteza::matrix_run()'
+ExecStart=Rscript -e 'corteza::bot_run()'
 Restart=on-failure
 RestartSec=5
 

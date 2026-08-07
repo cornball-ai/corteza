@@ -68,7 +68,7 @@ jobs:
       # attempt did parse it, and on macOS the parse quietly found no
       # floors at all and waved 0.0.1.2 through -- a verification step
       # that can silently check nothing is the same failure this whole
-      # job exists to stop. It is the value matrix_require_mx() enforces,
+      # job exists to stop. It is the value bot_require_mx() enforces,
       # so if it is wrong the bots are wrong too.
       - name: Verify Matrix stack
         run: |

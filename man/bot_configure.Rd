@@ -1,9 +1,9 @@
 % tinyrox says don't edit this manually, but it can't stop you!
-\name{matrix_configure}
-\alias{matrix_configure}
-\title{Deprecated: use bot_configure()}
+\name{bot_configure}
+\alias{bot_configure}
+\title{Configure the Matrix channel for this host}
 \usage{
-matrix_configure(
+bot_configure(
   server,
   user,
   password,
@@ -73,16 +73,31 @@ always room-accurate).}
 rename builds on. Defaults to the localpart of the bot's user id.}
 }
 \value{
-See \code{\link{bot_configure}}.
+The saved configuration, invisibly.
 }
 \description{
-Deprecated: use bot_configure()
+Logs in to a Matrix homeserver as the bot account, joins (or records)
+the target room, and writes credentials to
+\code{tools::R_user_dir("corteza", "config")/matrix.json} with file
+mode 0600. Call once per host. Model, provider, tools_filter, and
+auto_approve_asks are defaults the poll loop uses unless overridden
+at call time.
+}
+\details{
+Pre-CRAN releases stored the file at \code{~/.corteza/matrix.json};
+that path is still read for backward compatibility, but the next
+\code{bot_configure()} call writes to the new location.
+
 }
 \examples{
 \dontrun{
-matrix_configure(server, user, password, room)  # use bot_configure()
+# Requires a real Matrix server and bot credentials. Configuration
+# is written under tools::R_user_dir("corteza", "config").
+bot_configure(
+    server = "https://matrix.example.org",
+    user = "bot",
+    password = "secret",
+    room = "!roomid:example.org"
+)
 }
-}
-\seealso{
-\code{\link{bot_configure}}
 }

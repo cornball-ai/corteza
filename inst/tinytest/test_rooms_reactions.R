@@ -18,10 +18,10 @@ rx <- function(key, target = "$target", room = "!r:ex", self = FALSE,
                             target = target, key = key,
                             ts = as.POSIXct(NA), self = self)
 }
-approve <- corteza:::matrix_approve_keys(list())
-deny <- corteza:::matrix_deny_keys(list())
+approve <- corteza:::bot_approve_keys(list())
+deny <- corteza:::bot_deny_keys(list())
 verdict <- function(reactions, room = "!r:ex", target = "$target") {
-    corteza:::matrix_reaction_verdict(reactions, room, target, approve, deny)
+    corteza:::bot_reaction_verdict(reactions, room, target, approve, deny)
 }
 
 # --- The key vocabulary lives here ---
@@ -35,8 +35,8 @@ expect_true(all(c("n", "no", "nope") %in% deny))
 # No key means both things.
 expect_equal(length(intersect(approve, deny)), 0L)
 # A config can override either: which emoji a team uses is theirs.
-expect_identical(corteza:::matrix_approve_keys(list(approve_keys = "si")), "si")
-expect_identical(corteza:::matrix_deny_keys(list(deny_keys = "nein")), "nein")
+expect_identical(corteza:::bot_approve_keys(list(approve_keys = "si")), "si")
+expect_identical(corteza:::bot_deny_keys(list(deny_keys = "nein")), "nein")
 
 # --- Reading a verdict ---
 
@@ -81,13 +81,13 @@ expect_false(verdict(list(rx(intToUtf8(0x1F44E)), rx(intToUtf8(0x1F44D)))))
 # --- The mx.client passthrough is gone ---
 # It delegated the approve/deny vocabulary to the transport package,
 # which is exactly where it should not live.
-expect_false("matrix_extract_reaction_verdict" %in%
+expect_false("bot_extract_reaction_verdict" %in%
              ls(asNamespace("corteza"), all.names = TRUE))
 
 # --- The approval loop ---
 # Driven through chat.api's seams, so nothing here reaches a homeserver.
-# matrix_chat_client() is swapped for one that layers them on, the same
-# way test_matrix_transport.R does.
+# bot_chat_client() is swapped for one that layers them on, the same
+# way test_rooms_transport.R does.
 
 if (requireNamespace("mx.client", quietly = TRUE)) {
 
@@ -123,7 +123,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
 
     approval_client <- function(sync_fn, record = NULL, sent = NULL,
                                 reacted = NULL) {
-        orig <- corteza:::matrix_chat_client
+        orig <- corteza:::bot_chat_client
         stub <- function(cfg, save_cursor = TRUE, ...) {
             if (!is.null(record)) {
                 record$save_cursor <- c(record$save_cursor, save_cursor)
@@ -147,7 +147,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
                  },
                  ...)
         }
-        assignInNamespace("matrix_chat_client", stub, ns = "corteza")
+        assignInNamespace("bot_chat_client", stub, ns = "corteza")
         stub
     }
     cfg <- list(server = "https://ex.invalid", user = "bot", token = "tok",
@@ -158,40 +158,40 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
 
     # A thumbs-up from a human approves.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         approval_client(scripted(list(cursor = "s0"),
                                  list(cursor = "s1",
                                       sync = rx_event(intToUtf8(0x1F44D)))))
-        expect_true(corteza:::matrix_reaction_approval(
+        expect_true(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 5L))
     })
 
     # A thumbs-down declines.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         approval_client(scripted(list(cursor = "s0"),
                                  list(cursor = "s1",
                                       sync = rx_event(intToUtf8(0x1F44E)))))
-        expect_false(corteza:::matrix_reaction_approval(
+        expect_false(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 5L))
     })
 
     # The loop's own cursor never touches the bot's. A client built
     # save_cursor = TRUE here would persist the approval's position and
-    # the next matrix_poll() would resume past everything that arrived
+    # the next bot_poll() would resume past everything that arrived
     # while the user was deciding.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         rec <- new.env(); rec$polls <- list(); rec$save_cursor <- logical()
         approval_client(scripted(list(cursor = "s0"),
                                  list(cursor = "s1",
                                       sync = rx_event("yes")),
                                  record = rec),
                         record = rec)
-        corteza:::matrix_reaction_approval(cfg, a_call, a_dec,
+        corteza:::bot_reaction_approval(cfg, a_call, a_dec,
                                            room_id = "!session:ex",
                                            timeout_sec = 5L)
         expect_true(all(!rec$save_cursor))
@@ -204,8 +204,8 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
     # placed the instant the prompt lands cannot fall into the discarded
     # baseline sync. The first poll happens with no prompt sent yet.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         order <- character()
         rec <- new.env(); rec$polls <- list()
         sent <- new.env(); sent$args <- list()
@@ -220,8 +220,8 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
             list(sync = step$sync %||% list(rooms = list(join = list())),
                  client = client, first_run = FALSE)
         }
-        o <- corteza:::matrix_chat_client
-        assignInNamespace("matrix_chat_client", function(cfg,
+        o <- corteza:::bot_chat_client
+        assignInNamespace("bot_chat_client", function(cfg,
                                                          save_cursor = TRUE,
                                                          ...) {
             o(cfg, save_cursor = save_cursor, .sync = stub_sync,
@@ -233,7 +233,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
               .react = function(...) { order <<- c(order, "react"); "$s" },
               ...)
         }, ns = "corteza")
-        corteza:::matrix_reaction_approval(cfg, a_call, a_dec,
+        corteza:::bot_reaction_approval(cfg, a_call, a_dec,
                                            room_id = "!session:ex",
                                            timeout_sec = 5L)
         expect_identical(order[1:2], c("poll", "send"))
@@ -244,14 +244,14 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
     # Both seed reactions are placed, on the prompt, in the session's
     # room -- not the config's default room.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         reacted <- new.env(); reacted$args <- list()
         sent <- new.env(); sent$args <- list()
         approval_client(scripted(list(cursor = "s0"),
                                  list(cursor = "s1", sync = rx_event("yes"))),
                         sent = sent, reacted = reacted)
-        corteza:::matrix_reaction_approval(cfg, a_call, a_dec,
+        corteza:::bot_reaction_approval(cfg, a_call, a_dec,
                                            room_id = "!session:ex",
                                            timeout_sec = 5L)
         expect_identical(length(reacted$args), 2L)
@@ -267,8 +267,8 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
     # the next poll asks for the same batch and the loop spins to the
     # deadline without seeing the verdict that arrives after it.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         rec <- new.env(); rec$polls <- list()
         approval_client(scripted(
             list(cursor = "s0"),
@@ -279,7 +279,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
             # the answer
             list(cursor = "s3", sync = rx_event("yes")),
             record = rec), record = rec)
-        expect_true(corteza:::matrix_reaction_approval(
+        expect_true(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 10L))
         # Each poll asked from where the previous one ended.
         since <- vapply(rec$polls, function(p) p$since %||% NA_character_,
@@ -292,8 +292,8 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
     # prompt sent seconds ago -- but the cursor still advances, so the
     # next poll is live and can answer.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         rec <- new.env(); rec$polls <- list()
         approval_client(scripted(
             list(cursor = "s0"),
@@ -302,7 +302,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
             list(cursor = "s2", sync = rx_event(intToUtf8(0x1F44D))),
             record = rec), record = rec)
         # The backfilled thumbs-down is not read; the live thumbs-up is.
-        expect_true(corteza:::matrix_reaction_approval(
+        expect_true(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 10L))
         since <- vapply(rec$polls, function(p) p$since %||% NA_character_,
                         character(1))
@@ -311,24 +311,24 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
 
     # The bot's own seeded reactions never answer their own prompt.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         approval_client(scripted(
             list(cursor = "s0"),
             list(cursor = "s1", sync = rx_event(intToUtf8(0x1F44D),
                                                 sender = "@bot:ex"))))
         # Times out to FALSE rather than approving on its own seed.
-        expect_false(corteza:::matrix_reaction_approval(
+        expect_false(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 1L))
     })
 
     # A send that fails declines rather than waiting for a reaction to a
     # message nobody received.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
-        o <- corteza:::matrix_chat_client
-        assignInNamespace("matrix_chat_client", function(cfg,
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
+        o <- corteza:::bot_chat_client
+        assignInNamespace("bot_chat_client", function(cfg,
                                                          save_cursor = TRUE,
                                                          ...) {
             o(cfg, save_cursor = save_cursor,
@@ -336,21 +336,21 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
               .send = function(...) NULL, .media = function(...) NULL,
               .react = function(...) "$s", ...)
         }, ns = "corteza")
-        expect_false(corteza:::matrix_reaction_approval(
+        expect_false(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 5L))
     })
 
     # No verdict before the deadline declines.
     local({
-        orig <- corteza:::matrix_chat_client
-        on.exit(assignInNamespace("matrix_chat_client", orig, ns = "corteza"))
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
         approval_client(scripted(list(cursor = "s0"), list(cursor = "s1")))
-        expect_false(corteza:::matrix_reaction_approval(
+        expect_false(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 1L))
     })
 
     # corteza no longer runs its own sync loop or calls mx_react.
-    src <- paste(deparse(body(corteza:::matrix_reaction_approval)),
+    src <- paste(deparse(body(corteza:::bot_reaction_approval)),
                  collapse = " ")
     expect_false(grepl("mx_sync", src, fixed = TRUE))
     expect_false(grepl("mx_react", src, fixed = TRUE))
@@ -366,7 +366,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
 if (requireNamespace("chat.api", quietly = TRUE) &&
     "chat_channel_info" %in% getNamespaceExports("chat.api")) {
 
-    info_of <- corteza:::matrix_channel_info
+    info_of <- corteza:::bot_channel_info
 
     # No client is a real path: archiving from a registry with no live
     # transport. It answers empty rather than erroring.
@@ -397,34 +397,34 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
                              list(id = channel, name = "The Lab",
                                   topic = "~/lab | a place")
                          }, envir = asNamespace("chat.api"))
-        expect_identical(corteza:::matrix_room_name(cl, "!r:ex"), "The Lab")
+        expect_identical(corteza:::bot_room_name(cl, "!r:ex"), "The Lab")
         expect_identical(info_of(cl, "!r:ex")$topic, "~/lab | a place")
     })
 
-    # --- matrix_room_cwd takes a topic, not a session ---
+    # --- bot_room_cwd takes a topic, not a session ---
     # It used to fetch one itself, which was the third state read for a
     # single session and the second read of the same topic.
     local({
         cfg <- list(user_id = "@bot:ex", user = "bot")
-        default <- corteza:::matrix_default_cwd(cfg)
+        default <- corteza:::bot_default_cwd(cfg)
         # No topic is the default.
-        expect_identical(corteza:::matrix_room_cwd(cfg, NULL), default)
+        expect_identical(corteza:::bot_room_cwd(cfg, NULL), default)
         # A topic with no cwd part is the default too.
-        expect_identical(corteza:::matrix_room_cwd(cfg, "just a description"),
+        expect_identical(corteza:::bot_room_cwd(cfg, "just a description"),
                          default)
         # A cwd that does not exist falls back, and says so.
         expect_message(
-            got <- corteza:::matrix_room_cwd(cfg, "/nonexistent/xyzzy | d"),
+            got <- corteza:::bot_room_cwd(cfg, "/nonexistent/xyzzy | d"),
             "does not exist")
         expect_identical(got, default)
         # A cwd that does exist is used.
         d <- tempfile("roomcwd"); dir.create(d)
         on.exit(unlink(d, recursive = TRUE))
-        expect_identical(corteza:::matrix_room_cwd(cfg, paste0(d, " | desc")),
+        expect_identical(corteza:::bot_room_cwd(cfg, paste0(d, " | desc")),
                          d)
         # The signature no longer takes a session.
-        expect_false("mx_sess" %in% names(formals(corteza:::matrix_room_cwd)))
-        expect_true("topic" %in% names(formals(corteza:::matrix_room_cwd)))
+        expect_false("mx_sess" %in% names(formals(corteza:::bot_room_cwd)))
+        expect_true("topic" %in% names(formals(corteza:::bot_room_cwd)))
     })
 
     # --- The members cache reads chat_members() ---
@@ -437,11 +437,11 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
                              c("@a:ex", "@b:ex")
                          }, envir = asNamespace("chat.api"))
         s <- new.env(parent = emptyenv())
-        got <- corteza:::matrix_room_members_cached(s, "!r:ex", chat = cl)
+        got <- corteza:::bot_room_members_cached(s, "!r:ex", chat = cl)
         expect_identical(got, c("@a:ex", "@b:ex"))
         expect_identical(asked, "!r:ex")
         # Cached on the second call, not re-fetched.
-        corteza:::matrix_room_members_cached(s, "!r:ex", chat = cl)
+        corteza:::bot_room_members_cached(s, "!r:ex", chat = cl)
         expect_identical(length(asked), 1L)
     })
 
@@ -457,7 +457,7 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
         s$members <- c("@a:ex")
         s$members_at <- Sys.time() - 10000
         expect_identical(
-            corteza:::matrix_room_members_cached(s, "!r:ex", chat = cl),
+            corteza:::bot_room_members_cached(s, "!r:ex", chat = cl),
             "@a:ex")
     })
 
@@ -465,31 +465,31 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
     local({
         s <- new.env(parent = emptyenv())
         expect_identical(
-            corteza:::matrix_room_members_cached(s, "!r:ex", chat = NULL),
+            corteza:::bot_room_members_cached(s, "!r:ex", chat = NULL),
             character())
     })
 
     # --- corteza no longer reads room metadata off mx.api ---
-    src <- paste(vapply(c("matrix_archive_session", "matrix_room_cwd",
-                          "matrix_room_members_cached", "matrix_new_session"),
+    src <- paste(vapply(c("bot_archive_session", "bot_room_cwd",
+                          "bot_room_members_cached", "bot_new_session"),
                         function(f) paste(deparse(body(get(f,
                             envir = asNamespace("corteza")))), collapse = " "),
                         character(1)), collapse = " ")
     for (gone in c("mx_room_name", "mx_room_topic", "mx_room_members")) {
         expect_false(grepl(gone, src, fixed = TRUE), info = gone)
     }
-    # And matrix_new_session asks once, not three times.
-    ns <- paste(deparse(body(corteza:::matrix_new_session)), collapse = " ")
+    # And bot_new_session asks once, not three times.
+    ns <- paste(deparse(body(corteza:::bot_new_session)), collapse = " ")
     expect_identical(lengths(regmatches(ns,
-                                        gregexpr("matrix_channel_info", ns)))[[1]],
+                                        gregexpr("bot_channel_info", ns)))[[1]],
                      1L)
     # The topic it got is the one the cwd is derived from. Asserted on
-    # the source because reaching matrix_new_session() for real runs
+    # the source because reaching bot_new_session() for real runs
     # session_setup(), which wants a provider API key -- and the wiring
     # is the whole point: passing NULL here would silently send every
     # room back to the default directory while the single lookup above
     # still looked correct.
-    expect_true(grepl("matrix_room_cwd(cfg, info$topic)", ns, fixed = TRUE))
+    expect_true(grepl("bot_room_cwd(cfg, info$topic)", ns, fixed = TRUE))
     expect_true(grepl("room_name = info$name", ns, fixed = TRUE))
-    expect_true(grepl("matrix_parse_topic(info$topic)", ns, fixed = TRUE))
+    expect_true(grepl("bot_parse_topic(info$topic)", ns, fixed = TRUE))
 }

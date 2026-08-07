@@ -1,13 +1,13 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{matrix_archive_all}
 \alias{matrix_archive_all}
-\title{Flush all in-memory matrix sessions to the pensar vault}
+\title{Deprecated: use bot_archive_all()}
 \usage{
 matrix_archive_all(sessions, chat = NULL)
 }
 \arguments{
 \item{sessions}{A registry environment built by
-\code{matrix_run}/\code{matrix_poll}. Keys are room IDs, values
+\code{bot_run}/\code{bot_poll}. Keys are room IDs, values
 are session environments carrying \code{$transcript}, the
 Matrix-visible event ledger.}
 
@@ -15,21 +15,16 @@ Matrix-visible event ledger.}
 NULL, the room ID is used as the source identifier.}
 }
 \value{
-Integer count of rooms ingested, invisibly.
+See \code{\link{bot_archive_all}}.
 }
 \description{
-Walks the per-room session registry and archives each room's
-unarchived Matrix events via the pensar archive ingest. Archived
-events are consumed from the session ledger, and their Matrix event
-ids are persisted per room under \code{CORTEZA_STATE_DIR} so a
-restart's backfill is recognized rather than archived again. Silent
-no-op when \code{pensar} is not installed.
+Deprecated: use bot_archive_all()
 }
 \examples{
 \dontrun{
-# Requires a running Matrix session registry and the optional
-# pensar package for the actual archive step.
-reg <- new.env(parent = emptyenv())
-matrix_archive_all(reg)
+matrix_archive_all(sessions)  # use bot_archive_all()
 }
+}
+\seealso{
+\code{\link{bot_archive_all}}
 }

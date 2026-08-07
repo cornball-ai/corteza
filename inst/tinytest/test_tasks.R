@@ -254,10 +254,10 @@ expect_true(grepl("# Active tasks", res, fixed = TRUE))
 # channel has no synchronous readline / cli_read_line equivalent
 # for the approval prompt, so telling the LLM to call task_create
 # would just stall the conversation on default-deny.
-matrix_compose <- compose("BASE", tasks, channel = "matrix")
-expect_equal(matrix_compose, "BASE")
-expect_false(grepl("# Multi-step requests", matrix_compose, fixed = TRUE))
-expect_false(grepl("# Active tasks", matrix_compose, fixed = TRUE))
+bot_compose <- compose("BASE", tasks, channel = "matrix")
+expect_equal(bot_compose, "BASE")
+expect_false(grepl("# Multi-step requests", bot_compose, fixed = TRUE))
+expect_false(grepl("# Active tasks", bot_compose, fixed = TRUE))
 
 # Unspecified channel (subagents, embedded uses): also off by
 # default so callers opt in by setting an explicit channel.

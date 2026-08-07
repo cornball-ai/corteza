@@ -1,6 +1,14 @@
 # tinyrox says don't edit this manually, but it can't stop you!
 
 export(add_observer)
+export(bot_archive_all)
+export(bot_configure)
+export(bot_poll)
+export(bot_request_flush)
+export(bot_run)
+export(bot_run_init)
+export(bot_run_step)
+export(bot_send)
 export(chat)
 export(context_limit_for_model)
 export(context_usage_pct)

@@ -1,9 +1,9 @@
 % tinyrox says don't edit this manually, but it can't stop you!
-\name{matrix_send}
-\alias{matrix_send}
-\title{Deprecated: use bot_send()}
+\name{bot_send}
+\alias{bot_send}
+\title{Send a message to a Matrix room}
 \usage{
-matrix_send(text, room_id = NULL, msgtype = "m.text", markdown = FALSE)
+bot_send(text, room_id = NULL, msgtype = "m.text", markdown = FALSE)
 }
 \arguments{
 \item{text}{Character. Plain text body.}
@@ -17,16 +17,14 @@ from the saved Matrix config (see \code{\link{bot_configure}}).}
 from a conservative markdown subset.}
 }
 \value{
-See \code{\link{bot_send}}.
+The event ID of the sent message.
 }
 \description{
-Deprecated: use bot_send()
+Send a message to a Matrix room
 }
 \examples{
 \dontrun{
-matrix_send("hello")  # use bot_send()
+# Requires bot_configure() to have run.
+bot_send("hello from corteza")
 }
-}
-\seealso{
-\code{\link{bot_send}}
 }
