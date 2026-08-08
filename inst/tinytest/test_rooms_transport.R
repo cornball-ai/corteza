@@ -840,7 +840,28 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.17")
+
+# The runtime floor and the Suggests bound name the same version.
+#
+# Not tidiness. These drifted: two bumps were made with a sed whose
+# pattern no longer matched, so the constant sat three versions behind
+# while the assertion here was edited by the same non-matching pattern
+# and went on passing. CI verified the stale floor against a chat.api
+# that satisfied it and went green, which is the failure the verify step
+# exists to prevent, arriving through the door it was watching.
+#
+# Reading DESCRIPTION rather than restating a literal is the point: a
+# hard-coded version here can only ever agree with itself.
+local({
+    dcf <- read.dcf(system.file("DESCRIPTION", package = "corteza"),
+                    fields = "Suggests")[[1L]]
+    m <- regmatches(dcf, regexpr("chat\\.api \\(>= [0-9.]+\\)", dcf))
+    expect_true(length(m) == 1L && nzchar(m))
+    declared <- gsub("^.*>= |\\)$", "", m)
+    expect_identical(package_version(declared),
+                     package_version(corteza:::.CHAT_API_MIN))
+})
+
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
