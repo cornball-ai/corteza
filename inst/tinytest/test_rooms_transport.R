@@ -840,7 +840,28 @@ local({
 # so a host carrying an older chat.api would otherwise sync -- spending
 # the cursor -- and only then die on the missing first_run.
 expect_true(exists(".CHAT_API_MIN", envir = asNamespace("corteza")))
-expect_identical(corteza:::.CHAT_API_MIN, "0.0.1.17")
+
+# The runtime floor and the Suggests bound name the same version.
+#
+# Not tidiness. These drifted: two bumps were made with a sed whose
+# pattern no longer matched, so the constant sat three versions behind
+# while the assertion here was edited by the same non-matching pattern
+# and went on passing. CI verified the stale floor against a chat.api
+# that satisfied it and went green, which is the failure the verify step
+# exists to prevent, arriving through the door it was watching.
+#
+# Reading DESCRIPTION rather than restating a literal is the point: a
+# hard-coded version here can only ever agree with itself.
+local({
+    dcf <- read.dcf(system.file("DESCRIPTION", package = "corteza"),
+                    fields = "Suggests")[[1L]]
+    m <- regmatches(dcf, regexpr("chat\\.api \\(>= [0-9.]+\\)", dcf))
+    expect_true(length(m) == 1L && nzchar(m))
+    declared <- gsub("^.*>= |\\)$", "", m)
+    expect_identical(package_version(declared),
+                     package_version(corteza:::.CHAT_API_MIN))
+})
+
 # The comparison is a version comparison, not a string one: "0.0.1.10"
 # sorts before "0.0.1.9" as text and after it as a version.
 expect_true(package_version("0.0.1.10") > package_version("0.0.1.9"))
@@ -1429,4 +1450,98 @@ local({
         .channels = function(session) stop("M_UNKNOWN"))
     expect_equal(corteza:::bot_backfill_sessions(
         chat, corteza:::bot_new_session_registry(), cfg), 0L)
+})
+
+# ---------------------------------------------------------------
+# The activity trail reaches the room from inside a real poll. Every
+# other test of it exercises the module directly; this one proves
+# bot_poll() attaches the observer to the session the turn runs on, and
+# that what it produces goes out through the adapter.
+#
+# Remove the rooms_with_activity() wrapper in bot_poll() and this goes
+# red. Nothing else does: the module's own tests construct the
+# accumulator themselves.
+# ---------------------------------------------------------------
+local({
+    iso <- isolate_config(base_cfg(sync_token = "s1"))
+    on.exit(restore_config(iso), add = TRUE)
+
+    orig_resp <- corteza:::bot_should_respond
+    assignInNamespace("bot_should_respond", function(...) TRUE, ns = "corteza")
+    on.exit(assignInNamespace("bot_should_respond", orig_resp, ns = "corteza"),
+            add = TRUE)
+
+    orig_send <- corteza:::bot_reply_send
+    assignInNamespace("bot_reply_send",
+                      function(chat, channel, text, markdown = FALSE) "$ack",
+                      ns = "corteza")
+    on.exit(assignInNamespace("bot_reply_send", orig_send, ns = "corteza"),
+            add = TRUE)
+
+    # The turn itself: fire two tool calls through whatever observers the
+    # session carries, which is what the agent does for real.
+    saw_observer <- FALSE
+    orig_turn <- corteza:::bot_run_turn_in_cwd
+    assignInNamespace("bot_run_turn_in_cwd", function(prompt, session) {
+        saw_observer <<- length(session$on_tool) > 0L
+        for (obs in session$on_tool) {
+            obs(list(call = list(tool = "bash"), outcome = "ran",
+                     success = TRUE))
+            obs(list(call = list(tool = "replace_in_file"), outcome = "ran",
+                     success = TRUE, diff = list(added = 7L, removed = 2L)))
+        }
+        "the reply"
+    }, ns = "corteza")
+    on.exit(assignInNamespace("bot_run_turn_in_cwd", orig_turn, ns = "corteza"),
+            add = TRUE)
+
+    # The first frame is a rich send and every one after it is an edit,
+    # so the trail lands on two different seams.
+    posted <- list()
+    edited <- list()
+    seams <- list(
+        .sync = function(client, timeout = 0L, save = TRUE, ...) {
+            client$sync_token <- "s2"
+            sync_saved(client, save)
+            list(sync = sync_with_message(), client = client,
+                 first_run = FALSE)
+        },
+        .rich = function(session, room_id, body, msgtype = "m.text",
+                         extra = NULL) {
+            posted[[length(posted) + 1L]] <<- list(body = body,
+                                                   html = extra$formatted_body)
+            "$activity1"
+        },
+        .edit = function(session, room_id, body, msgtype = "m.text",
+                         extra = NULL) {
+            edited[[length(edited) + 1L]] <<- list(
+                body = body,
+                target = extra$`m.relates_to`$event_id,
+                new = extra$`m.new_content`$body)
+            "$activity2"
+        })
+
+    replied <- with_seamed_client(
+        seams,
+        corteza::bot_poll(timeout = 0L,
+                          sessions = seeded_sessions("!room:example")))
+
+    expect_equal(replied, 1L)
+    # The observer was on the session the turn ran on, not on some
+    # other one built beside it.
+    expect_true(saw_observer)
+
+    # One post, on the first tool call, saying what was true then.
+    expect_equal(length(posted), 1L)
+    expect_equal(posted[[1L]]$body, "Ran a command")
+    expect_true(grepl("<details><summary>", posted[[1L]]$html, fixed = TRUE))
+
+    # Then an edit with the finished state. The second tool call landed
+    # inside the five-second floor, so it did not get a frame of its own
+    # -- the final flush is what carries it, and that one ignores the
+    # floor because the last frame is what a reader is left looking at.
+    expect_equal(length(edited), 1L)
+    expect_equal(edited[[1L]]$new, "Edited a file, ran a command  +7 -2")
+    # Replacing the message it posted, not some other one.
+    expect_equal(edited[[1L]]$target, "$activity1")
 })

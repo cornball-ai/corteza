@@ -60,10 +60,24 @@
 #            chat_config_save, chat_matrix_configure, chat_set_identity)
 #            exist. This is the version at which corteza stopped calling
 #            mx.api and mx.client at all.
+#   0.0.1.17 chat_history() pages by an opaque cursor and returns one.
+#            Below it the return is a bare list and $messages is NULL,
+#            so a restart backfills nothing and says nothing about why.
+#   0.0.1.20 chat_edit() exists, takes `rich`, and keeps the message's
+#            kind. All three are load-bearing for the activity trail:
+#            without the verb it cannot be updated, without rich it
+#            cannot be collapsed, and without kind the first edit turns
+#            the notice into an ordinary message that other bots answer.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
-.CHAT_API_MIN <- "0.0.1.17"
+#
+# Keep this in step with the Suggests bound in DESCRIPTION. There is a
+# test that they agree, because they drifted: two bumps were made with a
+# sed whose pattern no longer matched, so the constant sat three
+# versions behind while the tests asserting it were edited by the same
+# non-matching pattern and went on passing.
+.CHAT_API_MIN <- "0.0.1.20"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -1845,7 +1859,18 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # milliseconds mx.api takes); Matrix clears it when the reply
         # event arrives.
         chat.api::chat_typing(chat_now(), m$channel, TRUE, timeout = 120)
-        reply <- bot_run_turn_in_cwd(ingest_body, session)
+        # The activity trail. A terminal shows tool calls as they run;
+        # a room used to show nothing between the typing indicator and
+        # the reply, so a turn that took four minutes was
+        # indistinguishable from one that had hung.
+        #
+        # The observer is registered per turn and removed after, because
+        # a session outlives the turn and a leftover one would keep
+        # writing into an accumulator whose message has already been
+        # finalized.
+        reply <- rooms_with_activity(session, chat, m$channel, function() {
+            bot_run_turn_in_cwd(ingest_body, session)
+        }, cfg = cfg)
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"

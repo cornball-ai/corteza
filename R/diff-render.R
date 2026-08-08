@@ -164,8 +164,15 @@ compute_unified_diff <- function(old_text, new_text, path, max_lines = 200L,
     counts <- .diff_summary_counts(res)
     full_lines <- as.character(res)
     clipped <- .clip_diff_lines(full_lines, max_lines, max_chars)
+    # added and removed ride along beside the sentence built from them.
+    # `lines` is clipped to a budget, so anything recounting from it
+    # undercounts a large diff -- and the only other place the true
+    # numbers survive is inside an English string. A room's "+102 -33"
+    # is read off these.
     list(path = path,
          summary = .diff_summary_line(counts$added, counts$removed),
+         added = counts$added,
+         removed = counts$removed,
          lines = clipped$lines,
          fallback = FALSE,
          truncated = clipped$truncated)
