@@ -128,13 +128,15 @@ local({
     # Same text: not due, however long has passed. A frame that says
     # what the last one said spends a permanent event on nothing.
     expect_false(corteza:::rooms_activity_due(acc, now = t0 + 3600))
-    # Changed text, but inside the floor: not yet. Synapse allows a
-    # burst of ten and then one event every five seconds, and the frames
-    # an over-eager trail loses are the ones at the end.
+    # Changed text, but inside the interval: coalesced into the next
+    # frame rather than sent now. This is what bounds the cost -- almost
+    # every tool call changes the summary, so without it a trail spends
+    # one permanent event per call.
     obs <- corteza:::rooms_activity_observer(acc)
     obs(ev("read_file"))
     expect_false(corteza:::rooms_activity_due(acc, now = t0 + 1))
-    expect_true(corteza:::rooms_activity_due(acc, now = t0 + 5))
+    expect_false(corteza:::rooms_activity_due(acc, now = t0 + 14))
+    expect_true(corteza:::rooms_activity_due(acc, now = t0 + 15))
 })
 # Nothing to say is never due.
 expect_false(corteza:::rooms_activity_due(corteza:::rooms_activity_new()))
@@ -325,4 +327,82 @@ local({
         expect_equal(flushes, 1L)
         "reply"
     })
+})
+
+# ---- The coalescing interval ----
+# The interval, not the content check, is what bounds the cost: almost
+# every completed tool call changes the summary, so a content check
+# alone would let a trail cost one permanent event per tool call.
+expect_equal(corteza:::rooms_activity_interval(NULL), 15)
+expect_equal(corteza:::rooms_activity_interval(list()), 15)
+expect_equal(corteza:::rooms_activity_interval(list(activity_interval = 30)),
+             30)
+expect_equal(corteza:::rooms_activity_interval(list(activity_interval = "20")),
+             20)
+# A config that cannot be read falls back rather than disabling the
+# gate: NA would make every comparison FALSE and the trail would go
+# silent, which looks exactly like a hung turn.
+expect_equal(corteza:::rooms_activity_interval(
+    list(activity_interval = "soon")), 15)
+expect_equal(corteza:::rooms_activity_interval(
+    list(activity_interval = c(1, 2))), 15)
+
+local({
+    acc <- feed(ev("bash"))
+    t0 <- as.POSIXct("2026-01-01 12:00:00", tz = "UTC")
+    acc$last_text <- "something else"
+    acc$last_at <- t0
+    # Fifteen seconds by default, not five.
+    expect_false(corteza:::rooms_activity_due(acc, now = t0 + 5))
+    expect_true(corteza:::rooms_activity_due(acc, now = t0 + 15))
+    # And the caller can widen it.
+    expect_false(corteza:::rooms_activity_due(acc, now = t0 + 15,
+                                              min_interval = 30))
+})
+
+# The observer honours the interval it was built with, so the config
+# reaches the gate rather than stopping at the constant.
+local({
+    flushes <- 0L
+    acc <- corteza:::rooms_activity_new()
+    obs <- corteza:::rooms_activity_observer(acc, chat = "c", channel = "!r",
+                                             interval = 1e6)
+    orig <- corteza:::rooms_activity_flush
+    assignInNamespace("rooms_activity_flush", function(...) {
+        flushes <<- flushes + 1L
+        invisible(TRUE)
+    }, ns = "corteza")
+    on.exit(assignInNamespace("rooms_activity_flush", orig, ns = "corteza"),
+            add = TRUE)
+    obs(ev("bash"))
+    # First frame still goes: nothing has been sent, so there is no
+    # interval to have elapsed.
+    expect_equal(flushes, 1L)
+})
+
+# ---- The trail is a notice ----
+# m.notice is the msgtype for automated output another bot should not
+# answer, and a room with several agents in it is exactly where a
+# progress trail would otherwise start a conversation with itself.
+local({
+    kinds <- character()
+    send <- function(chat, channel, text, ..., kind = "message") {
+        kinds <<- c(kinds, kind)
+        "$a1"
+    }
+    edit <- function(chat, channel, message_id, text, ..., kind = "message") {
+        kinds <<- c(kinds, kind)
+        message_id
+    }
+    acc <- feed(ev("bash"))
+    corteza:::rooms_activity_flush(acc, NULL, "!r:ex", send = send,
+                                   edit = edit)
+    obs <- corteza:::rooms_activity_observer(acc)
+    obs(ev("read_file"))
+    corteza:::rooms_activity_flush(acc, NULL, "!r:ex", send = send,
+                                   edit = edit)
+    # Both the first frame and the edits after it. An edit that dropped
+    # to m.text would turn the trail into an ordinary message partway
+    # through the turn.
+    expect_equal(kinds, c("notice", "notice"))
 })

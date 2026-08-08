@@ -1856,7 +1856,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # finalized.
         reply <- rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_body, session)
-        })
+        }, cfg = cfg)
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"

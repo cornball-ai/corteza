@@ -10,17 +10,47 @@
 # terminal. A Matrix edit is an ordinary timeline event, so it is rate
 # limited alongside real messages, and it is permanent: only the latest
 # renders, but every frame stays in the room forever and comes back out
-# of chat_history() on the next restart. So the trail is updated when
-# its text actually changes and not on a timer, with a floor between
-# edits. Liveness is the typing indicator's job -- that is an ephemeral
-# EDU, costs nothing, and is already sent.
+# of chat_history() on the next restart. So tool calls are coalesced
+# into one frame per interval rather than reported as they happen.
+# Liveness is the typing indicator's job -- that is an ephemeral EDU,
+# costs nothing, and is already sent.
+#
+# The trail goes out as a notice (m.notice) while replies stay ordinary
+# messages. That is what the msgtype is for: automated output another
+# bot should not answer. It is not a mute -- the spec asks clients not
+# to auto-respond, and says nothing about whether a push gateway rings
+# a phone, so a room that wants silence still needs a push rule or a
+# mute. Worth having anyway, because a room with several agents in it
+# is exactly where a progress trail would otherwise start a
+# conversation with itself.
 
-# Minimum seconds between edits to the activity message. The floor
-# exists for the burst budget, not for readability: Synapse's default
-# rc_message allows a burst of 10 and then one event every five seconds,
-# and the events an over-eager trail loses are the ones at the end,
-# where the work finished.
-.ROOMS_ACTIVITY_MIN_INTERVAL <- 5
+# Seconds of tool calls to coalesce into one frame.
+#
+# The interval, not the content check, is what bounds the cost. Almost
+# every completed tool call changes the summary -- "Ran 3 commands"
+# becomes "Ran 4 commands" -- so a content check alone filters very
+# little and a trail would cost roughly one permanent event per tool
+# call. At fifteen seconds a ten-minute turn spends at most forty.
+#
+# Not a timer. Nothing runs between tool calls, so a frame goes out on
+# the first completed call after the interval has elapsed rather than
+# at the instant it does. A quiet stretch simply has nothing to report,
+# and the final flush covers whatever the last interval did not.
+#
+# Set `activity_interval` in the config to change it. Zero or less
+# disables coalescing entirely, which is a debugging setting rather than
+# a supported one -- it costs an event per tool call and will be
+# throttled on any homeserver with default rate limits.
+.ROOMS_ACTIVITY_INTERVAL <- 15
+
+rooms_activity_interval <- function(cfg = NULL) {
+    v <- suppressWarnings(as.numeric(cfg$activity_interval %||%
+                                     .ROOMS_ACTIVITY_INTERVAL))
+    if (length(v) != 1L || is.na(v)) {
+        return(.ROOMS_ACTIVITY_INTERVAL)
+    }
+    v
+}
 
 # What each tool counts as in the summary. The vocabulary is the
 # reader's, not the tool registry's: someone watching a room wants to
@@ -63,7 +93,8 @@ rooms_activity_new <- function() {
 # because the observer is the only thing that runs during a turn:
 # bot_run_turn_in_cwd() does not return until the agent is finished, so
 # there is nowhere else to put it.
-rooms_activity_observer <- function(acc, chat = NULL, channel = NULL) {
+rooms_activity_observer <- function(acc, chat = NULL, channel = NULL,
+                                    interval = .ROOMS_ACTIVITY_INTERVAL) {
     function(event) {
         # "start" fires before the call runs and carries no result, so
         # counting it would double every tool. The three terminal
@@ -82,7 +113,8 @@ rooms_activity_observer <- function(acc, chat = NULL, channel = NULL) {
             identical(event$outcome, "declined"),
             added = event$diff$added %||% 0L,
             removed = event$diff$removed %||% 0L)
-        if (!is.null(chat) && !is.null(channel) && rooms_activity_due(acc)) {
+        if (!is.null(chat) && !is.null(channel) &&
+            rooms_activity_due(acc, min_interval = interval)) {
             rooms_activity_flush(acc, chat, channel)
         }
         invisible(NULL)
@@ -122,13 +154,14 @@ rooms_activity_live <- function(chat) {
 # that final one. A room that cannot be kept current gets one accurate
 # message instead of a stale one, which is the whole difference between
 # a summary and a lie.
-rooms_with_activity <- function(session, chat, channel, expr) {
+rooms_with_activity <- function(session, chat, channel, expr, cfg = NULL) {
     acc <- rooms_activity_new()
     before <- session$on_tool
     live <- rooms_activity_live(chat)
     add_observer(session, rooms_activity_observer(acc,
             chat = if (live) chat else NULL,
-            channel = if (live) channel else NULL))
+            channel = if (live) channel else NULL,
+            interval = rooms_activity_interval(cfg)))
     on.exit({
         session$on_tool <- before
         if (length(acc$events)) {
@@ -244,7 +277,7 @@ rooms_escape_html <- function(x) {
 # on frames that say what the last one said; content alone can fire
 # twice in a second when two tools finish together.
 rooms_activity_due <- function(acc, now = Sys.time(),
-                               min_interval = .ROOMS_ACTIVITY_MIN_INTERVAL) {
+                               min_interval = .ROOMS_ACTIVITY_INTERVAL) {
     text <- rooms_activity_text(acc$events)
     if (!nzchar(text) || identical(text, acc$last_text)) {
         return(FALSE)
@@ -282,12 +315,13 @@ rooms_activity_flush <- function(acc, chat, channel, now = Sys.time(),
         # can -- still says what the agent is doing.
         if (is.null(acc$message_id)) {
             send <- send %||% chat.api::chat_send
-            id <- send(chat, channel, text, markup = "plain", rich = html)
+            id <- send(chat, channel, text, markup = "plain", rich = html,
+                       kind = "notice")
             acc$message_id <- bot_event_id(id)
         } else {
             edit <- edit %||% chat.api::chat_edit
             edit(chat, channel, acc$message_id, text, markup = "plain",
-                 rich = html)
+                 rich = html, kind = "notice")
         }
         TRUE
     }, error = function(e) FALSE)
