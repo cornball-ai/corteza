@@ -1,3 +1,12 @@
+# corteza 0.7.1.22
+
+- **A config can name the transport.** `cfg$transport` picks the client
+  constructor behind `bot_chat_client()`: absent or `"matrix"` is the
+  Matrix adapter as before; a `{"constructor": "pkg::fn", "args": {...}}`
+  list builds any other `chat.api` client, and the whole room loop runs
+  on it. The adapter must hold its own poll cursor and report
+  `first_run`; the existing guard now says so.
+
 # corteza 0.7.1.19
 
 - **`matrix_*` is now `bot_*`, and `R/matrix.R` is `R/rooms.R`.** corteza
