@@ -91,9 +91,10 @@
 # stale package on disk. Leave NULL in production.
 bot_require_mx <- function(chat_api_version = NULL) {
     if (!requireNamespace("chat.api", quietly = TRUE)) {
-        stop("Matrix integration requires the 'chat.api' package. ",
+        stop("The room loop requires the 'chat.api' package (it is the ",
+             "transport contract, whichever transport a config names). ",
              "Install it from the cornball-ai GitHub mirror, or from the ",
-             "cornball drat, before calling Matrix functions.", call. = FALSE)
+             "cornball drat, before calling room functions.", call. = FALSE)
     }
     # requireNamespace() checks presence, not version, and a Suggests
     # floor is a resolution hint rather than a runtime guarantee: a
@@ -104,7 +105,7 @@ bot_require_mx <- function(chat_api_version = NULL) {
     # the cursor may not be recoverable.
     have <- chat_api_version %||% utils::packageVersion("chat.api")
     if (have < .CHAT_API_MIN) {
-        stop("Matrix integration requires chat.api >= ", .CHAT_API_MIN,
+        stop("The room loop requires chat.api >= ", .CHAT_API_MIN,
              ", but ", have, " is installed. Reinstall chat.api from the ",
              "cornball-ai mirror.", call. = FALSE)
     }
@@ -383,13 +384,77 @@ bot_event_id <- function(id) {
 # called -- which matters because it is called per use, on purpose, so
 # the access token that rotates mid-loop is never read from a stale copy.
 #
-# `...` reaches chat_matrix(), which exists for its testing seams
-# (.sync, .extract, .send, .media, .typing, .crypto, .save). Production
-# passes nothing.
+# `...` reaches the constructor -- for chat_matrix() that means its
+# testing seams (.sync, .extract, .send, .media, .typing, .crypto,
+# .save). Production passes nothing.
+#
+# cfg$transport picks the transport. Absent or "matrix" is the Matrix
+# adapter, exactly as before. Anything else is a list naming a chat.api
+# constructor -- {"constructor": "pkg::fn", "args": {...}} -- and the
+# whole loop above this seam runs on whatever chat_client comes back.
+# Which package that names is the config's business, not this file's:
+# corteza knows the contract, never the transports behind it.
 bot_chat_client <- function(cfg, save_cursor = TRUE, ...) {
-    chat.api::chat_matrix(mx = bot_cfg_object(cfg),
-                          save_cursor = isTRUE(save_cursor),
-                          e2ee = isTRUE(cfg$e2ee), ...)
+    tr <- cfg$transport
+    if (is.null(tr) || identical(tr, "matrix")) {
+        return(chat.api::chat_matrix(mx = bot_cfg_object(cfg),
+                                     save_cursor = isTRUE(save_cursor),
+                                     e2ee = isTRUE(cfg$e2ee), ...))
+    }
+    bot_transport_client(tr, save_cursor = save_cursor, ...)
+}
+
+# Build a chat_client from a config-declared constructor.
+bot_transport_client <- function(tr, save_cursor = TRUE, ...) {
+    fn <- bot_transport_constructor(tr)
+    args <- bot_transport_args(fn, tr$args, save_cursor)
+    client <- do.call(fn, c(args, list(...)))
+    if (!inherits(client, "chat_client")) {
+        stop("transport constructor '", tr$constructor,
+             "' did not return a chat_client.", call. = FALSE)
+    }
+    client
+}
+
+# Resolve a config's constructor spec to the exported function, refusing
+# loudly at each layer: shape, form, missing package. getExportedValue()
+# already errors on a name the package does not export, and names it.
+bot_transport_constructor <- function(tr) {
+    if (!is.list(tr) || !is.character(tr$constructor) ||
+        length(tr$constructor) != 1L) {
+        stop("config field 'transport' must be \"matrix\" or a list ",
+             "with a 'constructor' of the form \"pkg::fn\".",
+             call. = FALSE)
+    }
+    spec <- strsplit(tr$constructor, "::", fixed = TRUE)[[1L]]
+    if (length(spec) != 2L || !all(nzchar(spec))) {
+        stop("transport constructor '", tr$constructor,
+             "' is not of the form \"pkg::fn\".", call. = FALSE)
+    }
+    if (!requireNamespace(spec[[1L]], quietly = TRUE)) {
+        stop("transport constructor '", tr$constructor, "' needs the '",
+             spec[[1L]], "' package installed.", call. = FALSE)
+    }
+    getExportedValue(spec[[1L]], spec[[2L]])
+}
+
+# The config's args, plus save_cursor when -- and only when -- the
+# constructor declares that formal by name: corteza's poll loop needs
+# adapter-held cursors (it never passes `since`), and a constructor
+# without the formal makes that a config error surfaced by the
+# first_run check in bot_poll(), not something to guess around here by
+# pushing the argument through a `...`. An explicit args$save_cursor in
+# the config wins over the loop's default.
+bot_transport_args <- function(fn, args, save_cursor) {
+    args <- args %||% list()
+    if (!is.list(args)) {
+        stop("transport 'args' must be a named list.", call. = FALSE)
+    }
+    if ("save_cursor" %in% names(formals(fn)) &&
+        is.null(args$save_cursor)) {
+        args$save_cursor <- isTRUE(save_cursor)
+    }
+    args
 }
 
 # A plain cfg wrapped back into a chat_config carrying corteza's app and
@@ -1629,13 +1694,16 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     # field is still there as chat.api's escape hatch for whatever the
     # contract does not model, and corteza no longer needs the hatch.
     #
-    # A chat.api whose Matrix adapter predates first_run does not report
-    # it, and a NULL first_run makes the suppression branch below an
-    # error. Say which dependency is short rather than failing three
-    # lines on.
+    # An adapter that predates first_run does not report it, and a NULL
+    # first_run makes the suppression branch below an error. Say which
+    # dependency is short rather than failing three lines on. This is
+    # also the loop's demand on any config-named transport: corteza
+    # never passes `since`, so the adapter must hold its own cursor and
+    # say when there was none.
     if (is.null(res$first_run)) {
-        stop("chat.api::chat_poll() returned no first_run. corteza needs a ",
-             "chat.api whose Matrix adapter reports it.", call. = FALSE)
+        stop("chat.api::chat_poll() returned no first_run. corteza needs ",
+             "a transport adapter that holds its own poll cursor and ",
+             "reports it.", call. = FALSE)
     }
     first_run <- res$first_run
     # `chat` is the one client for this poll, and it stays current on its
