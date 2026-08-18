@@ -423,8 +423,7 @@ bot_transport_constructor <- function(tr) {
     if (!is.list(tr) || !is.character(tr$constructor) ||
         length(tr$constructor) != 1L) {
         stop("config field 'transport' must be \"matrix\" or a list ",
-             "with a 'constructor' of the form \"pkg::fn\".",
-             call. = FALSE)
+             "with a 'constructor' of the form \"pkg::fn\".", call. = FALSE)
     }
     spec <- strsplit(tr$constructor, "::", fixed = TRUE)[[1L]]
     if (length(spec) != 2L || !all(nzchar(spec))) {
@@ -450,8 +449,7 @@ bot_transport_args <- function(fn, args, save_cursor) {
     if (!is.list(args)) {
         stop("transport 'args' must be a named list.", call. = FALSE)
     }
-    if ("save_cursor" %in% names(formals(fn)) &&
-        is.null(args$save_cursor)) {
+    if ("save_cursor" %in% names(formals(fn)) && is.null(args$save_cursor)) {
         args$save_cursor <- isTRUE(save_cursor)
     }
     args
