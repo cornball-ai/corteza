@@ -77,7 +77,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.0.1.20"
+.CHAT_API_MIN <- "0.0.1.22"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -1825,12 +1825,34 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_clear_command(m$body)) {
+            # The segment title reads the transcript, so it must be
+            # taken before the archive drains it.
+            seg_title <- bot_segment_title(session)
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
-            tryCatch(
-                     bot_archive_session(session, m$channel, chat_now()),
-                     error = function(e) NULL
+            archived <- tryCatch(
+                                 bot_archive_session(session, m$channel,
+                                                     chat_now()),
+                                 error = function(e) NULL
             )
+            # Rooms listed in the config's segment_rooms get the ended
+            # conversation as a room of its own (see segment.R). Only
+            # when something was archived: the transcript pointer is
+            # the segment's content.
+            seg <- NULL
+            if (!is.null(archived) &&
+                m$channel %in% as.character(cfg$segment_rooms %||%
+                                            character())) {
+                seg <- tryCatch(
+                                bot_segment_from_clear(chat_now(),
+                                                       m$channel, seg_title,
+                                                       bot_vault_ref(archived)),
+                                error = function(e) {
+                    message("bot_segment_from_clear: ", conditionMessage(e))
+                    NULL
+                }
+                )
+            }
             if (exists(m$channel, envir = sessions, inherits = FALSE)) {
                 rm(list = m$channel, envir = sessions)
             }
@@ -1838,7 +1860,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # given, so any badge rename is undone with it.
             cfg <- bot_update_displayname(cfg, model = model, chat = chat,
                 provider = provider)
-            ack <- "Cleared. Starting a fresh session."
+            ack <- if (is.null(seg)) {
+                "Cleared. Starting a fresh session."
+            } else {
+                sprintf("Cleared. Filed as \"%s\".", seg$name)
+            }
             sent_id <- tryCatch(
                                 bot_reply_send(chat, m$channel, ack),
                                 error = function(e) NULL
