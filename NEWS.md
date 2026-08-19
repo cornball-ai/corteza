@@ -1,3 +1,14 @@
+# corteza 0.7.1.22
+
+- **A cleared conversation can become a room of its own.** When a
+  cleared room is listed in the config's `segment_rooms`, `/clear`
+  files the ended conversation as a "segment": a private room named by
+  the conversation's opening line, carrying the archived-transcript
+  pointer as a notice and an `ai.cornball.lifecycle` state event that
+  clients group and demote by. Off unless configured. Requires
+  chat.api >= 0.0.1.22 (`chat_set_state()`); older transports skip
+  with a message.
+
 # corteza 0.7.1.19
 
 - **`matrix_*` is now `bot_*`, and `R/matrix.R` is `R/rooms.R`.** corteza
