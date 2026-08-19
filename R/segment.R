@@ -53,8 +53,7 @@ bot_vault_ref <- function(path) {
     }
     p <- normalizePath(as.character(path[[1L]]), mustWork = FALSE)
     root <- tryCatch(
-                     normalizePath(getExportedValue("pensar",
-                                                    "default_vault")(),
+                     normalizePath(getExportedValue("pensar", "default_vault")(),
                                    mustWork = FALSE),
                      error = function(e) NULL
     )
@@ -85,16 +84,16 @@ bot_segment_from_clear <- function(chat, home_id, title, vault_ref) {
         setdiff(members, chat.api::chat_whoami(chat)$id)
     }, error = function(e) character())
     seg_id <- chat.api::chat_channel_create(chat, name = title,
-                                            preset = "private_chat",
-                                            invite = invite)
+        preset = "private_chat",
+        invite = invite)
     home_label <- bot_room_name(chat, home_id) %||% home_id
     if (!length(home_label) || !nzchar(home_label)) {
         home_label <- home_id
     }
     body <- paste0(
-        "Continued from ", home_label, ".",
+                   "Continued from ", home_label, ".",
         if (!is.null(vault_ref)) paste0("\nArchived transcript: ", vault_ref),
-        "\nReply here to pick the topic back up."
+                   "\nReply here to pick the topic back up."
     )
     # The summary is bot bookkeeping, not conversation: a notice renders
     # without a notification ping.
@@ -105,8 +104,7 @@ bot_segment_from_clear <- function(chat, home_id, title, vault_ref) {
         NULL
     })
     content <- list(state = "segment", segment_of = home_id,
-                    since = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ",
-                                   tz = "UTC"))
+                    since = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"))
     if (!is.null(vault_ref)) {
         content$vault <- vault_ref
     }

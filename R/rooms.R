@@ -1831,8 +1831,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
             archived <- tryCatch(
-                                 bot_archive_session(session, m$channel,
-                                                     chat_now()),
+                                 bot_archive_session(session, m$channel, chat_now()),
                                  error = function(e) NULL
             )
             # Rooms listed in the config's segment_rooms get the ended
@@ -1842,11 +1841,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             seg <- NULL
             if (!is.null(archived) &&
                 m$channel %in% as.character(cfg$segment_rooms %||%
-                                            character())) {
+                    character())) {
                 seg <- tryCatch(
                                 bot_segment_from_clear(chat_now(),
-                                                       m$channel, seg_title,
-                                                       bot_vault_ref(archived)),
+                        m$channel, seg_title,
+                        bot_vault_ref(archived)),
                                 error = function(e) {
                     message("bot_segment_from_clear: ", conditionMessage(e))
                     NULL
