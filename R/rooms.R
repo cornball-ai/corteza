@@ -77,7 +77,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.0.1.23"
+.CHAT_API_MIN <- "0.0.1.24"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -456,6 +456,11 @@ bot_msg_record <- function(m, addressed = FALSE) {
          is_self = isTRUE(m$self), mentions = m$mentions,
          encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
          addressed = isTRUE(addressed),
+         # NULL on an ordinary message and on a transport that reports
+         # no media. A picture arrives as its own message carrying one
+         # of these, whose `url` names where the bytes live rather than
+         # holding them -- see R/media.R for what becomes of it.
+         attachments = m$attachments,
          # NULL on an ordinary message, and on any transport whose
          # chat_capabilities()$thread_replies is FALSE -- which is what
          # makes every room in this loop behave as it always did.
@@ -1796,6 +1801,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # speaking; the reply gate below is unchanged.
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
+        # What the model gets: the same text, plus any picture that came
+        # with the message. Identical to ingest_body whenever there is
+        # no image, which is why everything below that is not the
+        # model's own copy goes on using ingest_body -- the reply gate
+        # reads text, and so does the transcript ledger.
+        ingest_content <- bot_message_content(chat_now(), m, ingest_body,
+            session$provider, cfg = cfg)
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
@@ -1814,7 +1826,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # unchanged), so bot-loop protection is intact.
             session$history <- c(
                                  session$history %||% list(),
-                                 list(list(role = "user", content = ingest_body))
+                                 list(list(role = "user", content = ingest_content))
             )
             next
         }
@@ -1940,7 +1952,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # writing into an accumulator whose message has already been
         # finalized.
         reply <- rooms_with_activity(session, chat, m$channel, function() {
-            bot_run_turn_in_cwd(ingest_body, session)
+            bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg)
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
