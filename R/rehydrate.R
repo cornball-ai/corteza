@@ -105,6 +105,11 @@ bot_archive_excerpt <- function(path, max_chars = 6000L) {
 # Returns TRUE when it seeded, invisibly, so a caller can tell a
 # rehydrated session from a blank one.
 bot_rehydrate_session <- function(session, chat, room_id, thread_root) {
+    # Marked before the lookup, not after, and whatever the outcome:
+    # the flag means "this session has been considered", so a thread
+    # nobody folded into is asked about once rather than on every
+    # message for the life of the process.
+    session$rehydrate_checked <- TRUE
     archive <- bot_thread_archive(chat, room_id, thread_root)
     if (is.null(archive)) {
         return(invisible(FALSE))
@@ -127,6 +132,30 @@ bot_rehydrate_session <- function(session, chat, room_id, thread_root) {
                          session$history %||% list())
     message("corteza: rehydrated thread ", thread_root, " from ", archive$vault)
     invisible(TRUE)
+}
+
+# Seed a thread's session from its archive, once.
+#
+# The gate is a flag on the session rather than "was this session just
+# created", because a session can reach its first live message already
+# populated: startup backfill builds one for every thread in its window.
+# Keying on freshness meant a restart left an active thread answering
+# from the backfilled tail alone, with the conversation it continues
+# lost for good.
+#
+# Errors are contained here, so a rehydration that fails cannot take
+# the turn with it.
+bot_maybe_rehydrate <- function(session, chat, room_id, thread) {
+    if (is.null(thread) || !nzchar(thread) ||
+        isTRUE(session$rehydrate_checked)) {
+        return(invisible(FALSE))
+    }
+    tryCatch(bot_rehydrate_session(session, chat, room_id, thread),
+             error = function(e) {
+        session$rehydrate_checked <- TRUE
+        message("corteza: rehydrate failed: ", conditionMessage(e))
+        invisible(FALSE)
+    })
 }
 
 # The registry key for a session.

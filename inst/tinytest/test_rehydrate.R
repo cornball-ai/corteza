@@ -175,6 +175,169 @@ local({
     expect_identical(length(s3$history), 0L)
 })
 
+# ---- Rehydration is considered once per session ----
+# The gate is a flag on the session, not "was it just created": a
+# session can reach its first live message already populated, because
+# startup backfill built one for every thread in its window.
+local({
+    lo <- chat.api::chat_loopback()
+    f <- tempfile(fileext = ".md")
+    writeLines(c("## user", "", "earlier turn"), f)
+    chat.api::chat_set_state(lo, "topic", "ai.cornball.fold",
+                             list(segment = "!seg:ex", vault = f),
+                             state_key = "$root")
+    # A session backfill already filled still gets seeded on its first
+    # live message. Keying on freshness is what left a restart
+    # answering an active thread from the backfilled tail alone.
+    s <- new.env(parent = emptyenv())
+    s$history <- list(list(role = "user", content = "from backfill"))
+    expect_true(corteza:::bot_maybe_rehydrate(s, lo, "topic", "$root"))
+    expect_identical(length(s$history), 3L)
+    expect_true(grepl("earlier turn", s$history[[1L]]$content, fixed = TRUE))
+    # And not a second time, however many messages follow.
+    expect_false(corteza:::bot_maybe_rehydrate(s, lo, "topic", "$root"))
+    expect_identical(length(s$history), 3L)
+
+    # A thread nobody folded into is asked about once too, or every
+    # message in an ordinary thread would cost a state read for the
+    # life of the process.
+    reads <- 0L
+    orig <- corteza:::bot_thread_archive
+    assignInNamespace("bot_thread_archive", function(...) {
+        reads <<- reads + 1L
+        NULL
+    }, ns = "corteza")
+    on.exit(assignInNamespace("bot_thread_archive", orig, ns = "corteza"),
+            add = TRUE)
+    s2 <- new.env(parent = emptyenv())
+    s2$history <- list()
+    for (i in 1:3) corteza:::bot_maybe_rehydrate(s2, lo, "topic", "$plain")
+    expect_identical(reads, 1L)
+
+    # An unthreaded message is never a rehydration candidate, and does
+    # not spend a read finding that out.
+    s3 <- new.env(parent = emptyenv())
+    expect_false(corteza:::bot_maybe_rehydrate(s3, lo, "topic", NULL))
+    expect_identical(reads, 1L)
+})
+
+# A rehydration that throws is contained and still marks the session,
+# so a failing archive cannot take the turn with it or retry forever.
+local({
+    lo <- chat.api::chat_loopback()
+    orig <- corteza:::bot_thread_archive
+    assignInNamespace("bot_thread_archive",
+                      function(...) stop("homeserver down"), ns = "corteza")
+    on.exit(assignInNamespace("bot_thread_archive", orig, ns = "corteza"),
+            add = TRUE)
+    s <- new.env(parent = emptyenv())
+    s$history <- list()
+    expect_message(res <- corteza:::bot_maybe_rehydrate(s, lo, "topic",
+                                                        "$root"),
+                   "rehydrate failed")
+    expect_false(res)
+    expect_true(isTRUE(s$rehydrate_checked))
+})
+
+# ---- Backfill routes threads into their own sessions ----
+# The defect this pins: backfill keyed every message by room, so a
+# restart put each topic's history into the main timeline's context and
+# left the threads themselves empty.
+local({
+    lo <- chat.api::chat_loopback()
+    hist <- list(
+        chat.api::chat_message(id = "$m1", channel = "!r:ex",
+                               sender = "@troy:ex", body = "main timeline",
+                               ts = Sys.time()),
+        chat.api::chat_message(id = "$m2", channel = "!r:ex",
+                               sender = "@troy:ex", body = "in thread a",
+                               ts = Sys.time(), thread = "$a"),
+        chat.api::chat_message(id = "$m3", channel = "!r:ex",
+                               sender = "@troy:ex", body = "also thread a",
+                               ts = Sys.time(), thread = "$a"),
+        chat.api::chat_message(id = "$m4", channel = "!r:ex",
+                               sender = "@troy:ex", body = "in thread b",
+                               ts = Sys.time(), thread = "$b"))
+    orig_hist <- chat.api::chat_history
+    orig_chan <- chat.api::chat_channels
+    assignInNamespace("chat_history",
+                      function(client, channel, limit = 50L, cursor = NULL,
+                               ...) list(messages = hist, cursor = NULL),
+                      ns = "chat.api")
+    assignInNamespace("chat_channels", function(client, ...) "!r:ex",
+                      ns = "chat.api")
+    on.exit({
+        assignInNamespace("chat_history", orig_hist, ns = "chat.api")
+        assignInNamespace("chat_channels", orig_chan, ns = "chat.api")
+    }, add = TRUE)
+
+    reg <- corteza:::bot_new_session_registry()
+    corteza:::bot_backfill_sessions(lo, reg, list(model = "claude-sonnet-4-6",
+                                                  provider = "anthropic"))
+    keys <- sort(ls(reg, all.names = TRUE))
+    expect_identical(keys, sort(c("!r:ex",
+                                  corteza:::bot_session_key("!r:ex", "$a"),
+                                  corteza:::bot_session_key("!r:ex", "$b"))))
+    body_of <- function(key) {
+        vapply(get(key, envir = reg)$history,
+               function(h) h$content, character(1))
+    }
+    # The room's own session holds only what was on its main timeline.
+    expect_true(any(grepl("main timeline", body_of("!r:ex"), fixed = TRUE)))
+    expect_false(any(grepl("in thread a", body_of("!r:ex"), fixed = TRUE)))
+    expect_false(any(grepl("in thread b", body_of("!r:ex"), fixed = TRUE)))
+    # And each thread holds its own, both messages of it.
+    a <- body_of(corteza:::bot_session_key("!r:ex", "$a"))
+    expect_identical(length(a), 2L)
+    expect_true(any(grepl("also thread a", a, fixed = TRUE)))
+    expect_false(any(grepl("in thread b", a, fixed = TRUE)))
+    # Every session knows the room it speaks into, so archival and
+    # sends still target a real room id rather than a composite key.
+    for (k in keys) {
+        expect_identical(get(k, envir = reg)$room_id, "!r:ex")
+    }
+})
+
+# Backfilled thread sessions are seeded from the archive too, and the
+# archive lands in front of the backfilled window -- it is the older
+# context of the two.
+local({
+    lo <- chat.api::chat_loopback()
+    f <- tempfile(fileext = ".md")
+    writeLines(c("## user", "", "the archived conversation"), f)
+    chat.api::chat_set_state(lo, "!r:ex", "ai.cornball.fold",
+                             list(segment = "!seg:ex", vault = f),
+                             state_key = "$a")
+    hist <- list(chat.api::chat_message(id = "$m1", channel = "!r:ex",
+                                        sender = "@troy:ex",
+                                        body = "recent thread turn",
+                                        ts = Sys.time(), thread = "$a"))
+    orig_hist <- chat.api::chat_history
+    orig_chan <- chat.api::chat_channels
+    assignInNamespace("chat_history",
+                      function(client, channel, limit = 50L, cursor = NULL,
+                               ...) list(messages = hist, cursor = NULL),
+                      ns = "chat.api")
+    assignInNamespace("chat_channels", function(client, ...) "!r:ex",
+                      ns = "chat.api")
+    on.exit({
+        assignInNamespace("chat_history", orig_hist, ns = "chat.api")
+        assignInNamespace("chat_channels", orig_chan, ns = "chat.api")
+    }, add = TRUE)
+
+    reg <- corteza:::bot_new_session_registry()
+    corteza:::bot_backfill_sessions(lo, reg, list(model = "claude-sonnet-4-6",
+                                                  provider = "anthropic"))
+    s <- get(corteza:::bot_session_key("!r:ex", "$a"), envir = reg)
+    bodies <- vapply(s$history, function(h) h$content, character(1))
+    expect_true(grepl("the archived conversation", bodies[[1L]], fixed = TRUE))
+    expect_true(grepl("recent thread turn", bodies[[length(bodies)]],
+                      fixed = TRUE))
+    # Considered once: the live path must not seed it a second time.
+    expect_true(isTRUE(s$rehydrate_checked))
+    expect_false(corteza:::bot_maybe_rehydrate(s, lo, "!r:ex", "$a"))
+})
+
 # ---- A transport without durable state ----
 # rehydration is a no-op rather than an error, so a bot on a transport
 # that has no state events keeps answering.

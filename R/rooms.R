@@ -1725,23 +1725,17 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # Without a thread the key is the room id and nothing about this
         # loop changes.
         skey <- bot_session_key(m$channel, m$thread)
-        fresh <- !exists(skey, envir = sessions, inherits = FALSE)
         session <- bot_get_or_create_session(sessions, skey, cfg,
             system = system, model = model, provider = provider,
             tools_filter = tools_filter, room_id = m$channel)
-        # The first message in a thread is the moment to seed it: a
-        # folded conversation's thread root stands for an archived
+        # A folded conversation's thread root stands for an archived
         # transcript, and replying there should continue that
-        # conversation rather than open a blank one. Only on a session
-        # this poll just created, and never for our own echo, so a
-        # rehydrated thread is not re-seeded on every later turn.
-        if (fresh && !is.null(m$thread) && !isTRUE(m$is_self)) {
-            tryCatch(
-                     bot_rehydrate_session(session, chat_now(), m$channel, m$thread),
-                     error = function(e) {
-                message("corteza: rehydrate failed: ", conditionMessage(e))
-            })
-        }
+        # conversation rather than open a blank one. Gated on the
+        # session's own flag rather than on having just created it:
+        # startup backfill can have built this session already, and
+        # keying on freshness left a restart answering an active thread
+        # from the backfilled tail alone.
+        bot_maybe_rehydrate(session, chat_now(), m$channel, m$thread)
 
         # Self events: either an echo of our own reply (already in
         # $history via turn() — skip) or an out-of-band send from a
@@ -2035,11 +2029,6 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         if (is.null(msgs) || !length(msgs)) {
             next
         }
-        session <- bot_get_or_create_session(
-            sessions, rid, cfg,
-            system = system, model = model,
-            provider = provider, tools_filter = tools_filter
-        )
         # Attribution mirrors the live path: label senders in multi-human
         # rooms, and label known bot senders even in one-human rooms.
         # Membership is not fetched during backfill, so multi-human is
@@ -2062,6 +2051,23 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             if (is.null(body) || !nzchar(body)) {
                 next
             }
+            # Per message, not per room: a threaded message belongs to
+            # its thread's session, the same way the live path routes
+            # it. Backfilling every message into the room's session put
+            # each topic's history into the main timeline's context and
+            # left the threads themselves empty, so a restart both
+            # polluted the room and lost the threads.
+            session <- bot_get_or_create_session(
+                sessions, bot_session_key(rid, m$thread), cfg,
+                system = system, model = model,
+                provider = provider, tools_filter = tools_filter,
+                room_id = rid
+            )
+            # A thread's archive is older context than this window, so
+            # it goes in before the window does. Once per session: the
+            # flag is what stops the second backfilled message in a
+            # thread asking again.
+            bot_maybe_rehydrate(session, chat, rid, m$thread)
             is_self <- isTRUE(m$self)
             if (is_self) {
                 role <- "assistant"
