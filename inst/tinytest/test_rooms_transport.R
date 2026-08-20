@@ -919,7 +919,7 @@ local({
     seen_cfg <- NULL
     orig_send <- corteza:::bot_reply_send
     assignInNamespace("bot_reply_send",
-                      function(chat, room_id, text, markdown = FALSE) {
+                      function(chat, room_id, text, markdown = FALSE, ...) {
         seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")
@@ -1037,7 +1037,7 @@ local({
     seen_cfg <- NULL
     orig_send <- corteza:::bot_reply_send
     assignInNamespace("bot_reply_send",
-                      function(chat, room_id, text, markdown = FALSE) {
+                      function(chat, room_id, text, markdown = FALSE, ...) {
         seen_cfg <<- chat$env$mx
         "$ack"
     }, ns = "corteza")

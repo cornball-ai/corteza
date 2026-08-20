@@ -1,3 +1,15 @@
+# corteza 0.7.1.23
+
+- **A folded conversation continues from its thread.** Sessions are
+  keyed by room and thread root rather than room alone, so a room's
+  main timeline and each of its threads are separate conversations
+  (without a thread the key is the room id exactly, so existing rooms
+  are unaffected). The first message in a thread seeds its session from
+  the archive the thread stands for, found through the
+  `ai.cornball.fold` index the fold writes into the topic room. Replies
+  go back into the thread they answer, falling back to the room where
+  the transport cannot route one. Requires chat.api >= 0.0.1.23.
+
 # corteza 0.7.1.22
 
 - **A cleared conversation can become a room of its own.** When a
