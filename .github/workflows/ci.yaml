@@ -57,6 +57,9 @@ jobs:
       - name: Install Matrix stack
         run: |
           for pkg in mx.api mx.client chat.api llm.api; do
+            # install_deps leaves llm.api's CRAN source unpacked here,
+            # and git clone refuses a directory that is not empty.
+            rm -rf "$RUNNER_TEMP/$pkg"
             git clone --depth 1 "https://github.com/cornball-ai/$pkg.git" "$RUNNER_TEMP/$pkg"
             R CMD INSTALL "$RUNNER_TEMP/$pkg"
           done
