@@ -32,7 +32,7 @@ bot_thread_archive <- function(chat, room_id, thread_root) {
     }
     st <- tryCatch(
                    chat.api::chat_get_state(chat, room_id, "ai.cornball.fold",
-                                            state_key = thread_root),
+            state_key = thread_root),
                    error = function(e) {
         message("bot_thread_archive: could not read fold index: ",
                 conditionMessage(e))
@@ -116,17 +116,16 @@ bot_rehydrate_session <- function(session, chat, room_id, thread_root) {
         return(invisible(FALSE))
     }
     framing <- paste0(
-        "This thread continues an earlier conversation that was ",
-        "archived. Its transcript follows; treat it as the ",
-        "conversation so far and carry on from it.\n\n", excerpt)
+                      "This thread continues an earlier conversation that was ",
+                      "archived. Its transcript follows; treat it as the ",
+                      "conversation so far and carry on from it.\n\n", excerpt)
     session$history <- c(
-        list(list(role = "user", content = framing),
-             list(role = "assistant",
-                  content = paste("I have the earlier conversation in",
-                                  "mind. Go ahead."))),
-        session$history %||% list())
-    message("corteza: rehydrated thread ", thread_root, " from ",
-            archive$vault)
+                         list(list(role = "user", content = framing),
+                              list(role = "assistant",
+                                   content = paste("I have the earlier conversation in",
+                    "mind. Go ahead."))),
+                         session$history %||% list())
+    message("corteza: rehydrated thread ", thread_root, " from ", archive$vault)
     invisible(TRUE)
 }
 

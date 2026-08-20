@@ -1737,8 +1737,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # rehydrated thread is not re-seeded on every later turn.
         if (fresh && !is.null(m$thread) && !isTRUE(m$is_self)) {
             tryCatch(
-                     bot_rehydrate_session(session, chat_now(), m$channel,
-                                           m$thread),
+                     bot_rehydrate_session(session, chat_now(), m$channel, m$thread),
                      error = function(e) {
                 message("corteza: rehydrate failed: ", conditionMessage(e))
             })
@@ -1839,8 +1838,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack,
-                                               thread = m$thread),
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1860,8 +1858,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 cfg <- bot_update_displayname(cfg, session, chat = chat)
             }
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack,
-                                               thread = m$thread),
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1919,8 +1916,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 sprintf("Cleared. Filed as \"%s\".", seg$name)
             }
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack,
-                                               thread = m$thread),
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
             bot_reset_session(sessions, skey, cfg, sent_id, ack,
