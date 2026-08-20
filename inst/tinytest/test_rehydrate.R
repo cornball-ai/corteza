@@ -10,6 +10,15 @@ if (!("chat_get_state" %in% getNamespaceExports("chat.api"))) {
     exit_file("chat.api too old: no chat_get_state")
 }
 
+# Sessions are built for real here rather than hand-assembled, because
+# what is under test is how bot_get_or_create_session() keys and
+# populates them. That means session_setup() runs, and it refuses a
+# provider whose API key is absent -- so the provider is ollama, for
+# which there is no key to check. Nothing here reaches a model.
+test_cfg <- function() {
+    list(room_id = "!r:ex", model = "qwen3:8b", provider = "ollama")
+}
+
 # ---- Session keys ----
 # Without a thread the key is the room id exactly, which is what keeps
 # every existing room behaving as it did.
@@ -30,8 +39,7 @@ expect_false(identical(corteza:::bot_session_key("!r:ex", "$a"),
 # room's thread answered with another topic's context.
 local({
     reg <- corteza:::bot_new_session_registry()
-    cfg <- list(room_id = "!r:ex", model = "claude-sonnet-4-6",
-                provider = "anthropic")
+    cfg <- test_cfg()
     main <- corteza:::bot_get_or_create_session(reg, "!r:ex", cfg)
     t1 <- corteza:::bot_get_or_create_session(
         reg, corteza:::bot_session_key("!r:ex", "$a"), cfg,
@@ -70,7 +78,7 @@ local({
     on.exit(assignInNamespace("bot_archive_session", orig, ns = "corteza"),
             add = TRUE)
     reg <- corteza:::bot_new_session_registry()
-    cfg <- list(room_id = "!r:ex")
+    cfg <- test_cfg()
     corteza:::bot_get_or_create_session(reg, "!r:ex", cfg)
     corteza:::bot_get_or_create_session(
         reg, corteza:::bot_session_key("!r:ex", "$a"), cfg,
@@ -272,8 +280,7 @@ local({
     }, add = TRUE)
 
     reg <- corteza:::bot_new_session_registry()
-    corteza:::bot_backfill_sessions(lo, reg, list(model = "claude-sonnet-4-6",
-                                                  provider = "anthropic"))
+    corteza:::bot_backfill_sessions(lo, reg, test_cfg())
     keys <- sort(ls(reg, all.names = TRUE))
     expect_identical(keys, sort(c("!r:ex",
                                   corteza:::bot_session_key("!r:ex", "$a"),
@@ -326,8 +333,7 @@ local({
     }, add = TRUE)
 
     reg <- corteza:::bot_new_session_registry()
-    corteza:::bot_backfill_sessions(lo, reg, list(model = "claude-sonnet-4-6",
-                                                  provider = "anthropic"))
+    corteza:::bot_backfill_sessions(lo, reg, test_cfg())
     s <- get(corteza:::bot_session_key("!r:ex", "$a"), envir = reg)
     bodies <- vapply(s$history, function(h) h$content, character(1))
     expect_true(grepl("the archived conversation", bodies[[1L]], fixed = TRUE))
