@@ -1,3 +1,21 @@
+# corteza 0.7.1.24
+
+- **A picture posted in a room reaches the model as a picture.** An
+  image arrives as its own message carrying an attachment that names
+  where the bytes live; corteza fetches it through the transport
+  (`chat.api::chat_download()`), encodes it, and sends it alongside the
+  text as `llm.api::llm_content()`. Before this the bot saw only the
+  filename, and answered that no image was attached.
+
+  On by default for the cloud providers, off for `ollama` (a local
+  build is as likely to be a text-only 9b as a vision model). Both are
+  overridable with `images: true`/`false` in the Matrix config, and
+  `image_max_bytes` sets the per-image ceiling (5 MB by default). One
+  unfetchable picture -- an encrypted attachment, most likely -- costs
+  the message its image and nothing else. Requires chat.api >= 0.0.1.24
+  and an llm.api with `llm_content()`; without either, the text goes
+  through as it did before and a message on stderr says why.
+
 # corteza 0.7.1.23
 
 - **A folded conversation continues from its thread.** Sessions are

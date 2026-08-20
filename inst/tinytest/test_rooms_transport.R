@@ -1545,3 +1545,99 @@ local({
     # Replacing the message it posted, not some other one.
     expect_equal(edited[[1L]]$target, "$activity1")
 })
+
+# ---------------------------------------------------------------
+# A picture posted in a room reaches the model as a picture.
+#
+# Every other media assertion lives in test_media.R and calls
+# bot_message_content() directly, so all of them would keep passing if
+# bot_poll() never called it and if bot_msg_record() went on dropping
+# the attachment. This is the one that walks the whole path: a real
+# m.image event through chat.api's media extractor, through the record,
+# through the fetch, into the prompt the turn actually runs on.
+# ---------------------------------------------------------------
+if (requireNamespace("chat.api", quietly = TRUE) &&
+    utils::packageVersion("chat.api") >= "0.0.1.24" &&
+    corteza:::bot_llm_multimodal()) {
+    local({
+        iso <- isolate_config(base_cfg(sync_token = "s1"))
+        on.exit(restore_config(iso), add = TRUE)
+
+        orig_resp <- corteza:::bot_should_respond
+        assignInNamespace("bot_should_respond", function(...) TRUE,
+                          ns = "corteza")
+        on.exit(assignInNamespace("bot_should_respond", orig_resp,
+                                  ns = "corteza"), add = TRUE)
+
+        orig_send <- corteza:::bot_reply_send
+        assignInNamespace("bot_reply_send",
+                          function(chat, channel, text, ...) "$ack",
+                          ns = "corteza")
+        on.exit(assignInNamespace("bot_reply_send", orig_send, ns = "corteza"),
+                add = TRUE)
+
+        captured <- NULL
+        orig_turn <- corteza:::bot_run_turn_in_cwd
+        assignInNamespace("bot_run_turn_in_cwd", function(prompt, session) {
+            captured <<- prompt
+            "I see a picture."
+        }, ns = "corteza")
+        on.exit(assignInNamespace("bot_run_turn_in_cwd", orig_turn,
+                                  ns = "corteza"), add = TRUE)
+
+        png_bytes <- as.raw(c(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))
+        img_sync <- list(next_batch = "s2", rooms = list(join = list(
+            `!room:example` = list(timeline = list(events = list(
+                list(type = "m.room.message", event_id = "$img1:example",
+                     sender = "@ann:example",
+                     origin_server_ts = 1700000000000,
+                     content = list(msgtype = "m.image",
+                                    body = "IMG_0942.png",
+                                    url = "mxc://example/abc",
+                                    info = list(mimetype = "image/png",
+                                                size = 8L)))))))))
+
+        asked <- NULL
+        seams <- list(
+            .sync = function(client, timeout = 0L, save = TRUE, ...) {
+                client$sync_token <- "s2"
+                sync_saved(client, save)
+                list(sync = img_sync, client = client, first_run = FALSE)
+            },
+            .download = function(session, mxc_url, dest) {
+                asked <<- mxc_url
+                writeBin(png_bytes, dest)
+                dest
+            })
+
+        # A vision provider, since the default registry is on ollama and
+        # ollama is off by default.
+        sessions <- corteza:::bot_new_session_registry()
+        s <- new.env(parent = emptyenv())
+        s$provider <- "anthropic"
+        s$model <- "claude-sonnet-4-6"
+        s$history <- list()
+        s$transcript <- list()
+        s$seen_event_ids <- character()
+        assign("!room:example", s, envir = sessions)
+
+        replied <- with_seamed_client(seams,
+            corteza::bot_poll(timeout = 0L, sessions = sessions))
+
+        expect_equal(replied, 1L)
+        # Fetched through the transport, from the address on the event.
+        expect_equal(asked, "mxc://example/abc")
+        # And the turn ran on content, not on the filename alone.
+        expect_true(inherits(captured, "llm_content"))
+        expect_equal(length(captured), 2L)
+        expect_true(inherits(captured[[2L]], "llm_image"))
+        expect_equal(captured[[2L]]$mime, "image/png")
+        expect_equal(captured[[2L]]$data, jsonlite::base64_enc(png_bytes))
+
+        # The Matrix ledger keeps the text. It feeds the vault archive,
+        # which is markdown, and a base64 image in it would be noise no
+        # reader could use.
+        expect_equal(length(s$transcript), 2L)
+        expect_equal(s$transcript[[1L]]$content, "IMG_0942.png")
+    })
+}

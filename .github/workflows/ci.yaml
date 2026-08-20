@@ -46,9 +46,20 @@ jobs:
       # which is the intent: the verify step below is what says so, in
       # the one line worth reading. Order matters: mx.client imports
       # mx.api.
+      # llm.api rides along even though it is an Imports and install_deps
+      # already brought it from CRAN. Images in a room need llm_content(),
+      # which is newer than the published build, and corteza
+      # feature-detects it rather than raising the Imports floor -- a
+      # floor above CRAN would make corteza uninstallable for everyone to
+      # buy a check an exists() makes anyway. The cost of that choice is
+      # that the media tests would skip themselves on a CRAN llm.api, so
+      # the default branch goes on here and the verify step below says so.
       - name: Install Matrix stack
         run: |
-          for pkg in mx.api mx.client chat.api; do
+          for pkg in mx.api mx.client chat.api llm.api; do
+            # install_deps leaves llm.api's CRAN source unpacked here,
+            # and git clone refuses a directory that is not empty.
+            rm -rf "$RUNNER_TEMP/$pkg"
             git clone --depth 1 "https://github.com/cornball-ai/$pkg.git" "$RUNNER_TEMP/$pkg"
             R CMD INSTALL "$RUNNER_TEMP/$pkg"
           done
@@ -86,7 +97,12 @@ jobs:
               stop("chat.api ", have, " is below the ", floor,
                    " this corteza requires", call. = FALSE)
             message("mx.api ", utils::packageVersion("mx.api"))
-            message("mx.client ", utils::packageVersion("mx.client"))'
+            message("mx.client ", utils::packageVersion("mx.client"))
+            message("llm.api ", utils::packageVersion("llm.api"))
+            if (!corteza:::bot_llm_multimodal())
+              stop("this llm.api has no llm_content(): every image test ",
+                   "would skip itself and the run would go green",
+                   call. = FALSE)'
 
       - name: Test
         run: ./run.sh run_tests
