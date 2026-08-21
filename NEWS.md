@@ -1,3 +1,17 @@
+# corteza 0.7.1.25
+
+- **The per-image ceiling is per provider.** It was one 5 MB constant,
+  taken from Anthropic's documented limit on the reasoning that the
+  strictest provider is the safe one to assume. That refused the first
+  real photograph anyone sent -- 5.58 MB, 6.5% over -- to a bot running
+  gpt-5.5, which takes four times that. Anthropic keeps 5 MB, OpenAI
+  and `openai_codex` get 20 MB, and a provider that is not listed takes
+  the conservative default rather than a guess. `image_max_bytes` still
+  overrides all of it. The "skipping" message now names the limit as
+  well as the size, since a line saying a picture was refused without
+  saying what would have passed is the one thing a reader has to go
+  find out.
+
 # corteza 0.7.1.24
 
 - **A picture posted in a room reaches the model as a picture.** An
