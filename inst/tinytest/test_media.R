@@ -89,11 +89,42 @@ expect_identical(length(corteza:::bot_image_attachments(
     msg(att(bytes = NA_integer_)))), 1L)
 
 # The limit is configurable.
-expect_identical(corteza:::bot_image_max_bytes(), corteza:::.BOT_IMAGE_MAX_BYTES)
-expect_identical(corteza:::bot_image_max_bytes(list(image_max_bytes = 1024)),
+# The ceiling is per provider, because they differ by 4x. One
+# conservative number chosen from the strictest provider refused the
+# first real photograph anyone sent to a bot running gpt-5.5.
+expect_identical(corteza:::bot_image_max_bytes(provider = "openai_codex"),
+                 corteza:::.BOT_IMAGE_MAX_BYTES[["openai_codex"]])
+expect_identical(corteza:::bot_image_max_bytes(provider = "anthropic"),
+                 corteza:::.BOT_IMAGE_MAX_BYTES[["anthropic"]])
+expect_true(corteza:::bot_image_max_bytes(provider = "openai_codex") >
+            corteza:::bot_image_max_bytes(provider = "anthropic"))
+
+# The regression, by the number that actually failed. cornball2.png was
+# 5,584,988 bytes -- 6.5% over the old flat 5 MB cap -- sent to a bot on
+# openai_codex, which takes four times that.
+expect_true(5584988 <= corteza:::bot_image_max_bytes(provider = "openai_codex"))
+# ... and it would still be refused on Anthropic, correctly: that is a
+# real 5 MB limit, not a guess. The two must not collapse to one number.
+expect_false(5584988 <= corteza:::bot_image_max_bytes(provider = "anthropic"))
+
+# An unnamed or unknown provider takes the conservative default rather
+# than erroring: [[ on a named atomic vector raises "subscript out of
+# bounds" for a name that is not there, which would cost the poll every
+# picture in it rather than one.
+expect_identical(corteza:::bot_image_max_bytes(),
+                 corteza:::.BOT_IMAGE_MAX_DEFAULT)
+expect_identical(corteza:::bot_image_max_bytes(provider = "some_gateway"),
+                 corteza:::.BOT_IMAGE_MAX_DEFAULT)
+expect_identical(corteza:::bot_image_max_bytes(provider = NA_character_),
+                 corteza:::.BOT_IMAGE_MAX_DEFAULT)
+
+# The config override still wins over both.
+expect_identical(corteza:::bot_image_max_bytes(list(image_max_bytes = 1024),
+                                               provider = "openai_codex"),
                  1024)
-expect_identical(corteza:::bot_image_max_bytes(list(image_max_bytes = "nope")),
-                 corteza:::.BOT_IMAGE_MAX_BYTES)
+expect_identical(corteza:::bot_image_max_bytes(list(image_max_bytes = "nope"),
+                                               provider = "anthropic"),
+                 corteza:::.BOT_IMAGE_MAX_BYTES[["anthropic"]])
 
 # ---- What the model ends up holding ----
 
@@ -196,6 +227,29 @@ local({
                                              cfg = list(image_max_bytes = 100)),
         "after download")
     expect_identical(out, "hello")
+})
+
+# A 5.5 MB photo goes through on openai_codex and is refused on
+# anthropic, from one call with nothing but the provider differing.
+# This is the end-to-end form of the regression above: the unit test
+# pins the number, this pins that the number is actually consulted.
+local({
+    big <- as.raw(rep(0L, 6L * 1024L * 1024L))
+    cl <- fake_chat(on_download = function(a, dest) {
+        writeBin(big, dest)
+        dest
+    })
+    m <- msg(att(bytes = NA_integer_))
+    out <- corteza:::bot_message_content(cl, m, "what is this",
+                                         "openai_codex")
+    expect_inherits(out, "llm_content")
+    expect_true(corteza:::bot_llm_multimodal())
+
+    expect_message(
+        small <- corteza:::bot_message_content(cl, m, "what is this",
+                                               "anthropic"),
+        "over the")
+    expect_identical(small, "what is this")
 })
 
 # One good picture and one bad one leaves the good one in place.

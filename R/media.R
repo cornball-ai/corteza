@@ -24,11 +24,31 @@
 .BOT_VISION_PROVIDERS <- c("anthropic", "anthropic_claude", "openai",
                            "openai_codex", "moonshot")
 
-# 5 MB. Anthropic's per-image ceiling is the lowest of the providers
-# here, and base64 adds a third on top of whatever this is, so the
-# conservative number is the one that does not depend on which room a
-# picture landed in.
-.BOT_IMAGE_MAX_BYTES <- 5L * 1024L * 1024L
+# The per-image ceiling, by provider, because they differ by 4x and a
+# single conservative number is wrong for most of them. The first
+# version of this was one 5 MB constant chosen from Anthropic's limit
+# on the reasoning that the strictest provider is the safe one to
+# assume. It refused the first real photograph anyone sent -- 5.58 MB,
+# 6.5% over -- to a bot running gpt-5.5, which would have taken it four
+# times over. A cap that does not depend on which room a picture landed
+# in also does not depend on what would actually have worked.
+#
+# Anthropic documents 5 MB per image; OpenAI 20 MB. The others are not
+# documented as clearly, so they get the conservative number rather
+# than a guess -- being refused locally with a message naming the limit
+# is a better failure than a 400 from a provider mid-conversation.
+.BOT_IMAGE_MAX_BYTES <- c(anthropic = 5L * 1024L * 1024L,
+                          anthropic_claude = 5L * 1024L * 1024L,
+                          openai = 20L * 1024L * 1024L,
+                          openai_codex = 20L * 1024L * 1024L,
+                          moonshot = 5L * 1024L * 1024L,
+                          # Local, so the constraint is this machine's
+                          # memory rather than an API limit. Same as the
+                          # cloud ceiling; a local model that cannot hold
+                          # it fails locally and visibly.
+                          ollama = 20L * 1024L * 1024L)
+
+.BOT_IMAGE_MAX_DEFAULT <- 5L * 1024L * 1024L
 
 # Whether to send images at all for this provider. cfg$images overrides,
 # either way: TRUE for a vision-capable ollama build, FALSE to turn the
@@ -52,19 +72,29 @@ bot_llm_multimodal <- function() {
     all(c("llm_content", "llm_image") %in% getNamespaceExports("llm.api"))
 }
 
-bot_image_max_bytes <- function(cfg = list()) {
+# The ceiling for this room's provider, or the caller's override.
+# cfg$image_max_bytes wins over both, so a bot pointed at a gateway
+# whose limit is neither of these can say so.
+bot_image_max_bytes <- function(cfg = list(), provider = NULL) {
     n <- suppressWarnings(as.numeric(cfg$image_max_bytes %||% NA))
-    if (is.na(n) || n <= 0) {
-        return(.BOT_IMAGE_MAX_BYTES)
+    if (!is.na(n) && n > 0) {
+        return(n)
     }
-    n
+    # Membership first: [[ on a named atomic vector errors on a name
+    # that is not there rather than answering NULL, so an unknown
+    # provider would take the whole poll's media with it.
+    p <- provider %||% ""
+    if (!p %in% names(.BOT_IMAGE_MAX_BYTES)) {
+        return(.BOT_IMAGE_MAX_DEFAULT)
+    }
+    .BOT_IMAGE_MAX_BYTES[[p]]
 }
 
 # The image attachments on one message. Non-image attachments -- a PDF,
 # a voice note -- are left alone: this understands pictures, and
 # silently handing a model a spreadsheet as an image would be worse
 # than not handing it anything.
-bot_image_attachments <- function(m, max_bytes = .BOT_IMAGE_MAX_BYTES) {
+bot_image_attachments <- function(m, max_bytes = .BOT_IMAGE_MAX_DEFAULT) {
     atts <- m$attachments
     if (!length(atts)) {
         return(list())
@@ -94,7 +124,7 @@ bot_image_attachments <- function(m, max_bytes = .BOT_IMAGE_MAX_BYTES) {
 # common case here -- chat.api refuses those, because the bytes behind
 # the URL are ciphertext it has no way to decrypt.
 bot_fetch_image <- function(chat, attachment,
-                            max_bytes = .BOT_IMAGE_MAX_BYTES) {
+                            max_bytes = .BOT_IMAGE_MAX_DEFAULT) {
     path <- tryCatch(chat.api::chat_download(chat, attachment),
                      error = function(e) {
         message("corteza: could not fetch ",
@@ -109,8 +139,13 @@ bot_fetch_image <- function(chat, attachment,
     # what the sender's client claimed and nothing verified it.
     size <- file.size(path)
     if (is.na(size) || size <= 0 || size > max_bytes) {
+        # The limit is in the message. Without it the line says a
+        # picture was refused and not what it would have to be to pass,
+        # which is the one thing the reader is about to want.
         message("corteza: skipping ", attachment$name %||% attachment$id,
-                " (", format(size, big.mark = ","), " bytes after download)")
+                " (", format(size, big.mark = ","), " bytes after download, ",
+                "over the ", format(max_bytes, big.mark = ","),
+                " byte limit)")
         return(NULL)
     }
     tryCatch(llm.api::llm_image(path, mime = attachment$mime),
@@ -130,7 +165,7 @@ bot_fetch_image <- function(chat, attachment,
 # it looks: `text` also feeds the reply gate and the Matrix transcript
 # ledger, and only the model's copy needs to be anything else.
 bot_message_content <- function(chat, m, text, provider, cfg = list()) {
-    max_bytes <- bot_image_max_bytes(cfg)
+    max_bytes <- bot_image_max_bytes(cfg, provider)
     atts <- bot_image_attachments(m, max_bytes)
     if (!length(atts)) {
         return(text)
