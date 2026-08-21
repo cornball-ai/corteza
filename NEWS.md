@@ -1,3 +1,15 @@
+# corteza 0.7.1.26
+
+- **A segment room is not named after the command that ended it.**
+  The fork auto-prepends a bare `/clear` as its own message, so a
+  conversation opening with one produced a permanent room titled
+  `/clear (2026-08-20)`. Commands are skipped when picking the title.
+
+- **A conversation the user said nothing in gets no room.** A `/clear`
+  straight after a `/clear` archives fine and used to become a sidebar
+  entry that will never be worth reopening. The bar is "said anything at
+  all", not a turn count -- a threshold would be a number nobody chose.
+
 # corteza 0.7.1.25
 
 - **The per-image ceiling is per provider.** It was one 5 MB constant,

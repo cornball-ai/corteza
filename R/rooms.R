@@ -1881,6 +1881,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # The segment title reads the transcript, so it must be
             # taken before the archive drains it.
             seg_title <- bot_segment_title(session)
+            # Read here for the same reason as the title: the archive is
+            # about to drain the transcript this reads.
+            seg_worth <- bot_segment_worth_keeping(session)
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
             archived <- tryCatch(
@@ -1895,8 +1898,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # conversation that ended once, and filing it again would
             # make a segment room whose parent is a topic room. Clearing
             # inside one still resets that thread's session.
+            # And not when the user said nothing: a /clear straight after
+            # a /clear archives fine and used to get a permanent room
+            # named after the command that ended it.
             seg <- NULL
-            if (!is.null(archived) && is.null(m$thread) &&
+            if (!is.null(archived) && is.null(m$thread) && seg_worth &&
                 m$channel %in% as.character(cfg$segment_rooms %||%
                     character())) {
                 seg <- tryCatch(
