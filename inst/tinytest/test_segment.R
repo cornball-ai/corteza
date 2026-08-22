@@ -49,6 +49,49 @@ local({
     expect_true(is.character(title) && nzchar(title))
 })
 
+# ---- Commands are not what the user said ----
+# The fork auto-prepends a bare "/clear" as its own message, so a
+# conversation opening with one was titled "/clear (2026-08-20)": the
+# tool's own vocabulary, on a permanent room, saying nothing about what
+# is inside it.
+local({
+    s <- fake_session(list(
+        list(role = "user", content = "/clear"),
+        list(role = "user", content = "How do I proof sourdough?")
+    ))
+    title <- corteza:::bot_segment_title(s)
+    expect_true(startsWith(title, "How do I proof sourdough? ("))
+    expect_false(grepl("/clear", title, fixed = TRUE))
+})
+
+# A command with arguments is still a command.
+expect_true(corteza:::.bot_is_command_line("/model sonnet"))
+expect_true(corteza:::.bot_is_command_line("/clear"))
+# A path is not, and neither is arithmetic or a bare slash. Listed
+# because a rule that ate these would silently drop real content: the
+# title falls back and the segment stops being worth keeping.
+expect_false(corteza:::.bot_is_command_line("/home/troy/cerebro"))
+expect_false(corteza:::.bot_is_command_line("/ hello"))
+expect_false(corteza:::.bot_is_command_line("and/or"))
+expect_false(corteza:::.bot_is_command_line("/"))
+
+# ---- Worth keeping ----
+# A /clear straight after a /clear ends a conversation in which the user
+# said nothing. It archives fine, and used to become a permanent room
+# named after the command that ended it.
+expect_false(corteza:::bot_segment_worth_keeping(
+    fake_session(list(list(role = "user", content = "/clear")))))
+expect_false(corteza:::bot_segment_worth_keeping(fake_session(list())))
+# Assistant output alone is not the user saying something either: a
+# scheduled briefing posted into the room and never answered.
+expect_false(corteza:::bot_segment_worth_keeping(
+    fake_session(list(list(role = "assistant", content = "Briefing.")))))
+# One real line is enough. The bar is "said anything", not a turn count:
+# a threshold would be a number nobody chose.
+expect_true(corteza:::bot_segment_worth_keeping(
+    fake_session(list(list(role = "user", content = "/clear"),
+                      list(role = "user", content = "thanks")))))
+
 # ---- Vault pointer ----
 expect_null(corteza:::bot_vault_ref(NULL))
 expect_null(corteza:::bot_vault_ref(""))

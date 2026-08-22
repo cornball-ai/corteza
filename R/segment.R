@@ -14,14 +14,30 @@
 # makes no segment, because the pointer to the transcript is the
 # segment's content.
 
-# Title for a segment room: the opening line of the conversation it
-# holds. The first human line is what the user typed to start the
-# topic, which beats a generated label for recognizing it in a room
-# list. Must be read before bot_archive_session() drains the
-# transcript.
-bot_segment_title <- function(session, max_chars = 60L) {
-    entries <- session$transcript %||% list()
-    for (e in entries) {
+# A line that drives the tool rather than saying anything: "/clear",
+# "/reset", "/model sonnet".
+#
+# The first token must be a slash followed by a word and then a space or
+# the end of the line. The trailing condition is the whole rule: without
+# it "/home/troy/cerebro" is a command, and a user whose opening line is
+# a bare path loses it -- the title falls back to "Conversation" and the
+# segment stops being worth keeping. A false positive here deletes
+# content; a false negative just leaves an ugly title.
+#
+# Worth its own predicate because such a line is neither a title nor
+# content, and both of those judgements are made below.
+.bot_is_command_line <- function(line) {
+    grepl("^/[[:alnum:]][[:alnum:]_-]*([[:space:]]|$)", line)
+}
+
+# The user's own lines, commands excluded, in order.
+#
+# A conversation's substance is what the user actually said. "/clear" is
+# not that, and a conversation consisting only of it has nothing to
+# archive under any name.
+.bot_user_lines <- function(session) {
+    out <- character()
+    for (e in session$transcript %||% list()) {
         if (!identical(e$role %||% "", "user")) {
             next
         }
@@ -30,18 +46,45 @@ bot_segment_title <- function(session, max_chars = 60L) {
         } else {
             as.character(e$content %||% "")
         }
-        if (!nzchar(trimws(text))) {
-            next
+        for (line in strsplit(text, "\n", fixed = TRUE)[[1L]]) {
+            line <- trimws(line)
+            if (!nzchar(line) || .bot_is_command_line(line)) {
+                next
+            }
+            out <- c(out, line)
         }
-        line <- trimws(strsplit(text, "\n", fixed = TRUE)[[1L]][[1L]])
-        if (!nzchar(line)) {
-            next
-        }
+    }
+    out
+}
+
+# Title for a segment room: the opening line of the conversation it
+# holds. The first human line is what the user typed to start the
+# topic, which beats a generated label for recognizing it in a room
+# list. Must be read before bot_archive_session() drains the
+# transcript.
+#
+# Commands are skipped. The fork auto-prepends a bare "/clear" as its own
+# message, so a conversation that opened with one was titled "/clear
+# (2026-08-20)" -- the tool's own vocabulary, on a room in the user's
+# sidebar, saying nothing about what is inside it.
+bot_segment_title <- function(session, max_chars = 60L) {
+    lines <- .bot_user_lines(session)
+    if (length(lines)) {
         return(sprintf("%s (%s)",
-                       .sanitize_inline(line, max_chars = max_chars),
+                       .sanitize_inline(lines[[1L]], max_chars = max_chars),
                        format(Sys.Date())))
     }
     sprintf("Conversation (%s)", format(Sys.time(), "%Y-%m-%d %H:%M"))
+}
+
+# Whether a cleared conversation is worth a room of its own.
+#
+# A /clear immediately after a /clear ends a conversation in which the
+# user said nothing. It archives fine and used to get a room named after
+# the command that ended it. The room is the cost here: it is permanent,
+# it sits in the sidebar, and nothing in it will ever be worth reopening.
+bot_segment_worth_keeping <- function(session) {
+    length(.bot_user_lines(session)) > 0L
 }
 
 # The durable form of an archive path: relative to the pensar vault
