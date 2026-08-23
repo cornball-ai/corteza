@@ -24,6 +24,19 @@ jobs:
         with:
           backend: RAPT
 
+      # macos-latest moved to arm64 and r-ci's macOS bootstrap stopped
+      # leaving `remotes` behind. run.sh install_deps calls it directly,
+      # so the dependency step died before any package code was parsed --
+      # and with fail-fast on, it cancelled the Linux leg too, which is
+      # the leg that actually gates these packages.
+      #
+      # Guarded on absence: a no-op on Linux, and it deletes itself the
+      # day upstream ships the fix rather than pinning us to an old image.
+      - name: Bootstrap remotes
+        run: >-
+          Rscript -e 'if (!requireNamespace("remotes", quietly = TRUE))
+          install.packages("remotes", repos = "https://cloud.r-project.org")'
+
       - name: Install llm.api
         run: |
           Rscript -e 'install.packages(c("curl", "jsonlite", "tinyoauth"), repos = "https://cloud.r-project.org")'
