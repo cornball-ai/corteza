@@ -1,3 +1,14 @@
+# corteza 0.7.1.29
+
+- **A barge-in stops the generation, not just the stream.** When the
+  voice client hangs up on a Converse stream mid-reply, the delta
+  relay now calls `llm.api::llm_cancel()`: the provider stops
+  generating and the turn returns its partial reply immediately,
+  instead of running out a tail nobody is listening to. The voice
+  server is single-threaded, so that tail was exactly the delay before
+  the user's next turn could start -- and it billed for every token.
+  The room record still keeps everything generated up to the cut.
+
 # corteza 0.7.1.28
 
 - **corteza serves live voice.** `voice_serve()` runs the AgentVoice

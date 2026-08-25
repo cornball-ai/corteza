@@ -469,3 +469,60 @@ local({
                  "ok\n")
     unlink(c(big, small))
 })
+
+# ---------------------------------------------------------------
+# The delta relay: streams while the peer listens, cancels generation
+# the moment it stops, keeps the record either way.
+# ---------------------------------------------------------------
+
+local({
+    sent <- character()
+    cancels <- 0L
+    relay <- corteza:::.voice_stream_cb(function(d) {
+        sent[[length(sent) + 1L]] <<- d
+        TRUE
+    }, function() cancels <<- cancels + 1L)
+    relay$fun("Hello ")
+    relay$fun("world.")
+    expect_equal(sent, c("Hello ", "world."))
+    expect_equal(relay$text(), "Hello world.")
+    expect_true(relay$alive())
+    expect_false(relay$empty())
+    expect_equal(cancels, 0L)
+})
+
+local({
+    sends <- 0L
+    cancels <- 0L
+    relay <- corteza:::.voice_stream_cb(function(d) {
+        sends <<- sends + 1L
+        if (sends >= 2L) {
+            stop("peer gone")
+        }
+        TRUE
+    }, function() cancels <<- cancels + 1L)
+    relay$fun("one ")
+    relay$fun("two ")
+    # The failing delta is buffered before the cancel fires: the room
+    # record holds everything generated, heard or not.
+    expect_equal(relay$text(), "one two ")
+    expect_false(relay$alive())
+    expect_equal(cancels, 1L)
+    # A hook that returns (a cancelled llm.api never calls again, but a
+    # test hook might): later deltas are buffered, never sent, and the
+    # cancel is not raised twice.
+    relay$fun("three")
+    expect_equal(relay$text(), "one two three")
+    expect_equal(sends, 2L)
+    expect_equal(cancels, 1L)
+})
+
+# The default cancel hook raises through the relay (that is how it
+# reaches agent()'s stream loop); the delta still makes the record.
+local({
+    relay <- corteza:::.voice_stream_cb(function(d) FALSE,
+                                        function() stop("llm_cancelled"))
+    expect_error(relay$fun("cut "), "llm_cancelled")
+    expect_equal(relay$text(), "cut ")
+    expect_false(relay$alive())
+})

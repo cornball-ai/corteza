@@ -89,38 +89,25 @@ voice_room_session <- function(state, room_id) {
     start$start <- .voice_type("TurnStart")$new(turn_id = turn_id)
     grpc::grpc_send(ev, start)
 
-    # Deltas append (unlike provisional transcripts, which replace), so
-    # granularity is free: whatever llm.api hands over goes out as is.
-    # A send that fails means the peer hung up; generation continues and
-    # the buffer keeps filling, because the ROOM record should hold the
-    # full reply whether or not the stream survived.
-    buf <- character()
-    alive <- TRUE
-    cb <- function(delta) {
-        buf[[length(buf) + 1L]] <<- delta
-        if (alive) {
-            m <- .voice_type("ConverseEvent")$new()
-            m$delta <- .voice_type("TextDelta")$new(text = delta)
-            ok <- tryCatch(grpc::grpc_send(ev, m), error = function(e) FALSE)
-            if (!isTRUE(ok)) {
-                alive <<- FALSE
-            }
-        }
-    }
-    reply <- state$hooks$run_turn(state, rec$room_id, text, cb)
+    relay <- .voice_stream_cb(function(delta) {
+        m <- .voice_type("ConverseEvent")$new()
+        m$delta <- .voice_type("TextDelta")$new(text = delta)
+        grpc::grpc_send(ev, m)
+    }, state$hooks$cancel)
+    reply <- state$hooks$run_turn(state, rec$room_id, text, relay$fun)
 
     # A provider (or an llm.api too old for on_delta) that streamed
     # nothing still produced a reply. One delta carrying all of it keeps
     # the contract -- the concatenated stream IS the turn text -- rather
     # than a silent stream followed by a room post from nowhere.
-    if (!length(buf) && is.character(reply) && nzchar(reply)) {
-        cb(reply)
+    if (relay$empty() && is.character(reply) && nzchar(reply)) {
+        relay$fun(reply)
     }
-    full <- paste(buf, collapse = "")
+    full <- relay$text()
 
     done <- .voice_type("ConverseEvent")$new()
     done$end <- .voice_type("TurnEnd")$new()
-    if (alive) {
+    if (relay$alive()) {
         try(grpc::grpc_send(ev, done), silent = TRUE)
     }
     try(grpc::grpc_finish(ev), silent = TRUE)
@@ -137,6 +124,42 @@ voice_room_session <- function(state, room_id) {
            list(text = full, event_id = event_id, stored = NULL),
            envir = rec$turns)
     invisible(NULL)
+}
+
+# The delta relay for one Converse call. Deltas append (unlike
+# provisional transcripts, which replace), so granularity is free:
+# whatever llm.api hands over goes out as is. The buffer, not the
+# stream, is the turn's record -- text() is what gets posted.
+#
+# A send that fails means the peer hung up, and the relay CANCELS the
+# generation right there (the hook raises llm_cancelled, which
+# agent()'s stream loop catches and turns into an immediate return with
+# the partial reply). This is the barge-in latency fix: the server is
+# single-threaded, so a generation left running would make the user's
+# next turn wait out a tail nobody is listening to, at full token
+# price. The failing delta is buffered BEFORE the cancel is raised, so
+# the room record keeps everything that was generated.
+#
+# `cancel` may not return (the default raises); a test hook that does
+# return is also fine -- the relay just goes quiet either way.
+.voice_stream_cb <- function(send, cancel) {
+    buf <- character()
+    alive <- TRUE
+    list(fun = function(delta) {
+        buf[[length(buf) + 1L]] <<- delta
+        if (!alive) {
+            return(invisible(NULL))
+        }
+        ok <- tryCatch(send(delta), error = function(e) FALSE)
+        if (!isTRUE(ok)) {
+            alive <<- FALSE
+            cancel()
+        }
+        invisible(NULL)
+    },
+         alive = function() alive,
+         empty = function() length(buf) == 0L,
+         text = function() paste(buf, collapse = ""))
 }
 
 # ReportTurn: truncate the stored reply to what was heard.

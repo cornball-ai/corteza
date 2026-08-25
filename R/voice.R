@@ -141,6 +141,7 @@ voice_state <- function(cfg_fn, hooks = list()) {
                      history = function(room_id) {
         chat.api::chat_history(.voice_chat(st), room_id, limit = 30L)$messages
     },
+                     cancel = .voice_cancel,
                      ready = function(port) invisible(NULL)
     )
     bad <- setdiff(names(hooks), names(defaults))
@@ -158,6 +159,20 @@ voice_state <- function(cfg_fn, hooks = list()) {
 # two voice RPCs.
 .voice_chat <- function(state) {
     bot_chat_client(state$cfg_fn())
+}
+
+# Abandon the in-flight generation. Called from inside the delta relay
+# the moment the client hangs up on the Converse stream: llm.api closes
+# the connection, the provider stops generating, and agent() returns
+# the partial reply -- so a barge-in stops costing tokens AND stops
+# blocking the user's next turn behind a tail nobody is listening to.
+#
+# Raises a condition of class llm_cancelled that agent()'s stream loop
+# catches. Outside a stream it is an ordinary error (there is nothing
+# to cancel), so a run_turn hook that is not llm.api-backed must either
+# handle it or override this hook.
+.voice_cancel <- function() {
+    llm.api::llm_cancel("voice client hung up on the stream")
 }
 
 # Unpredictable id for sessions and turns. The bearer match is the real
