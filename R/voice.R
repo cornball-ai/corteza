@@ -192,8 +192,10 @@ voice_id <- function(state) {
 #' -- the room poll loop.
 #'
 #' Requires the \code{grpc} and \code{RProtoBuf} packages (Suggests),
-#' and a media allocator named in the config (\code{voice.allocator});
-#' without the allocator, \code{AllocateVoice} refuses and says so.
+#' and a media allocator named in the config: \code{voice.allocator}
+#' (the gpu.ctl base URL) plus \code{voice.allocator_token} (the
+#' service credential its front requires on every mint). Without
+#' either, \code{AllocateVoice} refuses and names the missing key.
 #'
 #' @param config Config list as from \code{bot_load_config()}, or
 #'     \code{NULL} to load it.

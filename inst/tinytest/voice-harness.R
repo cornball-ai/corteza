@@ -33,10 +33,29 @@ hooks <- list(
             return(list(status = 401L, body = "{}"))
         }
         if (grepl("/v1/voice/allocations", url, fixed = TRUE)) {
+            # Enforce the settled contract the way the real allocator
+            # does, so the wire test proves corteza SENDS it: the
+            # service credential unconditionally (401 without), and the
+            # closed request schema with its protocol version (400
+            # without) -- see gpu.ctl's voice-allocation contract.
+            if (!identical(unname(headers[tolower(names(headers)) ==
+                "authorization"]),
+                           "Bearer svc-tok-1")) {
+                return(list(status = 401L, body = '{"error":"no credential"}'))
+            }
+            req <- tryCatch(jsonlite::fromJSON(body, simplifyVector = FALSE),
+                            error = function(e) NULL)
+            if (!is.list(req) || !identical(req$v, "gpu-voice-alloc/1") ||
+                !is.character(req$room_id) || !nzchar(req$room_id)) {
+                return(list(status = 400L, body = '{"error":"bad request"}'))
+            }
             expires <- format(as.numeric(Sys.time()) * 1000 + 600000,
                               scientific = FALSE)
             return(list(status = 200L, body = paste0(
-                '{"speech_to_text":',
+                '{"ok":true,"v":"gpu-voice-alloc/1",',
+                '"allocation_id":"va-harness-1",',
+                '"room_id":"', req$room_id, '",',
+                '"speech_to_text":',
                 '{"host":"stt.tail","port":7871,"security":"insecure"},',
                 '"text_to_speech":',
                 '{"host":"tts.tail","port":7872,"security":"insecure"},',
@@ -71,5 +90,6 @@ hooks <- list(
     ready = function(port) writeLines(as.character(port), port_file)
 )
 
-voice_serve(config = list(voice = list(allocator = "http://alloc.fake")),
+voice_serve(config = list(voice = list(allocator = "http://alloc.fake",
+                                       allocator_token = "svc-tok-1")),
             address = "127.0.0.1:0", hooks = hooks)
