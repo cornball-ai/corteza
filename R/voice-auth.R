@@ -59,15 +59,13 @@ voice_valid_server_name <- function(server) {
     }
     # Split the optional :port, keeping an IPv6 bracket literal whole.
     m <- regmatches(server,
-                    regexec("^(\\[[^]]+\\]|[^:]+)(:([0-9]{1,5}))?$",
-                            server))[[1L]]
+                    regexec("^(\\[[^]]+\\]|[^:]+)(:([0-9]{1,5}))?$", server))[[1L]]
     if (!length(m)) {
         return(FALSE)
     }
     host <- m[[2L]]
     port <- m[[4L]]
-    if (nzchar(port) &&
-        (as.integer(port) < 1L || as.integer(port) > 65535L)) {
+    if (nzchar(port) && (as.integer(port) < 1L || as.integer(port) > 65535L)) {
         return(FALSE)
     }
     if (grepl("^\\[", host)) {
@@ -90,7 +88,7 @@ voice_valid_server_name <- function(server) {
     }
     labels <- strsplit(host, ".", fixed = TRUE)[[1L]]
     length(labels) > 0L &&
-        all(grepl("^[0-9A-Za-z]([0-9A-Za-z-]{0,61}[0-9A-Za-z])?$", labels))
+    all(grepl("^[0-9A-Za-z]([0-9A-Za-z-]{0,61}[0-9A-Za-z])?$", labels))
 }
 
 # Where a server name's federation API answers. Delegation first
