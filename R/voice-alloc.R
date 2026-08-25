@@ -47,7 +47,7 @@ voice_allocate_media <- function(state, room_id) {
                                      paste0(sub("/+$", "", url), "/v1/voice/allocations"),
                                      body = body,
                                      headers = c("content-type" = "application/json",
-                                                 "authorization" = paste("Bearer", token))),
+                "authorization" = paste("Bearer", token))),
                     error = function(e) {
         voice_refuse("UNAVAILABLE",
                      "the media allocator is unreachable: %s",
@@ -67,7 +67,7 @@ voice_allocate_media <- function(state, room_id) {
         # Refusals carry an `error` sentence naming what the allocator
         # disliked; surface it when there is one.
         err <- tryCatch(jsonlite::fromJSON(res$body,
-                                           simplifyVector = FALSE)$error,
+                simplifyVector = FALSE)$error,
                         error = function(e) NULL)
         if (is.character(err) && length(err) == 1L && nzchar(err)) {
             voice_refuse("UNAVAILABLE",
@@ -90,19 +90,17 @@ voice_allocate_media <- function(state, room_id) {
     if (!identical(ans$v, .VOICE_ALLOC_PROTOCOL)) {
         voice_refuse("INTERNAL",
                      "the media allocator speaks %s, this corteza speaks %s",
-                     if (is.character(ans$v) && length(ans$v) == 1L &&
-            nzchar(ans$v)) ans$v else "<no version>",
+            if (is.character(ans$v) && length(ans$v) == 1L &&
+                     nzchar(ans$v)) ans$v else "<no version>",
                      .VOICE_ALLOC_PROTOCOL)
     }
     if (!isTRUE(ans$ok)) {
-        voice_refuse("INTERNAL",
-                     "the media allocator answered 200 without ok")
+        voice_refuse("INTERNAL", "the media allocator answered 200 without ok")
     }
     alloc_id <- ans$allocation_id
     if (!is.character(alloc_id) || length(alloc_id) != 1L ||
         !nzchar(alloc_id)) {
-        voice_refuse("INTERNAL",
-                     "allocation grant carries no allocation_id")
+        voice_refuse("INTERNAL", "allocation grant carries no allocation_id")
     }
     if (!identical(ans$room_id, room_id)) {
         voice_refuse("INTERNAL",
