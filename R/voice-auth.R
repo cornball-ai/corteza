@@ -46,14 +46,51 @@ voice_bearer <- function(metadata) {
     list(bearer = sub("^Bearer ", "", auth), server = server)
 }
 
-# The Matrix server-name grammar (spec appendices): a DNS name, an IPv4
+# The Matrix server-name shape (spec appendices): a DNS name, an IPv4
 # literal, or a bracketed IPv6 literal, with an optional port. This is
 # metadata that becomes a URL this process dials, so it is validated as
-# a name before it is ever used as one.
+# a name before it is ever used as one -- and TIGHTER than the spec's
+# ABNF on purpose: the ABNF admits strings no resolver accepts (port
+# 65536, empty labels, hyphen-edged labels), and refusing those here
+# costs nothing but a clearer error, earlier.
 voice_valid_server_name <- function(server) {
-    grepl(paste0("^(\\[[0-9A-Fa-f:.]{2,45}\\]",
-                 "|[0-9A-Za-z][0-9A-Za-z.-]{0,254})", "(:[0-9]{1,5})?$"),
-          server)
+    if (!is.character(server) || length(server) != 1L || !nzchar(server)) {
+        return(FALSE)
+    }
+    # Split the optional :port, keeping an IPv6 bracket literal whole.
+    m <- regmatches(server,
+                    regexec("^(\\[[^]]+\\]|[^:]+)(:([0-9]{1,5}))?$",
+                            server))[[1L]]
+    if (!length(m)) {
+        return(FALSE)
+    }
+    host <- m[[2L]]
+    port <- m[[4L]]
+    if (nzchar(port) &&
+        (as.integer(port) < 1L || as.integer(port) > 65535L)) {
+        return(FALSE)
+    }
+    if (grepl("^\\[", host)) {
+        return(grepl("^\\[[0-9A-Fa-f:.]{2,45}\\]$", host))
+    }
+    if (grepl("^[0-9.]+$", host)) {
+        # IPv4 literal: four octets, each 0-255.
+        octets <- strsplit(host, ".", fixed = TRUE)[[1L]]
+        if (length(octets) != 4L || !all(grepl("^[0-9]{1,3}$", octets))) {
+            return(FALSE)
+        }
+        return(all(as.integer(octets) <= 255L))
+    }
+    # DNS name: dot-separated labels, 1-63 chars each, alphanumeric at
+    # both ends, hyphens only inside, 255 chars overall. The dot checks
+    # are explicit because strsplit silently drops empty trailing
+    # pieces, which would wave "host.example." through.
+    if (nchar(host) > 255L || grepl("^\\.|\\.\\.|\\.$", host)) {
+        return(FALSE)
+    }
+    labels <- strsplit(host, ".", fixed = TRUE)[[1L]]
+    length(labels) > 0L &&
+        all(grepl("^[0-9A-Za-z]([0-9A-Za-z-]{0,61}[0-9A-Za-z])?$", labels))
 }
 
 # Where a server name's federation API answers. Delegation first

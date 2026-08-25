@@ -296,19 +296,47 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
 
 .voice_http <- function(method, url, body = NULL, headers = character(),
                         timeout_ms = 10000L, connect_timeout_ms = 5000L) {
+    # maxfilesize catches oversize responses that declare a
+    # Content-Length; the streaming guard below is the one that holds
+    # when they do not (chunked, or lying).
     h <- curl::new_handle(timeout_ms = as.integer(timeout_ms),
                           connecttimeout_ms = as.integer(connect_timeout_ms),
-                          followlocation = TRUE, maxredirs = 3L)
+                          followlocation = TRUE, maxredirs = 3L,
+                          maxfilesize = .VOICE_HTTP_MAX_BYTES)
     if (identical(method, "POST")) {
         curl::handle_setopt(h, post = TRUE, postfields = body %||% "")
     }
     if (length(headers)) {
         curl::handle_setheaders(h, .list = as.list(headers))
     }
-    res <- curl::curl_fetch_memory(url, handle = h)
-    if (length(res$content) > .VOICE_HTTP_MAX_BYTES) {
-        stop("response larger than ", .VOICE_HTTP_MAX_BYTES, " bytes",
+    # Streamed, not buffered: the cap is enforced as bytes ARRIVE, so a
+    # peer that never stops talking is cut off at the limit instead of
+    # growing this process until the limit is finally consulted.
+    sink <- .voice_http_sink(.VOICE_HTTP_MAX_BYTES)
+    res <- tryCatch(curl::curl_fetch_stream(url, sink$fun, handle = h),
+                    error = function(e) {
+        stop("voice http ", method, " failed: ", conditionMessage(e),
              call. = FALSE)
-    }
-    list(status = as.integer(res$status_code), body = rawToChar(res$content))
+    })
+    list(status = as.integer(res$status_code), body = sink$body())
+}
+
+# The per-chunk sink for .voice_http: accumulate, refuse the byte that
+# crosses the cap. Separate from the fetch so the guard is testable
+# without a peer -- libcurl's own maxfilesize abort (known length)
+# surfaces as a generic connection error, and only this sink covers the
+# unknown-length case.
+.voice_http_sink <- function(cap) {
+    chunks <- list()
+    total <- 0
+    list(fun = function(chunk) {
+        total <<- total + length(chunk)
+        if (total > cap) {
+            stop("response larger than ", cap, " bytes", call. = FALSE)
+        }
+        chunks[[length(chunks) + 1L]] <<- chunk
+    },
+         body = function() {
+        rawToChar(unlist(chunks, use.names = FALSE) %||% raw(0))
+    })
 }

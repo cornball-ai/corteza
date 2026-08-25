@@ -66,11 +66,32 @@ expect_error(corteza:::voice_bearer(c("authorization" = "Bearer x",
              "not a valid server name")
 expect_true(corteza:::voice_valid_server_name("host.example"))
 expect_true(corteza:::voice_valid_server_name("host.example:8448"))
+expect_true(corteza:::voice_valid_server_name("localhost"))
+expect_true(corteza:::voice_valid_server_name("a.b-c.d"))
 expect_true(corteza:::voice_valid_server_name("192.168.1.10:8448"))
 expect_true(corteza:::voice_valid_server_name("[2001:db8::1]:8448"))
 expect_false(corteza:::voice_valid_server_name("host example"))
 expect_false(corteza:::voice_valid_server_name("https://host.example"))
 expect_false(corteza:::voice_valid_server_name("host.example:99999999"))
+# Port boundaries: 65535 is the last real port, 65536 fits the spec's
+# 1*5DIGIT and no resolver's reality; 0 is not a port either.
+expect_true(corteza:::voice_valid_server_name("host.example:65535"))
+expect_false(corteza:::voice_valid_server_name("host.example:65536"))
+expect_false(corteza:::voice_valid_server_name("host.example:0"))
+# Label shape: no empty labels, no hyphen-edged labels, 63-char cap.
+expect_false(corteza:::voice_valid_server_name("host..example"))
+expect_false(corteza:::voice_valid_server_name(".host.example"))
+expect_false(corteza:::voice_valid_server_name("host.example."))
+expect_false(corteza:::voice_valid_server_name("-host.example"))
+expect_false(corteza:::voice_valid_server_name("host-.example"))
+expect_true(corteza:::voice_valid_server_name(
+    paste0(strrep("a", 63), ".example")))
+expect_false(corteza:::voice_valid_server_name(
+    paste0(strrep("a", 64), ".example")))
+# IPv4 octets are 0-255, and 999.1.1.1 is not an IPv4 address.
+expect_true(corteza:::voice_valid_server_name("255.255.255.255"))
+expect_false(corteza:::voice_valid_server_name("999.1.1.1"))
+expect_false(corteza:::voice_valid_server_name("1.2.3"))
 
 # ---------------------------------------------------------------
 # voice_discover: delegation wins, otherwise the literal name gets the
@@ -419,3 +440,32 @@ if (at_home()) {
         expect_true(elapsed < 5)
     })
 }
+
+# The size cap fires WHILE receiving. The sink is the during-receive
+# guard: the chunk that crosses the cap errors, everything before it is
+# kept, nothing after it is asked for.
+local({
+    sink <- corteza:::.voice_http_sink(10)
+    sink$fun(charToRaw("hello"))
+    sink$fun(charToRaw("world"))
+    expect_error(sink$fun(charToRaw("!")), "larger than")
+    expect_equal(sink$body(), "helloworld")
+    empty <- corteza:::.voice_http_sink(10)
+    expect_equal(empty$body(), "")
+})
+
+# And end to end without a network peer: file:// streams like any
+# transfer. Oversize errors (via libcurl's own maxfilesize on a known
+# length); a body under the cap comes through intact.
+local({
+    big <- tempfile(fileext = ".bin")
+    writeBin(raw(corteza:::.VOICE_HTTP_MAX_BYTES + 1024), big)
+    expect_error(corteza:::.voice_http("GET", paste0("file://", big)),
+                 "failed")
+    small <- tempfile(fileext = ".txt")
+    writeLines("ok", small)
+    expect_equal(corteza:::.voice_http("GET",
+                                       paste0("file://", small))$body,
+                 "ok\n")
+    unlink(c(big, small))
+})
