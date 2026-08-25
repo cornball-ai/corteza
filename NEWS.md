@@ -1,3 +1,21 @@
+# corteza 0.7.1.28
+
+- **corteza serves live voice.** `voice_serve()` runs the AgentVoice
+  gRPC service a fluffychat live-voice client talks to: `AllocateVoice`
+  verifies the caller's Matrix OpenID token against their own
+  homeserver, checks room membership, and relays a media grant from the
+  fleet allocator (`voice.allocator`, HTTP); `Converse` runs one turn
+  through the shared `turn()` machinery, streaming text deltas as the
+  model produces them; `ReportTurn` cuts the stored room message down
+  to the prefix the user actually heard, counted in code points. The
+  reply is posted when generation ends and edited down on report, so a
+  session that dies unreported leaves the full text standing -- the
+  documented fallback. Audio never crosses corteza: the client streams
+  PCM to the model hosts directly. Runs as its own R process, next to
+  the room poll loop, and needs the `grpc` and `RProtoBuf` Suggests.
+  The contract is `inst/proto/cornball/agent/v1/agent_voice.proto`,
+  vendored from cornball-ai/fluffychat.
+
 # corteza 0.7.1.27
 
 - **A config can name the transport.** `cfg$transport` picks the client
