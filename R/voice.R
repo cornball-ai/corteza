@@ -12,10 +12,10 @@
 #
 # This is a SEPARATE PROCESS from the room poll loop, started with
 # corteza::voice_serve(). The gRPC poll loop and the bot long-poll both
-# want the main thread, so one process cannot do both. Room context is
-# therefore built fresh per voice process (bot_new_session per room);
-# a voice turn and a text turn in the same room share history through
-# the room archive, not through in-process state.
+# want the main thread, so one process cannot do both. Room context
+# crosses through the room itself: a voice session is seeded from room
+# history on first use (voice-turn.R), and the replies it posts reach
+# the poll loop the same way -- never through in-process state.
 #
 # grpc and RProtoBuf are Suggests, checked loudly at voice_serve(): live
 # voice is off unless a deployment opts in, and most installs never load
@@ -139,8 +139,7 @@ voice_state <- function(cfg_fn, hooks = list()) {
         chat.api::chat_members(.voice_chat(st), room_id)
     },
                      history = function(room_id) {
-        chat.api::chat_history(.voice_chat(st), room_id,
-                               limit = 30L)$messages
+        chat.api::chat_history(.voice_chat(st), room_id, limit = 30L)$messages
     },
                      ready = function(port) invisible(NULL)
     )

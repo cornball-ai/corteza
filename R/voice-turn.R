@@ -53,7 +53,11 @@ voice_room_session <- function(state, room_id) {
         if (is.null(body) || !nzchar(body)) {
             next
         }
-        role <- if (isTRUE(m$self)) "assistant" else "user"
+        if (isTRUE(m$self)) {
+            role <- "assistant"
+        } else {
+            role <- "user"
+        }
         s$history <- c(s$history %||% list(),
                        list(list(role = role, content = body)))
         added <- added + 1L

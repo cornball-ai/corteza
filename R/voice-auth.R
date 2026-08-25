@@ -52,8 +52,7 @@ voice_bearer <- function(metadata) {
 # a name before it is ever used as one.
 voice_valid_server_name <- function(server) {
     grepl(paste0("^(\\[[0-9A-Fa-f:.]{2,45}\\]",
-                 "|[0-9A-Za-z][0-9A-Za-z.-]{0,254})",
-                 "(:[0-9]{1,5})?$"),
+                 "|[0-9A-Za-z][0-9A-Za-z.-]{0,254})", "(:[0-9]{1,5})?$"),
           server)
 }
 
