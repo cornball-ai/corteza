@@ -77,7 +77,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.0.1.20"
+.CHAT_API_MIN <- "0.0.1.24"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -305,9 +305,24 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
 #
 # Returns the event id, or NULL when the homeserver reported none, which
 # is what every caller tests for.
-bot_reply_send <- function(chat, room_id, text, markdown = FALSE) {
+bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
+                           thread = NULL) {
+    # A reply to a threaded message goes back into its thread, and only
+    # where the transport can carry one: chat_send() refuses a threaded
+    # send it cannot route, so asking first is what keeps a reply in an
+    # encrypted room from failing outright. Falling back to the room's
+    # main timeline loses the thread but keeps the conversation, which
+    # is the right way round for a reply someone is waiting on.
+    if (!is.null(thread)) {
+        caps <- tryCatch(chat.api::chat_capabilities(chat),
+                         error = function(e) list())
+        if (!isTRUE(caps$threads)) {
+            thread <- NULL
+        }
+    }
     bot_event_id(chat.api::chat_send(chat, room_id, text,
-                                     markup = bot_markup(markdown)))
+                                     markup = bot_markup(markdown),
+                                     thread = thread))
 }
 
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
@@ -503,7 +518,16 @@ bot_msg_record <- function(m, addressed = FALSE) {
     list(channel = m$channel, id = m$id, sender = m$sender, body = m$body,
          is_self = isTRUE(m$self), mentions = m$mentions,
          encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
-         addressed = isTRUE(addressed))
+         addressed = isTRUE(addressed),
+         # NULL on an ordinary message and on a transport that reports
+         # no media. A picture arrives as its own message carrying one
+         # of these, whose `url` names where the bytes live rather than
+         # holding them -- see R/media.R for what becomes of it.
+         attachments = m$attachments,
+         # NULL on an ordinary message, and on any transport whose
+         # chat_capabilities()$thread_replies is FALSE -- which is what
+         # makes every room in this loop behave as it always did.
+         thread = m$thread)
 }
 
 # The Matrix-visible transcript: an explicit ledger of the events this
@@ -726,8 +750,12 @@ bot_archive_all <- function(sessions, chat = NULL) {
         stop("sessions must be an environment registry", call. = FALSE)
     }
     n <- 0L
-    for (room_id in ls(envir = sessions, all.names = TRUE)) {
-        s <- get(room_id, envir = sessions, inherits = FALSE)
+    for (key in ls(envir = sessions, all.names = TRUE)) {
+        s <- get(key, envir = sessions, inherits = FALSE)
+        # The session's own room, not the registry key: a thread's key
+        # is room and root joined, and archiving under it would file the
+        # transcript against a room id no homeserver has ever heard of.
+        room_id <- s$room_id %||% key
         # Count what actually reached the vault. Inspecting session
         # state before and after cannot: a room whose pending events
         # turn out to be already archived leaves state changed while
@@ -1587,15 +1615,16 @@ bot_new_session_registry <- function() {
 # self-echo arriving through sync appends the acknowledgement a second
 # time. And it must ledger it, or backfill reinserts that event later
 # among already archived ones.
-bot_reset_session <- function(registry, room_id, cfg, sent_id, ack,
+bot_reset_session <- function(registry, key, cfg, sent_id, ack,
                               system = NULL, model = NULL, provider = NULL,
-                              tools_filter = NULL) {
-    if (exists(room_id, envir = registry, inherits = FALSE)) {
-        rm(list = room_id, envir = registry)
+                              tools_filter = NULL, room_id = key) {
+    if (exists(key, envir = registry, inherits = FALSE)) {
+        rm(list = key, envir = registry)
     }
-    s <- bot_get_or_create_session(registry, room_id, cfg, system = system,
+    s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
-                                   tools_filter = tools_filter)
+                                   tools_filter = tools_filter,
+                                   room_id = room_id)
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -1603,16 +1632,21 @@ bot_reset_session <- function(registry, room_id, cfg, sent_id, ack,
     invisible(s)
 }
 
-bot_get_or_create_session <- function(registry, room_id, cfg, system = NULL,
+bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
                                       model = NULL, provider = NULL,
-                                      tools_filter = NULL) {
-    if (exists(room_id, envir = registry, inherits = FALSE)) {
-        return(get(room_id, envir = registry))
+                                      tools_filter = NULL, room_id = key) {
+    if (exists(key, envir = registry, inherits = FALSE)) {
+        return(get(key, envir = registry))
     }
+    # room_id defaults to the key and is passed separately only for a
+    # thread, whose key is not a room id. Everything downstream -- the
+    # send target, the archive's source, the room's tool scope -- wants
+    # the room, so the session records it rather than leaving callers to
+    # take the key apart again.
     s <- bot_new_session(cfg, system = system, model = model,
                          provider = provider, tools_filter = tools_filter,
                          room_id = room_id)
-    assign(room_id, s, envir = registry)
+    assign(key, s, envir = registry)
     s
 }
 
@@ -1758,9 +1792,21 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     replied <- 0L
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
-        session <- bot_get_or_create_session(sessions, m$channel, cfg,
+        # A thread is its own conversation, so it gets its own session.
+        # Without a thread the key is the room id and nothing about this
+        # loop changes.
+        skey <- bot_session_key(m$channel, m$thread)
+        session <- bot_get_or_create_session(sessions, skey, cfg,
             system = system, model = model, provider = provider,
-            tools_filter = tools_filter)
+            tools_filter = tools_filter, room_id = m$channel)
+        # A folded conversation's thread root stands for an archived
+        # transcript, and replying there should continue that
+        # conversation rather than open a blank one. Gated on the
+        # session's own flag rather than on having just created it:
+        # startup backfill can have built this session already, and
+        # keying on freshness left a restart answering an active thread
+        # from the backfilled tail alone.
+        bot_maybe_rehydrate(session, chat_now(), m$channel, m$thread)
 
         # Self events: either an echo of our own reply (already in
         # $history via turn() — skip) or an out-of-band send from a
@@ -1821,6 +1867,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # speaking; the reply gate below is unchanged.
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
+        # What the model gets: the same text, plus any picture that came
+        # with the message. Identical to ingest_body whenever there is
+        # no image, which is why everything below that is not the
+        # model's own copy goes on using ingest_body -- the reply gate
+        # reads text, and so does the transcript ledger.
+        ingest_content <- bot_message_content(chat_now(), m, ingest_body,
+            session$provider, cfg = cfg)
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
@@ -1839,7 +1892,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # unchanged), so bot-loop protection is intact.
             session$history <- c(
                                  session$history %||% list(),
-                                 list(list(role = "user", content = ingest_body))
+                                 list(list(role = "user", content = ingest_content))
             )
             next
         }
@@ -1857,7 +1910,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack),
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1877,7 +1930,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 cfg <- bot_update_displayname(cfg, session, chat = chat)
             }
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack),
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -1891,28 +1944,64 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_clear_command(m$body)) {
+            # The segment title reads the transcript, so it must be
+            # taken before the archive drains it.
+            seg_title <- bot_segment_title(session)
+            # Read here for the same reason as the title: the archive is
+            # about to drain the transcript this reads.
+            seg_worth <- bot_segment_worth_keeping(session)
             # Archive whatever's in the session before nuking it so the
             # topic isn't lost. Best-effort; failures already log.
-            tryCatch(
-                     bot_archive_session(session, m$channel, chat_now()),
-                     error = function(e) NULL
+            archived <- tryCatch(
+                                 bot_archive_session(session, m$channel, chat_now()),
+                                 error = function(e) NULL
             )
-            if (exists(m$channel, envir = sessions, inherits = FALSE)) {
-                rm(list = m$channel, envir = sessions)
+            # Rooms listed in the config's segment_rooms get the ended
+            # conversation as a room of its own (see segment.R). Only
+            # when something was archived: the transcript pointer is
+            # the segment's content.
+            # Not for a thread: a thread is already the segment of a
+            # conversation that ended once, and filing it again would
+            # make a segment room whose parent is a topic room. Clearing
+            # inside one still resets that thread's session.
+            # And not when the user said nothing: a /clear straight after
+            # a /clear archives fine and used to get a permanent room
+            # named after the command that ended it.
+            seg <- NULL
+            if (!is.null(archived) && is.null(m$thread) && seg_worth &&
+                m$channel %in% as.character(cfg$segment_rooms %||%
+                    character())) {
+                seg <- tryCatch(
+                                bot_segment_from_clear(chat_now(),
+                        m$channel, seg_title,
+                        bot_vault_ref(archived)),
+                                error = function(e) {
+                    message("bot_segment_from_clear: ", conditionMessage(e))
+                    NULL
+                }
+                )
+            }
+            if (exists(skey, envir = sessions, inherits = FALSE)) {
+                rm(list = skey, envir = sessions)
             }
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
             cfg <- bot_update_displayname(cfg, model = model, chat = chat,
                 provider = provider)
-            ack <- "Cleared. Starting a fresh session."
+            ack <- if (is.null(seg)) {
+                "Cleared. Starting a fresh session."
+            } else {
+                sprintf("Cleared. Filed as \"%s\".", seg$name)
+            }
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack),
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
-            bot_reset_session(sessions, m$channel, cfg, sent_id, ack,
+            bot_reset_session(sessions, skey, cfg, sent_id, ack,
                               system = system, model = model,
                               provider = provider,
-                              tools_filter = tools_filter)
+                              tools_filter = tools_filter,
+                              room_id = m$channel)
             replied <- replied + 1L
             next
         }
@@ -1935,7 +2024,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # writing into an accumulator whose message has already been
         # finalized.
         reply <- rooms_with_activity(session, chat, m$channel, function() {
-            bot_run_turn_in_cwd(ingest_body, session)
+            bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg)
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
@@ -1948,7 +2037,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            bot_reply_send(chat, m$channel, reply, markdown = TRUE),
+                            bot_reply_send(chat, m$channel, reply,
+                markdown = TRUE, thread = m$thread),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
@@ -2023,11 +2113,6 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         if (is.null(msgs) || !length(msgs)) {
             next
         }
-        session <- bot_get_or_create_session(
-            sessions, rid, cfg,
-            system = system, model = model,
-            provider = provider, tools_filter = tools_filter
-        )
         # Attribution mirrors the live path: label senders in multi-human
         # rooms, and label known bot senders even in one-human rooms.
         # Membership is not fetched during backfill, so multi-human is
@@ -2050,6 +2135,23 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             if (is.null(body) || !nzchar(body)) {
                 next
             }
+            # Per message, not per room: a threaded message belongs to
+            # its thread's session, the same way the live path routes
+            # it. Backfilling every message into the room's session put
+            # each topic's history into the main timeline's context and
+            # left the threads themselves empty, so a restart both
+            # polluted the room and lost the threads.
+            session <- bot_get_or_create_session(
+                sessions, bot_session_key(rid, m$thread), cfg,
+                system = system, model = model,
+                provider = provider, tools_filter = tools_filter,
+                room_id = rid
+            )
+            # A thread's archive is older context than this window, so
+            # it goes in before the window does. Once per session: the
+            # flag is what stops the second backfilled message in a
+            # thread asking again.
+            bot_maybe_rehydrate(session, chat, rid, m$thread)
             is_self <- isTRUE(m$self)
             if (is_self) {
                 role <- "assistant"

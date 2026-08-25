@@ -1,4 +1,4 @@
-# corteza 0.7.1.22
+# corteza 0.7.1.27
 
 - **A config can name the transport.** `cfg$transport` picks the client
   constructor behind `bot_chat_client()`: absent or `"matrix"` is the
@@ -6,6 +6,73 @@
   list builds any other `chat.api` client, and the whole room loop runs
   on it. The adapter must hold its own poll cursor and report
   `first_run`; the existing guard now says so.
+
+# corteza 0.7.1.26
+
+- **A segment room is not named after the command that ended it.**
+  The fork auto-prepends a bare `/clear` as its own message, so a
+  conversation opening with one produced a permanent room titled
+  `/clear (2026-08-20)`. Commands are skipped when picking the title.
+
+- **A conversation the user said nothing in gets no room.** A `/clear`
+  straight after a `/clear` archives fine and used to become a sidebar
+  entry that will never be worth reopening. The bar is "said anything at
+  all", not a turn count -- a threshold would be a number nobody chose.
+
+# corteza 0.7.1.25
+
+- **The per-image ceiling is per provider.** It was one 5 MB constant,
+  taken from Anthropic's documented limit on the reasoning that the
+  strictest provider is the safe one to assume. That refused the first
+  real photograph anyone sent -- 5.58 MB, 6.5% over -- to a bot running
+  gpt-5.5, which takes four times that. Anthropic keeps 5 MB, OpenAI
+  and `openai_codex` get 20 MB, and a provider that is not listed takes
+  the conservative default rather than a guess. `image_max_bytes` still
+  overrides all of it. The "skipping" message now names the limit as
+  well as the size, since a line saying a picture was refused without
+  saying what would have passed is the one thing a reader has to go
+  find out.
+
+# corteza 0.7.1.24
+
+- **A picture posted in a room reaches the model as a picture.** An
+  image arrives as its own message carrying an attachment that names
+  where the bytes live; corteza fetches it through the transport
+  (`chat.api::chat_download()`), encodes it, and sends it alongside the
+  text as `llm.api::llm_content()`. Before this the bot saw only the
+  filename, and answered that no image was attached.
+
+  On by default for the cloud providers, off for `ollama` (a local
+  build is as likely to be a text-only 9b as a vision model). Both are
+  overridable with `images: true`/`false` in the Matrix config, and
+  `image_max_bytes` sets the per-image ceiling (5 MB by default). One
+  unfetchable picture -- an encrypted attachment, most likely -- costs
+  the message its image and nothing else. Requires chat.api >= 0.0.1.24
+  and an llm.api with `llm_content()`; without either, the text goes
+  through as it did before and a message on stderr says why.
+
+# corteza 0.7.1.23
+
+- **A folded conversation continues from its thread.** Sessions are
+  keyed by room and thread root rather than room alone, so a room's
+  main timeline and each of its threads are separate conversations
+  (without a thread the key is the room id exactly, so existing rooms
+  are unaffected). The first message in a thread seeds its session from
+  the archive the thread stands for, found through the
+  `ai.cornball.fold` index the fold writes into the topic room. Replies
+  go back into the thread they answer, falling back to the room where
+  the transport cannot route one. Requires chat.api >= 0.0.1.23.
+
+# corteza 0.7.1.22
+
+- **A cleared conversation can become a room of its own.** When a
+  cleared room is listed in the config's `segment_rooms`, `/clear`
+  files the ended conversation as a "segment": a private room named by
+  the conversation's opening line, carrying the archived-transcript
+  pointer as a notice and an `ai.cornball.lifecycle` state event that
+  clients group and demote by. Off unless configured. Requires
+  chat.api >= 0.0.1.22 (`chat_set_state()`); older transports skip
+  with a message.
 
 # corteza 0.7.1.19
 
