@@ -84,6 +84,7 @@ export(tool_web_search)
 export(tool_write_file)
 export(turn)
 export(uninstall_cli)
+export(voice_serve)
 export(worker_init)
 
 importFrom(callr,r_session)

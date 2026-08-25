@@ -697,6 +697,15 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         }
     }
 
+    # A caller that wants the reply as it is generated (the voice
+    # surface synthesises speech from these) sets session$on_delta.
+    # Same formals() defense as history_callback: on_delta arrived in
+    # llm.api later than the Imports minimum guarantees.
+    if (is.function(session$on_delta) &&
+        "on_delta" %in% names(formals(llm.api::agent))) {
+        agent_args$on_delta <- session$on_delta
+    }
+
     if (ws_active) {
         agent_args$web_search <- ws
     }

@@ -1,0 +1,236 @@
+// SPDX-FileCopyrightText: 2026-Present cornball.ai
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Vendored from cornball-ai/fluffychat (proto/agent_voice.proto), where
+// the original is distributed under AGPL-3.0-or-later. cornball.ai owns
+// this file's copyright and distributes this copy under the package
+// license (Apache-2.0), per Troy Hernandez, 2026-08-25.
+//
+// Agent wire for live voice. Served by the agent, not by the model host.
+//
+// Audio never crosses this service. The client streams PCM directly to the
+// model host and receives synthesised audio directly from it; only text and
+// session control travel here. That is the whole latency argument for talking
+// to the inference hosts directly, and it also keeps the agent out of the job
+// of proxying an audio stream without adding a buffer's worth of delay each
+// way.
+//
+// AUTH. Every call carries TWO gRPC metadata entries, both obtained from the
+// client's own homeserver via
+// POST /_matrix/client/v3/user/{userId}/openid/request_token:
+//
+//   authorization: Bearer <access_token>   the OpenID token
+//   matrix-server-name: <server_name>      the response's matrix_server_name
+//
+// The server name is not optional and not derivable: it says WHERE the token
+// verifies, and the user's homeserver need not share a domain with room_id or
+// with anything else in the request. The agent verifies by calling
+// GET /_matrix/federation/v1/openid/userinfo?access_token=... on that server
+// (resolved per server discovery), and rejects the call if the metadata entry
+// is missing rather than guessing a host -- verifying against a guessed
+// server is how a token that would never verify appears to.
+//
+// THE SUB MUST BELONG TO THE SERVER THAT ANSWERED. The server name is
+// caller-controlled, and a server is authoritative only for its own users --
+// so the agent rejects the verification unless the domain of the returned
+// `sub` equals the server name it queried. Skip that comparison and a
+// hostile homeserver answers userinfo with someone else's user id and
+// inherits that victim's room memberships. The spec requires this check;
+// it is the entire difference between "a server vouched for its user" and
+// "a server named a user".
+//
+// Verification yields an identity; it does not authorise anything by itself.
+// The agent must separately check that the verified user is a member of
+// room_id before minting -- room_id in the request is scoping, not
+// authentication, and OpenID proves who is asking, not that they belong
+// where they are asking to be.
+//
+// VERIFICATION HAPPENS EXACTLY ONCE PER SESSION, at AllocateVoice. The agent
+// has no way to know the OpenID token's lifetime (userinfo returns only the
+// sub; expires_in went to the client), so "cache until the token expires" is
+// not implementable and is not the model. Instead the minted session is bound
+// to the pair (verified identity, bearer bytes as presented): Converse and
+// ReportTurn carry the same two metadata entries, and the agent authorises
+// them by matching the bearer against the session's stored one
+// (constant-time), no federation round trip. Same bytes, same identity, until
+// expires_at_unix_ms ends the session. A caller presenting someone else's
+// session_id fails the bearer match; a different valid token from the same
+// user, or from another member of the room, is PERMISSION_DENIED all the
+// same -- a session belongs to the credential that opened it, not to the
+// user, and not to the room.
+//
+// This schema predates any implementation. Until a server ships, breaking
+// changes -- renames, renumbers, semantics -- are free and preferred over
+// compatibility shims.
+
+syntax = "proto3";
+
+package cornball.agent.v1;
+
+service AgentVoice {
+  // Opens a voice session and returns where to send audio, plus a credential
+  // scoped to it.
+  rpc AllocateVoice(AllocateVoiceRequest) returns (AllocateVoiceResponse);
+
+  // One conversational turn. Text in, tokens out as they are generated so the
+  // client can begin synthesising before generation finishes.
+  rpc Converse(ConverseRequest) returns (stream ConverseEvent);
+
+  // How much of a spoken reply actually reached the user.
+  rpc ReportTurn(ReportTurnRequest) returns (ReportTurnResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Session setup
+// ---------------------------------------------------------------------------
+
+message AllocateVoiceRequest {
+  // Matrix room the conversation belongs to.
+  string room_id = 1;
+}
+
+message AllocateVoiceResponse {
+  string session_id = 1;
+
+  // Where the client opens its two media streams. Separate fields rather than
+  // one host because the two models need not be co-resident.
+  Endpoint speech_to_text = 2;
+  Endpoint text_to_speech = 3;
+
+  // Allocation-scoped bearer, sent by the client to the endpoints above as
+  // `authorization: Bearer <token>`.
+  //
+  // Short lived and scoped to this allocation. The client is a Matrix client
+  // that runs on phones, so it must never hold the long-lived host credential:
+  // a leak of this one expires, and cannot be replayed against another
+  // allocation.
+  string token = 4;
+
+  // Absolute expiry, not a duration, so a client with a slow start does not
+  // measure the TTL from the wrong instant. Ends the whole session, not just
+  // the media token: after this instant the agent refuses the session_id and
+  // the bearer pairing that authorises Converse and ReportTurn (see AUTH).
+  int64 expires_at_unix_ms = 5;
+}
+
+message Endpoint {
+  // Tailnet name. Resolution is the tailnet's job.
+  string host = 1;
+  uint32 port = 2;
+
+  // The server's declared transport security. Three states on purpose: a
+  // plain bool cannot tell "the server said insecure" from "the server said
+  // nothing" (proto3 serialises false as absent), which silently turns
+  // absence into an insecure default -- the exact opposite of a declaration.
+  // A client receiving UNSPECIFIED refuses to connect.
+  ChannelSecurity security = 3;
+}
+
+enum ChannelSecurity {
+  // Absent or unset. Never valid to connect on.
+  CHANNEL_SECURITY_UNSPECIFIED = 0;
+  CHANNEL_SECURITY_TLS = 1;
+  // Unencrypted channel, for links already encrypted below gRPC -- the normal
+  // WireGuard-tailnet case. Valid only because the server declared it.
+  CHANNEL_SECURITY_INSECURE = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Turns
+// ---------------------------------------------------------------------------
+
+message ConverseRequest {
+  string session_id = 1;
+
+  // Stable transcript of what the user said, as returned by SpeechToText.
+  string text = 2;
+}
+
+message ConverseEvent {
+  oneof event {
+    TurnStart start = 1;
+    TextDelta delta = 2;
+    TurnEnd end = 3;
+  }
+}
+
+message TurnStart {
+  // Identifies this reply for ReportTurn. The client cannot use the Matrix
+  // event id: the message has not been sent yet, and what finally gets stored
+  // depends on how much of the reply the user heard.
+  string turn_id = 1;
+}
+
+message TextDelta {
+  // Appended to what came before, unlike a provisional transcript, which
+  // replaces.
+  string text = 1;
+}
+
+message TurnEnd {
+  // Set when generation stopped early rather than completing.
+  string stop_reason = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Truncation reporting
+// ---------------------------------------------------------------------------
+
+message ReportTurnRequest {
+  string session_id = 1;
+  string turn_id = 2;
+
+  // How much of the reply was actually heard, as a count of Unicode code
+  // points of the turn's text (the TextDelta stream, concatenated in order).
+  // The agent stores that prefix; zero explicitly means nothing was heard.
+  //
+  // REQUIRED, and `optional` for exactly that reason: zero is a legitimate
+  // report (barge-in before the first word), so the field needs presence to
+  // keep "reported zero" apart from "never reported" -- an implicit uint32
+  // drops an explicit 0 from the wire and the two collapse. The agent rejects
+  // a request with the field absent (INVALID_ARGUMENT) instead of reading it
+  // as zero, which would erase a fully-heard reply from history on the say-so
+  // of a client that said nothing.
+  //
+  // A TEXT offset, not a chunk count, because the chunk-to-text mapping
+  // exists only inside the synthesiser. A chunk count arriving here is
+  // unusable: the agent never saw how its text was split into audio. The
+  // client converts where the data lives -- it takes the input_text_end of
+  // the last chunk playback counted as heard (the client's midpoint rule; see
+  // AudioChunk in the inference schema) and maps it through its own record of
+  // which slice of the reply each Synthesize call covered.
+  //
+  // A cumulative count rather than an index for the usual reason: an index
+  // carries a base and an inclusivity convention, each silently wrong on its
+  // own; a count carries neither, so there is no conversion site to get
+  // wrong. Code points rather than bytes or UTF-16 units because that is the
+  // one unit both ends can produce exactly.
+  //
+  // Distinct from where generation was cancelled. Text generated is a superset
+  // of text spoken, so the two truncation points do not coincide and this one
+  // cuts further back. Storing the generation cut instead attributes unspoken
+  // sentences to the assistant.
+  optional uint32 text_heard = 3;
+
+  // Why the reply was cut, for the record.
+  TurnOutcome outcome = 4;
+}
+
+enum TurnOutcome {
+  TURN_OUTCOME_UNSPECIFIED = 0;
+  // Played all the way out.
+  TURN_OUTCOME_COMPLETED = 1;
+  // The user talked over it.
+  TURN_OUTCOME_BARGE_IN = 2;
+  // The user ended the session, or it dropped.
+  TURN_OUTCOME_ABANDONED = 3;
+}
+
+message ReportTurnResponse {
+  // What the agent actually stored: the first text_heard code points of the
+  // reply, possibly tidied to a word boundary. Returned so the client can
+  // render the same text the room history holds rather than its own guess at
+  // where the cut landed.
+  string stored_text = 1;
+}
