@@ -1,3 +1,15 @@
+# corteza 0.7.1.30
+
+- **The allocator caller speaks the settled `gpu-voice-alloc/1`
+  contract.** The request body carries the protocol version, and every
+  mint presents the service credential from the new
+  `voice.allocator_token` config key (a configured allocator without
+  its token refuses with a named config error). The response envelope
+  (`ok`, `v`, `allocation_id`, `room_id`) is validated before the
+  grant is read, a refusal's `error` sentence is surfaced, a 401 is
+  reported as the config problem it is, and the allocation id is
+  logged so log lines and revocation can name the grant.
+
 # corteza 0.7.1.29
 
 - **A barge-in stops the generation, not just the stream.** When the
