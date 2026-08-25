@@ -1547,6 +1547,93 @@ local({
 })
 
 # ---------------------------------------------------------------
+# cfg$transport picks the transport behind the one weld point. The
+# whole loop above bot_chat_client() runs on the chat.api contract, so
+# a config naming another constructor swaps the message plane without
+# corteza knowing the package -- which transport a deployment speaks is
+# the config's business, and this file never names one.
+# ---------------------------------------------------------------
+
+# A config naming the reference adapter's constructor gets the
+# reference adapter back. (Absent or "matrix" keeps the Matrix branch,
+# which is character-identical to the pre-seam call and pinned by the
+# seamed tests above.)
+local({
+    client <- corteza:::bot_chat_client(
+        list(transport = list(constructor = "chat.api::chat_loopback")))
+    expect_true(inherits(client, "chat_client"))
+    expect_true(inherits(client, "chat_loopback"))
+})
+
+# Malformed specs refuse loudly, each at its own layer.
+expect_error(corteza:::bot_transport_client(list()),
+             "'constructor'")
+expect_error(corteza:::bot_transport_client(
+    list(constructor = "no-double-colon")),
+             "pkg::fn")
+expect_error(corteza:::bot_transport_client(
+    list(constructor = "not.a.real.pkg::fn")),
+             "needs the 'not.a.real.pkg' package")
+expect_error(corteza:::bot_transport_client(
+    list(constructor = "chat.api::chat_identity",
+         args = list(id = "x"))),
+             "did not return a chat_client")
+expect_error(corteza:::bot_transport_client(
+    list(constructor = "chat.api::chat_loopback", args = "oops")),
+             "named list")
+
+# save_cursor rides through only when the constructor declares that
+# formal by name. corteza's loop never passes `since`, so a stateful
+# transport needs the flag -- and a constructor without the formal must
+# not have it pushed through `...` on a guess. An explicit config value
+# wins over the loop's default.
+local({
+    takes <- function(root, save_cursor = TRUE) NULL
+    lacks <- function(root) NULL
+    expect_identical(
+        corteza:::bot_transport_args(takes, list(root = "/s"), TRUE),
+        list(root = "/s", save_cursor = TRUE))
+    expect_identical(
+        corteza:::bot_transport_args(takes, list(root = "/s"), FALSE),
+        list(root = "/s", save_cursor = FALSE))
+    expect_identical(
+        corteza:::bot_transport_args(
+            takes, list(root = "/s", save_cursor = FALSE), TRUE),
+        list(root = "/s", save_cursor = FALSE))
+    expect_identical(
+        corteza:::bot_transport_args(lacks, list(root = "/s"), TRUE),
+        list(root = "/s"))
+    expect_identical(corteza:::bot_transport_args(lacks, NULL, TRUE),
+                     list())
+})
+
+# End to end on the reference adapter: bot_poll() runs a full cycle on
+# a non-Matrix transport. chat_loopback's poll reports no first_run, so
+# the run stops at corteza's own guard -- proof the dispatch reached the
+# loop and the guard names the actual gap. A transport whose poll does
+# report first_run (adapter-held cursor) clears it; that contract is
+# pinned by the Matrix seams above and by the adapter's own suite.
+local({
+    dir <- tempfile("corteza-transport-")
+    dir.create(dir)
+    cfgfile <- file.path(dir, "config.json")
+    writeLines(jsonlite::toJSON(
+        list(transport = list(constructor = "chat.api::chat_loopback"),
+             bots = list()), auto_unbox = TRUE), cfgfile)
+    old <- Sys.getenv("CORTEZA_MATRIX_CONFIG", unset = NA)
+    Sys.setenv(CORTEZA_MATRIX_CONFIG = cfgfile)
+    on.exit({
+        if (is.na(old)) {
+            Sys.unsetenv("CORTEZA_MATRIX_CONFIG")
+        } else {
+            Sys.setenv(CORTEZA_MATRIX_CONFIG = old)
+        }
+        unlink(dir, recursive = TRUE)
+    })
+    expect_error(corteza::bot_poll(timeout = 0L), "first_run")
+})
+
+# ---------------------------------------------------------------
 # A picture posted in a room reaches the model as a picture.
 #
 # Every other media assertion lives in test_media.R and calls
