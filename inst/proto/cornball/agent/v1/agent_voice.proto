@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026-Present cornball.ai
 //
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
+//
+// Vendored from cornball-ai/fluffychat (proto/agent_voice.proto), where
+// the original is distributed under AGPL-3.0-or-later. cornball.ai owns
+// this file's copyright and distributes this copy under the package
+// license (Apache-2.0), per Troy Hernandez, 2026-08-25.
 //
 // Agent wire for live voice. Served by the agent, not by the model host.
 //
