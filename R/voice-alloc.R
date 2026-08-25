@@ -11,45 +11,113 @@
 # with a missing host or an unsayable security state fails here, naming
 # the field, rather than as a client that cannot connect.
 
+# The protocol both sides of the allocation speak. The request carries
+# it so the allocator can refuse a caller from the future; the response
+# carries it back so corteza never reads fields into a shape the
+# allocator did not mean.
+.VOICE_ALLOC_PROTOCOL <- "gpu-voice-alloc/1"
+
 # The allocator's answer, validated and normalised to plain values. The
-# JSON shape mirrors the AllocateVoiceResponse proto fields.
+# envelope (ok, v, allocation_id, room_id) is checked here; the grant
+# fields mirror the AllocateVoiceResponse proto and are validated in
+# voice_validate_grant.
 voice_allocate_media <- function(state, room_id) {
-    url <- state$cfg_fn()$voice$allocator
+    voice_cfg <- state$cfg_fn()$voice
+    url <- voice_cfg$allocator
     if (!is.character(url) || length(url) != 1L || !nzchar(url)) {
         voice_refuse("FAILED_PRECONDITION",
                      paste0("no media allocator configured: set ",
                             "voice.allocator to the gpu.ctl base URL"))
     }
-    body <- jsonlite::toJSON(list(room_id = room_id), auto_unbox = TRUE)
+    # The allocator requires its service credential unconditionally, so
+    # a configured allocator without a token can never mint. Refuse
+    # here, naming the key, rather than relaying the 401 the allocator
+    # would send.
+    token <- voice_cfg$allocator_token
+    if (!is.character(token) || length(token) != 1L || !nzchar(token)) {
+        voice_refuse("FAILED_PRECONDITION",
+                     paste0("the media allocator requires a service ",
+                            "token: set voice.allocator_token to the ",
+                            "credential the gpu.ctl front expects"))
+    }
+    body <- jsonlite::toJSON(list(v = .VOICE_ALLOC_PROTOCOL,
+                                  room_id = room_id), auto_unbox = TRUE)
     res <- tryCatch(
                     state$hooks$http("POST",
                                      paste0(sub("/+$", "", url), "/v1/voice/allocations"),
                                      body = body,
-                                     headers = c("content-type" = "application/json")),
+                                     headers = c("content-type" = "application/json",
+                                                 "authorization" = paste("Bearer", token))),
                     error = function(e) {
         voice_refuse("UNAVAILABLE",
                      "the media allocator is unreachable: %s",
                      conditionMessage(e))
     }
     )
-    if (!identical(as.integer(res$status), 200L)) {
+    status <- as.integer(res$status)
+    if (identical(status, 401L)) {
+        # The credential is always sent, so a 401 means the allocator
+        # does not accept THIS one: a config problem with a name, not
+        # an outage.
+        voice_refuse("FAILED_PRECONDITION",
+                     paste0("the media allocator rejected the service ",
+                            "token (HTTP 401): check voice.allocator_token"))
+    }
+    if (!identical(status, 200L)) {
+        # Refusals carry an `error` sentence naming what the allocator
+        # disliked; surface it when there is one.
+        err <- tryCatch(jsonlite::fromJSON(res$body,
+                                           simplifyVector = FALSE)$error,
+                        error = function(e) NULL)
+        if (is.character(err) && length(err) == 1L && nzchar(err)) {
+            voice_refuse("UNAVAILABLE",
+                         "the media allocator refused the request (HTTP %s): %s",
+                         status, err)
+        }
         voice_refuse("UNAVAILABLE",
                      "the media allocator refused the request (HTTP %s)",
-                     res$status)
+                     status)
     }
-    grant <- tryCatch(jsonlite::fromJSON(res$body, simplifyVector = FALSE),
-                      error = function(e) NULL)
-    if (!is.list(grant)) {
+    ans <- tryCatch(jsonlite::fromJSON(res$body, simplifyVector = FALSE),
+                    error = function(e) NULL)
+    if (!is.list(ans)) {
         voice_refuse("INTERNAL",
                      "the media allocator answered with something not JSON")
     }
-    grant <- voice_validate_grant(grant)
+    # The envelope before the grant: a different protocol version, a
+    # 200 that does not say ok, or a grant for some other room is
+    # refused by name, never guessed through.
+    if (!identical(ans$v, .VOICE_ALLOC_PROTOCOL)) {
+        voice_refuse("INTERNAL",
+                     "the media allocator speaks %s, this corteza speaks %s",
+                     if (is.character(ans$v) && length(ans$v) == 1L &&
+            nzchar(ans$v)) ans$v else "<no version>",
+                     .VOICE_ALLOC_PROTOCOL)
+    }
+    if (!isTRUE(ans$ok)) {
+        voice_refuse("INTERNAL",
+                     "the media allocator answered 200 without ok")
+    }
+    alloc_id <- ans$allocation_id
+    if (!is.character(alloc_id) || length(alloc_id) != 1L ||
+        !nzchar(alloc_id)) {
+        voice_refuse("INTERNAL",
+                     "allocation grant carries no allocation_id")
+    }
+    if (!identical(ans$room_id, room_id)) {
+        voice_refuse("INTERNAL",
+                     "allocation %s is for a different room", alloc_id)
+    }
+    grant <- voice_validate_grant(ans)
     # An already-expired grant would mint a session no call can ever
     # authorise against -- the client learns that only when its first
     # Converse refuses, well after the allocator misbehaved.
     if (grant$expires_at_unix_ms <= state$hooks$clock()) {
         voice_refuse("INTERNAL", "allocation grant is already expired")
     }
+    grant$allocation_id <- alloc_id
+    # The id exists so log lines and revocation can name the grant.
+    message("corteza voice: allocation ", alloc_id, " for ", room_id)
     grant
 }
 

@@ -271,13 +271,73 @@ cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
 expect_equal(cond$status, "FAILED_PRECONDITION")
 expect_true(grepl("voice.allocator", conditionMessage(cond), fixed = TRUE))
 
+# An allocator without its service token can never mint (the front
+# requires the credential unconditionally): refused before any HTTP,
+# naming the config key.
 state <- corteza:::voice_state(list(voice = list(allocator = "http://a")),
+                               hooks = list(http = function(...) {
+                                   stop("must not be called")
+                               }))
+cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
+                 corteza_voice_refusal = identity)
+expect_equal(cond$status, "FAILED_PRECONDITION")
+expect_true(grepl("voice.allocator_token", conditionMessage(cond),
+                  fixed = TRUE))
+
+ALLOC_CFG <- list(voice = list(allocator = "http://a",
+                               allocator_token = "svc-tok-1"))
+
+state <- corteza:::voice_state(ALLOC_CFG,
                                hooks = list(http = function(...) {
                                    list(status = 503L, body = "")
                                }))
 cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
                  corteza_voice_refusal = identity)
 expect_equal(cond$status, "UNAVAILABLE")
+
+# A refusal body's `error` sentence is surfaced, not swallowed: it
+# names what the allocator disliked.
+state <- corteza:::voice_state(ALLOC_CFG,
+                               hooks = list(http = function(...) {
+                                   list(status = 400L,
+                                        body = '{"error":"room_id too long"}')
+                               }))
+cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
+                 corteza_voice_refusal = identity)
+expect_equal(cond$status, "UNAVAILABLE")
+expect_true(grepl("room_id too long", conditionMessage(cond), fixed = TRUE))
+
+# 401 is not an outage: the credential was sent and refused, which is a
+# config problem with a name.
+state <- corteza:::voice_state(ALLOC_CFG,
+                               hooks = list(http = function(...) {
+                                   list(status = 401L, body = "{}")
+                               }))
+cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
+                 corteza_voice_refusal = identity)
+expect_equal(cond$status, "FAILED_PRECONDITION")
+expect_true(grepl("voice.allocator_token", conditionMessage(cond),
+                  fixed = TRUE))
+
+# The request itself speaks the settled contract: protocol version in
+# the closed body, the service credential in the authorization header.
+seen <- list()
+state <- corteza:::voice_state(
+    ALLOC_CFG,
+    hooks = list(http = function(method, url, body = NULL,
+                                 headers = character()) {
+        seen <<- list(method = method, url = url, body = body,
+                      headers = headers)
+        list(status = 503L, body = "")
+    }))
+tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
+         corteza_voice_refusal = identity)
+expect_equal(seen$method, "POST")
+req <- jsonlite::fromJSON(seen$body, simplifyVector = FALSE)
+expect_equal(req$v, "gpu-voice-alloc/1")
+expect_equal(req$room_id, "!room:h")
+expect_equal(sort(names(req)), c("room_id", "v"))
+expect_equal(unname(seen$headers[["authorization"]]), "Bearer svc-tok-1")
 
 # ---------------------------------------------------------------
 # Wire-valid values that R's integer would mangle.
@@ -304,28 +364,53 @@ expect_error(corteza:::voice_validate_grant(bad), "no expiry")
 
 # A syntactically valid grant that is already expired mints a session
 # no call could ever authorise against: refused at allocation.
-grant_json <- function(expires) {
-    paste0('{"speech_to_text":',
+grant_json <- function(expires, v = "gpu-voice-alloc/1", ok = "true",
+                       allocation_id = '"va-1"', room_id = '"!room:h"') {
+    paste0('{"ok":', ok, ',"v":"', v, '",',
+           '"allocation_id":', allocation_id, ',',
+           '"room_id":', room_id, ',',
+           '"speech_to_text":',
            '{"host":"stt.tail","port":7871,"security":"insecure"},',
            '"text_to_speech":',
            '{"host":"tts.tail","port":7872,"security":"insecure"},',
            '"token":"t","expires_at_unix_ms":', expires, "}")
 }
-state <- corteza:::voice_state(
-    list(voice = list(allocator = "http://a")),
-    hooks = list(clock = function() 5000,
-                 http = function(...) list(status = 200L,
-                                           body = grant_json(4000))))
-cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
-                 corteza_voice_refusal = identity)
+alloc_state <- function(body) {
+    corteza:::voice_state(
+        ALLOC_CFG,
+        hooks = list(clock = function() 5000,
+                     http = function(...) list(status = 200L, body = body)))
+}
+refusal <- function(body) {
+    tryCatch(corteza:::voice_allocate_media(alloc_state(body), "!room:h"),
+             corteza_voice_refusal = identity)
+}
+cond <- refusal(grant_json(4000))
 expect_equal(cond$status, "INTERNAL")
 expect_true(grepl("already expired", conditionMessage(cond)))
-state <- corteza:::voice_state(
-    list(voice = list(allocator = "http://a")),
-    hooks = list(clock = function() 5000,
-                 http = function(...) list(status = 200L,
-                                           body = grant_json(6000))))
-expect_equal(corteza:::voice_allocate_media(state, "!room:h")$token, "t")
+
+# The envelope refuses by name before the grant is read: a foreign
+# protocol version, a 200 that does not say ok, a grant with no id, or
+# a grant scoped to some other room.
+cond <- refusal(grant_json(6000, v = "gpu-voice-alloc/2"))
+expect_equal(cond$status, "INTERNAL")
+expect_true(grepl("gpu-voice-alloc/2", conditionMessage(cond), fixed = TRUE))
+cond <- refusal(grant_json(6000, ok = "false"))
+expect_equal(cond$status, "INTERNAL")
+expect_true(grepl("without ok", conditionMessage(cond)))
+cond <- refusal(grant_json(6000, allocation_id = '""'))
+expect_equal(cond$status, "INTERNAL")
+expect_true(grepl("allocation_id", conditionMessage(cond), fixed = TRUE))
+cond <- refusal(grant_json(6000, room_id = '"!other:h"'))
+expect_equal(cond$status, "INTERNAL")
+expect_true(grepl("different room", conditionMessage(cond)))
+
+grant <- suppressMessages(
+    corteza:::voice_allocate_media(alloc_state(grant_json(6000)), "!room:h"))
+expect_equal(grant$token, "t")
+# The allocation id rides along so log lines and revocation can name
+# the grant.
+expect_equal(grant$allocation_id, "va-1")
 
 # ---------------------------------------------------------------
 # Credential rotation: the chat client is derived from the LIVE config
