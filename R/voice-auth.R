@@ -30,16 +30,14 @@ voice_bearer <- function(metadata) {
     auth <- md[["authorization"]]
     server <- md[["matrix-server-name"]]
     if (!is.character(auth) || !nzchar(auth)) {
-        voice_refuse("UNAUTHENTICATED",
-                     "missing metadata: authorization")
+        voice_refuse("UNAUTHENTICATED", "missing metadata: authorization")
     }
     if (!grepl("^Bearer .+", auth)) {
         voice_refuse("UNAUTHENTICATED",
                      "authorization must be 'Bearer <openid-token>'")
     }
     if (!is.character(server) || !nzchar(server)) {
-        voice_refuse("UNAUTHENTICATED",
-                     "missing metadata: matrix-server-name")
+        voice_refuse("UNAUTHENTICATED", "missing metadata: matrix-server-name")
     }
     list(bearer = sub("^Bearer ", "", auth), server = server)
 }
@@ -50,8 +48,7 @@ voice_bearer <- function(metadata) {
 # with no .well-known is the normal case, not an error.
 voice_discover <- function(server, http) {
     res <- tryCatch(
-                    http("GET", sprintf("https://%s/.well-known/matrix/server",
-                                        server)),
+                    http("GET", sprintf("https://%s/.well-known/matrix/server", server)),
                     error = function(e) NULL
     )
     if (!is.null(res) && identical(as.integer(res$status), 200L)) {
@@ -111,8 +108,7 @@ voice_verify_openid <- function(bearer, server, http) {
     digest::digest(paste0(state$key, bearer), algo = "sha256")
 }
 
-voice_session_new <- function(state, identity, bearer, room_id,
-                              expires_at_ms) {
+voice_session_new <- function(state, identity, bearer, room_id, expires_at_ms) {
     id <- voice_id(state)
     rec <- new.env(parent = emptyenv())
     rec$identity <- identity

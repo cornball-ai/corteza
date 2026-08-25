@@ -76,8 +76,7 @@ voice_load_protos <- function() {
 # else that escapes a handler is INTERNAL, because nothing considered it.
 voice_refuse <- function(status, fmt, ...) {
     stop(structure(class = c("corteza_voice_refusal", "error", "condition"),
-                   list(message = sprintf(fmt, ...), call = NULL,
-                        status = status)))
+                   list(message = sprintf(fmt, ...), call = NULL, status = status)))
 }
 
 # Everything a running voice server carries. `hooks` exists so tests and
@@ -97,26 +96,24 @@ voice_state <- function(cfg, hooks = list()) {
                              algo = "sha256")
     st$counter <- 0L
     defaults <- list(
-        http = .voice_http,
-        clock = function() as.numeric(Sys.time()) * 1000,
-        run_turn = .voice_run_turn,
-        post = function(room_id, text) {
-            bot_event_id(chat.api::chat_send(bot_chat_client(st$cfg),
-                                             room_id, text))
-        },
-        edit = function(room_id, event_id, text) {
-            chat.api::chat_edit(bot_chat_client(st$cfg), room_id, event_id,
-                                text)
-        },
-        members = function(room_id) {
-            chat.api::chat_members(bot_chat_client(st$cfg), room_id)
-        },
-        ready = function(port) invisible(NULL)
+                     http = .voice_http,
+                     clock = function() as.numeric(Sys.time()) * 1000,
+                     run_turn = .voice_run_turn,
+                     post = function(room_id, text) {
+        bot_event_id(chat.api::chat_send(bot_chat_client(st$cfg),
+                room_id, text))
+    },
+                     edit = function(room_id, event_id, text) {
+        chat.api::chat_edit(bot_chat_client(st$cfg), room_id, event_id, text)
+    },
+                     members = function(room_id) {
+        chat.api::chat_members(bot_chat_client(st$cfg), room_id)
+    },
+                     ready = function(port) invisible(NULL)
     )
     bad <- setdiff(names(hooks), names(defaults))
     if (length(bad)) {
-        stop("unknown voice hook: ", paste(bad, collapse = ", "),
-             call. = FALSE)
+        stop("unknown voice hook: ", paste(bad, collapse = ", "), call. = FALSE)
     }
     st$hooks <- utils::modifyList(defaults, hooks)
     st$rooms <- new.env(parent = emptyenv())
@@ -173,8 +170,8 @@ voice_serve <- function(config = NULL, address = NULL, hooks = list(),
     srv <- grpc::grpc_server(address)
     on.exit(grpc::grpc_close(srv), add = TRUE)
     port <- grpc::grpc_server_port(srv)
-    message("corteza voice: serving AgentVoice on ", address,
-            " (port ", port, ")")
+    message("corteza voice: serving AgentVoice on ", address, " (port ",
+            port, ")")
     state$hooks$ready(port)
     handled <- 0
     repeat {
@@ -217,13 +214,11 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
         }
         tryCatch(handler(state, ev),
                  corteza_voice_refusal = function(cond) {
-                     .voice_fail(ev, streaming, cond$status,
-                                 conditionMessage(cond))
-                 },
+            .voice_fail(ev, streaming, cond$status, conditionMessage(cond))
+        },
                  error = function(cond) {
-                     .voice_fail(ev, streaming, "INTERNAL",
-                                 conditionMessage(cond))
-                 })
+            .voice_fail(ev, streaming, "INTERNAL", conditionMessage(cond))
+        })
     }
     length(evs)
 }
@@ -236,8 +231,7 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
         try(grpc::grpc_finish(ev, status = status, message = msg),
             silent = TRUE)
     } else {
-        try(grpc::grpc_reply(ev, status = status, message = msg),
-            silent = TRUE)
+        try(grpc::grpc_reply(ev, status = status, message = msg), silent = TRUE)
     }
     invisible(NULL)
 }
@@ -252,6 +246,5 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
         curl::handle_setheaders(h, .list = as.list(headers))
     }
     res <- curl::curl_fetch_memory(url, handle = h)
-    list(status = as.integer(res$status_code),
-         body = rawToChar(res$content))
+    list(status = as.integer(res$status_code), body = rawToChar(res$content))
 }

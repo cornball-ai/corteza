@@ -23,16 +23,14 @@ voice_allocate_media <- function(state, room_id) {
     body <- jsonlite::toJSON(list(room_id = room_id), auto_unbox = TRUE)
     res <- tryCatch(
                     state$hooks$http("POST",
-                                     paste0(sub("/+$", "", url),
-                                            "/v1/voice/allocations"),
+                                     paste0(sub("/+$", "", url), "/v1/voice/allocations"),
                                      body = body,
-                                     headers = c("content-type" =
-                                                     "application/json")),
+                                     headers = c("content-type" = "application/json")),
                     error = function(e) {
-                        voice_refuse("UNAVAILABLE",
-                                     "the media allocator is unreachable: %s",
-                                     conditionMessage(e))
-                    }
+        voice_refuse("UNAVAILABLE",
+                     "the media allocator is unreachable: %s",
+                     conditionMessage(e))
+    }
     )
     if (!identical(as.integer(res$status), 200L)) {
         voice_refuse("UNAVAILABLE",
@@ -56,21 +54,19 @@ voice_validate_grant <- function(grant) {
         }
         host <- e$host
         if (!is.character(host) || length(host) != 1L || !nzchar(host)) {
-            voice_refuse("INTERNAL",
-                         "allocation grant %s has no host", field)
+            voice_refuse("INTERNAL", "allocation grant %s has no host", field)
         }
         port <- e$port
         if (!is.numeric(port) || length(port) != 1L || is.na(port) ||
             port < 1 || port > 65535) {
-            voice_refuse("INTERNAL",
-                         "allocation grant %s has no usable port", field)
+            voice_refuse("INTERNAL", "allocation grant %s has no usable port",
+                         field)
         }
         # Two sayable states only. Anything else would relay as
         # UNSPECIFIED, which the client refuses to connect on -- so it
         # refuses here, where the message can name the allocator.
         security <- e$security
-        if (!is.character(security) ||
-            !security %in% c("tls", "insecure")) {
+        if (!is.character(security) || !security %in% c("tls", "insecure")) {
             voice_refuse("INTERNAL",
                          paste0("allocation grant %s must declare security ",
                                 "as \"tls\" or \"insecure\""), field)
@@ -98,8 +94,7 @@ voice_validate_grant <- function(grant) {
     m$host <- ep$host
     m$port <- ep$port
     m$security <- .voice_enum_num("ChannelSecurity",
-                                  paste0("CHANNEL_SECURITY_",
-                                         toupper(ep$security)))
+                                  paste0("CHANNEL_SECURITY_", toupper(ep$security)))
     m
 }
 
@@ -107,8 +102,7 @@ voice_validate_grant <- function(grant) {
 # mint the session. The one RPC that does a federation round trip.
 .voice_allocate <- function(state, ev) {
     cred <- voice_bearer(ev$metadata)
-    identity <- voice_verify_openid(cred$bearer, cred$server,
-                                    state$hooks$http)
+    identity <- voice_verify_openid(cred$bearer, cred$server, state$hooks$http)
     req <- RProtoBuf::read(.voice_type("AllocateVoiceRequest"), ev$request)
     room_id <- req$room_id
     if (!nzchar(room_id)) {

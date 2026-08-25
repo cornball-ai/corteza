@@ -92,11 +92,10 @@ voice_room_session <- function(state, room_id) {
     # event_id NULL; ReportTurn then has nothing to edit and says so.
     event_id <- tryCatch(state$hooks$post(rec$room_id, full),
                          error = function(e) {
-                             message("corteza voice: could not post reply ",
-                                     "to ", rec$room_id, ": ",
-                                     conditionMessage(e))
-                             NULL
-                         })
+        message("corteza voice: could not post reply ", "to ", rec$room_id,
+                ": ", conditionMessage(e))
+        NULL
+    })
     assign(turn_id,
            list(text = full, event_id = event_id, stored = NULL),
            envir = rec$turns)
@@ -139,10 +138,10 @@ voice_room_session <- function(state, room_id) {
         # prevent. Refuse instead; the client may retry.
         tryCatch(state$hooks$edit(rec$room_id, turn$event_id, stored),
                  error = function(e) {
-                     voice_refuse("UNAVAILABLE",
-                                  "could not edit the room record: %s",
-                                  conditionMessage(e))
-                 })
+            voice_refuse("UNAVAILABLE",
+                         "could not edit the room record: %s",
+                         conditionMessage(e))
+        })
     }
     turn$stored <- stored
     assign(req$turn_id, turn, envir = rec$turns)
