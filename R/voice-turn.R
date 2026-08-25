@@ -18,14 +18,47 @@
 
 # One R session per room per voice process, built on first use. Fresh
 # rather than shared with the poll loop: this is a separate process, and
-# in-memory session state does not cross processes.
+# in-memory session state does not cross processes. What DOES cross is
+# the room itself -- the session is seeded from room history on
+# creation, so the first voice turn stands on the conversation so far
+# (including replies this or any other process posted), and a restart
+# recovers everything the room holds.
 voice_room_session <- function(state, room_id) {
     s <- state$rooms[[room_id]]
     if (is.null(s)) {
-        s <- bot_new_session(state$cfg, room_id = room_id)
+        s <- bot_new_session(state$cfg_fn(), room_id = room_id)
+        .voice_backfill(state, s, room_id)
         assign(room_id, s, envir = state$rooms)
     }
     s
+}
+
+# The tail of the room's history, as turns. Mirrors the shape
+# bot_backfill_sessions() builds for the poll loop, minus the
+# sender-attribution machinery: v1 live voice is one human and one bot
+# per room, so there is nobody to disambiguate.
+.voice_backfill <- function(state, s, room_id) {
+    msgs <- tryCatch(state$hooks$history(room_id), error = function(e) {
+        message("corteza voice: no history backfill for ", room_id, ": ",
+                conditionMessage(e))
+        NULL
+    })
+    added <- 0L
+    for (m in msgs) {
+        # Ordinary messages only: notices and emotes carry no turn.
+        if (!identical(m$kind, "message")) {
+            next
+        }
+        body <- m$body
+        if (is.null(body) || !nzchar(body)) {
+            next
+        }
+        role <- if (isTRUE(m$self)) "assistant" else "user"
+        s$history <- c(s$history %||% list(),
+                       list(list(role = role, content = body)))
+        added <- added + 1L
+    }
+    invisible(added)
 }
 
 # Default run_turn hook: the shared turn() machinery, deltas forwarded
@@ -126,12 +159,22 @@ voice_room_session <- function(state, room_id) {
         grpc::grpc_reply(ev, resp)
         return(invisible(NULL))
     }
-    stored <- voice_truncate(turn$text, req$text_heard)
+    # A turn whose post failed has no room record AT ALL, so no report
+    # against it can be honoured -- including a fully-heard one, where
+    # answering OK with stored_text would claim a message the history
+    # does not hold. The check sits before the truncation math on
+    # purpose: it is about the post, not about whether an edit is due.
+    if (is.null(turn$event_id)) {
+        voice_refuse("INTERNAL",
+                     paste0("the reply was never posted to the room, so ",
+                            "there is nothing to report against"))
+    }
+    heard <- as.numeric(req$text_heard)
+    if (is.na(heard)) {
+        voice_refuse("INVALID_ARGUMENT", "text_heard is not a number")
+    }
+    stored <- voice_truncate(turn$text, heard)
     if (!identical(stored, turn$text)) {
-        if (is.null(turn$event_id)) {
-            voice_refuse("INTERNAL",
-                         "the reply was never posted, so it cannot be cut")
-        }
         # If the edit fails the room still shows the full text, and
         # answering OK would hand the client a stored_text the history
         # does not hold -- the exact mismatch this RPC exists to
@@ -155,9 +198,13 @@ voice_room_session <- function(state, room_id) {
 # when the cut falls mid-word. R's substr() counts characters, which on
 # a UTF-8 string are code points -- the one unit both ends can produce
 # exactly (the proto pins this).
+#
+# `heard` stays numeric: the wire type is uint32, whose ceiling
+# (4294967295) is a VALID value that as.integer() would turn into NA.
+# Every count at or past the text's length means "heard it all".
 voice_truncate <- function(text, heard) {
     text <- enc2utf8(text)
-    heard <- as.integer(heard)
+    heard <- as.numeric(heard)
     total <- nchar(text, type = "chars")
     if (heard >= total) {
         return(text)

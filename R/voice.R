@@ -29,15 +29,38 @@
 
 .voice_env <- new.env(parent = emptyenv())
 
+# Version floors checked at runtime, not just declared, because an
+# installed copy loads however old it is (same rule as .CHAT_API_MIN in
+# rooms.R, and a test pins the grpc constant to the Suggests bound so
+# the two cannot drift).
+#
+# grpc: grpc_stream()/grpc_send()/grpc_finish() -- the server-streaming
+# surface Converse stands on -- arrived in 0.0.1.5.
+# llm.api: on_delta appeared in 0.1.9.2 but only streamed on every
+# provider in 0.1.9.4; below that a voice deployment silently waits for
+# the whole reply, which defeats the feature it thinks it enabled.
+.VOICE_GRPC_MIN <- "0.0.1.5"
+.VOICE_LLM_API_MIN <- "0.1.9.4"
+
 voice_require <- function() {
     need <- c("grpc", "RProtoBuf")
     have <- vapply(need, requireNamespace, logical(1), quietly = TRUE)
-    if (all(have)) {
-        return(invisible(TRUE))
+    if (!all(have)) {
+        stop("live voice needs ", paste(need[!have], collapse = " and "),
+             " installed (they are Suggests, not Imports, because voice is ",
+             "opt-in)", call. = FALSE)
     }
-    stop("live voice needs ", paste(need[!have], collapse = " and "),
-         " installed (they are Suggests, not Imports, because voice is ",
-         "opt-in)", call. = FALSE)
+    if (utils::packageVersion("grpc") < .VOICE_GRPC_MIN) {
+        stop("live voice needs grpc >= ", .VOICE_GRPC_MIN,
+             " (server streaming); installed: ",
+             utils::packageVersion("grpc"), call. = FALSE)
+    }
+    if (utils::packageVersion("llm.api") < .VOICE_LLM_API_MIN) {
+        stop("live voice needs llm.api >= ", .VOICE_LLM_API_MIN,
+             " (on_delta streams on every provider); installed: ",
+             utils::packageVersion("llm.api"), call. = FALSE)
+    }
+    invisible(TRUE)
 }
 
 # Register the AgentVoice descriptors, once per process.
@@ -81,17 +104,24 @@ voice_refuse <- function(status, fmt, ...) {
 
 # Everything a running voice server carries. `hooks` exists so tests and
 # harnesses can stand in for the world: every side effect the handlers
-# have (HTTP, the room turn, posting, editing, membership, the clock)
-# goes through one. Defaults are the real thing.
+# have (HTTP, the room turn, posting, editing, membership, history, the
+# clock) goes through one. Defaults are the real thing.
 #
-# The chat client is derived per call inside each default hook, never
-# cached in the state: Matrix credentials rotate on relogin, and a
-# server process lives across many rotations (see the rooms.R rule).
-voice_state <- function(cfg, hooks = list()) {
+# `cfg_fn` is a FUNCTION, not a config: Matrix credentials rotate on
+# relogin, a voice server lives across many rotations, and anything
+# derived from a cached cfg goes stale silently (the rooms.R rule). The
+# production cfg_fn is bot_load_config -- disk is authoritative after a
+# relogin persists -- and every default hook derives its client through
+# .voice_chat() at the moment of the call.
+voice_state <- function(cfg_fn, hooks = list()) {
+    if (!is.function(cfg_fn)) {
+        cfg <- cfg_fn
+        cfg_fn <- function() cfg
+    }
     st <- new.env(parent = emptyenv())
-    st$cfg <- cfg
+    st$cfg_fn <- cfg_fn
     st$sessions <- new.env(parent = emptyenv())
-    # Per-process key for the keyed-digest bearer compare (voice-auth.R).
+    # Per-process key for the keyed-HMAC bearer compare (voice-auth.R).
     st$key <- digest::digest(list(Sys.time(), Sys.getpid(), stats::runif(4)),
                              algo = "sha256")
     st$counter <- 0L
@@ -100,14 +130,17 @@ voice_state <- function(cfg, hooks = list()) {
                      clock = function() as.numeric(Sys.time()) * 1000,
                      run_turn = .voice_run_turn,
                      post = function(room_id, text) {
-        bot_event_id(chat.api::chat_send(bot_chat_client(st$cfg),
-                room_id, text))
+        bot_event_id(chat.api::chat_send(.voice_chat(st), room_id, text))
     },
                      edit = function(room_id, event_id, text) {
-        chat.api::chat_edit(bot_chat_client(st$cfg), room_id, event_id, text)
+        chat.api::chat_edit(.voice_chat(st), room_id, event_id, text)
     },
                      members = function(room_id) {
-        chat.api::chat_members(bot_chat_client(st$cfg), room_id)
+        chat.api::chat_members(.voice_chat(st), room_id)
+    },
+                     history = function(room_id) {
+        chat.api::chat_history(.voice_chat(st), room_id,
+                               limit = 30L)$messages
     },
                      ready = function(port) invisible(NULL)
     )
@@ -118,6 +151,14 @@ voice_state <- function(cfg, hooks = list()) {
     st$hooks <- utils::modifyList(defaults, hooks)
     st$rooms <- new.env(parent = emptyenv())
     st
+}
+
+# The transport client, derived from the LIVE config at the point of
+# use. Never cache the result: the whole reason this is a function call
+# and not a field is that the credentials inside can rotate between any
+# two voice RPCs.
+.voice_chat <- function(state) {
+    bot_chat_client(state$cfg_fn())
 }
 
 # Unpredictable id for sessions and turns. The bearer match is the real
@@ -155,13 +196,20 @@ voice_id <- function(state) {
 voice_serve <- function(config = NULL, address = NULL, hooks = list(),
                         poll_ms = 200L, max_events = Inf) {
     voice_require()
-    cfg <- config
-    if (is.null(cfg)) {
-        cfg <- bot_load_config()
+    # A literal config stays as given (the caller owns its lifetime); the
+    # default re-reads disk on every derivation so credential rotations
+    # land (see voice_state).
+    cfg_fn <- if (is.null(config)) bot_load_config else function() config
+    # The default chat hooks speak chat.api; the same runtime floor the
+    # room loop enforces applies here, but only when those defaults are
+    # actually in play -- a harness that overrides them all owes nothing
+    # to chat.api.
+    if (!all(c("post", "edit", "members", "history") %in% names(hooks))) {
+        bot_require_mx()
     }
-    state <- voice_state(cfg, hooks)
+    state <- voice_state(cfg_fn, hooks)
     if (is.null(address)) {
-        address <- cfg$voice$listen
+        address <- cfg_fn()$voice$listen
     }
     if (is.null(address)) {
         address <- "127.0.0.1:7851"
@@ -237,8 +285,21 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
 }
 
 # Default HTTP hook: method, url, body, headers -> list(status, body).
-.voice_http <- function(method, url, body = NULL, headers = character()) {
-    h <- curl::new_handle()
+#
+# BOUNDED, because the server is synchronous and the peer is
+# caller-selected: AllocateVoice dials the homeserver a client NAMED
+# before anything about that client is established, so a host that
+# accepts and stalls would otherwise hold every RPC hostage for as long
+# as it liked. Connect and total timeouts cap the stall; the size cap
+# stops a well-timed firehose from ballooning the process. Redirects
+# are followed (the .well-known step may serve one) but only a few.
+.VOICE_HTTP_MAX_BYTES <- 1e6
+
+.voice_http <- function(method, url, body = NULL, headers = character(),
+                        timeout_ms = 10000L, connect_timeout_ms = 5000L) {
+    h <- curl::new_handle(timeout_ms = as.integer(timeout_ms),
+                          connecttimeout_ms = as.integer(connect_timeout_ms),
+                          followlocation = TRUE, maxredirs = 3L)
     if (identical(method, "POST")) {
         curl::handle_setopt(h, post = TRUE, postfields = body %||% "")
     }
@@ -246,5 +307,9 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
         curl::handle_setheaders(h, .list = as.list(headers))
     }
     res <- curl::curl_fetch_memory(url, handle = h)
+    if (length(res$content) > .VOICE_HTTP_MAX_BYTES) {
+        stop("response larger than ", .VOICE_HTTP_MAX_BYTES, " bytes",
+             call. = FALSE)
+    }
     list(status = as.integer(res$status_code), body = rawToChar(res$content))
 }

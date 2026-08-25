@@ -173,6 +173,26 @@ ev <- unary("ReportTurn", corteza:::.voice_type("ReportTurnRequest")$new(
     session_id = sid, turn_id = "nope", text_heard = 0L))
 expect_equal(ev$status_name, "NOT_FOUND")
 
+# A turn whose room post failed refuses EVERY report -- including a
+# fully-heard one, where OK would claim a message the history does not
+# hold.
+out <- converse(sid, "please FAILPOST this")
+expect_equal(out$status, "OK")
+failpost_turn <- out$msgs[[1L]]$start$turn_id
+ev <- unary("ReportTurn", corteza:::.voice_type("ReportTurnRequest")$new(
+    session_id = sid, turn_id = failpost_turn, text_heard = 15L))
+expect_equal(ev$status_name, "INTERNAL")
+
+# uint32's ceiling crosses the wire as a valid "heard it all": stored
+# text is the full reply and the answer is OK, not INTERNAL.
+out <- converse(sid, "say hello again")
+expect_equal(out$status, "OK")
+turn2 <- out$msgs[[1L]]$start$turn_id
+ev <- unary("ReportTurn", corteza:::.voice_type("ReportTurnRequest")$new(
+    session_id = sid, turn_id = turn2, text_heard = 4294967295))
+expect_equal(ev$status_name, "OK")
+expect_equal(ev$response_message$stored_text, "Hello spoken world.")
+
 # A second allocation with the same credential mints a distinct
 # session: sessions belong to allocations, not to users.
 ev <- unary("AllocateVoice", req, metadata = MD)

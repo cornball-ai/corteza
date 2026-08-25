@@ -42,7 +42,7 @@ Suggests:
     chat.api (>= 0.0.1.24),
     clipr,
     fortunes,
-    grpc,
+    grpc (>= 0.0.1.5),
     mx.client (>= 0.2.0.4),
     pensar,
     RProtoBuf (>= 0.4.24),

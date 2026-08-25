@@ -14,7 +14,7 @@
 # The allocator's answer, validated and normalised to plain values. The
 # JSON shape mirrors the AllocateVoiceResponse proto fields.
 voice_allocate_media <- function(state, room_id) {
-    url <- state$cfg$voice$allocator
+    url <- state$cfg_fn()$voice$allocator
     if (!is.character(url) || length(url) != 1L || !nzchar(url)) {
         voice_refuse("FAILED_PRECONDITION",
                      paste0("no media allocator configured: set ",
@@ -43,7 +43,14 @@ voice_allocate_media <- function(state, room_id) {
         voice_refuse("INTERNAL",
                      "the media allocator answered with something not JSON")
     }
-    voice_validate_grant(grant)
+    grant <- voice_validate_grant(grant)
+    # An already-expired grant would mint a session no call can ever
+    # authorise against -- the client learns that only when its first
+    # Converse refuses, well after the allocator misbehaved.
+    if (grant$expires_at_unix_ms <= state$hooks$clock()) {
+        voice_refuse("INTERNAL", "allocation grant is already expired")
+    }
+    grant
 }
 
 voice_validate_grant <- function(grant) {
@@ -58,7 +65,7 @@ voice_validate_grant <- function(grant) {
         }
         port <- e$port
         if (!is.numeric(port) || length(port) != 1L || is.na(port) ||
-            port < 1 || port > 65535) {
+            port < 1 || port > 65535 || port != trunc(port)) {
             voice_refuse("INTERNAL", "allocation grant %s has no usable port",
                          field)
         }
@@ -78,8 +85,10 @@ voice_validate_grant <- function(grant) {
         voice_refuse("INTERNAL", "allocation grant carries no media token")
     }
     expires <- grant$expires_at_unix_ms
+    # Finite, positive, integral: an Inf or NaN here would mint a
+    # session that never expires (or never validates), silently.
     if (!is.numeric(expires) || length(expires) != 1L || is.na(expires) ||
-        expires <= 0) {
+        !is.finite(expires) || expires <= 0 || expires != trunc(expires)) {
         voice_refuse("INTERNAL", "allocation grant carries no expiry")
     }
     list(speech_to_text = ep("speech_to_text"),

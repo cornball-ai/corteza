@@ -45,11 +45,20 @@ hooks <- list(
         list(status = 500L, body = "")
     },
     run_turn = function(state, room_id, text, on_delta) {
+        # A prompt carrying FAILPOST produces a reply the post hook
+        # refuses, so the parent can drive the never-posted report path.
+        if (grepl("FAILPOST", text, fixed = TRUE)) {
+            on_delta("FAILPOST reply.")
+            return("FAILPOST reply.")
+        }
         on_delta("Hello ")
         on_delta("spoken world.")
         "Hello spoken world."
     },
     post = function(room_id, text) {
+        if (grepl("FAILPOST", text, fixed = TRUE)) {
+            stop("homeserver said no")
+        }
         writeLines(c(room_id, text), file.path(out_dir, "posted"))
         "$evt-1"
     },
@@ -58,6 +67,7 @@ hooks <- list(
         invisible(TRUE)
     },
     members = function(room_id) c(USER, "@corteza:bot.example"),
+    history = function(room_id) list(),
     ready = function(port) writeLines(as.character(port), port_file)
 )
 

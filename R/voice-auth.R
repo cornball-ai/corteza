@@ -39,31 +39,55 @@ voice_bearer <- function(metadata) {
     if (!is.character(server) || !nzchar(server)) {
         voice_refuse("UNAUTHENTICATED", "missing metadata: matrix-server-name")
     }
+    if (!voice_valid_server_name(server)) {
+        voice_refuse("UNAUTHENTICATED",
+                     "matrix-server-name is not a valid server name")
+    }
     list(bearer = sub("^Bearer ", "", auth), server = server)
 }
 
+# The Matrix server-name grammar (spec appendices): a DNS name, an IPv4
+# literal, or a bracketed IPv6 literal, with an optional port. This is
+# metadata that becomes a URL this process dials, so it is validated as
+# a name before it is ever used as one.
+voice_valid_server_name <- function(server) {
+    grepl(paste0("^(\\[[0-9A-Fa-f:.]{2,45}\\]",
+                 "|[0-9A-Za-z][0-9A-Za-z.-]{0,254})",
+                 "(:[0-9]{1,5})?$"),
+          server)
+}
+
 # Where a server name's federation API answers. Delegation first
-# (.well-known), then the literal name with the federation default port.
-# Failures fall through to the fallback rather than refusing: a server
-# with no .well-known is the normal case, not an error.
+# (.well-known, redirects followed by the HTTP hook), then the name
+# with the federation default port. Failures fall through to the
+# fallback rather than refusing: a server with no .well-known is the
+# normal case, not an error.
+#
+# DELIBERATE SPEC DEVIATION: the SRV steps (_matrix-fed._tcp, and the
+# deprecated _matrix._tcp) are skipped -- base R cannot do SRV lookups
+# without a dependency, tailnet deployments do not publish SRV records,
+# and hosted homeservers advertise via .well-known. A portless name --
+# delegated or direct -- therefore goes straight to the spec's no-SRV
+# fallback, port 8448, never to 443.
 voice_discover <- function(server, http) {
     res <- tryCatch(
                     http("GET", sprintf("https://%s/.well-known/matrix/server", server)),
                     error = function(e) NULL
     )
+    target <- server
     if (!is.null(res) && identical(as.integer(res$status), 200L)) {
         parsed <- tryCatch(jsonlite::fromJSON(res$body),
                            error = function(e) NULL)
         delegated <- parsed[["m.server"]]
         if (is.character(delegated) && length(delegated) == 1L &&
-            nzchar(delegated)) {
-            return(delegated)
+            nzchar(delegated) && voice_valid_server_name(delegated)) {
+            target <- delegated
         }
     }
-    if (grepl(":", server, fixed = TRUE)) {
-        return(server)
+    if (grepl(":[0-9]+$", target)) {
+        return(target)
     }
-    paste0(server, ":8448")
+    paste0(target, ":8448")
 }
 
 # Verify an OpenID token against the server the caller named, and bind
@@ -101,11 +125,14 @@ voice_verify_openid <- function(bearer, server, http) {
     identity
 }
 
-# Keyed digest of the bearer bytes. Comparing digests instead of the
-# bytes keeps the compare timing-independent of where two bearers first
-# differ; the key keeps the digest useless outside this process.
+# HMAC-SHA256 of the bearer under a per-process random key. The session
+# comparison is between two such digests, so where the compare exits
+# early reveals byte positions of an unpredictable digest, not of the
+# bearer -- which is the property a "constant-time compare" is after,
+# obtained without one. The key keeps the digest useless outside this
+# process.
 .voice_tag <- function(state, bearer) {
-    digest::digest(paste0(state$key, bearer), algo = "sha256")
+    digest::hmac(state$key, bearer, algo = "sha256")
 }
 
 voice_session_new <- function(state, identity, bearer, room_id, expires_at_ms) {

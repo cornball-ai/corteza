@@ -59,6 +59,19 @@ cond <- tryCatch(corteza:::voice_bearer(character()),
                  corteza_voice_refusal = identity)
 expect_equal(cond$status, "UNAUTHENTICATED")
 
+# The server name is validated as a name before it is used as one --
+# it becomes a URL this process dials.
+expect_error(corteza:::voice_bearer(c("authorization" = "Bearer x",
+                                      "matrix-server-name" = "not a name")),
+             "not a valid server name")
+expect_true(corteza:::voice_valid_server_name("host.example"))
+expect_true(corteza:::voice_valid_server_name("host.example:8448"))
+expect_true(corteza:::voice_valid_server_name("192.168.1.10:8448"))
+expect_true(corteza:::voice_valid_server_name("[2001:db8::1]:8448"))
+expect_false(corteza:::voice_valid_server_name("host example"))
+expect_false(corteza:::voice_valid_server_name("https://host.example"))
+expect_false(corteza:::voice_valid_server_name("host.example:99999999"))
+
 # ---------------------------------------------------------------
 # voice_discover: delegation wins, otherwise the literal name gets the
 # federation default port only when it carries none of its own.
@@ -75,6 +88,16 @@ http_wk <- function(body, status = 200L) {
 expect_equal(corteza:::voice_discover("host.example",
                                       http_wk('{"m.server":"fed.example:443"}')),
              "fed.example:443")
+# A PORTLESS delegated name gets the federation default port, exactly
+# like a portless direct name: with SRV out of scope (documented
+# deviation), the spec's fallback is 8448 -- never a silent 443.
+expect_equal(corteza:::voice_discover("host.example",
+                                      http_wk('{"m.server":"fed.example"}')),
+             "fed.example:8448")
+# A delegation that fails the server-name grammar is ignored, not used.
+expect_equal(corteza:::voice_discover("host.example",
+                                      http_wk('{"m.server":"not a name"}')),
+             "host.example:8448")
 expect_equal(corteza:::voice_discover("host.example",
                                       http_wk("", status = 404L)),
              "host.example:8448")
@@ -234,3 +257,165 @@ state <- corteza:::voice_state(list(voice = list(allocator = "http://a")),
 cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
                  corteza_voice_refusal = identity)
 expect_equal(cond$status, "UNAVAILABLE")
+
+# ---------------------------------------------------------------
+# Wire-valid values that R's integer would mangle.
+# ---------------------------------------------------------------
+
+# uint32's ceiling is a VALID text_heard ("heard it all", emphatically);
+# as.integer() would turn it into NA and an INTERNAL refusal.
+expect_equal(corteza:::voice_truncate("Hello spoken world.", 4294967295),
+             "Hello spoken world.")
+
+# ---------------------------------------------------------------
+# Grant boundaries: fractional ports, non-finite or fractional expiry.
+# ---------------------------------------------------------------
+
+bad <- full_grant()
+bad$speech_to_text$port <- 7871.5
+expect_error(corteza:::voice_validate_grant(bad), "no usable port")
+bad <- full_grant()
+bad$expires_at_unix_ms <- Inf
+expect_error(corteza:::voice_validate_grant(bad), "no expiry")
+bad <- full_grant()
+bad$expires_at_unix_ms <- 1755e9 + 0.5
+expect_error(corteza:::voice_validate_grant(bad), "no expiry")
+
+# A syntactically valid grant that is already expired mints a session
+# no call could ever authorise against: refused at allocation.
+grant_json <- function(expires) {
+    paste0('{"speech_to_text":',
+           '{"host":"stt.tail","port":7871,"security":"insecure"},',
+           '"text_to_speech":',
+           '{"host":"tts.tail","port":7872,"security":"insecure"},',
+           '"token":"t","expires_at_unix_ms":', expires, "}")
+}
+state <- corteza:::voice_state(
+    list(voice = list(allocator = "http://a")),
+    hooks = list(clock = function() 5000,
+                 http = function(...) list(status = 200L,
+                                           body = grant_json(4000))))
+cond <- tryCatch(corteza:::voice_allocate_media(state, "!room:h"),
+                 corteza_voice_refusal = identity)
+expect_equal(cond$status, "INTERNAL")
+expect_true(grepl("already expired", conditionMessage(cond)))
+state <- corteza:::voice_state(
+    list(voice = list(allocator = "http://a")),
+    hooks = list(clock = function() 5000,
+                 http = function(...) list(status = 200L,
+                                           body = grant_json(6000))))
+expect_equal(corteza:::voice_allocate_media(state, "!room:h")$token, "t")
+
+# ---------------------------------------------------------------
+# Credential rotation: the chat client is derived from the LIVE config
+# at every use, never from a snapshot. cfg_fn cycles configs; each
+# .voice_chat() call must hand bot_chat_client the latest one.
+# ---------------------------------------------------------------
+
+local({
+    seen <- list()
+    orig <- corteza:::bot_chat_client
+    assignInNamespace("bot_chat_client", function(cfg, ...) {
+        seen[[length(seen) + 1L]] <<- cfg
+        structure(list(), class = "fake_chat")
+    }, ns = "corteza")
+    on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"),
+            add = TRUE)
+    generation <- 0L
+    state <- corteza:::voice_state(function() {
+        generation <<- generation + 1L
+        list(token = paste0("tok-", generation))
+    })
+    corteza:::.voice_chat(state)
+    corteza:::.voice_chat(state)
+    expect_equal(length(seen), 2L)
+    expect_equal(seen[[1L]]$token, "tok-1")
+    # The second derivation saw the ROTATED config, not a cache.
+    expect_equal(seen[[2L]]$token, "tok-2")
+})
+
+# ---------------------------------------------------------------
+# Backfill: a voice session starts on the room's conversation, and a
+# second lookup of the same room does not backfill again.
+# ---------------------------------------------------------------
+
+local({
+    s <- new.env(parent = emptyenv())
+    msgs <- list(
+        list(kind = "message", body = "hi bot", self = FALSE,
+             sender = "@ann:h"),
+        list(kind = "notice", body = "archived: x", self = TRUE),
+        list(kind = "message", body = "", self = FALSE),
+        list(kind = "message", body = "hello ann", self = TRUE))
+    state <- corteza:::voice_state(list(),
+                                   hooks = list(history = function(rid) msgs))
+    expect_equal(corteza:::.voice_backfill(state, s, "!room:h"), 2L)
+    expect_equal(length(s$history), 2L)
+    expect_equal(s$history[[1L]], list(role = "user", content = "hi bot"))
+    expect_equal(s$history[[2L]], list(role = "assistant",
+                                       content = "hello ann"))
+    # A history fetch that fails seeds nothing and breaks nothing.
+    state2 <- corteza:::voice_state(list(),
+                                    hooks = list(history = function(rid) {
+        stop("no transport")
+    }))
+    s2 <- new.env(parent = emptyenv())
+    expect_equal(corteza:::.voice_backfill(state2, s2, "!room:h"), 0L)
+})
+
+local({
+    calls <- 0L
+    orig <- corteza:::bot_new_session
+    assignInNamespace("bot_new_session", function(cfg, ...) {
+        new.env(parent = emptyenv())
+    }, ns = "corteza")
+    on.exit(assignInNamespace("bot_new_session", orig, ns = "corteza"),
+            add = TRUE)
+    state <- corteza:::voice_state(list(),
+                                   hooks = list(history = function(rid) {
+        calls <<- calls + 1L
+        list(list(kind = "message", body = "earlier", self = FALSE))
+    }))
+    s1 <- corteza:::voice_room_session(state, "!room:h")
+    expect_equal(length(s1$history), 1L)
+    s2 <- corteza:::voice_room_session(state, "!room:h")
+    # Same session, and the room history was fetched exactly once.
+    expect_identical(s1, s2)
+    expect_equal(calls, 1L)
+})
+
+# ---------------------------------------------------------------
+# The runtime version floors cannot drift from DESCRIPTION: the test
+# reads the declared bound rather than restating it.
+# ---------------------------------------------------------------
+
+local({
+    desc <- read.dcf(system.file("DESCRIPTION", package = "corteza"),
+                     fields = "Suggests")[1L, 1L]
+    m <- regmatches(desc,
+                    regexpr("grpc \\(>= [0-9.]+\\)", desc))
+    expect_equal(length(m), 1L)
+    declared <- unname(sub("grpc \\(>= ([0-9.]+)\\)", "\\1", m))
+    expect_equal(declared, corteza:::.VOICE_GRPC_MIN)
+})
+
+# ---------------------------------------------------------------
+# Remote I/O is bounded: a peer that accepts (or blackholes) and stalls
+# cannot hold the synchronous server past the configured timeouts.
+# ---------------------------------------------------------------
+
+if (at_home()) {
+    local({
+        t0 <- Sys.time()
+        # 10.255.255.1 is non-routable: the connect stalls until the
+        # connect timeout fires. If some network answers it anyway, the
+        # request errors or returns fast -- either way the bound holds.
+        res <- tryCatch(corteza:::.voice_http("GET",
+                                              "https://10.255.255.1/x",
+                                              timeout_ms = 1500L,
+                                              connect_timeout_ms = 500L),
+                        error = function(e) e)
+        elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+        expect_true(elapsed < 5)
+    })
+}
