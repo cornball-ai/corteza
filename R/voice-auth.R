@@ -124,13 +124,71 @@ voice_discover <- function(server, http) {
     paste0(target, ":8448")
 }
 
+# The domain of a Matrix user id: everything after the localpart's
+# colon. Localparts cannot contain ':', so the first colon ends them;
+# the server name that follows may itself carry a port or a bracketed
+# IPv6 literal with colons, which is why this is a parse and not a
+# split. NULL when the id or its domain does not parse.
+voice_user_domain <- function(user_id) {
+    if (!is.character(user_id) || length(user_id) != 1L ||
+        is.na(user_id) || !grepl("^@[^:]+:.+", user_id)) {
+        return(NULL)
+    }
+    domain <- sub("^@[^:]+:", "", user_id)
+    if (!voice_valid_server_name(domain)) {
+        return(NULL)
+    }
+    domain
+}
+
+# Two server names name the same server when they are the same name,
+# hostname compared case-insensitively (DNS labels and IPv6 hex both
+# compare that way). An explicit port is part of the name: "h.example"
+# and "h.example:8448" are DIFFERENT servers, never folded together.
+voice_same_server <- function(a, b) {
+    is.character(a) && is.character(b) && length(a) == 1L &&
+    length(b) == 1L && !is.na(a) && !is.na(b) && nzchar(a) &&
+    nzchar(b) && identical(tolower(a), tolower(b))
+}
+
+# The agent's OWN homeserver, as list(domain, base), derived entirely
+# from the bot config: user_id supplies the server NAME, server
+# supplies the URL it actually answers on. No hostname lives in code
+# or config for this. NULL when the config cannot say (no parseable
+# user_id domain, or no http(s) server URL) -- which means no bypass,
+# discovery for everyone.
+voice_self_server <- function(cfg) {
+    domain <- voice_user_domain(cfg$user_id)
+    base <- cfg$server
+    if (is.null(domain) || !is.character(base) || length(base) != 1L ||
+        is.na(base) || !grepl("^https?://", base)) {
+        return(NULL)
+    }
+    list(domain = domain, base = sub("/+$", "", base))
+}
+
+# Where a caller-named server's federation API is dialed. The agent's
+# own homeserver is dialed directly at its configured base URL: its
+# name need not be publicly discoverable (a tailnet homeserver
+# deliberately is not), and the deployment already knows where it
+# lives. EVERY other name goes through normal discovery -- the bypass
+# is exactly the self-domain case, nothing wider, and it changes only
+# WHERE the question is asked, never what answer is accepted (the
+# sub-domain binding downstream is untouched).
+voice_verifier_base <- function(server, http, self = NULL) {
+    if (!is.null(self) && voice_same_server(server, self$domain)) {
+        return(self$base)
+    }
+    paste0("https://", voice_discover(server, http))
+}
+
 # Verify an OpenID token against the server the caller named, and bind
 # the answer to that server. Returns the verified user id.
-voice_verify_openid <- function(bearer, server, http) {
-    host <- voice_discover(server, http)
-    url <- sprintf(paste0("https://%s/_matrix/federation/v1/openid/",
+voice_verify_openid <- function(bearer, server, http, self = NULL) {
+    base <- voice_verifier_base(server, http, self)
+    url <- sprintf(paste0("%s/_matrix/federation/v1/openid/",
                           "userinfo?access_token=%s"),
-                   host, curl::curl_escape(bearer))
+                   base, curl::curl_escape(bearer))
     res <- tryCatch(http("GET", url), error = function(e) {
         voice_refuse("UNAUTHENTICATED",
                      "OpenID verification against %s failed: %s",
@@ -150,9 +208,12 @@ voice_verify_openid <- function(bearer, server, http) {
     }
     # THE SUB MUST BELONG TO THE SERVER THAT ANSWERED. This comparison
     # is the entire difference between "a server vouched for its user"
-    # and "a server named a user".
+    # and "a server named a user". Same centralized comparison as the
+    # self bypass: hostname case folds (HOST.EXAMPLE is host.example,
+    # per DNS), an explicit port stays identity -- one rule everywhere,
+    # so a caller cannot reach a path where the two disagree.
     domain <- sub("^@[^:]+:", "", identity)
-    if (!identical(domain, server)) {
+    if (!voice_same_server(domain, server)) {
         voice_refuse("PERMISSION_DENIED",
                      "%s is not authoritative for %s", server, identity)
     }
