@@ -281,7 +281,7 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
             # A method this build does not serve. UNIMPLEMENTED rather
             # than a domain refusal, because nothing considered it.
             rgrpc::grpc_reply(ev, status = "UNIMPLEMENTED",
-                             message = sprintf("no such method: %s", m))
+                              message = sprintf("no such method: %s", m))
             next
         }
         tryCatch(handler(state, ev),
