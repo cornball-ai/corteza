@@ -1,3 +1,16 @@
+# corteza 0.7.1.32
+
+- **The verifier dials the agent's own homeserver directly.** When a
+  voice caller names the agent's own homeserver domain (the domain of
+  the bot's `user_id`), OpenID verification goes straight to the
+  configured `server` URL instead of through Matrix discovery — a
+  tailnet homeserver is deliberately not publicly discoverable. Every
+  other server name still discovers normally, and the bypass changes
+  only where the question is asked: the sub-domain binding and
+  membership check are untouched. Derived entirely from the bot
+  config; no hostname constant in code or config. Replaces the
+  hostname-rewriting shadow in the launch script.
+
 # corteza 0.7.1.31
 
 - **Voice turns generate in spoken register.** A voice session's
