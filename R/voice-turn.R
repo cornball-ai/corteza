@@ -16,6 +16,38 @@
 # ReportTurn -- degrades to a partially-heard reply vanishing from
 # history entirely.
 
+# The spoken-register instruction appended to a voice session's system
+# prompt. The reply text is used twice -- synthesized aloud verbatim
+# AND posted to the room -- and the client is contractually barred from
+# altering it (text_heard and the truncation edit count code points of
+# the reply AS THE AGENT HOLDS IT), so speakable text has to be born
+# speakable. First live run without this: a markdown table read aloud
+# as "asterisk five bend forward". Override via voice.speech_style.
+.VOICE_SPEECH_REGISTER <- paste0(
+    "Voice register: your reply is read aloud verbatim by a speech ",
+    "synthesizer, and stored in the room as the same plain text. Write ",
+    "plain spoken prose only. No markdown syntax of any kind: no ",
+    "asterisks, underscores, pipes, backticks, code fences, headings, ",
+    "bullet or numbered list markers, and no tables. Say numbers, ",
+    "scores, times, and abbreviations the way they are spoken aloud. ",
+    "Keep sentences short. When content is inherently visual, describe ",
+    "it in words instead.")
+
+# The system prompt for a voice session: the room system plus the
+# spoken-register instruction, or a configured override of that
+# instruction (voice.speech_style, a non-empty string).
+voice_speech_system <- function(system, style = NULL) {
+    if (!is.character(style) || length(style) != 1L || is.na(style) ||
+        !nzchar(style)) {
+        style <- .VOICE_SPEECH_REGISTER
+    }
+    if (!is.character(system) || length(system) != 1L || is.na(system) ||
+        !nzchar(system)) {
+        return(style)
+    }
+    paste(system, style, sep = "\n\n")
+}
+
 # One R session per room per voice process, built on first use. Fresh
 # rather than shared with the poll loop: this is a separate process, and
 # in-memory session state does not cross processes. What DOES cross is
@@ -23,10 +55,17 @@
 # creation, so the first voice turn stands on the conversation so far
 # (including replies this or any other process posted), and a restart
 # recovers everything the room holds.
+#
+# Voice sessions speak: the system prompt gains the spoken-register
+# instruction here, at birth, so every turn of the session generates
+# speakable text. Room-poll sessions are untouched -- markdown stays
+# the register for typed chat.
 voice_room_session <- function(state, room_id) {
     s <- state$rooms[[room_id]]
     if (is.null(s)) {
         s <- bot_new_session(state$cfg_fn(), room_id = room_id)
+        s$system <- voice_speech_system(s$system,
+                                        state$cfg_fn()$voice$speech_style)
         .voice_backfill(state, s, room_id)
         assign(room_id, s, envir = state$rooms)
     }
