@@ -17,7 +17,7 @@
 # history on first use (voice-turn.R), and the replies it posts reach
 # the poll loop the same way -- never through in-process state.
 #
-# grpc and RProtoBuf are Suggests, checked loudly at voice_serve(): live
+# rgrpc and RProtoBuf are Suggests, checked loudly at voice_serve(): live
 # voice is off unless a deployment opts in, and most installs never load
 # either package.
 
@@ -31,29 +31,31 @@
 
 # Version floors checked at runtime, not just declared, because an
 # installed copy loads however old it is (same rule as .CHAT_API_MIN in
-# rooms.R, and a test pins the grpc constant to the Suggests bound so
+# rooms.R, and a test pins the rgrpc constant to the Suggests bound so
 # the two cannot drift).
 #
-# grpc: grpc_stream()/grpc_send()/grpc_finish() -- the server-streaming
-# surface Converse stands on -- arrived in 0.0.1.5.
+# rgrpc: grpc_stream()/grpc_send()/grpc_finish() -- the server-streaming
+# surface Converse stands on -- arrived in 0.0.1.5 under the package's
+# old name (grpc); 0.1.0 is the first release named rgrpc, so that is
+# the floor.
 # llm.api: on_delta appeared in 0.1.9.2 but only streamed on every
 # provider in 0.1.9.4; below that a voice deployment silently waits for
 # the whole reply, which defeats the feature it thinks it enabled.
-.VOICE_GRPC_MIN <- "0.0.1.5"
+.VOICE_RGRPC_MIN <- "0.1.0"
 .VOICE_LLM_API_MIN <- "0.1.9.4"
 
 voice_require <- function() {
-    need <- c("grpc", "RProtoBuf")
+    need <- c("rgrpc", "RProtoBuf")
     have <- vapply(need, requireNamespace, logical(1), quietly = TRUE)
     if (!all(have)) {
         stop("live voice needs ", paste(need[!have], collapse = " and "),
              " installed (they are Suggests, not Imports, because voice is ",
              "opt-in)", call. = FALSE)
     }
-    if (utils::packageVersion("grpc") < .VOICE_GRPC_MIN) {
-        stop("live voice needs grpc >= ", .VOICE_GRPC_MIN,
+    if (utils::packageVersion("rgrpc") < .VOICE_RGRPC_MIN) {
+        stop("live voice needs rgrpc >= ", .VOICE_RGRPC_MIN,
              " (server streaming); installed: ",
-             utils::packageVersion("grpc"), call. = FALSE)
+             utils::packageVersion("rgrpc"), call. = FALSE)
     }
     if (utils::packageVersion("llm.api") < .VOICE_LLM_API_MIN) {
         stop("live voice needs llm.api >= ", .VOICE_LLM_API_MIN,
@@ -191,7 +193,7 @@ voice_id <- function(state) {
 #' until interrupted. Run it as its own R process, next to -- not inside
 #' -- the room poll loop.
 #'
-#' Requires the \code{grpc} and \code{RProtoBuf} packages (Suggests),
+#' Requires the \code{rgrpc} and \code{RProtoBuf} packages (Suggests),
 #' and a media allocator named in the config: \code{voice.allocator}
 #' (the gpu.ctl base URL) plus \code{voice.allocator_token} (the
 #' service credential its front requires on every mint). Without
@@ -237,9 +239,9 @@ voice_serve <- function(config = NULL, address = NULL, hooks = list(),
         address <- "127.0.0.1:7851"
     }
     voice_load_protos()
-    srv <- grpc::grpc_server(address)
-    on.exit(grpc::grpc_close(srv), add = TRUE)
-    port <- grpc::grpc_server_port(srv)
+    srv <- rgrpc::grpc_server(address)
+    on.exit(rgrpc::grpc_close(srv), add = TRUE)
+    port <- rgrpc::grpc_server_port(srv)
     message("corteza voice: serving AgentVoice on ", address, " (port ",
             port, ")")
     state$hooks$ready(port)
@@ -256,7 +258,7 @@ voice_serve <- function(config = NULL, address = NULL, hooks = list(),
 # One drain of the server's event queue. Split from voice_serve so a
 # test can drive the loop by hand.
 voice_poll_once <- function(state, srv, timeout_ms = 100L) {
-    evs <- grpc::grpc_poll(srv, timeout_ms = as.integer(timeout_ms))
+    evs <- rgrpc::grpc_poll(srv, timeout_ms = as.integer(timeout_ms))
     for (ev in evs) {
         if (!identical(ev$type, "request")) {
             # cancelled: Converse runs synchronously inside its handler,
@@ -278,7 +280,7 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
         if (is.null(handler)) {
             # A method this build does not serve. UNIMPLEMENTED rather
             # than a domain refusal, because nothing considered it.
-            grpc::grpc_reply(ev, status = "UNIMPLEMENTED",
+            rgrpc::grpc_reply(ev, status = "UNIMPLEMENTED",
                              message = sprintf("no such method: %s", m))
             next
         }
@@ -298,10 +300,10 @@ voice_poll_once <- function(state, srv, timeout_ms = 100L) {
 # dead call is not a server error.
 .voice_fail <- function(ev, streaming, status, msg) {
     if (streaming) {
-        try(grpc::grpc_finish(ev, status = status, message = msg),
+        try(rgrpc::grpc_finish(ev, status = status, message = msg),
             silent = TRUE)
     } else {
-        try(grpc::grpc_reply(ev, status = status, message = msg), silent = TRUE)
+        try(rgrpc::grpc_reply(ev, status = status, message = msg), silent = TRUE)
     }
     invisible(NULL)
 }

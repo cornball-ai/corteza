@@ -205,6 +205,6 @@ voice_validate_grant <- function(grant) {
     resp$text_to_speech <- .voice_endpoint_msg(grant$text_to_speech)
     resp$token <- grant$token
     resp$expires_at_unix_ms <- grant$expires_at_unix_ms
-    grpc::grpc_reply(ev, resp)
+    rgrpc::grpc_reply(ev, resp)
     invisible(NULL)
 }
