@@ -621,10 +621,10 @@ local({
     desc <- read.dcf(system.file("DESCRIPTION", package = "corteza"),
                      fields = "Suggests")[1L, 1L]
     m <- regmatches(desc,
-                    regexpr("grpc \\(>= [0-9.]+\\)", desc))
+                    regexpr("rgrpc \\(>= [0-9.]+\\)", desc))
     expect_equal(length(m), 1L)
-    declared <- unname(sub("grpc \\(>= ([0-9.]+)\\)", "\\1", m))
-    expect_equal(declared, corteza:::.VOICE_GRPC_MIN)
+    declared <- unname(sub("rgrpc \\(>= ([0-9.]+)\\)", "\\1", m))
+    expect_equal(declared, corteza:::.VOICE_RGRPC_MIN)
 })
 
 # ---------------------------------------------------------------

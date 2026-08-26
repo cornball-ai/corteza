@@ -37,7 +37,7 @@ until interrupted. Run it as its own R process, next to -- not inside
 -- the room poll loop.
 }
 \details{
-Requires the \code{grpc} and \code{RProtoBuf} packages (Suggests),
+Requires the \code{rgrpc} and \code{RProtoBuf} packages (Suggests),
 and a media allocator named in the config: \code{voice.allocator}
 (the gpu.ctl base URL) plus \code{voice.allocator_token} (the
 service credential its front requires on every mint). Without

@@ -8,9 +8,9 @@
 if (!at_home()) {
     exit_file("wire test runs at home only")
 }
-if (!requireNamespace("grpc", quietly = TRUE) ||
+if (!requireNamespace("rgrpc", quietly = TRUE) ||
     !requireNamespace("RProtoBuf", quietly = TRUE)) {
-    exit_file("needs grpc and RProtoBuf")
+    exit_file("needs rgrpc and RProtoBuf")
 }
 
 dir <- tempfile("voice-wire-")
@@ -42,18 +42,18 @@ if (is.null(port)) {
 }
 
 corteza:::voice_load_protos()
-client <- grpc::grpc_client(sprintf("127.0.0.1:%s", port))
-svc <- grpc::grpc_service(corteza:::.voice_type("AllocateVoiceRequest"),
+client <- rgrpc::grpc_client(sprintf("127.0.0.1:%s", port))
+svc <- rgrpc::grpc_service(corteza:::.voice_type("AllocateVoiceRequest"),
                           "cornball.agent.v1.AgentVoice")
 
 MD <- c("authorization" = "Bearer tok-openid-1",
         "matrix-server-name" = "host.example")
 
 unary <- function(method, req, metadata = MD) {
-    call <- grpc::grpc_call(client, grpc::grpc_method(svc, method), req,
+    call <- rgrpc::grpc_call(client, rgrpc::grpc_method(svc, method), req,
                             deadline_ms = 10000L, metadata = metadata)
     repeat {
-        evs <- grpc::grpc_await(call, timeout_ms = 1000L)
+        evs <- rgrpc::grpc_await(call, timeout_ms = 1000L)
         for (ev in evs) {
             return(ev)
         }
@@ -95,15 +95,15 @@ expect_equal(ev$status_name, "UNAUTHENTICATED")
 # ---------------------------------------------------------------
 
 converse <- function(session_id, text, metadata = MD) {
-    s <- grpc::grpc_stream(client, grpc::grpc_method(svc, "Converse"),
+    s <- rgrpc::grpc_stream(client, rgrpc::grpc_method(svc, "Converse"),
                            metadata = metadata, deadline_ms = 10000L)
-    grpc::grpc_send(s, corteza:::.voice_type("ConverseRequest")$new(
+    rgrpc::grpc_send(s, corteza:::.voice_type("ConverseRequest")$new(
         session_id = session_id, text = text))
-    grpc::grpc_writes_done(s)
+    rgrpc::grpc_writes_done(s)
     msgs <- list()
     status <- NULL
     for (i in 1:100) {
-        evs <- grpc::grpc_await(s, timeout_ms = 1000L)
+        evs <- rgrpc::grpc_await(s, timeout_ms = 1000L)
         for (e in evs) {
             if (!is.null(e$response_message)) {
                 msgs[[length(msgs) + 1L]] <- e$response_message
@@ -199,6 +199,6 @@ ev <- unary("AllocateVoice", req, metadata = MD)
 expect_equal(ev$status_name, "OK")
 expect_false(identical(ev$response_message$session_id, sid))
 
-grpc::grpc_close(client)
+rgrpc::grpc_close(client)
 proc$kill()
 unlink(dir, recursive = TRUE)

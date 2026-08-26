@@ -126,12 +126,12 @@ voice_room_session <- function(state, room_id) {
 
     start <- .voice_type("ConverseEvent")$new()
     start$start <- .voice_type("TurnStart")$new(turn_id = turn_id)
-    grpc::grpc_send(ev, start)
+    rgrpc::grpc_send(ev, start)
 
     relay <- .voice_stream_cb(function(delta) {
         m <- .voice_type("ConverseEvent")$new()
         m$delta <- .voice_type("TextDelta")$new(text = delta)
-        grpc::grpc_send(ev, m)
+        rgrpc::grpc_send(ev, m)
     }, state$hooks$cancel)
     reply <- state$hooks$run_turn(state, rec$room_id, text, relay$fun)
 
@@ -147,9 +147,9 @@ voice_room_session <- function(state, room_id) {
     done <- .voice_type("ConverseEvent")$new()
     done$end <- .voice_type("TurnEnd")$new()
     if (relay$alive()) {
-        try(grpc::grpc_send(ev, done), silent = TRUE)
+        try(rgrpc::grpc_send(ev, done), silent = TRUE)
     }
-    try(grpc::grpc_finish(ev), silent = TRUE)
+    try(rgrpc::grpc_finish(ev), silent = TRUE)
 
     # Post the full reply now (see header). A post that fails leaves
     # event_id NULL; ReportTurn then has nothing to edit and says so.
@@ -222,7 +222,7 @@ voice_room_session <- function(state, room_id) {
         # report decided what the room holds.
         resp <- .voice_type("ReportTurnResponse")$new()
         resp$stored_text <- turn$stored
-        grpc::grpc_reply(ev, resp)
+        rgrpc::grpc_reply(ev, resp)
         return(invisible(NULL))
     }
     # A turn whose post failed has no room record AT ALL, so no report
@@ -256,7 +256,7 @@ voice_room_session <- function(state, room_id) {
     assign(req$turn_id, turn, envir = rec$turns)
     resp <- .voice_type("ReportTurnResponse")$new()
     resp$stored_text <- stored
-    grpc::grpc_reply(ev, resp)
+    rgrpc::grpc_reply(ev, resp)
     invisible(NULL)
 }
 
