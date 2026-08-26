@@ -236,6 +236,20 @@ cond <- tryCatch(
                                                            base = "https://hs.tail")),
                  corteza_voice_refusal = identity)
 expect_equal(cond$status, "PERMISSION_DENIED")
+# an UPPERCASE spelling of the self domain, end to end: the bypass
+# fires (DNS names fold case) AND the downstream sub-domain binding
+# accepts the same fold -- one comparison rule, so no case variant can
+# take the bypass and then be refused as unauthoritative
+expect_equal(corteza:::voice_verify_openid("tok", "HOST.EXAMPLE",
+                                           no_wk_http('{"sub":"@ann:host.example"}'),
+                                           self = list(domain = "host.example",
+                                                       base = "https://hs.tail")),
+             "@ann:host.example")
+# and the same fold holds on the DISCOVERY path (no self), where the
+# caller's uppercase name meets the server's lowercase sub
+expect_equal(corteza:::voice_verify_openid("tok", "HOST.EXAMPLE",
+                                           openid_http('{"sub":"@ann:host.example"}')),
+             "@ann:host.example")
 # a caller naming any OTHER server discovers normally even with self set
 expect_equal(corteza:::voice_verify_openid("tok", "other.example",
                                            openid_http('{"sub":"@ann:other.example"}'),

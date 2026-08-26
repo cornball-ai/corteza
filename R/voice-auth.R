@@ -208,9 +208,12 @@ voice_verify_openid <- function(bearer, server, http, self = NULL) {
     }
     # THE SUB MUST BELONG TO THE SERVER THAT ANSWERED. This comparison
     # is the entire difference between "a server vouched for its user"
-    # and "a server named a user".
+    # and "a server named a user". Same centralized comparison as the
+    # self bypass: hostname case folds (HOST.EXAMPLE is host.example,
+    # per DNS), an explicit port stays identity -- one rule everywhere,
+    # so a caller cannot reach a path where the two disagree.
     domain <- sub("^@[^:]+:", "", identity)
-    if (!identical(domain, server)) {
+    if (!voice_same_server(domain, server)) {
         voice_refuse("PERMISSION_DENIED",
                      "%s is not authoritative for %s", server, identity)
     }
