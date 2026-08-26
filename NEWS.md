@@ -1,3 +1,15 @@
+# corteza 0.7.1.31
+
+- **Voice turns generate in spoken register.** A voice session's
+  system prompt now carries an instruction to write plain speakable
+  prose: no markdown syntax, numbers and abbreviations said aloud,
+  short sentences, visual content described in words. The reply is
+  synthesized verbatim by contract (the client may not alter it, or
+  the heard-text accounting breaks), so speakable text has to be born
+  speakable — the first live run read a markdown table aloud as
+  "asterisk five bend forward". `voice.speech_style` in the config
+  replaces the instruction's text; typed room chat keeps markdown.
+
 # corteza 0.7.1.30
 
 - **The allocator caller speaks the settled `gpu-voice-alloc/1`
