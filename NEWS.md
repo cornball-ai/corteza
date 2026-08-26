@@ -1,3 +1,10 @@
+# corteza 0.7.1.33
+
+- **Follows the grpc package's rename to rgrpc** (their #27, same
+  `grpc_*` function surface): Suggests, namespace qualifiers, the
+  runtime floor (rgrpc >= 0.1.0, the first release under the new
+  name), and the refusal messages.
+
 # corteza 0.7.1.32
 
 - **The verifier dials the agent's own homeserver directly.** When a
