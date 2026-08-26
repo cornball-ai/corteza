@@ -261,6 +261,33 @@ bad$speech_to_text$security <- "none"
 expect_error(corteza:::voice_validate_grant(bad), "tls.*insecure")
 
 # ---------------------------------------------------------------
+# Spoken register: a voice session's system prompt gains the
+# speech-plain instruction; a configured style replaces the default
+# text; a session with no room system still gets the register.
+# ---------------------------------------------------------------
+
+sys <- corteza:::voice_speech_system("You are cornelius.")
+expect_true(startsWith(sys, "You are cornelius.\n\n"))
+expect_true(grepl("read aloud", sys, fixed = TRUE))
+expect_true(grepl("No markdown", sys, fixed = TRUE))
+# a configured override replaces the default instruction, not the room
+# system
+sys <- corteza:::voice_speech_system("You are cornelius.",
+                                     style = "Speak like a pirate.")
+expect_identical(sys, "You are cornelius.\n\nSpeak like a pirate.")
+expect_false(grepl("No markdown", sys, fixed = TRUE))
+# degenerate styles (empty, NA, non-string) fall back to the default
+expect_true(grepl("No markdown",
+                  corteza:::voice_speech_system("s", style = "")))
+expect_true(grepl("No markdown",
+                  corteza:::voice_speech_system("s", style = NA)))
+# no room system at all: the register stands alone
+expect_identical(corteza:::voice_speech_system(NULL),
+                 corteza:::.VOICE_SPEECH_REGISTER)
+expect_identical(corteza:::voice_speech_system(""),
+                 corteza:::.VOICE_SPEECH_REGISTER)
+
+# ---------------------------------------------------------------
 # The allocator itself: unconfigured is a precondition refusal that
 # names the config key; a refusing allocator surfaces as UNAVAILABLE.
 # ---------------------------------------------------------------

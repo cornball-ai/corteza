@@ -197,6 +197,12 @@ voice_id <- function(state) {
 #' service credential its front requires on every mint). Without
 #' either, \code{AllocateVoice} refuses and names the missing key.
 #'
+#' Voice sessions generate in spoken register: their system prompt
+#' carries an instruction to write plain speakable prose (no markdown,
+#' numbers said aloud), because the reply is synthesized verbatim.
+#' \code{voice.speech_style} in the config replaces that instruction's
+#' text; typed room chat is unaffected either way.
+#'
 #' @param config Config list as from \code{bot_load_config()}, or
 #'     \code{NULL} to load it.
 #' @param address \code{"host:port"} to bind, or \code{NULL} for the
