@@ -177,7 +177,9 @@ voice_validate_grant <- function(grant) {
 # mint the session. The one RPC that does a federation round trip.
 .voice_allocate <- function(state, ev) {
     cred <- voice_bearer(ev$metadata)
-    identity <- voice_verify_openid(cred$bearer, cred$server, state$hooks$http)
+    identity <- voice_verify_openid(cred$bearer, cred$server,
+                                    state$hooks$http,
+                                    self = voice_self_server(state$cfg_fn()))
     req <- RProtoBuf::read(.voice_type("AllocateVoiceRequest"), ev$request)
     room_id <- req$room_id
     if (!nzchar(room_id)) {

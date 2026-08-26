@@ -171,6 +171,87 @@ expect_error(corteza:::voice_verify_openid("tok", "host.example",
              "usable sub")
 
 # ---------------------------------------------------------------
+# Self-verification: the agent's OWN homeserver is dialed at its
+# configured base URL with NO discovery; every other name discovers
+# normally. Both halves derive from the bot config -- no hostname
+# constant exists in code or config.
+# ---------------------------------------------------------------
+
+# the user-id domain parser: ports and IPv6 literals are part of the
+# name, malformed ids and invalid server names parse to NULL
+expect_identical(corteza:::voice_user_domain("@u:host.example"),
+                 "host.example")
+expect_identical(corteza:::voice_user_domain("@u:host.example:8448"),
+                 "host.example:8448")
+expect_identical(corteza:::voice_user_domain("@u:[2001:db8::1]:8448"),
+                 "[2001:db8::1]:8448")
+expect_null(corteza:::voice_user_domain("u:host.example"))
+expect_null(corteza:::voice_user_domain("@u"))
+expect_null(corteza:::voice_user_domain("@u:host..example"))
+expect_null(corteza:::voice_user_domain(NULL))
+
+# the comparison: hostnames fold case (DNS and IPv6 hex both do), an
+# explicit port is identity -- never folded with the portless name
+expect_true(corteza:::voice_same_server("Host.Example", "host.example"))
+expect_true(corteza:::voice_same_server("[2001:DB8::1]", "[2001:db8::1]"))
+expect_false(corteza:::voice_same_server("host.example",
+                                         "host.example:8448"))
+expect_false(corteza:::voice_same_server("[::1]", "[::1]:8448"))
+expect_false(corteza:::voice_same_server("host.example", ""))
+expect_false(corteza:::voice_same_server("host.example", NULL))
+
+# self derivation from the bot config; degenerate configs mean no
+# bypass rather than a broken one
+self <- corteza:::voice_self_server(list(user_id = "@bot:host.example",
+                                         server = "https://hs.tail:443/"))
+expect_identical(self, list(domain = "host.example",
+                            base = "https://hs.tail:443"))
+expect_null(corteza:::voice_self_server(list(server = "https://hs.tail")))
+expect_null(corteza:::voice_self_server(list(user_id = "@bot:host.example",
+                                             server = "hs.tail")))
+
+# the self case dials the configured base VERBATIM and never touches
+# discovery (an http hook that refuses .well-known proves it)
+no_wk_http <- function(sub_json) {
+    function(method, url, ...) {
+        if (grepl(".well-known", url, fixed = TRUE)) {
+            stop("discovery must not run for the self domain")
+        }
+        expect_true(startsWith(url,
+                               "https://hs.tail/_matrix/federation/v1/openid/userinfo"))
+        list(status = 200L, body = sub_json)
+    }
+}
+expect_equal(corteza:::voice_verify_openid("tok", "host.example",
+                                           no_wk_http('{"sub":"@ann:host.example"}'),
+                                           self = list(domain = "host.example",
+                                                       base = "https://hs.tail")),
+             "@ann:host.example")
+# the sub-domain binding is untouched by the bypass: a self-dialed
+# answer vouching for another domain still refuses
+cond <- tryCatch(
+                 corteza:::voice_verify_openid("tok", "host.example",
+                                               no_wk_http('{"sub":"@v:other.example"}'),
+                                               self = list(domain = "host.example",
+                                                           base = "https://hs.tail")),
+                 corteza_voice_refusal = identity)
+expect_equal(cond$status, "PERMISSION_DENIED")
+# a caller naming any OTHER server discovers normally even with self set
+expect_equal(corteza:::voice_verify_openid("tok", "other.example",
+                                           openid_http('{"sub":"@ann:other.example"}'),
+                                           self = list(domain = "host.example",
+                                                       base = "https://hs.tail")),
+             "@ann:other.example")
+# ...including the self HOSTNAME with a differing explicit port: that
+# is a different server, so it takes the discovery path (whose net
+# failure falls back to the name itself), never the self base
+expect_equal(corteza:::voice_verifier_base("host.example:8448",
+                                           function(...) stop("net down"),
+                                           self = list(domain = "host.example",
+                                                       base = "https://hs.tail")),
+             "https://host.example:8448")
+
+# ---------------------------------------------------------------
 # Sessions: bound to the bearer bytes that opened them, ended by the
 # absolute expiry. Every failure is the same PERMISSION_DENIED, so a
 # probe cannot confirm a session id it cannot use.
