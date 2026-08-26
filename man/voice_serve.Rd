@@ -43,4 +43,10 @@ and a media allocator named in the config: \code{voice.allocator}
 service credential its front requires on every mint). Without
 either, \code{AllocateVoice} refuses and names the missing key.
 
+Voice sessions generate in spoken register: their system prompt
+carries an instruction to write plain speakable prose (no markdown,
+numbers said aloud), because the reply is synthesized verbatim.
+\code{voice.speech_style} in the config replaces that instruction's
+text; typed room chat is unaffected either way.
+
 }

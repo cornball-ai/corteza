@@ -24,14 +24,14 @@
 # speakable. First live run without this: a markdown table read aloud
 # as "asterisk five bend forward". Override via voice.speech_style.
 .VOICE_SPEECH_REGISTER <- paste0(
-    "Voice register: your reply is read aloud verbatim by a speech ",
-    "synthesizer, and stored in the room as the same plain text. Write ",
-    "plain spoken prose only. No markdown syntax of any kind: no ",
-    "asterisks, underscores, pipes, backticks, code fences, headings, ",
-    "bullet or numbered list markers, and no tables. Say numbers, ",
-    "scores, times, and abbreviations the way they are spoken aloud. ",
-    "Keep sentences short. When content is inherently visual, describe ",
-    "it in words instead.")
+                                 "Voice register: your reply is read aloud verbatim by a speech ",
+                                 "synthesizer, and stored in the room as the same plain text. Write ",
+                                 "plain spoken prose only. No markdown syntax of any kind: no ",
+                                 "asterisks, underscores, pipes, backticks, code fences, headings, ",
+                                 "bullet or numbered list markers, and no tables. Say numbers, ",
+                                 "scores, times, and abbreviations the way they are spoken aloud. ",
+                                 "Keep sentences short. When content is inherently visual, describe ",
+                                 "it in words instead.")
 
 # The system prompt for a voice session: the room system plus the
 # spoken-register instruction, or a configured override of that
