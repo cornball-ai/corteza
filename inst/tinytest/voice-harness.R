@@ -38,10 +38,18 @@ hooks <- list(
             # service credential unconditionally (401 without), and the
             # closed request schema with its protocol version (400
             # without) -- see gpu.ctl's voice-allocation contract.
-            if (!identical(unname(headers[tolower(names(headers)) ==
-                "authorization"]),
-                           "Bearer svc-tok-1")) {
+            auth <- unname(headers[tolower(names(headers)) ==
+                "authorization"])
+            if (!length(auth) || !nzchar(auth[[1L]])) {
+                # ABSENT credential is 401; PRESENT-but-wrong is 400.
+                # The contract's documented coarseness (gpu.ctl fixed
+                # their side of this seam in their PR #12) -- corteza
+                # maps the two differently, so the fake must split them
+                # the same way the real allocator does.
                 return(list(status = 401L, body = '{"error":"no credential"}'))
+            }
+            if (!identical(auth[[1L]], "Bearer svc-tok-1")) {
+                return(list(status = 400L, body = '{"error":"bad credential"}'))
             }
             req <- tryCatch(jsonlite::fromJSON(body, simplifyVector = FALSE),
                             error = function(e) NULL)
