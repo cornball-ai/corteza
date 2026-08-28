@@ -31,6 +31,12 @@
 .subagent_spend_retired$query_count <- 0L
 .subagent_spend_retired$n_agents <- 0L
 .subagent_spend_retired$cost_missing <- FALSE
+# Carried through retirement like every other total. Without it, killing
+# a subagent would make the process-wide unpriced-token count go *down*,
+# and any consumer differencing it across a window would read the drop
+# as "this window's spend was priced". Auto runs kill their monitor on
+# the way out, so this fires on every single run.
+.subagent_spend_retired$missing_tokens <- 0
 
 #' Per-process monotonic counter for short subagent ids.
 #'
@@ -961,6 +967,11 @@ subagent_accumulate_usage <- function(info, usage) {
         # (cost-blind provider) makes the running cost a floor, not a
         # precise figure. A zero-token query leaves the flag alone.
         info$cost_missing <- TRUE
+        # Also accumulate the unpriced tokens. The flag is sticky and
+        # process-wide once aggregated, so it cannot answer "was the
+        # spend in *this* window priced" -- a counter can.
+        info$cumulative_missing_tokens <- (info$cumulative_missing_tokens %||%
+            0) + as.numeric(usage$total_tokens %||% 0)
     }
     info$query_count <- (info$query_count %||% 0L) + 1L
     info
@@ -981,6 +992,8 @@ subagent_retire_spend <- function(info) {
     r$total_tokens <- r$total_tokens + (info$cumulative_total_tokens %||% 0L)
     r$query_count <- r$query_count + (info$query_count %||% 0L)
     r$n_agents <- r$n_agents + 1L
+    r$missing_tokens <- r$missing_tokens +
+    (info$cumulative_missing_tokens %||% 0)
     cc <- info$cumulative_cost
     if (is.null(cc) || is.na(cc)) {
         if ((info$cumulative_total_tokens %||% 0L) > 0L) {
@@ -1008,9 +1021,11 @@ subagent_retire_spend <- function(info) {
 subagent_spend_total <- function() {
     acc <- list(cost = 0, input_tokens = 0L, output_tokens = 0L,
                 total_tokens = 0L, query_count = 0L, n_agents = 0L,
-                cost_missing = FALSE)
+                cost_missing = FALSE, missing_tokens = 0)
     for (id in ls(.subagent_registry)) {
         e <- .subagent_registry[[id]]
+        acc$missing_tokens <- acc$missing_tokens +
+        (e$cumulative_missing_tokens %||% 0)
         acc$input_tokens <- acc$input_tokens + (e$cumulative_input_tokens %||% 0L)
         acc$output_tokens <- acc$output_tokens + (e$cumulative_output_tokens %||% 0L)
         acc$total_tokens <- acc$total_tokens + (e$cumulative_total_tokens %||% 0L)
@@ -1035,6 +1050,7 @@ subagent_spend_total <- function() {
     acc$query_count <- acc$query_count + r$query_count
     acc$n_agents <- acc$n_agents + r$n_agents
     acc$cost <- acc$cost + r$cost
+    acc$missing_tokens <- acc$missing_tokens + (r$missing_tokens %||% 0)
     if (isTRUE(r$cost_missing)) {
         acc$cost_missing <- TRUE
     }

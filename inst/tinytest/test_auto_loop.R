@@ -320,11 +320,78 @@ res <- with_stubs(
         corteza:::run_auto_loop(ctx, "make files", max_loops = 2L)
     }))
 
-# Refused partway through the turn, not after all 100 landed.
-expect_false(is.na(refused_at))
-expect_true(refused_at <= 7L)
-expect_true(gate_calls < 100L)
+# Refused partway through the turn, not after all 100 landed -- and at
+# the exact boundary. The cap counts calls EXECUTED, so a cap of 5
+# permits calls 1..5 and refuses the 6th. Asserting the exact number
+# rather than a range is the point: an inequality would have hidden the
+# off-by-one where a cap of 5 let only 4 calls through.
+expect_equal(refused_at, 6L)
+expect_equal(gate_calls, 6L)
 expect_true(any(grepl("tool-call cap", res)))
+# Five files created, one per executed call.
+expect_equal(length(list.files(wt, pattern = "^r[0-9]+\\.txt$")), 5L)
+
+# ---- the progress query's own cost is checked before it buys a turn ----
+#
+# Asking the monitor whether to continue costs tokens. Without a recheck
+# after the query, that spend can cross the cap and the verdict still
+# authorizes a whole further worker turn -- the most expensive thing the
+# run can do. The stub bills the session directly, standing in for a
+# monitor query that lands the run over budget.
+
+reset_wt()
+turns <- 0L
+cheap_turn <- function(prompt, session) {
+    turns <<- turns + 1L
+    writeLines(as.character(turns), file.path(wt, sprintf("q%d.txt", turns)))
+    list(reply = "working", session = session,
+         usage = list(cost = 0.001, total_tokens = 10L))
+}
+ctx <- auto_ctx(cheap_turn)
+dir.create(file.path(wt, ".corteza"), recursive = TRUE, showWarnings = FALSE)
+writeLines('{"auto": {"max_cost": 1}}', file.path(wt, ".corteza", "config.json"))
+
+expensive_progress <- list(
+                           spawn = function(...) "mon-stub",
+                           progress = function(id, goal, reply, diff, ...) {
+    # The query bills the session on its way to answering "continue".
+    corteza:::session_accumulate_spend(ctx$session,
+                                       list(total_tokens = 100L, cost = 5))
+    list(verdict = "continue", reason = "looks fine, keep going")
+})
+
+res <- with_stubs(expensive_progress,
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 10L)))
+# One worker turn ran; the query then blew the cap, so no second turn
+# was authorized even though the monitor said continue.
+expect_equal(turns, 1L)
+expect_true(any(grepl("spend cap", res)))
+expect_false(any(grepl("monitor said", res)))
+# And the closing report includes the query that ended the run, rather
+# than the stale figure from before it.
+expect_true(any(grepl("spent \\$5\\.", res)))
+
+# A monitor that says stop is still reported as the monitor stopping,
+# not relabelled as a budget stop, even when it also crossed the cap.
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(cheap_turn)
+dir.create(file.path(wt, ".corteza"), recursive = TRUE, showWarnings = FALSE)
+writeLines('{"auto": {"max_cost": 1}}', file.path(wt, ".corteza", "config.json"))
+stopping_progress <- list(
+                          spawn = function(...) "mon-stub",
+                          progress = function(id, goal, reply, diff, ...) {
+    corteza:::session_accumulate_spend(ctx$session,
+                                       list(total_tokens = 100L, cost = 5))
+    list(verdict = "stop", reason = "goal met")
+})
+res <- with_stubs(stopping_progress,
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 10L)))
+expect_equal(turns, 1L)
+expect_true(any(grepl("monitor said stop", res)))
+expect_false(any(grepl("spend cap", res)))
 
 # ---- nonsense bounds refuse to start ----
 #

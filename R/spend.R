@@ -43,7 +43,14 @@
 #' @noRd
 .spend_empty_segment <- function(id = NULL) {
     list(id = id, cost = 0, input_tokens = 0L, output_tokens = 0L,
-         total_tokens = 0L, turns = 0L, cost_missing = FALSE)
+         total_tokens = 0L, turns = 0L, cost_missing = FALSE,
+         # Tokens consumed by queries that came back without a price.
+         # cost_missing is sticky, which is right for a report ("this
+         # total is a floor") and useless for anything that needs a
+         # delta: once true it stays true, so a later window can never
+         # tell whether *its* spend was priced. This accumulates, so it
+         # can be differenced. See auto_spend_since() in R/auto.R.
+         missing_tokens = 0)
 }
 
 #' Accumulate one turn's usage into the current spend segment.
@@ -82,6 +89,8 @@ session_accumulate_spend <- function(session, usage) {
     if (is.null(usage$cost) || is.na(usage$cost)) {
         if (.spend_usage_has_tokens(usage)) {
             seg$cost_missing <- TRUE
+            seg$missing_tokens <- (seg$missing_tokens %||% 0) +
+            as.numeric(usage$total_tokens %||% 0)
         }
     } else {
         seg$cost <- seg$cost + as.numeric(usage$cost)

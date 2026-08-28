@@ -97,10 +97,15 @@ unlink(c(wt, dirty, repo), recursive = TRUE)
 
 # ---- spend: the monitor counts against the cap ----
 
+# Built through the real accumulator rather than hand-shaped, so the
+# fixture cannot quietly diverge from what session_accumulate_spend()
+# actually records -- which is how the earlier version of this test
+# ended up asserting against a segment shape that no longer existed.
 fake_session <- function(cost, tokens, missing = FALSE) {
     s <- new.env(parent = emptyenv())
-    s$spend <- list(segments = list(list(cost = cost, total_tokens = tokens,
-                                         cost_missing = missing)))
+    corteza:::session_accumulate_spend(
+        s, list(total_tokens = tokens,
+                cost = if (isTRUE(missing)) NA else cost))
     s
 }
 
@@ -216,9 +221,12 @@ bad <- corteza:::auto_validate_bounds(
 expect_equal(length(bad), 1L)
 expect_true(grepl("max_loops", bad))
 
+# Inf is rejected too. It passes a `<= 0` test and then disables the
+# bound outright in auto_check_limits() -- an infinite cap on a mode
+# whose whole premise is being bounded.
 for (field in c("max_loops", "max_minutes", "max_cost", "max_tokens",
                 "max_tool_calls", "stall_loops")) {
-    for (value in list(0, -1, NA, NA_integer_)) {
+    for (value in list(0, -1, NA, NA_integer_, Inf, -Inf)) {
         bad <- corteza:::auto_validate_bounds(
             utils::modifyList(auto, stats::setNames(list(value), field)))
         expect_true(length(bad) >= 1L)
@@ -226,35 +234,65 @@ for (field in c("max_loops", "max_minutes", "max_cost", "max_tokens",
     }
 }
 
-# ---- cost_missing is baseline-relative ----
+# ---- cost_missing is measured by differencing, not by reading a flag ----
 #
-# The flag is sticky per segment and the subagent tally is process-wide,
-# so reading either outright means one unpriced model earlier in a long
-# session poisons every later auto run -- it would refuse to start over
-# spend it did not create.
+# cost_missing is sticky per segment and process-wide once aggregated
+# across subagents, so it cannot answer "was the spend THIS run created
+# priced". missing_tokens accumulates only unpriced tokens, so the
+# difference across the run can.
 
-seg <- function(cost, tokens, missing) {
-    list(cost = cost, total_tokens = tokens, cost_missing = missing)
+seg <- function(cost, tokens, missing, missing_tokens = 0) {
+    list(cost = cost, total_tokens = tokens, cost_missing = missing,
+         missing_tokens = missing_tokens)
 }
 sess <- new.env(parent = emptyenv())
-sess$spend <- list(segments = list(seg(1, 500, TRUE)))
+sess$spend <- list(segments = list(seg(1, 500, TRUE, missing_tokens = 500)))
 b <- corteza:::auto_spend_baseline(sess)
 
 # An old unpriced segment that gains nothing during the run does not
 # make this run's cost unknown.
 expect_true(corteza:::auto_spend_since(sess, b)$cost_known)
 
-# But if that same segment gains tokens during the run, the new spend is
-# unpriced too and the total really is a floor.
+# The case a grew-and-flagged test gets wrong: a segment already flagged
+# from earlier unpriced usage now takes PRICED usage. Tokens grow and the
+# sticky flag is still TRUE, but nothing this run spent was unpriced.
 sess$spend$segments[[1]]$total_tokens <- 900
+sess$spend$segments[[1]]$cost <- 2
+expect_true(corteza:::auto_spend_since(sess, b)$cost_known)
+
+# Genuinely new unpriced usage on that same already-flagged segment does
+# make the total a floor.
+sess$spend$segments[[1]]$missing_tokens <- 800
 expect_false(corteza:::auto_spend_since(sess, b)$cost_known)
 
 # A fresh unpriced segment opened during the run also counts.
 sess2 <- new.env(parent = emptyenv())
 sess2$spend <- list(segments = list(seg(1, 500, FALSE)))
 b2 <- corteza:::auto_spend_baseline(sess2)
-sess2$spend$segments[[2]] <- seg(0, 300, TRUE)
+sess2$spend$segments[[2]] <- seg(0, 300, TRUE, missing_tokens = 300)
 expect_false(corteza:::auto_spend_since(sess2, b2)$cost_known)
+
+# ---- spend.R accumulates the counter the difference relies on ----
+
+s3 <- new.env(parent = emptyenv())
+corteza:::session_accumulate_spend(s3, list(total_tokens = 100L, cost = 0.5))
+expect_equal(s3$spend$segments[[1]]$missing_tokens, 0)
+expect_false(s3$spend$segments[[1]]$cost_missing)
+
+# An unpriced query records its tokens, not just the flag.
+corteza:::session_accumulate_spend(s3, list(total_tokens = 250L, cost = NA))
+expect_equal(s3$spend$segments[[1]]$missing_tokens, 250)
+expect_true(s3$spend$segments[[1]]$cost_missing)
+
+# A later priced query leaves the counter alone, which is what lets a
+# window after this point read as priced despite the sticky flag.
+corteza:::session_accumulate_spend(s3, list(total_tokens = 400L, cost = 1))
+expect_equal(s3$spend$segments[[1]]$missing_tokens, 250)
+expect_true(s3$spend$segments[[1]]$cost_missing)
+
+# A zero-token query with no price is not unpriced usage.
+corteza:::session_accumulate_spend(s3, list(total_tokens = 0L, cost = NA))
+expect_equal(s3$spend$segments[[1]]$missing_tokens, 250)
 
 # ---- parse_auto_flags ----
 

@@ -160,18 +160,27 @@ auto_spend_since <- function(session, baseline) {
     main_tok <- sum(seg_tok)
     sub <- tryCatch(subagent_spend_total(), error = function(e) list())
 
-    # cost_missing is baseline-relative, like everything else here. The
-    # flag is sticky per segment and the subagent tally is process-wide,
-    # so reading either outright means one unpriced model earlier in the
-    # session poisons every auto run afterwards -- the run would refuse
-    # to start over spend it did not create. A segment only counts if it
-    # actually grew during this run.
-    base_tok <- baseline$seg_tokens %||% numeric()
-    grew <- vapply(seq_along(segs), function(i) {
-        prev <- if (i <= length(base_tok)) base_tok[[i]] else 0
-        seg_tok[[i]] > prev
-    }, logical(1))
-    sub_grew <- (sub$total_tokens %||% 0) > (baseline$sub_tokens %||% 0)
+    # Unpriced spend is measured by differencing a counter, not by
+    # reading a flag.
+    #
+    # cost_missing is sticky per segment and, once aggregated across
+    # subagents, process-wide and permanent. Reading it outright means
+    # one unpriced model earlier in the session poisons every auto run
+    # afterwards. An earlier attempt at this compared "did the segment
+    # grow" against the flag, which is no better: a segment already
+    # flagged from earlier unpriced usage reports unknown the moment it
+    # takes any *priced* usage, and since a run's own monitor always adds
+    # subagent tokens, one historical unpriced subagent made every future
+    # run unknown forever.
+    #
+    # missing_tokens accumulates only the tokens that actually came back
+    # without a price (R/spend.R, R/subagent.R), so the difference across
+    # this run answers the question that was being asked all along: was
+    # the spend *this run created* priced.
+    missing_now <- sum(vapply(segs,
+                              function(s) as.numeric(s$missing_tokens %||% 0),
+                              numeric(1))) + (sub$missing_tokens %||% 0)
+    missing_base <- (baseline$missing_tokens %||% 0)
 
     list(
          cost = (main_cost - (baseline$main_cost %||% 0)) +
@@ -180,8 +189,7 @@ auto_spend_since <- function(session, baseline) {
          ((sub$total_tokens %||% 0) - (baseline$sub_tokens %||% 0)),
          # A missing price makes the total a floor, not a number. Treating
          # an unknown cost as zero is how a capped run quietly isn't.
-         cost_known = !any(grew & seg_missing) &&
-         !(sub_grew && isTRUE(sub$cost_missing))
+         cost_known = (missing_now - missing_base) <= 0
     )
 }
 
@@ -195,9 +203,11 @@ auto_spend_baseline <- function(session) {
     list(
          main_cost = sum(vapply(segs, function(s) s$cost %||% 0, numeric(1))),
          main_tokens = sum(seg_tok),
-         # Per-segment, so auto_spend_since() can tell which segments this
-         # run actually added to.
-         seg_tokens = seg_tok,
+         # Unpriced tokens across both halves, so auto_spend_since() can
+         # difference them rather than reading a sticky flag.
+         missing_tokens = sum(vapply(segs,
+                                     function(s) as.numeric(s$missing_tokens %||%
+                    0), numeric(1))) + (sub$missing_tokens %||% 0),
          sub_cost = sub$cost %||% 0,
          sub_tokens = sub$total_tokens %||% 0
     )
@@ -354,8 +364,14 @@ auto_validate_bounds <- function(auto) {
     bad <- character()
     for (nm in names(checks)) {
         v <- suppressWarnings(as.numeric(checks[[nm]]))
-        if (length(v) != 1L || is.na(v) || v <= 0) {
-            bad <- c(bad, sprintf("%s must be a positive number (got %s)", nm,
+        # Finite as well as positive. Inf passes a `<= 0` test and then
+        # disables the bound entirely in auto_check_limits() -- an
+        # infinite cap on a mode whose entire premise is being bounded.
+        # Rejecting is the consistent choice: someone who wants no time
+        # limit should not get it by writing one that silently isn't.
+        if (length(v) != 1L || is.na(v) || !is.finite(v) || v <= 0) {
+            bad <- c(bad, sprintf(
+                                  "%s must be a positive finite number (got %s)", nm,
                                   paste(format(checks[[nm]]), collapse = ",")))
         }
     }
@@ -453,9 +469,6 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                                  state$gate_calls)
     }
     budget_check <- function(event) {
-        if (identical(event, "call")) {
-            state$gate_calls <<- state$gate_calls + 1L
-        }
         refresh_spend()
         # The loop counter is a between-turn concern and is already
         # incremented for the turn now running, so checking it here would
@@ -463,9 +476,23 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         # other bound is a real-time quantity and applies mid-turn.
         probe <- state
         probe$loop <- 1L
+        # The tool-call cap counts calls *executed*. Checked before the
+        # counter moves, so a cap of N permits exactly N calls and
+        # refuses the N+1th. The post-approval recheck skips this bound
+        # entirely: whether this call fits was settled a moment ago, and
+        # re-applying it against the now-incremented counter would refuse
+        # the very call just approved. That recheck exists because the
+        # monitor query cost tokens, not to re-litigate the count.
+        if (identical(event, "monitor")) {
+            probe$tool_calls <- 0L
+        }
         lim <- auto_check_limits(probe, auto)
         if (isTRUE(lim$stop)) {
             stop_reason <<- lim$reason
+            return(lim)
+        }
+        if (identical(event, "call")) {
+            state$gate_calls <<- state$gate_calls + 1L
         }
         lim
     }
@@ -540,11 +567,29 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                                         loop = state$loop - 1L, max_loops = auto$max_loops,
                                         timeout = auto$monitor_timeout)
 
+        # The progress query itself cost tokens, so re-read the budget
+        # before its answer is acted on. Refreshed ahead of both exits
+        # below so the closing spend report includes the cost of the
+        # query, even when that query is what ended the run.
+        refresh_spend()
+
         if (!identical(verdict$verdict, "continue")) {
             stop_reason <<- sprintf("monitor said %s: %s", verdict$verdict,
                                     verdict$reason)
             return(character(0))
         }
+
+        # Only "continue" needs authorizing. Stopping needs no budget,
+        # and checking the cap first would relabel a monitor's "goal met"
+        # as "hit the spend cap" whenever both happened to be true.
+        # Without this, the query could cross a cost, token, or time cap
+        # and still buy a whole further worker turn.
+        post <- auto_check_limits(state, auto)
+        if (isTRUE(post$stop)) {
+            stop_reason <<- post$reason
+            return(character(0))
+        }
+
         if (identical(claimed, "done")) {
             say("worker reported done; monitor says keep going: %s",
                 verdict$reason)
