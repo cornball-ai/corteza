@@ -131,16 +131,38 @@ resolve_subagent_id <- function(input) {
 #'   child of the CLI parent). Used by recursion in
 #'   [subagent_turn_prompt()] to avoid archiving past the configured
 #'   depth_cap.
+#' @param web_search Logical or NULL. Provider-native (server-side) web
+#'   search for the child. NULL (default) preserves the historical
+#'   behavior: [new_session()] leaves it unset and [turn()] enables it
+#'   for providers that support it. Pass FALSE for a child that must
+#'   have no outbound channel -- dropping `web_search` from
+#'   `tools_filter` does not achieve that on its own, because the
+#'   provider's own search tool is injected by `llm.api::agent`, not
+#'   drawn from the skill registry.
+#' @param allowed_paths Character or NULL. Confines this child's file
+#'   tools to the given roots for the life of the process. NULL (default)
+#'   leaves it unrestricted, as before. A read-only `tools_filter` is not
+#'   a filesystem sandbox on its own -- `read_file` reaches anything the
+#'   process can -- so a child that should only see its project needs
+#'   this as well.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
 subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
-                               max_turns = 10L, depth = 0L, plan_mode = FALSE) {
+                               max_turns = 10L, depth = 0L, plan_mode = FALSE,
+                               web_search = NULL, allowed_paths = NULL) {
+    if (!is.null(allowed_paths)) {
+        # Process-level and read by tool_config() (R/tool-impl.R). Safe
+        # to set globally here: this runs inside the child's own R
+        # process, which exists only to serve this one subagent.
+        options(corteza.allowed_paths = as.character(allowed_paths))
+    }
     session <- new_session(channel = "console", provider = provider,
                            tools_filter = tools_filter, system = system,
                            max_turns = as.integer(max_turns),
-                           plan_mode = isTRUE(plan_mode))
+                           plan_mode = isTRUE(plan_mode),
+                           web_search = web_search)
     if (!is.null(model)) {
         session$model_map$cloud <- model
     }
@@ -397,8 +419,40 @@ SUBAGENT_PRESETS <- list(
                          work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
                                   "bash", "write_file", "replace_in_file", "list_files",
                                   "git_status", "git_diff", "git_log", "run_r"),
-                         minimal = c("read_file", "grep_files")
+                         minimal = c("read_file", "grep_files"),
+                         # Hall monitor: supervises an unattended auto run. Read-only
+                         # by construction -- a supervisor that can act is not a
+                         # supervisor. No web_search/fetch_url either: it reads the
+                         # worker's transcript, which is attacker-influenceable text,
+                         # so it gets no outbound channel. See PRESET_WEB_SEARCH below;
+                         # the tool list alone does not deliver that.
+                         monitor = c("read_file", "grep_files", "list_files",
+                                     "git_status", "git_diff", "git_log")
 )
+
+# Provider-native (server-side) web search per preset.
+#
+# Dropping "web_search" from a preset's tool list does NOT take web
+# access away. subagent_turn_init() builds its session without a
+# web_search argument, so .session_web_search() (R/turn.R) falls through
+# to TRUE and llm.api::agent injects the provider's own search tool.
+# Every subagent spawned before this table existed had web search on
+# regardless of its preset.
+#
+# NULL (the default for a preset not listed here) keeps that behavior:
+# investigate and work want search. The monitor is the one grant where
+# "read-only" has to mean no network, so it is pinned FALSE.
+PRESET_WEB_SEARCH <- list(monitor = FALSE)
+
+# Presets confined to the project directory.
+#
+# A read-only tool list is not a filesystem sandbox: read_file will
+# happily read any path the process can reach. Presets named here get
+# `allowed_paths` pinned to the parent's cwd inside the child process,
+# so the monitor can inspect the work it is supervising and nothing
+# else. TRUE means "confine to cwd"; absent means unconfined, which is
+# the historical behavior for every other preset.
+PRESET_CONFINED <- list(monitor = TRUE)
 
 #' Get subagent configuration.
 #' @param config Config list from load_config().
@@ -474,7 +528,10 @@ subagent_session_key <- function(parent_key) {
 #'   `web_search`, `fetch_url`. `"work"`: investigate + `bash`,
 #'   `write_file`, `replace_in_file`, `list_files`, `git_status`,
 #'   `git_diff`, `git_log`, `run_r`. `"minimal"`: `read_file`,
-#'   `grep_files`.
+#'   `grep_files`. `"monitor"`: the read-only hall monitor used to
+#'   supervise unattended auto runs -- `read_file`, `grep_files`,
+#'   `list_files`, `git_status`, `git_diff`, `git_log`, and
+#'   provider-native web search explicitly off.
 #' @param parent_session Parent session object; read for
 #'   nested-spawning control and session-key derivation.
 #' @param config Config list.
@@ -563,6 +620,22 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
         preset = preset, tools = tools,
         default_tools = subcfg$default_tools
     )
+    # Provider-native web search is a separate grant from the tool list
+    # (see PRESET_WEB_SEARCH). NULL for every preset but "monitor", which
+    # keeps the historical default for existing presets.
+    child_web_search <- if (is.null(preset)) {
+        NULL
+    } else {
+        PRESET_WEB_SEARCH[[preset]]
+    }
+    # Confined presets get allowed_paths pinned to the project inside the
+    # child. NULL leaves the child unrestricted, as before.
+    child_allowed_paths <- if (!is.null(preset) &&
+        isTRUE(PRESET_CONFINED[[preset]])) {
+        cwd
+    } else {
+        NULL
+    }
     # Default provider/model from parent session when available, else config/env.
     spawn_provider <- parent_session$provider %||%
     getOption("corteza.provider", "anthropic")
@@ -583,7 +656,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
     tryCatch(
              session$run(
                          function(cwd, provider, model, tools_filter, system, max_turns,
-                                  depth, id, plan_mode) {
+                                  depth, id, plan_mode, web_search, allowed_paths) {
         library(corteza)
         corteza::worker_init(cwd = cwd)
         corteza::subagent_turn_init(
@@ -593,14 +666,18 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                     system = system,
                                     max_turns = max_turns,
                                     depth = depth,
-                                    plan_mode = plan_mode
+                                    plan_mode = plan_mode,
+                                    web_search = web_search,
+                                    allowed_paths = allowed_paths
         )
         corteza::subagent_turn_set_id(id)
     },
                          list(cwd = cwd, provider = spawn_provider, model = spawn_model,
                               tools_filter = effective_tools, system = system_prompt,
                               max_turns = 10L, depth = child_depth, id = id,
-                              plan_mode = child_plan_mode)
+                              plan_mode = child_plan_mode,
+                              web_search = child_web_search,
+                              allowed_paths = child_allowed_paths)
         ),
              error = function(e) {
         try(session$close(), silent = TRUE)
