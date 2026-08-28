@@ -538,10 +538,36 @@ old_opt <- getOption("corteza.allowed_paths")
 options(corteza.allowed_paths = conf_root)
 expect_equal(corteza:::tool_config()$allowed_paths, conf_root)
 
-# In-root reads validate; outside-root reads do not.
+# In-root reads validate; outside-root reads do not. Note a.txt does not
+# exist: containment has to hold for a path that has not been created
+# yet, which is the common case for a write. normalizePath() leaves a
+# non-existent path unresolved while resolving the base, so wherever an
+# ancestor is a symlink (macOS /var -> /private/var) the two sides stop
+# comparing equal and the check silently never matches.
+expect_false(file.exists(file.path(conf_root, "a.txt")))
 expect_true(corteza:::tool_check_path(file.path(conf_root, "a.txt"),
                                       "read")$ok)
+expect_true(corteza:::tool_check_path(file.path(conf_root, "deep", "b.txt"),
+                                      "write")$ok)
 expect_false(corteza:::tool_check_path("/etc/hosts", "read")$ok)
+
+# The same asymmetry, forced on every platform rather than only where
+# the OS happens to symlink a temp root: a real symlinked ancestor.
+if (.Platform$OS.type == "unix") {
+    link_root <- file.path(tempdir(), "corteza-confine-link")
+    unlink(link_root, recursive = TRUE)
+    dir.create(file.path(link_root, "real"), recursive = TRUE,
+               showWarnings = FALSE)
+    if (!file.exists(file.path(link_root, "via"))) {
+        file.symlink(file.path(link_root, "real"), file.path(link_root, "via"))
+    }
+    options(corteza.allowed_paths = file.path(link_root, "real"))
+    # Reached through the link, naming a file that does not exist yet.
+    expect_true(corteza:::tool_check_path(
+        file.path(link_root, "via", "new.txt"), "write")$ok)
+    options(corteza.allowed_paths = conf_root)
+    unlink(link_root, recursive = TRUE)
+}
 
 options(corteza.allowed_paths = old_opt)
 # Unset restores the historical unrestricted behavior.
