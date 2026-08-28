@@ -266,8 +266,8 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
                     text = paste(c(
                                    head_line, detail,
                                    sprintf("  Permanent: set \"approval_mode\": \"%s\" in %s",
-                                           arg, corteza_config_path("config.json"))
-                        ), collapse = "\n")
+                            arg, corteza_config_path("config.json"))
+                    ), collapse = "\n")
             ))
     }
 
@@ -277,14 +277,14 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
          text = paste(c(
                         format_permissions(config),
                         sprintf("Project approvals: %s",
-                            if (file.exists(approvals_path)) {
-                                approvals_path
-                            } else {
-                                "none"
-                            }),
+                    if (file.exists(approvals_path)) {
+                        approvals_path
+                    } else {
+                        "none"
+                    }),
                         sprintf("Change for this session: /permissions %s",
                                 paste(.approval_modes, collapse = "|"))
-             ), collapse = "\n")
+            ), collapse = "\n")
     )
 }
 
