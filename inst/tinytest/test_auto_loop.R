@@ -384,6 +384,85 @@ expect_equal(length(executed), 5L)
 expect_equal(executed, sprintf("h%d.txt", 1:5))
 expect_true(any(grepl("tool-call cap", res)))
 
+# ---- a broken counter stops execution, through the real handler ----
+#
+# on_approved is the only thing advancing the executed-call cap. If the
+# gate swallowed its failure the call would run off the books, and a
+# repeatedly failing counter would disable max_tool_calls silently.
+# Asserted against the tool executor, not just the gate's return value.
+
+reset_wt()
+ran <- character()
+broken_turn <- function(prompt, session) {
+    # Break the counter the driver installed, then attempt a call.
+    gate <- session$auto_gate
+    session$auto_gate <- function(call, decision) {
+        corteza:::monitor_auto_gate(
+            "mon-stub", config = list(), cwd = wt,
+            budget_check = function(event) list(stop = FALSE, reason = ""),
+            on_approved = function() stop("counter exploded"))(call, decision)
+    }
+    h <- corteza:::.make_tool_handler(session, function(name, args) {
+        ran <<- c(ran, args$path %||% name)
+        list(content = list(list(type = "text", text = "ok")))
+    })
+    # Deliberately uncaught: the escalation has to travel the real path
+    # out through turn() to the loop's handler. Catching it here would
+    # test the assertion rather than the mechanism.
+    h("write_file", list(path = "bad.txt", content = "x"))
+    list(reply = "should not get here", session = session,
+         usage = list(cost = 0.001, total_tokens = 10L))
+}
+
+ctx <- auto_ctx(broken_turn)
+res <- with_stubs(
+    list(spawn = function(...) "mon-stub",
+         progress = function(...) list(verdict = "continue", reason = "ok")),
+    capture.output({
+        ns <- asNamespace("corteza")
+        old <- get("monitor_ask_approval", envir = ns)
+        unlockBinding("monitor_ask_approval", ns)
+        assign("monitor_ask_approval",
+               function(...) list(verdict = "approve", reason = "fine"),
+               envir = ns)
+        on.exit(assign("monitor_ask_approval", old, envir = ns), add = TRUE)
+        corteza:::run_auto_loop(ctx, "x", max_loops = 1L)
+    }))
+
+# The tool never executed, even though the monitor approved it, and the
+# run halted rather than carrying on with an uncounted call behind it.
+expect_equal(ran, character())
+expect_true(any(grepl("Halted for a human", res)))
+expect_true(any(grepl("accounting failed", res)))
+expect_true(any(grepl("escalated", res)))
+
+# ---- the closing report counts the last approved call ----
+#
+# A terminal error or interrupt used to return before spend was
+# refreshed, so the final line quoted figures from before the last
+# approved call.
+
+reset_wt()
+turns <- 0L
+spend_then_die <- function(prompt, session) {
+    turns <<- turns + 1L
+    corteza:::session_accumulate_spend(session,
+                                       list(total_tokens = 700L, cost = 0.25))
+    writeLines("x", file.path(wt, sprintf("t%d.txt", turns)))
+    if (turns == 2L) {
+        stop("died after spending")
+    }
+    list(reply = "working", session = session,
+         usage = list(cost = 0, total_tokens = 0L))
+}
+ctx <- auto_ctx(spend_then_die)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 10L)))
+expect_true(any(grepl("turn errored", res)))
+# Both turns' spend is in the closing line, including the one that died.
+expect_true(any(grepl("spent \\$0\\.5000", res)))
+
 # ---- the progress query's own cost is checked before it buys a turn ----
 #
 # Asking the monitor whether to continue costs tokens. Without a recheck

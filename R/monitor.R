@@ -761,8 +761,26 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
         # the envelope, past the monitor, and past the post-query budget
         # recheck. A refusal did no work and must not consume the
         # executed-call budget.
+        #
+        # A failure to count is NOT swallowed. on_approved is the only
+        # thing advancing the executed-call counter, so a throwing
+        # callback would run the call uncounted and, repeated, disable
+        # max_tool_calls entirely -- a cap that silently stops counting
+        # is worse than no cap. If the call cannot be accounted for, it
+        # does not run. (Contrast on_verdict below, which is display:
+        # there, swallowing is right, because a broken progress line
+        # must not block work.)
         if (identical(result$action, "proceed") && is.function(on_approved)) {
-            tryCatch(on_approved(), error = function(e) NULL)
+            counted <- tryCatch({
+                on_approved()
+                TRUE
+            }, error = function(e) conditionMessage(e))
+            if (!isTRUE(counted)) {
+                result <- list(
+                               action = "escalate",
+                               reason = paste("executed-call accounting failed, refusing to",
+                        "run uncounted:", counted))
+            }
         }
         if (is.function(on_verdict)) {
             tryCatch(on_verdict(call, result$action, result$reason),

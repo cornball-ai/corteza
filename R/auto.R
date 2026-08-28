@@ -528,6 +528,12 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
             return(goal)
         }
 
+        # Ahead of the terminal-status check below, not after it: a run
+        # ending on an error or an interrupt still spent whatever the
+        # turn spent, and the closing report should say so rather than
+        # quoting figures from before the last approved call.
+        refresh_spend()
+
         # Anything other than a clean turn ends the run.
         #
         # An attended session can print an error and let the user decide
@@ -549,8 +555,6 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                                    paste("turn ended:", status))
             return(character(0))
         }
-
-        refresh_spend()
 
         current <- worktree_digest(cwd)
         # Stall is measured against the previous iteration, not the run

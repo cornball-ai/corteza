@@ -410,6 +410,37 @@ expect_equal(actions, c("refuse", "proceed", "escalate", "proceed"))
 # work and consumed no executed-call budget.
 expect_equal(approved, 2L)
 
+# A counter that cannot count refuses the call rather than running it
+# uncounted. on_approved is the only thing advancing the executed-call
+# cap, so swallowing its failure would run work off the books and,
+# repeated, disable max_tool_calls entirely.
+assign("monitor_ask_approval",
+       function(...) list(verdict = "approve", reason = "fine"), envir = ns)
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() stop("counter exploded"))
+res <- g(list(tool = "write_file", args = list(path = "n.R"), paths = "n.R"),
+         allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("accounting failed", res$reason))
+expect_true(grepl("counter exploded", res$reason))
+
+# Display failures ARE still swallowed: a broken progress line must not
+# block work. The asymmetry is deliberate -- one is accounting, the
+# other is cosmetics. Stub still in place, so this exercises the
+# approved path rather than an unreachable monitor.
+approved <- 0L
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() approved <<- approved + 1L,
+    on_verdict = function(call, action, reason) stop("display exploded"))
+expect_equal(g(list(tool = "read_file", args = list(path = "R/turn.R"),
+                    paths = "R/turn.R"), allow)$action, "proceed")
+expect_equal(approved, 1L)
+assign("monitor_ask_approval", old_ask, envir = ns)
+
 # An out-of-envelope call never reaches the monitor and never counts.
 approved <- 0L
 g <- corteza:::monitor_auto_gate(
