@@ -100,7 +100,10 @@ expect_false(corteza:::.path_within("/home/u/proj-evil/x", "/home/u/proj"))
 
 d <- corteza:::get_auto_config(list())
 expect_equal(d$max_loops, 10L)
-expect_true(d$allow_exec)
+# Off unless explicitly granted. Shell and run_r bodies can't be
+# path-resolved, so a run that assumed exec would be brokering calls
+# whose effect it cannot bound.
+expect_false(d$allow_exec)
 expect_equal(d$never_broker, character())
 
 d <- corteza:::get_auto_config(list(auto = list(max_loops = 3,
@@ -154,16 +157,17 @@ e <- env_of("write_file", list(path = "R/new.R"),
 expect_false(e$ok)
 expect_true(grepl("never_broker", e$reason))
 
-# Exec: brokered by default, refused when allow_exec is off.
-expect_true(env_of("bash", list(command = "R CMD check ."))$ok)
-e <- env_of("bash", list(command = "R CMD check ."),
-            config = list(auto = list(allow_exec = FALSE)))
-expect_false(e$ok)
-expect_true(grepl("allow_exec", e$reason))
+# Exec: refused by default, brokered only when explicitly granted.
+for (tool in c("bash", "cmd", "run_r", "run_r_script")) {
+    e <- env_of(tool, list(command = "R CMD check .", code = "1 + 1"))
+    expect_false(e$ok)
+    expect_true(grepl("allow_exec", e$reason))
+}
 
-e <- env_of("run_r", list(code = "1 + 1"),
-            config = list(auto = list(allow_exec = FALSE)))
-expect_false(e$ok)
+expect_true(env_of("bash", list(command = "R CMD check ."),
+                   config = list(auto = list(allow_exec = TRUE)))$ok)
+expect_true(env_of("run_r", list(code = "1 + 1"),
+                   config = list(auto = list(allow_exec = TRUE)))$ok)
 
 # dangerous_tools is deliberately NOT an envelope input: that list is
 # bash/run_r/write_file/replace_in_file, i.e. the calls the monitor
@@ -233,6 +237,18 @@ writeLines('{"auto": {"allow_exec": true, "never_broker": []}}',
            file.path(cfg_root, ".corteza", "config.json"))
 resolved <- corteza:::auto_envelope_config(cfg_root, allow_exec = FALSE)
 expect_false(corteza:::get_auto_config(resolved)$allow_exec)
+
+# Nor by staying silent: with no call-site grant the default is off, so
+# a project config alone can never reach an exec-enabled run.
+writeLines('{"auto": {"allow_exec": true}}',
+           file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root)
+expect_false(corteza:::get_auto_config(resolved)$allow_exec)
+
+# The call site can grant it.
+writeLines('{}', file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root, allow_exec = TRUE)
+expect_true(corteza:::get_auto_config(resolved)$allow_exec)
 
 # A project that vetoes exec is honored even when the call site granted it.
 writeLines('{"auto": {"allow_exec": false}}',
@@ -336,6 +352,54 @@ g <- gate(list(tool = "write_file", args = list(path = "R/new.R"),
                paths = "R/new.R"),
           list(approval = "allow", reason = "default: random/write/console"))
 expect_equal(g$action, "escalate")
+
+# ---- the gate enforces budget per call, not per turn ----
+#
+# A cap checked only between worker turns can be overshot by a whole
+# turn's worth of calls, since one turn makes many. The gate takes a
+# budget_check called before each brokered call and again after the
+# approval query, because asking the monitor costs tokens too.
+
+events <- character()
+budget <- function(event) {
+    events <<- c(events, event)
+    list(stop = TRUE, reason = "over the tool-call cap")
+}
+g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(),
+                                 cwd = root, budget_check = budget)
+res <- g(list(tool = "read_file", args = list(path = "R/turn.R"),
+              paths = "R/turn.R"), allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("tool-call cap", res$reason))
+# Refused before the envelope is even consulted, so no monitor query was
+# attempted for a call the run could not afford.
+expect_equal(events, "call")
+
+# A budget_check that throws fails closed rather than letting the call
+# through on the strength of a broken check.
+g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(),
+                                 cwd = root,
+                                 budget_check = function(event) stop("boom"))
+res <- g(list(tool = "read_file", args = list(path = "R/turn.R"),
+              paths = "R/turn.R"), allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("budget check failed", res$reason))
+
+# In-budget calls proceed to the envelope, and the post-monitor check
+# runs too. Here the envelope passes and the monitor is unreachable, so
+# the "monitor" event only fires if the call got that far.
+events <- character()
+g <- corteza:::monitor_auto_gate(
+    "no-such-monitor", config = list(), cwd = root,
+    budget_check = function(event) {
+        events <<- c(events, event)
+        list(stop = FALSE, reason = "")
+    })
+res <- g(list(tool = "write_file", args = list(path = "R/new.R"),
+              paths = "R/new.R"), allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("unreachable", res$reason))
+expect_true("call" %in% events)
 
 # ---- the gate inside the real tool handler ----
 #

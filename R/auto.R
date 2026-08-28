@@ -154,12 +154,24 @@ format_worktree_delta <- function(delta) {
 auto_spend_since <- function(session, baseline) {
     segs <- (session$spend %||% list())$segments %||% list()
     main_cost <- sum(vapply(segs, function(s) s$cost %||% 0, numeric(1)))
-    main_tok <- sum(vapply(segs,
-                           function(s) as.numeric(s$total_tokens %||% 0),
-                           numeric(1)))
-    main_missing <- any(vapply(segs, function(s) isTRUE(s$cost_missing),
-                               logical(1)))
+    seg_tok <- vapply(segs, function(s) as.numeric(s$total_tokens %||% 0),
+                      numeric(1))
+    seg_missing <- vapply(segs, function(s) isTRUE(s$cost_missing), logical(1))
+    main_tok <- sum(seg_tok)
     sub <- tryCatch(subagent_spend_total(), error = function(e) list())
+
+    # cost_missing is baseline-relative, like everything else here. The
+    # flag is sticky per segment and the subagent tally is process-wide,
+    # so reading either outright means one unpriced model earlier in the
+    # session poisons every auto run afterwards -- the run would refuse
+    # to start over spend it did not create. A segment only counts if it
+    # actually grew during this run.
+    base_tok <- baseline$seg_tokens %||% numeric()
+    grew <- vapply(seq_along(segs), function(i) {
+        prev <- if (i <= length(base_tok)) base_tok[[i]] else 0
+        seg_tok[[i]] > prev
+    }, logical(1))
+    sub_grew <- (sub$total_tokens %||% 0) > (baseline$sub_tokens %||% 0)
 
     list(
          cost = (main_cost - (baseline$main_cost %||% 0)) +
@@ -168,7 +180,8 @@ auto_spend_since <- function(session, baseline) {
          ((sub$total_tokens %||% 0) - (baseline$sub_tokens %||% 0)),
          # A missing price makes the total a floor, not a number. Treating
          # an unknown cost as zero is how a capped run quietly isn't.
-         cost_known = !main_missing && !isTRUE(sub$cost_missing)
+         cost_known = !any(grew & seg_missing) &&
+         !(sub_grew && isTRUE(sub$cost_missing))
     )
 }
 
@@ -177,11 +190,14 @@ auto_spend_since <- function(session, baseline) {
 auto_spend_baseline <- function(session) {
     segs <- (session$spend %||% list())$segments %||% list()
     sub <- tryCatch(subagent_spend_total(), error = function(e) list())
+    seg_tok <- vapply(segs, function(s) as.numeric(s$total_tokens %||% 0),
+                      numeric(1))
     list(
          main_cost = sum(vapply(segs, function(s) s$cost %||% 0, numeric(1))),
-         main_tokens = sum(vapply(segs,
-                                  function(s) as.numeric(s$total_tokens %||% 0),
-                                  numeric(1))),
+         main_tokens = sum(seg_tok),
+         # Per-segment, so auto_spend_since() can tell which segments this
+         # run actually added to.
+         seg_tokens = seg_tok,
          sub_cost = sub$cost %||% 0,
          sub_tokens = sub$total_tokens %||% 0
     )
@@ -248,7 +264,10 @@ auto_state <- function(session, dir = getwd()) {
     list(loop = 1L, started = Sys.time(), baseline = worktree_digest(dir),
          spend_baseline = auto_spend_baseline(session),
          spend = list(cost = 0, tokens = 0, cost_known = TRUE),
-         tool_calls = 0L, stalled = 0L, last_reply = "")
+         # gate_calls is counted by the gate itself, so the cap is
+         # enforced against calls as they are brokered rather than
+         # against the session counter's view between turns.
+         tool_calls = 0L, gate_calls = 0L, stalled = 0L, last_reply = "")
 }
 
 # ---- The worker's continuation prompt ----
@@ -317,6 +336,32 @@ parse_auto_flags <- function(text) {
          allow_exec = allow_exec)
 }
 
+#' Check that every configured bound is a usable positive number.
+#'
+#' A cap of 0, NA, or a negative is not a tighter setting, it is a
+#' broken one -- and the failure is quiet, because the first iteration
+#' has nothing to compare against and runs before any limit check can
+#' bite. So the run refuses to start instead.
+#'
+#' @param auto Resolved auto config.
+#' @return Character vector of problems; empty when all bounds are sane.
+#' @noRd
+auto_validate_bounds <- function(auto) {
+    checks <- list(max_loops = auto$max_loops, max_minutes = auto$max_minutes,
+                   max_cost = auto$max_cost, max_tokens = auto$max_tokens,
+                   max_tool_calls = auto$max_tool_calls,
+                   stall_loops = auto$stall_loops)
+    bad <- character()
+    for (nm in names(checks)) {
+        v <- suppressWarnings(as.numeric(checks[[nm]]))
+        if (length(v) != 1L || is.na(v) || v <= 0) {
+            bad <- c(bad, sprintf("%s must be a positive number (got %s)", nm,
+                                  paste(format(checks[[nm]]), collapse = ",")))
+        }
+    }
+    bad
+}
+
 #' Drive an unattended run through the ordinary REPL loop.
 #'
 #' Auto mode does not get its own turn loop. `run_repl_loop()` already
@@ -356,6 +401,15 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                     sprintf(fmt, ...), palette$reset %||% ""))
     }
 
+    # Refuse a nonsense budget rather than interpreting it. A bound of 0
+    # or NA would otherwise still permit the first worker turn, since the
+    # first iteration is the one with nothing yet to compare against.
+    bad <- auto_validate_bounds(auto)
+    if (length(bad) > 0L) {
+        say("refusing to start: %s", paste(bad, collapse = "; "))
+        return(invisible(NULL))
+    }
+
     say("goal: %s", goal)
     say("caps: %d loops, %g min, $%g, %s tool calls",
         auto$max_loops, auto$max_minutes, auto$max_cost,
@@ -386,8 +440,39 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         tryCatch(subagent_kill(monitor_id), error = function(e) NULL)
     }, add = TRUE)
 
+    # Enforced at the gate, immediately before each brokered call and
+    # again after each approval query. Between-turn checks are not
+    # enough: one worker turn makes many tool calls, so a cap checked
+    # only between turns can be overshot by a whole turn's worth of
+    # work, and the monitor query that approves a call costs tokens of
+    # its own.
+    refresh_spend <- function() {
+        state$spend <<- auto_spend_since(ctx$session, state$spend_baseline)
+        state$tool_calls <<- max(
+                                 (ctx$session$turn_number %||% 0L) - state$tool_baseline,
+                                 state$gate_calls)
+    }
+    budget_check <- function(event) {
+        if (identical(event, "call")) {
+            state$gate_calls <<- state$gate_calls + 1L
+        }
+        refresh_spend()
+        # The loop counter is a between-turn concern and is already
+        # incremented for the turn now running, so checking it here would
+        # abort the final permitted iteration partway through. Every
+        # other bound is a real-time quantity and applies mid-turn.
+        probe <- state
+        probe$loop <- 1L
+        lim <- auto_check_limits(probe, auto)
+        if (isTRUE(lim$stop)) {
+            stop_reason <<- lim$reason
+        }
+        lim
+    }
+
     ctx$session$auto_gate <- monitor_auto_gate(
         monitor_id, config, cwd,
+        budget_check = budget_check,
         on_verdict = function(call, action, reason) {
         if (!identical(action, "proceed")) {
             say("monitor %s %s: %s", action, call$tool %||% "?", reason)
@@ -401,18 +486,29 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
             return(goal)
         }
 
-        # An escalation during the turn we just ran ends things here.
-        # The gate already refused the call and the loop already printed
-        # why; this is the part that stops the run rather than feeding
-        # another prompt into it.
-        if (!is.null(ctx$auto_halt)) {
-            stop_reason <<- paste("escalated:", ctx$auto_halt)
+        # Anything other than a clean turn ends the run.
+        #
+        # An attended session can print an error and let the user decide
+        # what to do next; an unattended one has nobody to decide, and
+        # carrying on is actively wrong here. ctx$last_assistant_response
+        # still holds the *previous* successful turn's reply after a
+        # failure, so without this the monitor would be shown a stale
+        # reply, plausibly say continue, and the run would spin on a
+        # turn that keeps failing the same way. An interrupt matters
+        # doubly: Ctrl+C is the operator stopping the run, and it must
+        # stop the run rather than just the turn inside it.
+        status <- ctx$last_turn_status %||% "ok"
+        if (!identical(status, "ok")) {
+            stop_reason <<- switch(status,
+                                   escalate = paste("escalated:", ctx$auto_halt %||% "?"),
+                                   interrupt = "interrupted",
+                                   denied = "a tool call was denied",
+                                   error = paste("turn errored:", ctx$last_turn_error %||% "?"),
+                                   paste("turn ended:", status))
             return(character(0))
         }
 
-        state$spend <<- auto_spend_since(ctx$session, state$spend_baseline)
-        state$tool_calls <<- (ctx$session$turn_number %||% 0L) -
-        state$tool_baseline
+        refresh_spend()
 
         current <- worktree_digest(cwd)
         # Stall is measured against the previous iteration, not the run

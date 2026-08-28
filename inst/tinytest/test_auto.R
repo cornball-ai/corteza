@@ -207,6 +207,55 @@ expect_equal(corteza:::auto_parse_status(NULL), "continue")
 expect_equal(corteza:::auto_parse_status("AUTO_STATUS: done and continue"),
              "continue")
 
+# ---- auto_validate_bounds ----
+
+expect_equal(length(corteza:::auto_validate_bounds(auto)), 0L)
+
+bad <- corteza:::auto_validate_bounds(
+    utils::modifyList(auto, list(max_loops = 0L)))
+expect_equal(length(bad), 1L)
+expect_true(grepl("max_loops", bad))
+
+for (field in c("max_loops", "max_minutes", "max_cost", "max_tokens",
+                "max_tool_calls", "stall_loops")) {
+    for (value in list(0, -1, NA, NA_integer_)) {
+        bad <- corteza:::auto_validate_bounds(
+            utils::modifyList(auto, stats::setNames(list(value), field)))
+        expect_true(length(bad) >= 1L)
+        expect_true(any(grepl(field, bad)))
+    }
+}
+
+# ---- cost_missing is baseline-relative ----
+#
+# The flag is sticky per segment and the subagent tally is process-wide,
+# so reading either outright means one unpriced model earlier in a long
+# session poisons every later auto run -- it would refuse to start over
+# spend it did not create.
+
+seg <- function(cost, tokens, missing) {
+    list(cost = cost, total_tokens = tokens, cost_missing = missing)
+}
+sess <- new.env(parent = emptyenv())
+sess$spend <- list(segments = list(seg(1, 500, TRUE)))
+b <- corteza:::auto_spend_baseline(sess)
+
+# An old unpriced segment that gains nothing during the run does not
+# make this run's cost unknown.
+expect_true(corteza:::auto_spend_since(sess, b)$cost_known)
+
+# But if that same segment gains tokens during the run, the new spend is
+# unpriced too and the total really is a floor.
+sess$spend$segments[[1]]$total_tokens <- 900
+expect_false(corteza:::auto_spend_since(sess, b)$cost_known)
+
+# A fresh unpriced segment opened during the run also counts.
+sess2 <- new.env(parent = emptyenv())
+sess2$spend <- list(segments = list(seg(1, 500, FALSE)))
+b2 <- corteza:::auto_spend_baseline(sess2)
+sess2$spend$segments[[2]] <- seg(0, 300, TRUE)
+expect_false(corteza:::auto_spend_since(sess2, b2)$cost_known)
+
 # ---- parse_auto_flags ----
 
 f <- corteza:::parse_auto_flags("fix the failing tests")

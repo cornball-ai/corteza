@@ -222,6 +222,144 @@ res <- with_stubs(stub_monitor(character()),
 expect_true(any(grepl("spend cap", res)))
 expect_true(turns <= 2L)
 
+# ---- an errored turn is terminal ----
+#
+# An attended session prints the error and lets the user decide. An
+# unattended one has nobody to decide, and ctx$last_assistant_response
+# still holds the PREVIOUS successful turn's reply -- so without an
+# explicit outcome the monitor is shown a stale reply, plausibly says
+# continue, and the run spins on a turn that keeps failing identically.
+
+reset_wt()
+turns <- 0L
+flaky_turn <- function(prompt, session) {
+    turns <<- turns + 1L
+    if (turns == 2L) {
+        stop("the model exploded")
+    }
+    writeLines("x", file.path(wt, sprintf("g%d.txt", turns)))
+    list(reply = "working", session = session,
+         usage = list(cost = 0.01, total_tokens = 100L))
+}
+ctx <- auto_ctx(flaky_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 10L)))
+expect_equal(turns, 2L)
+expect_true(any(grepl("turn errored", res)))
+expect_true(any(grepl("the model exploded", res)))
+
+# ---- an interrupted turn is terminal ----
+#
+# Ctrl+C is the operator stopping the run. It must stop the run, not
+# just the turn inside it.
+
+reset_wt()
+turns <- 0L
+interrupted_turn <- function(prompt, session) {
+    turns <<- turns + 1L
+    if (turns == 2L) {
+        stop(structure(class = c("interrupt", "condition"),
+                       list(message = "", call = NULL)))
+    }
+    writeLines("x", file.path(wt, sprintf("i%d.txt", turns)))
+    list(reply = "working", session = session,
+         usage = list(cost = 0.01, total_tokens = 100L))
+}
+ctx <- auto_ctx(interrupted_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 10L)))
+expect_equal(turns, 2L)
+expect_true(any(grepl("interrupted", res)))
+
+# ---- the tool-call cap bites mid-turn, not just between turns ----
+#
+# The blocker this guards: one worker turn makes many calls, so a cap
+# checked only between continuation prompts can be overshot by an entire
+# turn's worth of work. Here a single turn tries 100 calls against a cap
+# of 5; the gate must refuse partway through rather than after.
+
+reset_wt()
+gate_calls <- 0L
+refused_at <- NA_integer_
+runaway_turn <- function(prompt, session) {
+    for (i in 1:100) {
+        gate_calls <<- gate_calls + 1L
+        res <- session$auto_gate(
+            list(tool = "write_file", args = list(path = sprintf("r%d.txt", i)),
+                 paths = sprintf("r%d.txt", i)),
+            list(approval = "allow", reason = "default: random/write/console"))
+        if (!identical(res$action, "proceed")) {
+            refused_at <<- i
+            break
+        }
+        writeLines("x", file.path(wt, sprintf("r%d.txt", i)))
+    }
+    list(reply = "made a lot of calls", session = session,
+         usage = list(cost = 0.001, total_tokens = 10L))
+}
+
+ctx <- auto_ctx(runaway_turn)
+# Caps come off disk via auto_envelope_config(), not from ctx$config, so
+# the cap has to be a real project config to take effect.
+dir.create(file.path(wt, ".corteza"), recursive = TRUE, showWarnings = FALSE)
+writeLines('{"auto": {"max_tool_calls": 5}}',
+           file.path(wt, ".corteza", "config.json"))
+res <- with_stubs(
+    list(spawn = function(...) "mon-stub",
+         progress = function(...) list(verdict = "continue", reason = "ok")),
+    capture.output({
+        ns <- asNamespace("corteza")
+        old <- get("monitor_ask_approval", envir = ns)
+        unlockBinding("monitor_ask_approval", ns)
+        assign("monitor_ask_approval",
+               function(...) list(verdict = "approve", reason = "fine"),
+               envir = ns)
+        on.exit(assign("monitor_ask_approval", old, envir = ns), add = TRUE)
+        corteza:::run_auto_loop(ctx, "make files", max_loops = 2L)
+    }))
+
+# Refused partway through the turn, not after all 100 landed.
+expect_false(is.na(refused_at))
+expect_true(refused_at <= 7L)
+expect_true(gate_calls < 100L)
+expect_true(any(grepl("tool-call cap", res)))
+
+# ---- nonsense bounds refuse to start ----
+#
+# A cap of 0 is not a tighter setting, it is a broken one, and the
+# failure is quiet: the first iteration has nothing to compare against
+# and would run before any limit check could bite.
+
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 0L)))
+expect_equal(turns, 0L)
+expect_true(any(grepl("refusing to start", res)))
+expect_true(any(grepl("max_loops", res)))
+
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = -3L)))
+expect_equal(turns, 0L)
+expect_true(any(grepl("refusing to start", res)))
+
+# A sane bound of 1 still runs exactly one turn.
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 1L)))
+expect_equal(turns, 1L)
+
 # ---- /auto is wired into the REPL ----
 #
 # A bare /auto prints usage and must not spawn anything. The monitor is

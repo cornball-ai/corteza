@@ -860,9 +860,17 @@ run_repl_loop <- function(ctx) {
                     ctx$palette$reset))
         pre_turn_len <- length(ctx$session$history %||% list())
         turn_start <- Sys.time()
+        # Per-turn outcome, for drivers that need to tell "the turn
+        # failed" from "the turn ran". An attended session can just look
+        # at the screen; an unattended one cannot, and without this a
+        # driver reading ctx$last_assistant_response after a failed turn
+        # sees the *previous* turn's reply and carries on as though
+        # nothing went wrong. Handlers below overwrite it.
+        ctx$last_turn_status <- "ok"
         result <- tryCatch(
                            ctx$turn_fn(prompt, ctx$session),
                            corteza_user_deny = function(c) {
+            ctx$last_turn_status <- "denied"
             # User picked "3. Deny" at the approval prompt. Abort the
             # whole turn so the LLM doesn't cascade through more tool
             # calls. apply_exit_marker repairs any tool_use blocks
@@ -888,6 +896,7 @@ run_repl_loop <- function(ctx) {
             # Recorded on ctx rather than returned, because the auto
             # driver reads it between turns (see run_auto_loop) and an
             # attended session has no driver to read it at all.
+            ctx$last_turn_status <- "escalate"
             ctx$auto_halt <- c$reason %||% "escalated"
             cat(sprintf("\n%sHalted for a human: %s%s\n",
                         ctx$palette$yellow, ctx$auto_halt, ctx$palette$reset))
@@ -898,6 +907,7 @@ run_repl_loop <- function(ctx) {
             NULL
         },
                            interrupt = function(c) {
+            ctx$last_turn_status <- "interrupt"
             # Ctrl+C in terminal R, Esc in RStudio. Same handling:
             # apply_exit_marker repairs any unfinished tool_use
             # blocks in turn_session$history (preserving completed
@@ -910,6 +920,8 @@ run_repl_loop <- function(ctx) {
             NULL
         },
                            error = function(e) {
+            ctx$last_turn_status <- "error"
+            ctx$last_turn_error <- conditionMessage(e)
             message(sprintf("%sError:%s %s",
                             ctx$palette$bright_magenta, ctx$palette$reset, e$message))
             NULL

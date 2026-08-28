@@ -333,7 +333,13 @@ auto_envelope_config <- function(cwd = getwd(), allow_exec = NULL) {
     project <- load_config_file(
                                 file.path(cwd, ".corteza", "config.json"))$auto %||% list()
 
-    granted <- allow_exec %||% global$allow_exec %||% TRUE
+    # Default off. Shell and run_r bodies cannot be path-resolved
+    # (resolve_paths() says so itself in R/policy.R), so an auto run
+    # cannot bound what they touch. Execution is therefore something the
+    # operator turns on for a specific run (--exec) or in their own
+    # global config -- never something a run assumes. A project config
+    # can still veto, and still cannot grant.
+    granted <- allow_exec %||% global$allow_exec %||% FALSE
     vetoed <- identical(project$allow_exec, FALSE)
     config$auto <- config$auto %||% list()
     config$auto$allow_exec <- isTRUE(granted) && !vetoed
@@ -364,11 +370,8 @@ get_auto_config <- function(config = list()) {
          # of agent turns and thousands of calls.
          max_tool_calls = as.integer(cfg$max_tool_calls %||% 300L),
          stall_loops = as.integer(cfg$stall_loops %||% 2L),
-         # Exec is on by default because an auto run that cannot execute
-         # cannot run its own tests, and a loop that cannot check its
-         # work is not worth running unattended. The monitor rules on
-         # the literal command; see .MONITOR_EXEC_TOOLS.
-         allow_exec = isTRUE(cfg$allow_exec %||% TRUE),
+         # Off unless explicitly granted; see auto_envelope_config().
+         allow_exec = isTRUE(cfg$allow_exec %||% FALSE),
          # Tools the monitor may never broker, whatever it thinks.
          # Empty by default: the envelope is about what a call touches,
          # not which tool it is. This is here for a user who wants a
@@ -684,32 +687,67 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 #' @param config Config list, already through
 #'   \code{auto_envelope_config()}.
 #' @param cwd Containment root.
+#' @param budget_check Optional \code{function(event)} returning
+#'   \code{list(stop, reason)}. Called with \code{"call"} before each
+#'   brokered call and \code{"monitor"} after each approval query.
+#'   Without it, a cap is only enforced between worker turns, and one
+#'   turn can make hundreds of calls -- so the advertised bound would be
+#'   exceeded by however much a single turn managed. Asking the monitor
+#'   also costs money, so the budget has to be re-read after its reply
+#'   and before its verdict is acted on.
 #' @param on_verdict Optional function(call, action, reason) for display.
 #' @return A function(call, decision) -> list(action, reason).
 #' @noRd
 monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
-                              on_verdict = NULL) {
+                              budget_check = NULL, on_verdict = NULL) {
     auto <- get_auto_config(config)
     force(monitor_id)
     counter <- 0L
 
-    function(call, decision) {
-        env <- monitor_in_envelope(call, decision, config, cwd)
-        result <- if (!isTRUE(env$ok)) {
-            # Outside the envelope the monitor is not consulted at all.
-            # No model judgment decides what a model is allowed to judge.
-            list(action = "escalate", reason = env$reason)
+    over_budget <- function(event) {
+        if (!is.function(budget_check)) {
+            return(NULL)
+        }
+        res <- tryCatch(budget_check(event),
+                        error = function(e) {
+            list(stop = TRUE,
+                 reason = paste("budget check failed:", conditionMessage(e)))
+        })
+        if (isTRUE(res$stop)) {
+            list(action = "escalate", reason = res$reason %||% "over budget")
         } else {
-            counter <<- counter + 1L
-            req <- sprintf("a%d", counter)
-            v <- monitor_ask_approval(monitor_id, call, decision,
-                                      request_id = req,
-                                      timeout = auto$monitor_timeout)
-            list(action = switch(v$verdict,
-                                 approve = "proceed",
-                                 refuse = "refuse",
-                                 "escalate"),
-                 reason = v$reason)
+            NULL
+        }
+    }
+
+    function(call, decision) {
+        # Before anything else, including the envelope: a run that has
+        # spent its budget stops here rather than one turn later.
+        result <- over_budget("call")
+
+        if (is.null(result)) {
+            env <- monitor_in_envelope(call, decision, config, cwd)
+            if (!isTRUE(env$ok)) {
+                # Outside the envelope the monitor is not consulted at
+                # all. No model judgment decides what a model is allowed
+                # to judge.
+                result <- list(action = "escalate", reason = env$reason)
+            } else {
+                counter <<- counter + 1L
+                req <- sprintf("a%d", counter)
+                v <- monitor_ask_approval(monitor_id, call, decision,
+                    request_id = req,
+                    timeout = auto$monitor_timeout)
+                # The query itself cost tokens. Re-read the budget before
+                # acting on the answer, or an approval bought with the
+                # last of the budget still authorizes the call.
+                result <- over_budget("monitor") %||%
+                list(action = switch(v$verdict,
+                                     approve = "proceed",
+                                     refuse = "refuse",
+                                     "escalate"),
+                     reason = v$reason)
+            }
         }
 
         if (is.function(on_verdict)) {
