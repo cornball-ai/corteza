@@ -980,10 +980,17 @@ subagent_accumulate_usage <- function(info, usage) {
         usage$input_tokens)
     info$cumulative_output_tokens <- add_int(info$cumulative_output_tokens %||% 0L,
         usage$output_tokens)
+    # Normalized, not the raw field, for the same reason as the main
+    # segment tally in R/spend.R: a provider reporting input and output
+    # without a total would record a priced query as zero tokens and
+    # slip past any token cap reading this.
     info$cumulative_total_tokens <- add_int(info$cumulative_total_tokens %||% 0L,
-        usage$total_tokens)
+        .spend_normalized_tokens(usage))
     if (!is.null(usage$cost) && !is.na(usage$cost)) {
-        prev <- info$cumulative_cost
+        # %||%: every other counter here tolerates an absent field, and
+        # a bare NULL would make is.na() return logical(0) and the `if`
+        # error out rather than treating it as "no cost yet".
+        prev <- info$cumulative_cost %||% NA_real_
         info$cumulative_cost <- if (is.na(prev)) {
             as.numeric(usage$cost)
         } else {

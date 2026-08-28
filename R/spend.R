@@ -112,7 +112,11 @@ session_accumulate_spend <- function(session, usage) {
     seg <- sp$segments[[i]]
     seg$input_tokens <- .spend_add_int(seg$input_tokens, usage$input_tokens)
     seg$output_tokens <- .spend_add_int(seg$output_tokens, usage$output_tokens)
-    seg$total_tokens <- .spend_add_int(seg$total_tokens, usage$total_tokens)
+    # Normalized, not the raw field: a provider that reports input and
+    # output without a total would otherwise record a priced query as
+    # zero tokens, and any token cap reading this would never trip.
+    seg$total_tokens <- .spend_add_int(seg$total_tokens,
+                                       .spend_normalized_tokens(usage))
     if (is.null(usage$cost) || is.na(usage$cost)) {
         if (.spend_usage_has_tokens(usage)) {
             seg$cost_missing <- TRUE

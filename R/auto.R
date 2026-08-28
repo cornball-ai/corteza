@@ -499,17 +499,22 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         lim <- auto_check_limits(probe, auto)
         if (isTRUE(lim$stop)) {
             stop_reason <<- lim$reason
-            return(lim)
-        }
-        if (identical(event, "call")) {
-            state$gate_calls <<- state$gate_calls + 1L
         }
         lim
+    }
+    # The counter moves here and nowhere else: the gate calls this only
+    # after a call has cleared the envelope, the monitor, and the
+    # post-query budget recheck. Counting at check time instead would
+    # charge a refused call against a cap documented as counting calls
+    # executed.
+    on_approved <- function() {
+        state$gate_calls <<- state$gate_calls + 1L
     }
 
     ctx$session$auto_gate <- monitor_auto_gate(
         monitor_id, config, cwd,
         budget_check = budget_check,
+        on_approved = on_approved,
         on_verdict = function(call, action, reason) {
         if (!identical(action, "proceed")) {
             say("monitor %s %s: %s", action, call$tool %||% "?", reason)

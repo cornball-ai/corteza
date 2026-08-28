@@ -294,6 +294,17 @@ expect_true(s3$spend$segments[[1]]$cost_missing)
 corteza:::session_accumulate_spend(s3, list(total_tokens = 0L, cost = NA))
 expect_equal(s3$spend$segments[[1]]$missing_tokens, 250)
 
+# A registry entry shaped the way subagent_spawn() actually builds one.
+# A bare list() is a fixture shaped like nothing real, and it only ever
+# tests the branches that happen to tolerate missing fields.
+fresh_subagent_entry <- function() {
+    list(id = "fixture", seq = 1L,
+         cumulative_input_tokens = 0L, cumulative_output_tokens = 0L,
+         cumulative_total_tokens = 0L, cumulative_cost = NA_real_,
+         cumulative_missing_tokens = 0, cost_missing = FALSE,
+         query_count = 0L)
+}
+
 # ---- the counter must agree with the flag about what counts as usage ----
 #
 # .spend_usage_has_tokens() accepts a nonzero input OR output count, so a
@@ -313,6 +324,34 @@ expect_equal(corteza:::.spend_normalized_tokens(
     list(total_tokens = NA, input_tokens = 7L)), 7)
 expect_equal(corteza:::.spend_normalized_tokens(list()), 0)
 
+# The token TOTALS must normalize too, not just the unpriced counter. A
+# PRICED query reporting input and output without a total would
+# otherwise record known cost and zero tokens, so max_tokens could never
+# trip no matter how much the run consumed.
+s5 <- new.env(parent = emptyenv())
+corteza:::session_accumulate_spend(
+    s5, list(input_tokens = 900L, output_tokens = 100L, cost = 0.5))
+expect_equal(s5$spend$segments[[1]]$total_tokens, 1000)
+expect_false(s5$spend$segments[[1]]$cost_missing)
+b5 <- corteza:::auto_spend_baseline(new.env(parent = emptyenv()))
+spent5 <- corteza:::auto_spend_since(s5, b5)
+expect_equal(spent5$tokens, 1000)
+expect_true(spent5$cost_known)
+# And that count is what the cap sees.
+r5 <- corteza:::auto_check_limits(
+    list(loop = 1L, started = Sys.time(), tool_calls = 0L, stalled = 0L,
+         spend = spent5),
+    utils::modifyList(auto, list(max_tokens = 500)))
+expect_true(r5$stop)
+expect_true(grepl("token cap", r5$reason))
+
+# Same normalization on the subagent side.
+corteza:::subagent_spend_reset()
+e5 <- corteza:::subagent_accumulate_usage(
+    fresh_subagent_entry(), list(input_tokens = 700L, output_tokens = 300L, cost = 0.2))
+expect_equal(e5$cumulative_total_tokens, 1000)
+expect_false(isTRUE(e5$cost_missing))
+
 # End to end on the main-agent accumulator: total omitted entirely.
 s4 <- new.env(parent = emptyenv())
 corteza:::session_accumulate_spend(
@@ -326,7 +365,7 @@ expect_false(corteza:::auto_spend_since(s4, b4)$cost_known)
 # And on the subagent accumulator, which feeds the same difference.
 corteza:::subagent_spend_reset()
 entry <- corteza:::subagent_accumulate_usage(
-    list(), list(input_tokens = 400L, output_tokens = 100L, cost = NA))
+    fresh_subagent_entry(), list(input_tokens = 400L, output_tokens = 100L, cost = NA))
 expect_true(entry$cost_missing)
 expect_equal(entry$cumulative_missing_tokens, 500)
 

@@ -375,6 +375,51 @@ expect_true(grepl("tool-call cap", res$reason))
 # attempted for a call the run could not afford.
 expect_equal(events, "call")
 
+# ---- only executed calls consume the executed-call budget ----
+#
+# The counter moves in on_approved, which the gate calls only after the
+# envelope, the monitor, and the post-query recheck have all cleared the
+# call. Counting at check time would charge a refusal against a cap
+# documented as counting calls executed.
+
+approved <- 0L
+verdicts <- c("refuse", "approve", "escalate", "approve")
+i <- 0L
+ns <- asNamespace("corteza")
+old_ask <- get("monitor_ask_approval", envir = ns)
+unlockBinding("monitor_ask_approval", ns)
+assign("monitor_ask_approval", function(...) {
+    i <<- i + 1L
+    list(verdict = verdicts[[min(i, length(verdicts))]], reason = "stub")
+}, envir = ns)
+
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() approved <<- approved + 1L)
+
+actions <- vapply(seq_along(verdicts), function(k) {
+    g(list(tool = "write_file", args = list(path = sprintf("n%d.R", k)),
+           paths = sprintf("n%d.R", k)), allow)$action
+}, character(1))
+
+assign("monitor_ask_approval", old_ask, envir = ns)
+
+expect_equal(actions, c("refuse", "proceed", "escalate", "proceed"))
+# Two proceeds, so two counted -- the refusal and the escalation did no
+# work and consumed no executed-call budget.
+expect_equal(approved, 2L)
+
+# An out-of-envelope call never reaches the monitor and never counts.
+approved <- 0L
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() approved <<- approved + 1L)
+expect_equal(g(list(tool = "write_file", args = list(path = "../../etc/x"),
+                    paths = "../../etc/x"), allow)$action, "escalate")
+expect_equal(approved, 0L)
+
 # A budget_check that throws fails closed rather than letting the call
 # through on the strength of a broken check.
 g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(),

@@ -695,11 +695,18 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 #'   exceeded by however much a single turn managed. Asking the monitor
 #'   also costs money, so the budget has to be re-read after its reply
 #'   and before its verdict is acted on.
+#' @param on_approved Optional \code{function()} called only when a call
+#'   is actually cleared to run, after both the envelope and the monitor
+#'   have agreed and after the post-query budget recheck. This is where a
+#'   caller counts executed calls: incrementing at check time instead
+#'   would charge a refused call, or one halted by the recheck, against a
+#'   budget it never spent.
 #' @param on_verdict Optional function(call, action, reason) for display.
 #' @return A function(call, decision) -> list(action, reason).
 #' @noRd
 monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
-                              budget_check = NULL, on_verdict = NULL) {
+                              budget_check = NULL, on_approved = NULL,
+                              on_verdict = NULL) {
     auto <- get_auto_config(config)
     force(monitor_id)
     counter <- 0L
@@ -750,6 +757,13 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
             }
         }
 
+        # Counted only once the call is genuinely cleared to run: past
+        # the envelope, past the monitor, and past the post-query budget
+        # recheck. A refusal did no work and must not consume the
+        # executed-call budget.
+        if (identical(result$action, "proceed") && is.function(on_approved)) {
+            tryCatch(on_approved(), error = function(e) NULL)
+        }
         if (is.function(on_verdict)) {
             tryCatch(on_verdict(call, result$action, result$reason),
                      error = function(e) NULL)
