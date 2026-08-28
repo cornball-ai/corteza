@@ -1,3 +1,28 @@
+# corteza 0.7.1.35
+
+- **`/auto [--loops N] <goal>` runs bounded unattended iterations**,
+  supervised by a read-only "hall monitor" subagent. The monitor is the
+  point: `turn()` routes only `"ask"` verdicts to `approval_cb`, and the
+  default tensor resolves ordinary project writes to `"allow"` outside
+  `~/projects`, so a supervisor wired there would never be consulted for
+  the edits that matter. Every call surviving `policy()` now passes a
+  `session$auto_gate` instead, whatever the verdict.
+- **The monitor's authority is mechanically bounded** before it is asked
+  anything: credential-path safety verdicts, paths escaping the project
+  (resolved through symlinks), unknown tools, and write calls whose
+  target cannot be resolved all stop for a human rather than going to a
+  model for an opinion. Project config can tighten the envelope but
+  never widen it, since a `.corteza/config.json` travels with a cloned
+  repo.
+- **Subagent presets can now withhold provider-native web search and
+  confine file tools to the project.** `subagent_turn_init()` previously
+  built its session without a `web_search` argument, so every subagent
+  had server-side search on regardless of its tool preset.
+- Auto-run progress is measured by content hash rather than size and
+  mtime, against a baseline that keeps pre-existing uncommitted work out
+  of the run's ledger; spend counts the monitor's own queries, and an
+  unpriced model stops the run rather than counting as zero.
+
 # corteza 0.7.1.34
 
 - **`/permissions` switches approval mode for the session**
