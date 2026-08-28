@@ -27,7 +27,10 @@ child -- cannot be expanded after spawn.}
 `web_search`, `fetch_url`. `"work"`: investigate + `bash`,
 `write_file`, `replace_in_file`, `list_files`, `git_status`,
 `git_diff`, `git_log`, `run_r`. `"minimal"`: `read_file`,
-`grep_files`.}
+`grep_files`. `"monitor"`: the read-only hall monitor used to
+supervise unattended auto runs -- `read_file`, `grep_files`,
+`list_files`, `git_status`, `git_diff`, `git_log`, and
+provider-native web search explicitly off.}
 
 \item{parent_session}{Parent session object; read for
 nested-spawning control and session-key derivation.}

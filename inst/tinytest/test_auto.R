@@ -207,6 +207,45 @@ expect_equal(corteza:::auto_parse_status(NULL), "continue")
 expect_equal(corteza:::auto_parse_status("AUTO_STATUS: done and continue"),
              "continue")
 
+# ---- parse_auto_flags ----
+
+f <- corteza:::parse_auto_flags("fix the failing tests")
+expect_equal(f$goal, "fix the failing tests")
+expect_null(f$loops)
+expect_null(f$allow_exec)
+
+f <- corteza:::parse_auto_flags("--loops 5 fix the tests")
+expect_equal(f$loops, 5L)
+expect_equal(f$goal, "fix the tests")
+
+# Flags are stripped wherever they appear, not just at the front.
+f <- corteza:::parse_auto_flags("fix the tests --loops 3")
+expect_equal(f$loops, 3L)
+expect_equal(f$goal, "fix the tests")
+
+f <- corteza:::parse_auto_flags("--exec build it")
+expect_true(f$allow_exec)
+expect_equal(f$goal, "build it")
+
+f <- corteza:::parse_auto_flags("--no-exec just read things")
+expect_false(f$allow_exec)
+expect_equal(f$goal, "just read things")
+
+# --no-exec is the tighter setting, so it wins when both appear rather
+# than the later flag winning by accident of parse order.
+f <- corteza:::parse_auto_flags("--exec --no-exec do it")
+expect_false(f$allow_exec)
+
+f <- corteza:::parse_auto_flags("--loops 2 --exec  ship   it ")
+expect_equal(f$loops, 2L)
+expect_true(f$allow_exec)
+expect_equal(f$goal, "ship it")
+
+# An empty goal is what the usage message keys off.
+expect_equal(corteza:::parse_auto_flags("")$goal, "")
+expect_equal(corteza:::parse_auto_flags("--loops 4")$goal, "")
+expect_equal(corteza:::parse_auto_flags(NULL)$goal, "")
+
 # ---- delta rendering ----
 
 expect_true(grepl("nothing changed",

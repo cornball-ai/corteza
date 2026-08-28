@@ -70,7 +70,11 @@ run_repl_loop <- function(ctx) {
     while (TRUE) {
         prompt <- ctx$read_input("> ")
         if (length(prompt) == 0L) {
-            cat("\nBye.\n")
+            # EOF. For an attended session that is Ctrl+D and "Bye." is
+            # right; a driver that ends the loop by returning EOF (see
+            # run_auto_loop) sets its own message, since the run did not
+            # end because anyone said goodbye.
+            cat(ctx$eof_message %||% "\nBye.\n")
             break
         }
         if (nchar(trimws(prompt)) == 0) {
@@ -406,6 +410,24 @@ run_repl_loop <- function(ctx) {
                     ctx$config$approval_mode <- res$mode
                 }
                 cat(res$text, "\n")
+                next
+            }
+            if (cmd == "/auto") {
+                # Re-entrant on purpose: run_auto_loop() drives this same
+                # loop with an injected read_input, so we nest one level
+                # and unwind back to the user's prompt when the run ends.
+                # Its on.exit restores read_input, the gate, and the EOF
+                # message, so the outer loop resumes unchanged.
+                spec <- parse_auto_flags(paste(parts[-1], collapse = " "))
+                if (!nzchar(spec$goal)) {
+                    cat(paste0(
+                               "Usage: /auto [--loops N] [--exec|--no-exec] <goal>\n",
+                               "  Runs bounded unattended iterations toward <goal>,\n",
+                               "  supervised by a read-only monitor subagent.\n"))
+                    next
+                }
+                run_auto_loop(ctx, spec$goal, max_loops = spec$loops,
+                              allow_exec = spec$allow_exec)
                 next
             }
             if (cmd == "/dryrun") {
@@ -852,6 +874,26 @@ run_repl_loop <- function(ctx) {
             marker <- user_deny_marker(c$tool %||% "?")
             apply_exit_marker(ctx$session, prompt, pre_turn_len, marker,
                               placeholder = "[Denied by user before execution]")
+            transcript_append(ctx$disk_session$session, "assistant", marker)
+            NULL
+        },
+                           corteza_auto_escalate = function(c) {
+            # Auto mode only. The authority gate (R/monitor.R) raised
+            # this because a human is needed. Must be listed BEFORE the
+            # interrupt handler: the condition is classed "interrupt" so
+            # the tryCatch(error=) wrappers around tool dispatch cannot
+            # swallow it, which also means the handler below would
+            # otherwise catch it first and report it as a Ctrl+C.
+            #
+            # Recorded on ctx rather than returned, because the auto
+            # driver reads it between turns (see run_auto_loop) and an
+            # attended session has no driver to read it at all.
+            ctx$auto_halt <- c$reason %||% "escalated"
+            cat(sprintf("\n%sHalted for a human: %s%s\n",
+                        ctx$palette$yellow, ctx$auto_halt, ctx$palette$reset))
+            marker <- auto_escalate_marker(ctx$auto_halt)
+            apply_exit_marker(ctx$session, prompt, pre_turn_len, marker,
+                              placeholder = "[Halted before execution]")
             transcript_append(ctx$disk_session$session, "assistant", marker)
             NULL
         },

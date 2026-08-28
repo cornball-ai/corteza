@@ -401,7 +401,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             action <- gate$action %||% "escalate"
             if (identical(action, "escalate")) {
                 stop(auto_escalate_condition(gate$reason %||% "unspecified",
-                                             call$tool %||% "?"))
+                        call$tool %||% "?"))
             }
             if (!identical(action, "proceed")) {
                 return(outcome_text(

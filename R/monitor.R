@@ -331,15 +331,15 @@ auto_envelope_config <- function(cwd = getwd(), allow_exec = NULL) {
     global <- load_config_file(corteza_config_path("config.json"))$auto %||%
     list()
     project <- load_config_file(
-        file.path(cwd, ".corteza", "config.json"))$auto %||% list()
+                                file.path(cwd, ".corteza", "config.json"))$auto %||% list()
 
     granted <- allow_exec %||% global$allow_exec %||% TRUE
     vetoed <- identical(project$allow_exec, FALSE)
     config$auto <- config$auto %||% list()
     config$auto$allow_exec <- isTRUE(granted) && !vetoed
     config$auto$never_broker <- unique(c(
-                                         as.character(global$never_broker %||% character()),
-                                         as.character(project$never_broker %||% character())
+            as.character(global$never_broker %||% character()),
+            as.character(project$never_broker %||% character())
         ))
     config
 }
@@ -400,7 +400,8 @@ get_auto_config <- function(config = list()) {
 #' @param cwd Session working directory; the containment root.
 #' @return List with \code{ok} (logical) and \code{reason} (character).
 #' @noRd
-monitor_in_envelope <- function(call, decision, config = list(), cwd = getwd()) {
+monitor_in_envelope <- function(call, decision, config = list(),
+                                cwd = getwd()) {
     outside <- function(why) list(ok = FALSE, reason = why)
     auto <- get_auto_config(config)
     tool <- call$tool %||% ""
@@ -443,8 +444,8 @@ monitor_in_envelope <- function(call, decision, config = list(), cwd = getwd()) 
     #    pointing outside it is exactly how this check gets walked past.
     root_real <- .resolve_real(cwd, cwd)
     denied <- vapply(config$denied_paths %||% character(),
-                     function(d) .resolve_real(d, root_real),
-                     character(1), USE.NAMES = FALSE)
+                     function(d) .resolve_real(d, root_real), character(1),
+                     USE.NAMES = FALSE)
     paths <- call$paths %||% resolve_paths(call)
 
     # 6. A mutating call whose target we could not resolve is refused,
@@ -528,13 +529,9 @@ monitor_system_prompt <- function(goal) {
 #' @noRd
 monitor_spawn <- function(goal, session = NULL, config = list()) {
     auto <- get_auto_config(config)
-    subagent_spawn(
-                   task = monitor_system_prompt(goal),
-                   model = auto$monitor_model,
-                   preset = "monitor",
-                   parent_session = session,
-                   config = config
-    )
+    subagent_spawn(task = monitor_system_prompt(goal),
+                   model = auto$monitor_model, preset = "monitor",
+                   parent_session = session, config = config)
 }
 
 #' Ask the monitor to rule on a single pending tool call.

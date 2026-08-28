@@ -150,8 +150,9 @@ resolve_subagent_id <- function(input) {
 #' @export
 subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
-                               max_turns = 10L, depth = 0L, plan_mode = FALSE,
-                               web_search = NULL, allowed_paths = NULL) {
+                               max_turns = 10L, depth = 0L,
+                               plan_mode = FALSE, web_search = NULL,
+                               allowed_paths = NULL) {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
