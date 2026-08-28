@@ -357,6 +357,12 @@ get_auto_config <- function(config = list()) {
          max_loops = as.integer(cfg$max_loops %||% 10L),
          max_minutes = as.numeric(cfg$max_minutes %||% 30),
          max_cost = as.numeric(cfg$max_cost %||% 5),
+         max_tokens = as.numeric(cfg$max_tokens %||% 2e6),
+         # The bound that actually holds. max_loops caps iterations, but
+         # one iteration runs up to session$max_turns model turns, each
+         # with a batch of tool calls -- so ten loops can mean hundreds
+         # of agent turns and thousands of calls.
+         max_tool_calls = as.integer(cfg$max_tool_calls %||% 300L),
          stall_loops = as.integer(cfg$stall_loops %||% 2L),
          # Exec is on by default because an auto run that cannot execute
          # cannot run its own tests, and a loop that cannot check its
