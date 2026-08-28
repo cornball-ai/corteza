@@ -131,12 +131,9 @@ expect_equal(ctx6$disk_session$sessionId, "new-sess")
 # 6b. /clear kills live subagents and retires their spend. Inject a
 # fake registry entry, clear, and assert the registry is emptied while
 # the spend lands in the process-run total.
+corteza:::subagent_spend_reset()
 reg <- corteza:::.subagent_registry
-rm(list = ls(reg), envir = reg)
 r <- corteza:::.subagent_spend_retired
-r$cost <- 0; r$input_tokens <- 0L; r$output_tokens <- 0L
-r$total_tokens <- 0L; r$query_count <- 0L; r$n_agents <- 0L
-r$cost_missing <- FALSE
 reg[["clear-test-agent"]] <- list(
     id = "clear-test-agent", seq = 1L, session_key = "agent:main:subagent:cta",
     session = NULL, cumulative_input_tokens = 300L,

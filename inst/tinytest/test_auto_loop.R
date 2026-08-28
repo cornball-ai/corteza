@@ -331,6 +331,59 @@ expect_true(any(grepl("tool-call cap", res)))
 # Five files created, one per executed call.
 expect_equal(length(list.files(wt, pattern = "^r[0-9]+\\.txt$")), 5L)
 
+# ---- the cap holds through the REAL tool handler ----
+#
+# The previous version of this called session$auto_gate() directly,
+# which bypassed the counter that caused the bug: .make_tool_handler()
+# increments session$turn_number BEFORE consulting the gate, so a cap
+# read from that counter fires one call early. Driving the handler is
+# the only way this assertion means anything.
+
+reset_wt()
+executed <- character()
+handler_exec <- function(name, args) {
+    executed <<- c(executed, args$path %||% name)
+    list(content = list(list(type = "text", text = "ok")))
+}
+
+handler_turn <- function(prompt, session) {
+    h <- corteza:::.make_tool_handler(session, handler_exec)
+    for (i in 1:20) {
+        out <- h("write_file", list(path = sprintf("h%d.txt", i),
+                                    content = "x"))
+        if (grepl("monitor refused|policy denied", out)) {
+            break
+        }
+    }
+    list(reply = "done calling", session = session,
+         usage = list(cost = 0.001, total_tokens = 10L))
+}
+
+ctx <- auto_ctx(handler_turn)
+dir.create(file.path(wt, ".corteza"), recursive = TRUE, showWarnings = FALSE)
+writeLines('{"auto": {"max_tool_calls": 5}}',
+           file.path(wt, ".corteza", "config.json"))
+
+res <- with_stubs(
+    list(spawn = function(...) "mon-stub",
+         progress = function(...) list(verdict = "continue", reason = "ok")),
+    capture.output({
+        ns <- asNamespace("corteza")
+        old <- get("monitor_ask_approval", envir = ns)
+        unlockBinding("monitor_ask_approval", ns)
+        assign("monitor_ask_approval",
+               function(...) list(verdict = "approve", reason = "fine"),
+               envir = ns)
+        on.exit(assign("monitor_ask_approval", old, envir = ns), add = TRUE)
+        corteza:::run_auto_loop(ctx, "write files", max_loops = 1L)
+    }))
+
+# Exactly five calls executed through the real dispatch path; the sixth
+# was refused. An off-by-one here shows up as 4.
+expect_equal(length(executed), 5L)
+expect_equal(executed, sprintf("h%d.txt", 1:5))
+expect_true(any(grepl("tool-call cap", res)))
+
 # ---- the progress query's own cost is checked before it buys a turn ----
 #
 # Asking the monitor whether to continue costs tokens. Without a recheck

@@ -38,6 +38,33 @@
     any(!is.na(v) & v > 0)
 }
 
+#' Token count for a usage list, normalized across providers.
+#'
+#' Must agree with [.spend_usage_has_tokens()] about what counts as
+#' usage, or the two disagree silently: that predicate accepts a nonzero
+#' `input_tokens` or `output_tokens`, so reading only `total_tokens`
+#' means a provider that omits the total sets the "price unknown" flag
+#' while the unpriced-token counter stays at zero -- and anything
+#' differencing that counter concludes the spend was priced.
+#'
+#' Reported total when present and positive, otherwise input + output.
+#' @noRd
+.spend_normalized_tokens <- function(usage) {
+    num <- function(x) {
+        v <- suppressWarnings(as.numeric(x %||% 0))
+        if (length(v) != 1L || is.na(v)) {
+            0
+        } else {
+            v
+        }
+    }
+    tot <- num(usage$total_tokens)
+    if (tot > 0) {
+        return(tot)
+    }
+    num(usage$input_tokens) + num(usage$output_tokens)
+}
+
 #' An empty per-conversation main-agent segment tally.
 #' @param id Optional session id stamped on the segment for display.
 #' @noRd
@@ -90,7 +117,7 @@ session_accumulate_spend <- function(session, usage) {
         if (.spend_usage_has_tokens(usage)) {
             seg$cost_missing <- TRUE
             seg$missing_tokens <- (seg$missing_tokens %||% 0) +
-            as.numeric(usage$total_tokens %||% 0)
+            .spend_normalized_tokens(usage)
         }
     } else {
         seg$cost <- seg$cost + as.numeric(usage$cost)

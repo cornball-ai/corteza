@@ -464,9 +464,19 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     # its own.
     refresh_spend <- function() {
         state$spend <<- auto_spend_since(ctx$session, state$spend_baseline)
-        state$tool_calls <<- max(
-                                 (ctx$session$turn_number %||% 0L) - state$tool_baseline,
-                                 state$gate_calls)
+        # gate_calls alone, deliberately not session$turn_number.
+        #
+        # turn_number is incremented in .make_tool_handler() *before* the
+        # gate is consulted, so it counts the call being decided as
+        # already made. Taking the max of the two put the cap one call
+        # early in the real handler -- a cap of 5 permitted 4 -- while a
+        # test calling auto_gate() directly saw only gate_calls and
+        # looked correct. The two also measure different things:
+        # turn_number counts every dispatch, including task intercepts,
+        # dry runs, and policy denials, none of which execute work.
+        # gate_calls, read before its increment, is exactly the number of
+        # calls this run has approved and executed.
+        state$tool_calls <<- state$gate_calls
     }
     budget_check <- function(event) {
         refresh_spend()

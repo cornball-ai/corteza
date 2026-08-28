@@ -294,6 +294,68 @@ expect_true(s3$spend$segments[[1]]$cost_missing)
 corteza:::session_accumulate_spend(s3, list(total_tokens = 0L, cost = NA))
 expect_equal(s3$spend$segments[[1]]$missing_tokens, 250)
 
+# ---- the counter must agree with the flag about what counts as usage ----
+#
+# .spend_usage_has_tokens() accepts a nonzero input OR output count, so a
+# provider that reports those but omits total_tokens sets the "price
+# unknown" flag. If the counter reads only total_tokens it stays at zero,
+# and anything differencing it concludes the spend was priced -- the flag
+# says unknown while the number says known.
+
+expect_equal(corteza:::.spend_normalized_tokens(
+    list(total_tokens = 300L, input_tokens = 100L, output_tokens = 50L)), 300)
+# No total reported: fall back to input + output.
+expect_equal(corteza:::.spend_normalized_tokens(
+    list(input_tokens = 100L, output_tokens = 50L)), 150)
+expect_equal(corteza:::.spend_normalized_tokens(
+    list(total_tokens = 0L, input_tokens = 100L, output_tokens = 50L)), 150)
+expect_equal(corteza:::.spend_normalized_tokens(
+    list(total_tokens = NA, input_tokens = 7L)), 7)
+expect_equal(corteza:::.spend_normalized_tokens(list()), 0)
+
+# End to end on the main-agent accumulator: total omitted entirely.
+s4 <- new.env(parent = emptyenv())
+corteza:::session_accumulate_spend(
+    s4, list(input_tokens = 200L, output_tokens = 100L, cost = NA))
+expect_true(s4$spend$segments[[1]]$cost_missing)
+# The counter moved with the flag rather than staying at zero.
+expect_equal(s4$spend$segments[[1]]$missing_tokens, 300)
+b4 <- corteza:::auto_spend_baseline(new.env(parent = emptyenv()))
+expect_false(corteza:::auto_spend_since(s4, b4)$cost_known)
+
+# And on the subagent accumulator, which feeds the same difference.
+corteza:::subagent_spend_reset()
+entry <- corteza:::subagent_accumulate_usage(
+    list(), list(input_tokens = 400L, output_tokens = 100L, cost = NA))
+expect_true(entry$cost_missing)
+expect_equal(entry$cumulative_missing_tokens, 500)
+
+# ---- missing_tokens survives retirement ----
+#
+# Auto runs kill their monitor on the way out, so this fires on every
+# run. If the counter were dropped at retirement the process-wide total
+# would go DOWN, and a later window differencing it would read the drop
+# as "this window's spend was priced" -- the same silent inversion the
+# counter exists to prevent.
+
+corteza:::subagent_spend_reset()
+reg <- corteza:::.subagent_registry
+reg[["retire-test"]] <- list(
+    id = "retire-test", seq = 1L,
+    cumulative_input_tokens = 400L, cumulative_output_tokens = 100L,
+    cumulative_total_tokens = 500L, cumulative_cost = NA,
+    cumulative_missing_tokens = 500, cost_missing = TRUE, query_count = 1L)
+
+before <- corteza:::subagent_spend_total()$missing_tokens
+corteza:::subagent_retire_spend(reg[["retire-test"]])
+rm(list = "retire-test", envir = reg)
+after <- corteza:::subagent_spend_total()$missing_tokens
+
+expect_equal(before, 500)
+expect_equal(after, before)
+corteza:::subagent_spend_reset()
+expect_equal(corteza:::subagent_spend_total()$missing_tokens, 0)
+
 # ---- parse_auto_flags ----
 
 f <- corteza:::parse_auto_flags("fix the failing tests")

@@ -38,6 +38,33 @@
 # the way out, so this fires on every single run.
 .subagent_spend_retired$missing_tokens <- 0
 
+#' Clear the subagent registry and the retired-spend accumulator.
+#'
+#' Test-support only; nothing in the runtime resets spend, which is
+#' reported per process run. It lives here rather than in each test file
+#' because three of them had hand-rolled their own copy, and when
+#' `missing_tokens` was added none of the three learned about it -- so
+#' the field leaked across tests while every local reset still looked
+#' complete. One definition next to the fields it clears cannot drift
+#' that way.
+#'
+#' @return Invisible TRUE.
+#' @noRd
+subagent_spend_reset <- function() {
+    reg <- .subagent_registry
+    rm(list = ls(reg), envir = reg)
+    r <- .subagent_spend_retired
+    r$cost <- 0
+    r$input_tokens <- 0L
+    r$output_tokens <- 0L
+    r$total_tokens <- 0L
+    r$query_count <- 0L
+    r$n_agents <- 0L
+    r$cost_missing <- FALSE
+    r$missing_tokens <- 0
+    invisible(TRUE)
+}
+
 #' Per-process monotonic counter for short subagent ids.
 #'
 #' Subagents are short-lived and never outlive the parent process, so a
@@ -971,7 +998,7 @@ subagent_accumulate_usage <- function(info, usage) {
         # process-wide once aggregated, so it cannot answer "was the
         # spend in *this* window priced" -- a counter can.
         info$cumulative_missing_tokens <- (info$cumulative_missing_tokens %||%
-            0) + as.numeric(usage$total_tokens %||% 0)
+            0) + .spend_normalized_tokens(usage)
     }
     info$query_count <- (info$query_count %||% 0L) + 1L
     info
