@@ -1,3 +1,13 @@
+# corteza 0.7.1.34
+
+- **`/permissions` switches approval mode for the session**
+  (`/permissions allow|ask|deny`), instead of only printing settings.
+  Changing how much corteza asks before running a tool previously meant
+  editing `config.json` and restarting. Session-scoped like `/dryrun`;
+  the reply names the config file for anyone who wants it permanent,
+  and says plainly that `allow` does not waive the credential-path
+  guard, which short-circuits ahead of the config overlay.
+
 # corteza 0.7.1.33
 
 - **Follows the grpc package's rename to rgrpc** (their #27, same

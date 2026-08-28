@@ -390,14 +390,22 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/permissions") {
-                cat(format_permissions(ctx$config), "\n")
-                approvals_path <- file.path(ctx$cwd, ".corteza", "approvals.json")
-                cat(sprintf("Project approvals: %s\n",
-                        if (file.exists(approvals_path)) {
-                            approvals_path
-                        } else {
-                            "none"
-                        }))
+                arg <- if (length(parts) > 1L) {
+                    parts[2]
+                } else {
+                    NULL
+                }
+                res <- permissions_command(ctx$config, arg, cwd = ctx$cwd)
+                if (isTRUE(res$changed)) {
+                    # Both, same as /dryrun below: policy() reads
+                    # session$config at call time (see .make_tool_handler),
+                    # while ctx$config is what the display commands render.
+                    # Updating one and not the other is how a toggle ends up
+                    # lying about itself.
+                    ctx$session$config$approval_mode <- res$mode
+                    ctx$config$approval_mode <- res$mode
+                }
+                cat(res$text, "\n")
                 next
             }
             if (cmd == "/dryrun") {
