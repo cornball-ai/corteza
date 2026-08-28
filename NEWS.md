@@ -13,7 +13,14 @@
   target cannot be resolved all stop for a human rather than going to a
   model for an opinion. Project config can tighten the envelope but
   never widen it, since a `.corteza/config.json` travels with a cloned
-  repo.
+  repo. Shell and R execution is off unless enabled per run with
+  `--exec` or in your own global config, because those tools' effects
+  cannot be resolved from their arguments.
+- Budgets are enforced at the gate, immediately before each brokered
+  call and again after each monitor query, not merely between turns: one
+  turn makes many calls, and asking the monitor costs tokens of its own.
+  Errors and interrupts end a run rather than continuing against the
+  previous turn's reply.
 - **Subagent presets can now withhold provider-native web search and
   confine file tools to the project.** `subagent_turn_init()` previously
   built its session without a `web_search` argument, so every subagent
