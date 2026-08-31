@@ -720,14 +720,23 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 #'   would charge a refused call, or one halted by the recheck, against a
 #'   budget it never spent.
 #' @param on_verdict Optional function(call, action, reason) for display.
+#' @param on_decision Optional function(record) receiving one structured
+#'   record per gate consultation: which authority decided (budget,
+#'   envelope, monitor, accounting), the action, the reason, and -- when
+#'   the monitor was consulted -- the request id and raw verdict. This
+#'   is observability, not authority: errors are swallowed like
+#'   \code{on_verdict}'s, because a broken recorder must not block work.
+#'   The caller is expected to notice its own write failures (see
+#'   \code{auto_log_append()}).
 #' @return A function(call, decision) -> list(action, reason).
 #' @noRd
 monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                               budget_check = NULL, on_approved = NULL,
-                              on_verdict = NULL) {
+                              on_verdict = NULL, on_decision = NULL) {
     auto <- get_auto_config(config)
     force(monitor_id)
     counter <- 0L
+    decisions <- 0L
 
     over_budget <- function(event) {
         if (!is.function(budget_check)) {
@@ -746,9 +755,20 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
     }
 
     function(call, decision) {
+        # Attribution travels with the result: every branch that decides
+        # also names itself, so the record cannot drift from the logic
+        # the way a post-hoc classification of reason strings would.
+        authority <- NULL
+        request_id <- NULL
+        raw_verdict <- NULL
+        decisions <<- decisions + 1L
+
         # Before anything else, including the envelope: a run that has
         # spent its budget stops here rather than one turn later.
         result <- over_budget("call")
+        if (!is.null(result)) {
+            authority <- "budget"
+        }
 
         if (is.null(result)) {
             env <- monitor_in_envelope(call, decision, config, cwd)
@@ -757,21 +777,30 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                 # all. No model judgment decides what a model is allowed
                 # to judge.
                 result <- list(action = "escalate", reason = env$reason)
+                authority <- "envelope"
             } else {
                 counter <<- counter + 1L
                 req <- sprintf("a%d", counter)
                 v <- monitor_ask_approval(monitor_id, call, decision,
                     request_id = req,
                     timeout = auto$monitor_timeout)
+                request_id <- req
+                raw_verdict <- v$verdict
                 # The query itself cost tokens. Re-read the budget before
                 # acting on the answer, or an approval bought with the
                 # last of the budget still authorizes the call.
-                result <- over_budget("monitor") %||%
-                list(action = switch(v$verdict,
-                                     approve = "proceed",
-                                     refuse = "refuse",
-                                     "escalate"),
-                     reason = v$reason)
+                post <- over_budget("monitor")
+                if (!is.null(post)) {
+                    result <- post
+                    authority <- "budget"
+                } else {
+                    result <- list(action = switch(v$verdict,
+                                                   approve = "proceed",
+                                                   refuse = "refuse",
+                                                   "escalate"),
+                                   reason = v$reason)
+                    authority <- "monitor"
+                }
             }
         }
 
@@ -798,7 +827,19 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                                action = "escalate",
                                reason = paste("executed-call accounting failed, refusing to",
                         "run uncounted:", counted))
+                authority <- "accounting"
             }
+        }
+        if (is.function(on_decision)) {
+            tryCatch(on_decision(list(
+                                      seq = decisions,
+                                      tool = call$tool %||% NA_character_,
+                                      action = result$action,
+                                      authority = authority,
+                                      reason = result$reason,
+                                      request_id = request_id,
+                                      verdict = raw_verdict)),
+                     error = function(e) NULL)
         }
         if (is.function(on_verdict)) {
             tryCatch(on_verdict(call, result$action, result$reason),

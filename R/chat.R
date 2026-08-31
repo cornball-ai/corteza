@@ -442,7 +442,8 @@ chat_trace_observer <- function(session) {
                  trace_add(session$sessionId, event$call$tool, event$call$args,
                            event$result, success = event$success,
                            elapsed_ms = round(event$elapsed_ms),
-                           turn = event$turn_number),
+                           turn = event$turn_number,
+                           auto_run_id = session$auto_run_id),
                  error = function(e) NULL
         )
     }
