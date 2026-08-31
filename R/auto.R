@@ -463,10 +463,10 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                        stall_loops = auto$stall_loops),
            allow_exec = isTRUE(auto$allow_exec),
            allow_exec_source = if (!is.null(allow_exec)) {
-               "call_site"
-           } else {
-               "config"
-           },
+            "call_site"
+        } else {
+            "config"
+        },
            cwd = cwd,
            session_id = ctx$disk_session$sessionId %||% NA_character_,
            provider = ctx$provider %||% NA_character_,
@@ -699,7 +699,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                claimed = claimed,
                changed = isTRUE(run_delta$changed),
                files_changed = length(run_delta$added) +
-                   length(run_delta$removed) + length(run_delta$modified))
+               length(run_delta$removed) + length(run_delta$modified))
 
         if (!identical(verdict$verdict, "continue")) {
             stop_it("monitor", sprintf("monitor said %s: %s",
@@ -749,10 +749,10 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                         cost_known = isTRUE(state$spend$cost_known %||% TRUE)),
            changed = isTRUE(final_delta$changed),
            files_changed = length(final_delta$added) +
-               length(final_delta$removed) + length(final_delta$modified),
+           length(final_delta$removed) + length(final_delta$modified),
            duration_min = round(as.numeric(difftime(Sys.time(),
-                                                    state$started,
-                                                    units = "mins")), 2))
+                    state$started,
+                    units = "mins")), 2))
     invisible(state)
 }
 

@@ -795,9 +795,9 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                     authority <- "budget"
                 } else {
                     result <- list(action = switch(v$verdict,
-                                                   approve = "proceed",
-                                                   refuse = "refuse",
-                                                   "escalate"),
+                            approve = "proceed",
+                            refuse = "refuse",
+                            "escalate"),
                                    reason = v$reason)
                     authority <- "monitor"
                 }

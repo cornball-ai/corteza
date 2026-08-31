@@ -64,8 +64,7 @@ auto_log_append <- function(path, type, ...) {
             dir.create(dir, recursive = TRUE, mode = "0700")
         }
         rec <- c(list(type = type,
-                      ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z",
-                                  tz = "UTC")),
+                      ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")),
                  list(...))
         rec <- rec[!vapply(rec, is.null, logical(1))]
         json <- jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null",
@@ -95,14 +94,14 @@ auto_log_read <- function(path) {
     recs <- recs[!vapply(recs, is.null, logical(1))]
     types <- vapply(recs, function(r) r$type %||% "", character(1))
     list(start = if (any(types == "run_start")) {
-        recs[[which(types == "run_start")[[1L]]]]
-    } else {
-        NULL
-    },
+            recs[[which(types == "run_start")[[1L]]]]
+        } else {
+            NULL
+        },
          records = recs,
          end = if (any(types == "run_end")) {
-        recs[[utils::tail(which(types == "run_end"), 1L)]]
-    } else {
-        NULL
-    })
+            recs[[utils::tail(which(types == "run_end"), 1L)]]
+        } else {
+            NULL
+        })
 }

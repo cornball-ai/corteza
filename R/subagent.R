@@ -755,9 +755,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
     # change to the spawn API.
     tryCatch(
              transcript_write_header(id, cwd, agent_id = paste0("subagent-", id),
-                                     extra = list(
-                                         auto_run_id =
-                                             parent_session$auto_run_id %||% NULL)),
+                                     extra = list(auto_run_id = parent_session$auto_run_id %||% NULL)),
              error = function(e) {
         log_event("subagent_transcript_init_failed", subagent_id = id,
                   error = conditionMessage(e), level = "warn")
