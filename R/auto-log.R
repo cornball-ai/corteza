@@ -45,10 +45,8 @@ auto_log_path <- function(run_id, agent_id = DEFAULT_AGENT_ID) {
 #' @noRd
 auto_new_run_id <- function() {
     .auto_run_counter$n <- .auto_run_counter$n + 1L
-    sprintf("%s-%04x%02x",
-            format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"),
-            Sys.getpid() %% 65536L,
-            .auto_run_counter$n %% 256L)
+    sprintf("%s-%04x%02x", format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"),
+            Sys.getpid() %% 65536L, .auto_run_counter$n %% 256L)
 }
 
 #' Append one record to a run log. Never throws.

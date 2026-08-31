@@ -238,8 +238,7 @@ auto_check_limits <- function(state, auto) {
     halt <- function(why, kind) list(stop = TRUE, reason = why, kind = kind)
 
     if (state$loop > auto$max_loops) {
-        return(halt(sprintf("reached max_loops (%d)", auto$max_loops),
-                    "loops"))
+        return(halt(sprintf("reached max_loops (%d)", auto$max_loops), "loops"))
     }
     elapsed <- as.numeric(difftime(Sys.time(), state$started, units = "mins"))
     if (is.finite(auto$max_minutes) && elapsed >= auto$max_minutes) {
@@ -475,13 +474,13 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         if (!ended) {
             record("run_end",
                    stop_category = if (is.null(unexpected)) {
-                "unexpected_exit"
-            } else {
-                "unexpected_error"
-            },
+                    "unexpected_exit"
+                } else {
+                    "unexpected_error"
+                },
                    stop_reason = unexpected %||%
-                paste("non-local exit before run_end (interrupt, or a",
-                      "condition outside the loop)"))
+                   paste("non-local exit before run_end (interrupt, or a",
+                         "condition outside the loop)"))
         }
     }, add = TRUE)
 
@@ -489,8 +488,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     # dies here must still close its record.
     config <- tryCatch(auto_envelope_config(cwd, allow_exec = allow_exec),
                        error = function(e) {
-        unexpected <<- paste("config resolution failed:",
-                             conditionMessage(e))
+        unexpected <<- paste("config resolution failed:", conditionMessage(e))
         stop(e)
     })
     auto <- get_auto_config(config)
@@ -856,8 +854,7 @@ auto_delta_evidence <- function(baseline, final, delta, cap = 1000L) {
         list(path = p, hash = unname(baseline[[p]]))
     }),
          modified = lapply(take(delta$modified), function(p) {
-        list(path = p, base = unname(baseline[[p]]),
-             final = unname(final[[p]]))
+        list(path = p, base = unname(baseline[[p]]), final = unname(final[[p]]))
     }),
          truncated = truncated)
 }
