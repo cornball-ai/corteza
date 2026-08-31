@@ -63,6 +63,20 @@ user_deny_marker <- function(tool = "?") {
             .user_abort_directive)
 }
 
+#' History marker written when an unattended run escalates to a human.
+#'
+#' Carries the same "stop and ask" directive as its siblings, for the
+#' same reason: whatever the worker does next, it must not be another
+#' attempt at the thing that just got escalated.
+#' @param reason Character. Why a human is needed.
+#' @return Character scalar.
+#' @keywords internal
+auto_escalate_marker <- function(reason = "") {
+    sprintf("[Auto run halted for a human: %s. %s]",
+        if (length(reason) && nzchar(reason)) as.character(reason)[1] else "?",
+            .user_abort_directive)
+}
+
 #' History marker written when a turn is interrupted (Ctrl+C / Esc).
 #'
 #' Carries the same "stop and ask the user" directive as

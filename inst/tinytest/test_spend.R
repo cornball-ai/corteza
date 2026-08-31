@@ -5,14 +5,7 @@
 
 # Reset the package-level subagent spend state so these tests are
 # independent of any other test that spawned/killed an agent.
-reset_sub_spend <- function() {
-    reg <- corteza:::.subagent_registry
-    rm(list = ls(reg), envir = reg)
-    r <- corteza:::.subagent_spend_retired
-    r$cost <- 0; r$input_tokens <- 0L; r$output_tokens <- 0L
-    r$total_tokens <- 0L; r$query_count <- 0L; r$n_agents <- 0L
-    r$cost_missing <- FALSE
-}
+reset_sub_spend <- corteza:::subagent_spend_reset
 reset_sub_spend()
 
 # --- main-agent accumulation -------------------------------------------

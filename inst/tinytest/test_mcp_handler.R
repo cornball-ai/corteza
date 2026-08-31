@@ -92,11 +92,7 @@ o_tok <- getOption("corteza.mcp_subagent_cap_tokens")
 # `corteza:::.subagent_spend_retired$x <- v` would reassign through :::
 # and error.)
 retired <- corteza:::.subagent_spend_retired
-reset_retired <- function() {
-    retired$cost <- 0; retired$input_tokens <- 0L; retired$output_tokens <- 0L
-    retired$total_tokens <- 0L; retired$query_count <- 0L
-    retired$n_agents <- 0L; retired$cost_missing <- FALSE
-}
+reset_retired <- corteza:::subagent_spend_reset
 reset_retired()
 
 # Default (not exposed): tools/list hides every subagent tool, and a

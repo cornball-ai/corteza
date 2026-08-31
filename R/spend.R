@@ -38,12 +38,46 @@
     any(!is.na(v) & v > 0)
 }
 
+#' Token count for a usage list, normalized across providers.
+#'
+#' Must agree with [.spend_usage_has_tokens()] about what counts as
+#' usage, or the two disagree silently: that predicate accepts a nonzero
+#' `input_tokens` or `output_tokens`, so reading only `total_tokens`
+#' means a provider that omits the total sets the "price unknown" flag
+#' while the unpriced-token counter stays at zero -- and anything
+#' differencing that counter concludes the spend was priced.
+#'
+#' Reported total when present and positive, otherwise input + output.
+#' @noRd
+.spend_normalized_tokens <- function(usage) {
+    num <- function(x) {
+        v <- suppressWarnings(as.numeric(x %||% 0))
+        if (length(v) != 1L || is.na(v)) {
+            0
+        } else {
+            v
+        }
+    }
+    tot <- num(usage$total_tokens)
+    if (tot > 0) {
+        return(tot)
+    }
+    num(usage$input_tokens) + num(usage$output_tokens)
+}
+
 #' An empty per-conversation main-agent segment tally.
 #' @param id Optional session id stamped on the segment for display.
 #' @noRd
 .spend_empty_segment <- function(id = NULL) {
     list(id = id, cost = 0, input_tokens = 0L, output_tokens = 0L,
-         total_tokens = 0L, turns = 0L, cost_missing = FALSE)
+         total_tokens = 0L, turns = 0L, cost_missing = FALSE,
+         # Tokens consumed by queries that came back without a price.
+         # cost_missing is sticky, which is right for a report ("this
+         # total is a floor") and useless for anything that needs a
+         # delta: once true it stays true, so a later window can never
+         # tell whether *its* spend was priced. This accumulates, so it
+         # can be differenced. See auto_spend_since() in R/auto.R.
+         missing_tokens = 0)
 }
 
 #' Accumulate one turn's usage into the current spend segment.
@@ -78,10 +112,16 @@ session_accumulate_spend <- function(session, usage) {
     seg <- sp$segments[[i]]
     seg$input_tokens <- .spend_add_int(seg$input_tokens, usage$input_tokens)
     seg$output_tokens <- .spend_add_int(seg$output_tokens, usage$output_tokens)
-    seg$total_tokens <- .spend_add_int(seg$total_tokens, usage$total_tokens)
+    # Normalized, not the raw field: a provider that reports input and
+    # output without a total would otherwise record a priced query as
+    # zero tokens, and any token cap reading this would never trip.
+    seg$total_tokens <- .spend_add_int(seg$total_tokens,
+                                       .spend_normalized_tokens(usage))
     if (is.null(usage$cost) || is.na(usage$cost)) {
         if (.spend_usage_has_tokens(usage)) {
             seg$cost_missing <- TRUE
+            seg$missing_tokens <- (seg$missing_tokens %||% 0) +
+            .spend_normalized_tokens(usage)
         }
     } else {
         seg$cost <- seg$cost + as.numeric(usage$cost)

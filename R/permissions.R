@@ -78,8 +78,40 @@ normalize_path_for_check <- function(path) {
     # to the base, so the comparison silently fails on Windows.
     # mustWork = FALSE so denied_paths entries that don't exist on the
     # current machine (e.g. ~/.ssh on a fresh VM) still compare cleanly.
+    #
+    # normalizePath() can only resolve symlinks in a path that exists,
+    # and it returns a non-existent path unchanged. That asymmetry breaks
+    # containment wherever an ancestor is a symlink: on macOS /var links
+    # to /private/var, so a check on a not-yet-created file compared an
+    # unresolved path against a resolved base and quietly never matched.
+    # A containment check that stops matching is exactly the silent
+    # failure to avoid -- for allowed_paths it spuriously denies, and for
+    # denied_paths it spuriously permits.
+    #
+    # So resolve against the deepest ancestor that does exist, then
+    # re-attach the part that doesn't. Same technique as .resolve_real()
+    # in R/monitor.R, which needs it for the same reason.
     tryCatch({
-        normalizePath(path, winslash = "/", mustWork = FALSE)
+        cur <- path
+        tail <- character()
+        # Bounded: dirname() reaches "/" (or a drive root) and fixpoints.
+        while (nzchar(cur) && !file.exists(cur)) {
+            tail <- c(basename(cur), tail)
+            parent <- dirname(cur)
+            if (identical(parent, cur)) {
+                break
+            }
+            cur <- parent
+        }
+        if (!nzchar(cur) || !file.exists(cur)) {
+            return(normalizePath(path, winslash = "/", mustWork = FALSE))
+        }
+        base <- normalizePath(cur, winslash = "/", mustWork = FALSE)
+        if (length(tail) > 0L) {
+            paste(c(base, tail), collapse = "/")
+        } else {
+            base
+        }
     }, error = function(e) {
         path
     })

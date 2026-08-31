@@ -1,0 +1,731 @@
+library(tinytest)
+
+# ---- parse_monitor_verdict: well-formed ----
+
+v <- corteza:::parse_monitor_verdict("VERDICT: continue\nREASON: on track")
+expect_equal(v$verdict, "continue")
+expect_equal(v$reason, "on track")
+
+v <- corteza:::parse_monitor_verdict("VERDICT: stop\nREASON: goal met")
+expect_equal(v$verdict, "stop")
+
+v <- corteza:::parse_monitor_verdict("VERDICT: escalate\nREASON: needs a human")
+expect_equal(v$verdict, "escalate")
+
+# Case-insensitive, and tolerant of the markdown a chat model reaches for.
+expect_equal(corteza:::parse_monitor_verdict("verdict: continue")$verdict,
+             "continue")
+expect_equal(corteza:::parse_monitor_verdict("**VERDICT: stop**")$verdict,
+             "stop")
+expect_equal(corteza:::parse_monitor_verdict("> VERDICT: continue")$verdict,
+             "continue")
+expect_equal(corteza:::parse_monitor_verdict("VERDICT:continue")$verdict,
+             "continue")
+
+# A missing REASON is not fatal -- the verdict is the load-bearing half.
+v <- corteza:::parse_monitor_verdict("VERDICT: continue")
+expect_equal(v$verdict, "continue")
+expect_equal(v$reason, "")
+
+# Preamble before the contract still parses.
+v <- corteza:::parse_monitor_verdict(
+    "I checked the diff and the tests.\n\nVERDICT: stop\nREASON: done")
+expect_equal(v$verdict, "stop")
+
+# ---- parse_monitor_verdict: everything unparseable is "escalate" ----
+#
+# The whole point. A supervisor whose garbled output reads as approval is
+# worse than no supervisor, so each of these must come back escalate --
+# never continue.
+
+expect_equal(corteza:::parse_monitor_verdict("")$verdict, "escalate")
+expect_equal(corteza:::parse_monitor_verdict("   \n  ")$verdict, "escalate")
+expect_equal(corteza:::parse_monitor_verdict(NULL)$verdict, "escalate")
+expect_equal(corteza:::parse_monitor_verdict(NA_character_)$verdict, "escalate")
+expect_equal(corteza:::parse_monitor_verdict(character(0))$verdict, "escalate")
+expect_equal(corteza:::parse_monitor_verdict(c("VERDICT: continue", "x"))$verdict,
+             "escalate")
+
+# Prose with no verdict line at all.
+expect_equal(
+    corteza:::parse_monitor_verdict("Looks fine to me, go ahead.")$verdict,
+    "escalate")
+
+# A verdict value outside the contract.
+expect_equal(corteza:::parse_monitor_verdict("VERDICT: maybe")$verdict,
+             "escalate")
+expect_equal(corteza:::parse_monitor_verdict("VERDICT: yes")$verdict,
+             "escalate")
+
+# Self-contradiction is escalation: there is no defensible way to pick
+# one of two verdicts, so we don't pick.
+v <- corteza:::parse_monitor_verdict(
+    "VERDICT: continue\nOn reflection:\nVERDICT: stop")
+expect_equal(v$verdict, "escalate")
+expect_true(grepl("conflicting", v$reason))
+
+# Repeating the same verdict is not a conflict.
+expect_equal(
+    corteza:::parse_monitor_verdict("VERDICT: stop\nVERDICT: stop")$verdict,
+    "stop")
+
+# ---- lexical path normalization ----
+
+expect_equal(corteza:::.normalize_lexical("/a/b/../c"), "/a/c")
+expect_equal(corteza:::.normalize_lexical("/a/./b"), "/a/b")
+expect_equal(corteza:::.normalize_lexical("/a/b/../../c"), "/c")
+expect_equal(corteza:::.normalize_lexical("/a//b"), "/a/b")
+# Walking above the root stays at the root rather than wrapping around.
+expect_equal(corteza:::.normalize_lexical("/../../etc"), "/etc")
+# Relative paths keep a leading .. so containment below fails closed.
+expect_equal(corteza:::.normalize_lexical("../x"), "../x")
+
+expect_true(corteza:::.is_absolute_path("/etc"))
+expect_false(corteza:::.is_absolute_path("R/foo.R"))
+
+expect_equal(corteza:::.resolve_against("R/foo.R", "/home/u/proj"),
+             "/home/u/proj/R/foo.R")
+expect_equal(corteza:::.resolve_against("../secret", "/home/u/proj"),
+             "/home/u/secret")
+expect_equal(corteza:::.resolve_against("/etc/passwd", "/home/u/proj"),
+             "/etc/passwd")
+
+expect_true(corteza:::.path_within("/home/u/proj/R/x.R", "/home/u/proj"))
+expect_true(corteza:::.path_within("/home/u/proj", "/home/u/proj"))
+expect_false(corteza:::.path_within("/home/u/secret", "/home/u/proj"))
+# A sibling directory sharing a name prefix is not inside.
+expect_false(corteza:::.path_within("/home/u/proj-evil/x", "/home/u/proj"))
+
+# ---- get_auto_config ----
+
+d <- corteza:::get_auto_config(list())
+expect_equal(d$max_loops, 10L)
+# Off unless explicitly granted. Shell and run_r bodies can't be
+# path-resolved, so a run that assumed exec would be brokering calls
+# whose effect it cannot bound.
+expect_false(d$allow_exec)
+expect_equal(d$never_broker, character())
+
+d <- corteza:::get_auto_config(list(auto = list(max_loops = 3,
+                                                allow_exec = FALSE,
+                                                never_broker = "write_file")))
+expect_equal(d$max_loops, 3L)
+expect_false(d$allow_exec)
+expect_equal(d$never_broker, "write_file")
+
+# ---- monitor_in_envelope ----
+
+root <- "/home/u/proj"
+allow <- list(approval = "ask", reason = "default: code/write/console")
+
+env_of <- function(tool, args, decision = allow, config = list()) {
+    corteza:::monitor_in_envelope(
+        list(tool = tool, args = args, paths = corteza:::resolve_paths(
+            list(args = args))),
+        decision, config, root)
+}
+
+# In-project write is exactly what the monitor is for.
+expect_true(env_of("write_file", list(path = "R/new.R"))$ok)
+expect_true(env_of("replace_in_file", list(path = "DESCRIPTION"))$ok)
+expect_true(env_of("read_file", list(path = "R/turn.R"))$ok)
+
+# A hard safety verdict is never brokered, whatever the tool.
+e <- env_of("read_file", list(path = "~/.ssh/id_rsa"),
+            decision = list(approval = "ask",
+                            reason = "safety: ~/.ssh/id_rsa is a credential path"))
+expect_false(e$ok)
+expect_true(grepl("hard safety", e$reason))
+
+# Path escapes the project.
+e <- env_of("write_file", list(path = "../../etc/hosts"))
+expect_false(e$ok)
+expect_true(grepl("outside the project", e$reason))
+
+e <- env_of("write_file", list(path = "/etc/hosts"))
+expect_false(e$ok)
+
+# Configured denied path, even when it sits inside the project root.
+e <- env_of("read_file", list(path = "vault/keys.txt"),
+            config = list(denied_paths = file.path(root, "vault")))
+expect_false(e$ok)
+expect_true(grepl("denied path", e$reason))
+
+# never_broker pins a tool to always stop for a human.
+e <- env_of("write_file", list(path = "R/new.R"),
+            config = list(auto = list(never_broker = "write_file")))
+expect_false(e$ok)
+expect_true(grepl("never_broker", e$reason))
+
+# Exec: refused by default, brokered only when explicitly granted.
+for (tool in c("bash", "cmd", "run_r", "run_r_script")) {
+    e <- env_of(tool, list(command = "R CMD check .", code = "1 + 1"))
+    expect_false(e$ok)
+    expect_true(grepl("allow_exec", e$reason))
+}
+
+expect_true(env_of("bash", list(command = "R CMD check ."),
+                   config = list(auto = list(allow_exec = TRUE)))$ok)
+expect_true(env_of("run_r", list(code = "1 + 1"),
+                   config = list(auto = list(allow_exec = TRUE)))$ok)
+
+# dangerous_tools is deliberately NOT an envelope input: that list is
+# bash/run_r/write_file/replace_in_file, i.e. the calls the monitor
+# exists to broker. Treating it as a stop-list would make auto mode
+# inert, so a default config must still let an in-project write through.
+expect_true(env_of("write_file", list(path = "R/new.R"),
+                   config = list(dangerous_tools =
+                                     corteza:::default_dangerous_tools()))$ok)
+
+# ---- envelope: unknown tools and unresolvable mutations fail closed ----
+
+# A package tool (base::file.remove and friends are registered by the
+# default skill_packages config) is not one of classify_op()'s known
+# read/write/exec tools, so its effect can't be bounded.
+e <- env_of("base::file.remove", list(x = "R/turn.R"))
+expect_false(e$ok)
+expect_true(grepl("not a recognized", e$reason))
+
+e <- env_of("some_new_tool", list(thing = "x"))
+expect_false(e$ok)
+
+# A write tool whose target resolve_paths() cannot see must not pass by
+# having nothing to check.
+e <- env_of("write_file", list(destination_file = "R/x.R"))
+expect_false(e$ok)
+expect_true(grepl("no target path", e$reason))
+
+# ---- envelope: symlink containment ----
+
+if (.Platform$OS.type == "unix") {
+    tmp_root <- file.path(tempdir(), "corteza-monitor-symlink")
+    dir.create(file.path(tmp_root, "proj"), recursive = TRUE,
+               showWarnings = FALSE)
+    dir.create(file.path(tmp_root, "outside"), recursive = TRUE,
+               showWarnings = FALSE)
+    link <- file.path(tmp_root, "proj", "escape")
+    if (!file.exists(link)) {
+        file.symlink(file.path(tmp_root, "outside"), link)
+    }
+    proj <- file.path(tmp_root, "proj")
+
+    # Lexically "escape/x.R" is inside the project. It is not.
+    e <- corteza:::monitor_in_envelope(
+        list(tool = "write_file", args = list(path = "escape/x.R"),
+             paths = "escape/x.R"), allow, list(), proj)
+    expect_false(e$ok)
+    expect_true(grepl("outside the project", e$reason))
+
+    # A genuinely in-project path still passes, including one that does
+    # not exist yet (the common case for a new file).
+    e <- corteza:::monitor_in_envelope(
+        list(tool = "write_file", args = list(path = "R/brand-new.R"),
+             paths = "R/brand-new.R"), allow, list(), proj)
+    expect_true(e$ok)
+
+    unlink(tmp_root, recursive = TRUE)
+}
+
+# ---- envelope: project config can tighten but never widen ----
+
+cfg_root <- file.path(tempdir(), "corteza-monitor-cfg")
+dir.create(file.path(cfg_root, ".corteza"), recursive = TRUE,
+           showWarnings = FALSE)
+
+# A project that tries to grant itself exec brokering does not get it.
+writeLines('{"auto": {"allow_exec": true, "never_broker": []}}',
+           file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root, allow_exec = FALSE)
+expect_false(corteza:::get_auto_config(resolved)$allow_exec)
+
+# Nor by staying silent: with no call-site grant the default is off, so
+# a project config alone can never reach an exec-enabled run.
+writeLines('{"auto": {"allow_exec": true}}',
+           file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root)
+expect_false(corteza:::get_auto_config(resolved)$allow_exec)
+
+# The call site can grant it.
+writeLines('{}', file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root, allow_exec = TRUE)
+expect_true(corteza:::get_auto_config(resolved)$allow_exec)
+
+# A project that vetoes exec is honored even when the call site granted it.
+writeLines('{"auto": {"allow_exec": false}}',
+           file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root, allow_exec = TRUE)
+expect_false(corteza:::get_auto_config(resolved)$allow_exec)
+
+# never_broker unions across layers; a project can add but not clear.
+writeLines('{"auto": {"never_broker": ["write_file"]}}',
+           file.path(cfg_root, ".corteza", "config.json"))
+resolved <- corteza:::auto_envelope_config(cfg_root, allow_exec = TRUE)
+expect_true("write_file" %in% corteza:::get_auto_config(resolved)$never_broker)
+
+unlink(cfg_root, recursive = TRUE)
+
+# ---- verdict vocabularies are disjoint ----
+
+# An approval answered in the progress vocabulary is not an approval.
+v <- corteza:::parse_monitor_verdict(
+    "VERDICT: continue", allowed = corteza:::.MONITOR_VERDICTS_APPROVAL)
+expect_equal(v$verdict, "escalate")
+expect_true(grepl("not a verdict for this question", v$reason))
+
+# And the reverse.
+v <- corteza:::parse_monitor_verdict(
+    "VERDICT: approve", allowed = corteza:::.MONITOR_VERDICTS_PROGRESS)
+expect_equal(v$verdict, "escalate")
+
+v <- corteza:::parse_monitor_verdict(
+    "VERDICT: approve", allowed = corteza:::.MONITOR_VERDICTS_APPROVAL)
+expect_equal(v$verdict, "approve")
+
+# ---- echoed request id ----
+
+expect_equal(
+    corteza:::parse_monitor_verdict("REQUEST: a1\nVERDICT: continue",
+                                    request_id = "a1")$verdict,
+    "continue")
+
+# A reply that echoes nothing may be answering a different question.
+v <- corteza:::parse_monitor_verdict("VERDICT: continue", request_id = "a1")
+expect_equal(v$verdict, "escalate")
+expect_true(grepl("did not echo", v$reason))
+
+# A reply echoing the wrong id is stale or crossed.
+v <- corteza:::parse_monitor_verdict("REQUEST: a7\nVERDICT: continue",
+                                     request_id = "a1")
+expect_equal(v$verdict, "escalate")
+expect_true(grepl("wrong request id", v$reason))
+
+# ---- prompt rendering helpers ----
+
+expect_equal(corteza:::.monitor_truncate("", 10L), "(nothing)")
+expect_equal(corteza:::.monitor_truncate("abc", 10L), "abc")
+expect_true(grepl("truncated",
+                  corteza:::.monitor_truncate(strrep("x", 50L), 10L)))
+
+expect_equal(corteza:::.monitor_render_args(list()), "  (none)")
+expect_true(grepl("path: R/x.R",
+                  corteza:::.monitor_render_args(list(path = "R/x.R"))))
+
+# ---- .monitor_query against subagent_query's real return type ----
+#
+# The bug a live run found and every stubbed test missed: subagent_query()
+# returns the reply as a CHARACTER SCALAR, not a list with $reply.
+# Reading $reply off it raised "$ operator is invalid for atomic vectors"
+# on every approval query, so the monitor could never return a verdict
+# and every auto run escalated on its first tool call. The tests stubbed
+# monitor_ask_approval, one layer above the mistake.
+#
+# Pin the contract first, so a change on the subagent side breaks here
+# rather than at runtime.
+expect_true(is.character(corteza:::.format_subagent_reply(
+    list(reply = "VERDICT: approve"))))
+expect_equal(length(corteza:::.format_subagent_reply(
+    list(reply = "VERDICT: approve"))), 1L)
+
+with_query_stub <- function(fn, expr) {
+    ns <- asNamespace("corteza")
+    old <- get("subagent_query", envir = ns)
+    unlockBinding("subagent_query", ns)
+    assign("subagent_query", fn, envir = ns)
+    on.exit({
+        assign("subagent_query", old, envir = ns)
+    }, add = TRUE)
+    force(expr)
+}
+
+# A character reply -- what the real function returns -- parses.
+v <- with_query_stub(
+    function(id, prompt, wait = TRUE, timeout = 60L, return_name = NULL) {
+        "REQUEST: a1\nVERDICT: approve\nREASON: fine"
+    },
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "read_file", args = list(path = "x")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "approve")
+expect_equal(v$reason, "fine")
+
+# The progress question too, in its own vocabulary.
+v <- with_query_stub(
+    function(id, prompt, wait = TRUE, timeout = 60L, return_name = NULL) {
+        "REQUEST: p1\nVERDICT: continue\nREASON: on track"
+    },
+    corteza:::monitor_ask_progress("mon", "goal", "reply", "diff", loop = 1L))
+expect_equal(v$verdict, "continue")
+
+# A multi-element character vector is joined rather than silently taking
+# the first element.
+v <- with_query_stub(
+    function(...) c("REQUEST: a1", "VERDICT: refuse", "REASON: no"),
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "bash", args = list(command = "rm -rf /")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "refuse")
+
+# A list-shaped reply still works, so a change on either side degrades to
+# an escalation rather than an error.
+v <- with_query_stub(
+    function(...) list(reply = "REQUEST: a1\nVERDICT: approve"),
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "read_file", args = list(path = "x")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "approve")
+
+# An unexpected shape escalates instead of throwing.
+v <- with_query_stub(
+    function(...) 42L,
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "read_file", args = list(path = "x")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "escalate")
+
+# ---- monitor_auto_gate wiring ----
+#
+# No network: monitor_in_envelope rejects before any query is attempted,
+# so the gate must escalate without a live subagent.
+
+seen <- list()
+gate <- corteza:::monitor_auto_gate(
+    "no-such-monitor", config = list(), cwd = root,
+    on_verdict = function(call, action, reason) {
+        seen[[length(seen) + 1L]] <<- list(action = action, reason = reason)
+    })
+
+g <- gate(list(tool = "write_file", args = list(path = "../../etc/hosts"),
+               paths = "../../etc/hosts"), allow)
+expect_equal(g$action, "escalate")
+expect_true(grepl("outside the project", g$reason))
+
+# An in-envelope call with an unreachable monitor escalates rather than
+# proceeding. Absence of a verdict is never a yes.
+g <- gate(list(tool = "write_file", args = list(path = "R/new.R"),
+               paths = "R/new.R"), allow)
+expect_equal(g$action, "escalate")
+expect_true(grepl("unreachable", g$reason))
+expect_equal(length(seen), 2L)
+
+# ---- the gate sees "allow" decisions, not just "ask" ----
+#
+# This is the whole reason the gate is not an approval_cb. The default
+# tensor resolves the `random` data class to "allow" for writes on every
+# channel, and classify_data() only returns "code" under ~/projects or
+# ~/src -- so an ordinary repo elsewhere gets "allow" and would never
+# reach an approval callback. Assert that reading of policy directly, so
+# this test fails if the tensor is ever retuned.
+d <- corteza:::default_policy(list(tool = "write_file", channel = "console",
+                                   paths = "/srv/work/repo/R/x.R"))
+expect_equal(d$approval, "allow")
+
+# And assert the gate is consulted for exactly that call anyway.
+g <- gate(list(tool = "write_file", args = list(path = "R/new.R"),
+               paths = "R/new.R"),
+          list(approval = "allow", reason = "default: random/write/console"))
+expect_equal(g$action, "escalate")
+
+# ---- the gate enforces budget per call, not per turn ----
+#
+# A cap checked only between worker turns can be overshot by a whole
+# turn's worth of calls, since one turn makes many. The gate takes a
+# budget_check called before each brokered call and again after the
+# approval query, because asking the monitor costs tokens too.
+
+events <- character()
+budget <- function(event) {
+    events <<- c(events, event)
+    list(stop = TRUE, reason = "over the tool-call cap")
+}
+g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(),
+                                 cwd = root, budget_check = budget)
+res <- g(list(tool = "read_file", args = list(path = "R/turn.R"),
+              paths = "R/turn.R"), allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("tool-call cap", res$reason))
+# Refused before the envelope is even consulted, so no monitor query was
+# attempted for a call the run could not afford.
+expect_equal(events, "call")
+
+# ---- only executed calls consume the executed-call budget ----
+#
+# The counter moves in on_approved, which the gate calls only after the
+# envelope, the monitor, and the post-query recheck have all cleared the
+# call. Counting at check time would charge a refusal against a cap
+# documented as counting calls executed.
+
+approved <- 0L
+verdicts <- c("refuse", "approve", "escalate", "approve")
+i <- 0L
+ns <- asNamespace("corteza")
+old_ask <- get("monitor_ask_approval", envir = ns)
+unlockBinding("monitor_ask_approval", ns)
+assign("monitor_ask_approval", function(...) {
+    i <<- i + 1L
+    list(verdict = verdicts[[min(i, length(verdicts))]], reason = "stub")
+}, envir = ns)
+
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() approved <<- approved + 1L)
+
+actions <- vapply(seq_along(verdicts), function(k) {
+    g(list(tool = "write_file", args = list(path = sprintf("n%d.R", k)),
+           paths = sprintf("n%d.R", k)), allow)$action
+}, character(1))
+
+assign("monitor_ask_approval", old_ask, envir = ns)
+
+expect_equal(actions, c("refuse", "proceed", "escalate", "proceed"))
+# Two proceeds, so two counted -- the refusal and the escalation did no
+# work and consumed no executed-call budget.
+expect_equal(approved, 2L)
+
+# A counter that cannot count refuses the call rather than running it
+# uncounted. on_approved is the only thing advancing the executed-call
+# cap, so swallowing its failure would run work off the books and,
+# repeated, disable max_tool_calls entirely.
+assign("monitor_ask_approval",
+       function(...) list(verdict = "approve", reason = "fine"), envir = ns)
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() stop("counter exploded"))
+res <- g(list(tool = "write_file", args = list(path = "n.R"), paths = "n.R"),
+         allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("accounting failed", res$reason))
+expect_true(grepl("counter exploded", res$reason))
+
+# Display failures ARE still swallowed: a broken progress line must not
+# block work. The asymmetry is deliberate -- one is accounting, the
+# other is cosmetics. Stub still in place, so this exercises the
+# approved path rather than an unreachable monitor.
+approved <- 0L
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() approved <<- approved + 1L,
+    on_verdict = function(call, action, reason) stop("display exploded"))
+expect_equal(g(list(tool = "read_file", args = list(path = "R/turn.R"),
+                    paths = "R/turn.R"), allow)$action, "proceed")
+expect_equal(approved, 1L)
+assign("monitor_ask_approval", old_ask, envir = ns)
+
+# An out-of-envelope call never reaches the monitor and never counts.
+approved <- 0L
+g <- corteza:::monitor_auto_gate(
+    "mon", config = list(), cwd = root,
+    budget_check = function(event) list(stop = FALSE, reason = ""),
+    on_approved = function() approved <<- approved + 1L)
+expect_equal(g(list(tool = "write_file", args = list(path = "../../etc/x"),
+                    paths = "../../etc/x"), allow)$action, "escalate")
+expect_equal(approved, 0L)
+
+# A budget_check that throws fails closed rather than letting the call
+# through on the strength of a broken check.
+g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(),
+                                 cwd = root,
+                                 budget_check = function(event) stop("boom"))
+res <- g(list(tool = "read_file", args = list(path = "R/turn.R"),
+              paths = "R/turn.R"), allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("budget check failed", res$reason))
+
+# In-budget calls proceed to the envelope, and the post-monitor check
+# runs too. Here the envelope passes and the monitor is unreachable, so
+# the "monitor" event only fires if the call got that far.
+events <- character()
+g <- corteza:::monitor_auto_gate(
+    "no-such-monitor", config = list(), cwd = root,
+    budget_check = function(event) {
+        events <<- c(events, event)
+        list(stop = FALSE, reason = "")
+    })
+res <- g(list(tool = "write_file", args = list(path = "R/new.R"),
+              paths = "R/new.R"), allow)
+expect_equal(res$action, "escalate")
+expect_true(grepl("unreachable", res$reason))
+expect_true("call" %in% events)
+
+# ---- the gate inside the real tool handler ----
+#
+# Everything above tests the gate in isolation. This drives
+# .make_tool_handler() itself -- the actual dispatch path turn() uses --
+# so the wiring is verified rather than assumed.
+
+executed <- character()
+fake_exec <- function(name, args) {
+    executed <<- c(executed, name)
+    list(content = list(list(type = "text", text = "did it")))
+}
+
+gated_session <- function(action, reason = "because") {
+    s <- corteza::new_session("console")
+    s$auto_gate <- function(call, decision) {
+        list(action = action, reason = reason)
+    }
+    s
+}
+
+# proceed: the tool runs.
+executed <- character()
+h <- corteza:::.make_tool_handler(gated_session("proceed"), fake_exec)
+out <- h("read_file", list(path = "DESCRIPTION"))
+expect_equal(executed, "read_file")
+expect_true(grepl("did it", out))
+
+# refuse: the model is told no and the tool does NOT run.
+executed <- character()
+h <- corteza:::.make_tool_handler(gated_session("refuse", "off goal"), fake_exec)
+out <- h("write_file", list(path = "R/x.R", content = "x"))
+expect_equal(executed, character())
+expect_true(grepl("monitor refused", out))
+expect_true(grepl("off goal", out))
+
+# escalate: propagates as a turn-aborting condition, tool does not run.
+executed <- character()
+h <- corteza:::.make_tool_handler(gated_session("escalate", "needs a human"),
+                                  fake_exec)
+got <- tryCatch(h("write_file", list(path = "R/x.R", content = "x")),
+                corteza_auto_escalate = function(c) c$reason)
+expect_equal(got, "needs a human")
+expect_equal(executed, character())
+
+# A gate that throws is a gate that approved nothing.
+executed <- character()
+s <- corteza::new_session("console")
+s$auto_gate <- function(call, decision) stop("gate exploded")
+h <- corteza:::.make_tool_handler(s, fake_exec)
+got <- tryCatch(h("write_file", list(path = "R/x.R", content = "x")),
+                corteza_auto_escalate = function(c) c$reason)
+expect_true(grepl("gate failed", got))
+expect_equal(executed, character())
+
+# A gate returning a malformed answer fails closed too.
+executed <- character()
+s <- corteza::new_session("console")
+s$auto_gate <- function(call, decision) list(nonsense = TRUE)
+h <- corteza:::.make_tool_handler(s, fake_exec)
+got <- tryCatch(h("write_file", list(path = "R/x.R", content = "x")),
+                corteza_auto_escalate = function(c) "escalated")
+expect_equal(got, "escalated")
+expect_equal(executed, character())
+
+# The gate stands in for the human: an "ask" call it approved must not
+# then also hit approval_cb.
+executed <- character()
+asked <- 0L
+s <- corteza::new_session("console")
+s$auto_gate <- function(call, decision) list(action = "proceed", reason = "")
+s$approval_cb <- function(call, decision) {
+    asked <<- asked + 1L
+    FALSE
+}
+s$config <- list(permissions = list(read_file = "ask"))
+h <- corteza:::.make_tool_handler(s, fake_exec)
+out <- h("read_file", list(path = "DESCRIPTION"))
+expect_equal(asked, 0L)
+expect_equal(executed, "read_file")
+
+# With no gate set, the ordinary approval path is untouched.
+executed <- character()
+asked <- 0L
+s <- corteza::new_session("console")
+s$approval_cb <- function(call, decision) {
+    asked <<- asked + 1L
+    FALSE
+}
+s$config <- list(permissions = list(read_file = "ask"))
+h <- corteza:::.make_tool_handler(s, fake_exec)
+out <- h("read_file", list(path = "DESCRIPTION"))
+expect_equal(asked, 1L)
+expect_equal(executed, character())
+expect_true(grepl("user declined", out))
+
+# ---- escalation condition aborts rather than declining ----
+
+cond <- corteza:::auto_escalate_condition("bad thing", "write_file")
+expect_true(inherits(cond, "corteza_auto_escalate"))
+# Not an "error": the defensive tryCatch(error=) wrappers inside
+# .make_tool_handler must not be able to swallow an escalation.
+expect_false(inherits(cond, "error"))
+expect_true(inherits(cond, "interrupt"))
+expect_true(grepl("write_file", conditionMessage(cond)))
+
+caught <- tryCatch({
+    stop(corteza:::auto_escalate_condition("nope", "bash"))
+    "not reached"
+}, corteza_auto_escalate = function(c) c$reason)
+expect_equal(caught, "nope")
+
+# The specific failure this guards: an escalation raised inside a handler
+# wrapped in tryCatch(error = ...) must still propagate.
+survived <- tryCatch({
+    tryCatch(stop(corteza:::auto_escalate_condition("deep", "bash")),
+             error = function(e) "swallowed")
+}, corteza_auto_escalate = function(c) "propagated")
+expect_equal(survived, "propagated")
+
+# ---- monitor confinement: read-only tools are not a sandbox ----
+#
+# tool_config() overlays the process-level corteza.allowed_paths option,
+# which subagent_turn_init() sets for confined presets. Verified here on
+# the option rather than by spawning a child, so it runs without an API
+# key; the spawn path is covered by the at_home test below.
+
+expect_true(isTRUE(corteza:::PRESET_CONFINED[["monitor"]]))
+expect_equal(corteza:::PRESET_WEB_SEARCH[["monitor"]], FALSE)
+expect_null(corteza:::PRESET_CONFINED[["work"]])
+expect_null(corteza:::PRESET_WEB_SEARCH[["investigate"]])
+
+conf_root <- file.path(tempdir(), "corteza-confine")
+dir.create(conf_root, recursive = TRUE, showWarnings = FALSE)
+old_opt <- getOption("corteza.allowed_paths")
+options(corteza.allowed_paths = conf_root)
+expect_equal(corteza:::tool_config()$allowed_paths, conf_root)
+
+# In-root reads validate; outside-root reads do not. Note a.txt does not
+# exist: containment has to hold for a path that has not been created
+# yet, which is the common case for a write. normalizePath() leaves a
+# non-existent path unresolved while resolving the base, so wherever an
+# ancestor is a symlink (macOS /var -> /private/var) the two sides stop
+# comparing equal and the check silently never matches.
+expect_false(file.exists(file.path(conf_root, "a.txt")))
+expect_true(corteza:::tool_check_path(file.path(conf_root, "a.txt"),
+                                      "read")$ok)
+expect_true(corteza:::tool_check_path(file.path(conf_root, "deep", "b.txt"),
+                                      "write")$ok)
+expect_false(corteza:::tool_check_path("/etc/hosts", "read")$ok)
+
+# The same asymmetry, forced on every platform rather than only where
+# the OS happens to symlink a temp root: a real symlinked ancestor.
+if (.Platform$OS.type == "unix") {
+    link_root <- file.path(tempdir(), "corteza-confine-link")
+    unlink(link_root, recursive = TRUE)
+    dir.create(file.path(link_root, "real"), recursive = TRUE,
+               showWarnings = FALSE)
+    if (!file.exists(file.path(link_root, "via"))) {
+        file.symlink(file.path(link_root, "real"), file.path(link_root, "via"))
+    }
+    options(corteza.allowed_paths = file.path(link_root, "real"))
+    # Reached through the link, naming a file that does not exist yet.
+    expect_true(corteza:::tool_check_path(
+        file.path(link_root, "via", "new.txt"), "write")$ok)
+    options(corteza.allowed_paths = conf_root)
+    unlink(link_root, recursive = TRUE)
+}
+
+options(corteza.allowed_paths = old_opt)
+# Unset restores the historical unrestricted behavior.
+expect_true(corteza:::tool_check_path("/etc/hosts", "read")$ok)
+unlink(conf_root, recursive = TRUE)
+
+# The monitor preset resolves to a read-only tool list.
+mon_tools <- corteza:::resolve_subagent_tools(preset = "monitor")
+expect_true(all(c("read_file", "grep_files", "git_diff") %in% mon_tools))
+for (forbidden in c("write_file", "replace_in_file", "bash", "run_r",
+                    "web_search", "fetch_url")) {
+    expect_false(forbidden %in% mon_tools)
+}

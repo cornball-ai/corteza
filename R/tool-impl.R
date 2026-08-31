@@ -4,7 +4,18 @@
 # Shared helpers ----
 
 tool_config <- function() {
-    load_config(getwd())
+    config <- load_config(getwd())
+    # Process-level path confinement, used to pin a subagent to its
+    # project (see PRESET_ALLOWED_PATHS in R/subagent.R). Each subagent
+    # is its own R process, so the option cannot leak into the parent.
+    # This can only ever tighten: validate_path() treats a NULL
+    # allowed_paths as unrestricted, so setting one is strictly a
+    # narrowing. denied_paths is untouched either way.
+    confined <- getOption("corteza.allowed_paths", NULL)
+    if (!is.null(confined)) {
+        config$allowed_paths <- confined
+    }
+    config
 }
 
 tool_resolve_path <- function(path = ".") {

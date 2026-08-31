@@ -368,7 +368,55 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                                 FALSE
                 ))
         }
-        if (identical(decision$approval, "ask")) {
+
+        # Auto-authority gate (unattended runs only; NULL otherwise).
+        #
+        # This cannot live in approval_cb, which only ever sees "ask".
+        # The default tensor (R/policy.R) resolves the `random` data
+        # class to "allow" for write and exec on every channel, and
+        # classify_data() only returns "code" for paths under
+        # get_code_paths() -- ~/projects, ~/src by default. So a repo
+        # anywhere else classifies `random`, its writes decide "allow",
+        # and an approval_cb-based supervisor is never consulted for a
+        # single edit. Config can widen the same way: a per-tool
+        # "allow" permission downgrades ask to allow before we get
+        # here. A supervisor wired to approval_cb would be decorative
+        # in exactly the repos people run this in.
+        #
+        # So the gate sees every call that survived policy, whatever
+        # the verdict, and it is the thing that decides. It returns
+        # "proceed", "refuse" (tell the model no, keep the turn alive),
+        # or "escalate" (abort the whole turn for a human).
+        gate_approved <- FALSE
+        if (is.function(session$auto_gate)) {
+            gate <- tryCatch(
+                             session$auto_gate(call, decision),
+                             # A gate that errored did not approve anything.
+                             # Fail closed: absence of a verdict is never a yes.
+                             error = function(e) {
+                list(action = "escalate",
+                     reason = paste("auto gate failed:", conditionMessage(e)))
+            }
+            )
+            action <- gate$action %||% "escalate"
+            if (identical(action, "escalate")) {
+                stop(auto_escalate_condition(gate$reason %||% "unspecified",
+                        call$tool %||% "?"))
+            }
+            if (!identical(action, "proceed")) {
+                return(outcome_text(
+                                    "declined",
+                                    nudge(sprintf("[monitor refused: %s]",
+                                .sanitize_inline(gate$reason %||% ""))),
+                                    FALSE
+                    ))
+            }
+            # The gate brokered this call, so it stands in for the
+            # human at the approval prompt below.
+            gate_approved <- TRUE
+        }
+
+        if (identical(decision$approval, "ask") && !gate_approved) {
             approved <- tryCatch(
                                  session$approval_cb(call, decision),
                                  error = function(e) FALSE

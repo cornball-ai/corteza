@@ -31,6 +31,39 @@
 .subagent_spend_retired$query_count <- 0L
 .subagent_spend_retired$n_agents <- 0L
 .subagent_spend_retired$cost_missing <- FALSE
+# Carried through retirement like every other total. Without it, killing
+# a subagent would make the process-wide unpriced-token count go *down*,
+# and any consumer differencing it across a window would read the drop
+# as "this window's spend was priced". Auto runs kill their monitor on
+# the way out, so this fires on every single run.
+.subagent_spend_retired$missing_tokens <- 0
+
+#' Clear the subagent registry and the retired-spend accumulator.
+#'
+#' Test-support only; nothing in the runtime resets spend, which is
+#' reported per process run. It lives here rather than in each test file
+#' because three of them had hand-rolled their own copy, and when
+#' `missing_tokens` was added none of the three learned about it -- so
+#' the field leaked across tests while every local reset still looked
+#' complete. One definition next to the fields it clears cannot drift
+#' that way.
+#'
+#' @return Invisible TRUE.
+#' @noRd
+subagent_spend_reset <- function() {
+    reg <- .subagent_registry
+    rm(list = ls(reg), envir = reg)
+    r <- .subagent_spend_retired
+    r$cost <- 0
+    r$input_tokens <- 0L
+    r$output_tokens <- 0L
+    r$total_tokens <- 0L
+    r$query_count <- 0L
+    r$n_agents <- 0L
+    r$cost_missing <- FALSE
+    r$missing_tokens <- 0
+    invisible(TRUE)
+}
 
 #' Per-process monotonic counter for short subagent ids.
 #'
@@ -131,16 +164,39 @@ resolve_subagent_id <- function(input) {
 #'   child of the CLI parent). Used by recursion in
 #'   [subagent_turn_prompt()] to avoid archiving past the configured
 #'   depth_cap.
+#' @param web_search Logical or NULL. Provider-native (server-side) web
+#'   search for the child. NULL (default) preserves the historical
+#'   behavior: [new_session()] leaves it unset and [turn()] enables it
+#'   for providers that support it. Pass FALSE for a child that must
+#'   have no outbound channel -- dropping `web_search` from
+#'   `tools_filter` does not achieve that on its own, because the
+#'   provider's own search tool is injected by `llm.api::agent`, not
+#'   drawn from the skill registry.
+#' @param allowed_paths Character or NULL. Confines this child's file
+#'   tools to the given roots for the life of the process. NULL (default)
+#'   leaves it unrestricted, as before. A read-only `tools_filter` is not
+#'   a filesystem sandbox on its own -- `read_file` reaches anything the
+#'   process can -- so a child that should only see its project needs
+#'   this as well.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
 subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
-                               max_turns = 10L, depth = 0L, plan_mode = FALSE) {
+                               max_turns = 10L, depth = 0L,
+                               plan_mode = FALSE, web_search = NULL,
+                               allowed_paths = NULL) {
+    if (!is.null(allowed_paths)) {
+        # Process-level and read by tool_config() (R/tool-impl.R). Safe
+        # to set globally here: this runs inside the child's own R
+        # process, which exists only to serve this one subagent.
+        options(corteza.allowed_paths = as.character(allowed_paths))
+    }
     session <- new_session(channel = "console", provider = provider,
                            tools_filter = tools_filter, system = system,
                            max_turns = as.integer(max_turns),
-                           plan_mode = isTRUE(plan_mode))
+                           plan_mode = isTRUE(plan_mode),
+                           web_search = web_search)
     if (!is.null(model)) {
         session$model_map$cloud <- model
     }
@@ -397,8 +453,40 @@ SUBAGENT_PRESETS <- list(
                          work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
                                   "bash", "write_file", "replace_in_file", "list_files",
                                   "git_status", "git_diff", "git_log", "run_r"),
-                         minimal = c("read_file", "grep_files")
+                         minimal = c("read_file", "grep_files"),
+                         # Hall monitor: supervises an unattended auto run. Read-only
+                         # by construction -- a supervisor that can act is not a
+                         # supervisor. No web_search/fetch_url either: it reads the
+                         # worker's transcript, which is attacker-influenceable text,
+                         # so it gets no outbound channel. See PRESET_WEB_SEARCH below;
+                         # the tool list alone does not deliver that.
+                         monitor = c("read_file", "grep_files", "list_files",
+                                     "git_status", "git_diff", "git_log")
 )
+
+# Provider-native (server-side) web search per preset.
+#
+# Dropping "web_search" from a preset's tool list does NOT take web
+# access away. subagent_turn_init() builds its session without a
+# web_search argument, so .session_web_search() (R/turn.R) falls through
+# to TRUE and llm.api::agent injects the provider's own search tool.
+# Every subagent spawned before this table existed had web search on
+# regardless of its preset.
+#
+# NULL (the default for a preset not listed here) keeps that behavior:
+# investigate and work want search. The monitor is the one grant where
+# "read-only" has to mean no network, so it is pinned FALSE.
+PRESET_WEB_SEARCH <- list(monitor = FALSE)
+
+# Presets confined to the project directory.
+#
+# A read-only tool list is not a filesystem sandbox: read_file will
+# happily read any path the process can reach. Presets named here get
+# `allowed_paths` pinned to the parent's cwd inside the child process,
+# so the monitor can inspect the work it is supervising and nothing
+# else. TRUE means "confine to cwd"; absent means unconfined, which is
+# the historical behavior for every other preset.
+PRESET_CONFINED <- list(monitor = TRUE)
 
 #' Get subagent configuration.
 #' @param config Config list from load_config().
@@ -474,7 +562,10 @@ subagent_session_key <- function(parent_key) {
 #'   `web_search`, `fetch_url`. `"work"`: investigate + `bash`,
 #'   `write_file`, `replace_in_file`, `list_files`, `git_status`,
 #'   `git_diff`, `git_log`, `run_r`. `"minimal"`: `read_file`,
-#'   `grep_files`.
+#'   `grep_files`. `"monitor"`: the read-only hall monitor used to
+#'   supervise unattended auto runs -- `read_file`, `grep_files`,
+#'   `list_files`, `git_status`, `git_diff`, `git_log`, and
+#'   provider-native web search explicitly off.
 #' @param parent_session Parent session object; read for
 #'   nested-spawning control and session-key derivation.
 #' @param config Config list.
@@ -563,6 +654,22 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
         preset = preset, tools = tools,
         default_tools = subcfg$default_tools
     )
+    # Provider-native web search is a separate grant from the tool list
+    # (see PRESET_WEB_SEARCH). NULL for every preset but "monitor", which
+    # keeps the historical default for existing presets.
+    child_web_search <- if (is.null(preset)) {
+        NULL
+    } else {
+        PRESET_WEB_SEARCH[[preset]]
+    }
+    # Confined presets get allowed_paths pinned to the project inside the
+    # child. NULL leaves the child unrestricted, as before.
+    child_allowed_paths <- if (!is.null(preset) &&
+        isTRUE(PRESET_CONFINED[[preset]])) {
+        cwd
+    } else {
+        NULL
+    }
     # Default provider/model from parent session when available, else config/env.
     spawn_provider <- parent_session$provider %||%
     getOption("corteza.provider", "anthropic")
@@ -583,7 +690,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
     tryCatch(
              session$run(
                          function(cwd, provider, model, tools_filter, system, max_turns,
-                                  depth, id, plan_mode) {
+                                  depth, id, plan_mode, web_search, allowed_paths) {
         library(corteza)
         corteza::worker_init(cwd = cwd)
         corteza::subagent_turn_init(
@@ -593,14 +700,18 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                     system = system,
                                     max_turns = max_turns,
                                     depth = depth,
-                                    plan_mode = plan_mode
+                                    plan_mode = plan_mode,
+                                    web_search = web_search,
+                                    allowed_paths = allowed_paths
         )
         corteza::subagent_turn_set_id(id)
     },
                          list(cwd = cwd, provider = spawn_provider, model = spawn_model,
                               tools_filter = effective_tools, system = system_prompt,
                               max_turns = 10L, depth = child_depth, id = id,
-                              plan_mode = child_plan_mode)
+                              plan_mode = child_plan_mode,
+                              web_search = child_web_search,
+                              allowed_paths = child_allowed_paths)
         ),
              error = function(e) {
         try(session$close(), silent = TRUE)
@@ -869,10 +980,17 @@ subagent_accumulate_usage <- function(info, usage) {
         usage$input_tokens)
     info$cumulative_output_tokens <- add_int(info$cumulative_output_tokens %||% 0L,
         usage$output_tokens)
+    # Normalized, not the raw field, for the same reason as the main
+    # segment tally in R/spend.R: a provider reporting input and output
+    # without a total would record a priced query as zero tokens and
+    # slip past any token cap reading this.
     info$cumulative_total_tokens <- add_int(info$cumulative_total_tokens %||% 0L,
-        usage$total_tokens)
+        .spend_normalized_tokens(usage))
     if (!is.null(usage$cost) && !is.na(usage$cost)) {
-        prev <- info$cumulative_cost
+        # %||%: every other counter here tolerates an absent field, and
+        # a bare NULL would make is.na() return logical(0) and the `if`
+        # error out rather than treating it as "no cost yet".
+        prev <- info$cumulative_cost %||% NA_real_
         info$cumulative_cost <- if (is.na(prev)) {
             as.numeric(usage$cost)
         } else {
@@ -883,6 +1001,11 @@ subagent_accumulate_usage <- function(info, usage) {
         # (cost-blind provider) makes the running cost a floor, not a
         # precise figure. A zero-token query leaves the flag alone.
         info$cost_missing <- TRUE
+        # Also accumulate the unpriced tokens. The flag is sticky and
+        # process-wide once aggregated, so it cannot answer "was the
+        # spend in *this* window priced" -- a counter can.
+        info$cumulative_missing_tokens <- (info$cumulative_missing_tokens %||%
+            0) + .spend_normalized_tokens(usage)
     }
     info$query_count <- (info$query_count %||% 0L) + 1L
     info
@@ -903,6 +1026,8 @@ subagent_retire_spend <- function(info) {
     r$total_tokens <- r$total_tokens + (info$cumulative_total_tokens %||% 0L)
     r$query_count <- r$query_count + (info$query_count %||% 0L)
     r$n_agents <- r$n_agents + 1L
+    r$missing_tokens <- r$missing_tokens +
+    (info$cumulative_missing_tokens %||% 0)
     cc <- info$cumulative_cost
     if (is.null(cc) || is.na(cc)) {
         if ((info$cumulative_total_tokens %||% 0L) > 0L) {
@@ -930,9 +1055,11 @@ subagent_retire_spend <- function(info) {
 subagent_spend_total <- function() {
     acc <- list(cost = 0, input_tokens = 0L, output_tokens = 0L,
                 total_tokens = 0L, query_count = 0L, n_agents = 0L,
-                cost_missing = FALSE)
+                cost_missing = FALSE, missing_tokens = 0)
     for (id in ls(.subagent_registry)) {
         e <- .subagent_registry[[id]]
+        acc$missing_tokens <- acc$missing_tokens +
+        (e$cumulative_missing_tokens %||% 0)
         acc$input_tokens <- acc$input_tokens + (e$cumulative_input_tokens %||% 0L)
         acc$output_tokens <- acc$output_tokens + (e$cumulative_output_tokens %||% 0L)
         acc$total_tokens <- acc$total_tokens + (e$cumulative_total_tokens %||% 0L)
@@ -957,6 +1084,7 @@ subagent_spend_total <- function() {
     acc$query_count <- acc$query_count + r$query_count
     acc$n_agents <- acc$n_agents + r$n_agents
     acc$cost <- acc$cost + r$cost
+    acc$missing_tokens <- acc$missing_tokens + (r$missing_tokens %||% 0)
     if (isTRUE(r$cost_missing)) {
         acc$cost_missing <- TRUE
     }

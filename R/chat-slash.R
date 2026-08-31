@@ -275,6 +275,7 @@ chat_help_text <- function() {
           "  /sessions                     List sessions for this directory",
           "  /trace [N]                    Show last N tool executions (default 20)",
           "  /permissions [allow|ask|deny] Show, or switch, tool approval for this session",
+          "  /auto [--loops N] <goal>      Bounded unattended run, watched by a monitor subagent",
           "  /dryrun                       Toggle dry-run mode (preview tools)",
           "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
           "  /compact                      Summarize conversation to free context",
