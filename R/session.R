@@ -428,8 +428,7 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
-                              agent_id = DEFAULT_AGENT_ID,
-                              auto_run_id = NULL) {
+                              agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists

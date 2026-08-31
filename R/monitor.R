@@ -794,8 +794,7 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
         # record as every other decision; the handler surfaces the
         # identical policy-denied message it always has.
         if (identical(decision$approval %||% "", "deny")) {
-            result <- list(action = "deny",
-                           reason = decision$reason %||% "")
+            result <- list(action = "deny", reason = decision$reason %||% "")
             authority <- "policy"
         } else {
             # Before anything else, including the envelope: a run that

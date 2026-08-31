@@ -495,16 +495,14 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                               changed = isTRUE(fd$changed),
                               files_changed = length(fd$added) +
                               length(fd$removed) + length(fd$modified),
-                              delta = auto_delta_evidence(st$baseline, fin,
-                                                          fd))
+                              delta = auto_delta_evidence(st$baseline, fin, fd))
             }
             extra$loops <- max(st$loop - 1L, 0L)
             extra$tool_calls <- st$tool_calls
             extra$spend <- list(
                                 cost = st$spend$cost %||% 0,
                                 tokens = st$spend$tokens %||% 0,
-                                cost_known = isTRUE(st$spend$cost_known %||%
-                        TRUE))
+                                cost_known = isTRUE(st$spend$cost_known %||% TRUE))
             extra$duration_min <- round(as.numeric(difftime(Sys.time(),
                         st$started, units = "mins")), 2)
         } else {
@@ -524,10 +522,10 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     # else ends as unexpected_exit.
     on.exit({
         finish(if (is.null(unexpected)) {
-            "unexpected_exit"
-        } else {
-            "unexpected_error"
-        },
+                "unexpected_exit"
+            } else {
+                "unexpected_error"
+            },
                unexpected %||%
                paste("non-local exit before run_end (interrupt, or a",
                      "condition outside the loop)"))
@@ -852,8 +850,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     withCallingHandlers(
                         run_repl_loop(ctx),
                         error = function(e) {
-        unexpected <<- paste("error escaped the loop:",
-                             conditionMessage(e))
+        unexpected <<- paste("error escaped the loop:", conditionMessage(e))
     })
     say("stopped: %s", stop_reason)
     say("spent $%.4f over %d tool calls in %.1f min",
