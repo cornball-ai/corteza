@@ -246,14 +246,33 @@ auto_check_limits <- function(state, auto) {
         return(halt(sprintf("hit the tool-call cap (%d)", auto$max_tool_calls)))
     }
     spend <- state$spend %||% list(cost = 0, tokens = 0, cost_known = TRUE)
-    if (!isTRUE(spend$cost_known)) {
-        return(halt(paste("stopping: a model in this run has no price in",
-                          "llm.api's table, so the spend cap can't be",
-                          "enforced")))
-    }
-    if (is.finite(auto$max_cost) && (spend$cost %||% 0) >= auto$max_cost) {
-        return(halt(sprintf("hit the spend cap ($%.4f of $%g)",
-                            spend$cost, auto$max_cost)))
+    note <- ""
+    if (isTRUE(spend$cost_known)) {
+        if (is.finite(auto$max_cost) && (spend$cost %||% 0) >= auto$max_cost) {
+            return(halt(sprintf("hit the spend cap ($%.4f of $%g)",
+                                spend$cost, auto$max_cost)))
+        }
+    } else {
+        # No price available. This is NOT automatically a failure, and
+        # treating it as one made auto mode unusable on the provider it
+        # was most likely to run under: an OAuth / subscription plan has
+        # no per-token price to report, so `cost_missing` is permanently
+        # true and every run refused to start.
+        #
+        # The point of the spend cap is to bound the run, and tokens
+        # bound it just as well when dollars are unavailable -- they are
+        # reported either way. So the dollar check is skipped, the token
+        # check below still applies, and the caller is told once that
+        # the money cap is not the thing holding the line. Only if there
+        # is no token cap to fall back on is there genuinely nothing
+        # enforceable, and then it stops.
+        if (!is.finite(auto$max_tokens)) {
+            return(halt(paste("no model price available and no token cap to",
+                              "fall back on, so nothing bounds this run")))
+        }
+        note <- sprintf(paste("no model price available (subscription or",
+                              "cost-blind provider); bounding on the token cap",
+                              "instead (%g)"), auto$max_tokens)
     }
     if (is.finite(auto$max_tokens) &&
         (spend$tokens %||% 0) >= auto$max_tokens) {
@@ -265,7 +284,7 @@ auto_check_limits <- function(state, auto) {
                             "nothing changed on disk for %d consecutive iterations",
                             state$stalled)))
     }
-    list(stop = FALSE, reason = "")
+    list(stop = FALSE, reason = "", note = note)
 }
 
 #' Fresh loop state.
@@ -277,7 +296,8 @@ auto_state <- function(session, dir = getwd()) {
          # gate_calls is counted by the gate itself, so the cap is
          # enforced against calls as they are brokered rather than
          # against the session counter's view between turns.
-         tool_calls = 0L, gate_calls = 0L, stalled = 0L, last_reply = "")
+         tool_calls = 0L, gate_calls = 0L, stalled = 0L, last_reply = "",
+         noted_budget = FALSE)
 }
 
 # ---- The worker's continuation prompt ----
@@ -499,6 +519,13 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
             probe$tool_calls <- 0L
         }
         lim <- auto_check_limits(probe, auto)
+        # Said once per run, not once per brokered call: the operator
+        # needs to know the dollar cap is not the thing holding the line,
+        # and needs to know it exactly one time.
+        if (nzchar(lim$note %||% "") && !isTRUE(state$noted_budget)) {
+            state$noted_budget <<- TRUE
+            say("%s", lim$note)
+        }
         if (isTRUE(lim$stop)) {
             stop_reason <<- lim$reason
         }

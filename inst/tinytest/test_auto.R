@@ -167,11 +167,43 @@ r <- corteza:::auto_check_limits(
 expect_true(r$stop)
 expect_true(grepl("token cap", r$reason))
 
-# An unknown price stops the run rather than being counted as zero.
+# An unknown price does NOT stop the run on its own. An OAuth or
+# subscription provider has no per-token price to report, so treating
+# that as a failure made auto mode unusable on the provider it was most
+# likely to run under. The token cap bounds the run instead, and the
+# caller is told once.
 r <- corteza:::auto_check_limits(
     st(spend = list(cost = 0, tokens = 0, cost_known = FALSE)), auto)
+expect_false(r$stop)
+expect_true(grepl("no model price available", r$note))
+expect_true(grepl("token cap", r$note))
+
+# The dollar cap is genuinely skipped, not merely warned about: spend
+# far past max_cost does not stop when there is no price to trust.
+r <- corteza:::auto_check_limits(
+    st(spend = list(cost = 1e6, tokens = 0, cost_known = FALSE)), auto)
+expect_false(r$stop)
+
+# But the token cap still bites, which is the whole basis for continuing.
+r <- corteza:::auto_check_limits(
+    st(spend = list(cost = 0, tokens = 1e9, cost_known = FALSE)), auto)
 expect_true(r$stop)
-expect_true(grepl("no price", r$reason))
+expect_true(grepl("token cap", r$reason))
+
+# With no token cap to fall back on there is nothing enforceable left,
+# and then it does stop. (Unreachable through auto_validate_bounds,
+# which rejects a non-finite cap; kept as the honest floor.)
+r <- corteza:::auto_check_limits(
+    st(spend = list(cost = 0, tokens = 0, cost_known = FALSE)),
+    utils::modifyList(auto, list(max_tokens = Inf)))
+expect_true(r$stop)
+expect_true(grepl("nothing bounds this run", r$reason))
+
+# A priced run still enforces dollars, and says nothing about it.
+r <- corteza:::auto_check_limits(
+    st(spend = list(cost = 0.5, tokens = 0, cost_known = TRUE)), auto)
+expect_false(r$stop)
+expect_equal(r$note, "")
 
 r <- corteza:::auto_check_limits(st(stalled = 2L), auto)
 expect_true(r$stop)
