@@ -93,7 +93,7 @@ new_log <- function(before) {
 
 id1 <- corteza:::auto_new_run_id()
 id2 <- corteza:::auto_new_run_id()
-expect_true(grepl("^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$", id1))
+expect_true(grepl("^[0-9]{8}T[0-9]{6}-[0-9a-f]+-[0-9a-f]+$", id1))
 expect_false(identical(id1, id2))
 
 # id generation must not touch the user's RNG state: same seed before
@@ -302,6 +302,38 @@ expect_true(grepl("monitor spawn failed", lg$end$stop_reason))
 expect_true(grepl("no child processes", lg$end$stop_reason))
 # a closed record means "no run_end" keeps meaning hard termination
 expect_false(is.null(lg$end))
+# no state existed yet: identity fields honest, evidence fields absent
+expect_equal(lg$end$loops, 0L)
+expect_false("spend" %in% names(lg$end))
+
+# ---- an error escaping mid-run keeps ALL the evidence -----------------
+#
+# The abnormal ending is when the record matters most: loops, spend,
+# executed calls, and the filesystem delta must be there, along with
+# the error's own message.
+
+reset_wt()
+turns <- 0L
+before <- logs_before()
+ctx <- auto_ctx(edit_turn)
+err <- tryCatch({
+    with_stubs(list(spawn = function(...) "mon-stub",
+                    progress = function(...) stop("progress probe died")),
+               capture.output(corteza:::run_auto_loop(ctx, "make edits",
+                                                      max_loops = 5L)))
+    NULL
+}, error = function(e) conditionMessage(e))
+expect_true(grepl("progress probe died", err))    # still propagates
+f <- new_log(before)
+lg <- corteza:::auto_log_read(f)
+expect_equal(lg$end$stop_category, "unexpected_error")
+expect_true(grepl("progress probe died", lg$end$stop_reason))
+# the evidence a post-mortem needs survived the unwind
+expect_equal(lg$end$loops, 1L)                    # one turn had run
+expect_equal(lg$end$spend$cost, 0.01)
+expect_true(lg$end$files_changed >= 1L)           # f1.txt was written
+added <- vapply(lg$end$delta$added, `[[`, "", "path")
+expect_true("f1.txt" %in% added)
 
 # ---- gate decisions: authority travels with the record ----------------
 
@@ -346,10 +378,12 @@ expect_true(isTRUE(seen[[2L]]$envelope_ok))      # evaluated and passed
 expect_null(seen[[2L]]$budget_event)             # budget never decided
 expect_equal(seen[[2L]]$call_id, "c-mon")
 
-# 3. budget stop decides before the envelope and is attributed to it
+# 3. budget stop decides before the envelope and is attributed to it,
+#    carrying the structured limit kind straight from the check
 gate_b <- corteza:::monitor_auto_gate(
     "mon-x", config = list(), cwd = wt,
-    budget_check = function(event) list(stop = TRUE, reason = "cap hit"),
+    budget_check = function(event) list(stop = TRUE, reason = "cap hit",
+                                        kind = "cost"),
     on_decision = function(d) seen[[length(seen) + 1L]] <<- d)
 r <- gate_b(list(tool = "write_file",
                  args = list(path = file.path(wt, "ok.txt"), content = "x")),
@@ -357,6 +391,7 @@ r <- gate_b(list(tool = "write_file",
 expect_equal(r$action, "escalate")
 expect_equal(seen[[3L]]$authority, "budget")
 expect_equal(seen[[3L]]$budget_event, "call")     # pre-envelope phase
+expect_equal(seen[[3L]]$limit_kind, "cost")       # no join needed
 expect_null(seen[[3L]]$envelope_ok)               # never evaluated
 
 # 4. post-query budget stop: monitor consulted, budget overrides
@@ -365,7 +400,8 @@ gate_p <- corteza:::monitor_auto_gate(
     "mon-x", config = list(), cwd = wt,
     budget_check = function(event) {
         if (identical(event, "monitor")) {
-            list(stop = TRUE, reason = "query spent the last of it")
+            list(stop = TRUE, reason = "query spent the last of it",
+                 kind = "tokens")
         } else {
             list(stop = FALSE)
         }
@@ -377,6 +413,7 @@ r <- gate_p(list(tool = "write_file",
 expect_equal(r$action, "escalate")
 expect_equal(seen[[4L]]$authority, "budget")
 expect_equal(seen[[4L]]$budget_event, "monitor")  # post-query phase
+expect_equal(seen[[4L]]$limit_kind, "tokens")
 expect_equal(seen[[4L]]$verdict, "approve")      # the overridden verdict kept
 expect_true(nzchar(seen[[4L]]$request_id %||% ""))
 
@@ -390,6 +427,23 @@ r <- gate_a(list(tool = "write_file",
             list(approval = "allow", reason = "policy"))
 expect_equal(r$action, "escalate")
 expect_equal(seen[[5L]]$authority, "accounting")
+
+# 5b. policy denial: first, mechanical, and recorded -- neither budget
+#     nor envelope nor monitor is consulted, and the action is deny
+gate_d <- corteza:::monitor_auto_gate(
+    "mon-x", config = list(), cwd = wt,
+    budget_check = function(event) stop("must not be called"),
+    on_decision = function(d) seen[[length(seen) + 1L]] <<- d)
+r <- gate_d(list(tool = "bash", call_id = "c-deny",
+                 args = list(command = "ls")),
+            list(approval = "deny", reason = "config: bash denied"))
+expect_equal(r$action, "deny")
+expect_equal(seen[[6L]]$authority, "policy")
+expect_equal(seen[[6L]]$policy_approval, "deny")
+expect_equal(seen[[6L]]$call_id, "c-deny")
+expect_null(seen[[6L]]$envelope_ok)              # never evaluated
+expect_null(seen[[6L]]$request_id)               # monitor never consulted
+expect_null(seen[[6L]]$budget_event)             # budget never consulted
 
 # 6. a throwing recorder does not affect the decision
 gate_t <- corteza:::monitor_auto_gate(
@@ -422,11 +476,15 @@ handler_turn <- function(prompt, session) {
         h("write_file", list(path = file.path(wt, "same.txt"),
                              content = "identical"))
     }
+    # And one call policy itself denies: it must leave the same
+    # structured, call_id-carrying record as the gated calls.
+    h("read_file", list(path = file.path(wt, "same.txt")))
     list(reply = "made identical calls", session = session,
          usage = list(cost = 0.001, total_tokens = 10L))
 }
 ctx <- auto_ctx(handler_turn)
 ctx$session$sessionId <- "accept-join"
+ctx$session$config <- list(permissions = list(read_file = "deny"))
 # The production trace observer, not a copy: if chat()'s observer ever
 # stops passing call_id, this test fails.
 ctx$session$on_tool <- list(corteza:::chat_trace_observer(ctx$session))
@@ -459,7 +517,7 @@ f <- new_log(before)
 lg <- corteza:::auto_log_read(f)
 rid <- lg$start$run_id
 gates <- Filter(function(r) identical(r$type, "gate"), lg$records)
-expect_equal(length(gates), 4L)
+expect_equal(length(gates), 5L)
 
 trace_file <- corteza:::trace_path("accept-join")
 trows <- lapply(readLines(trace_file), jsonlite::fromJSON,
@@ -469,18 +527,30 @@ expect_true(all(vapply(trows, function(t) identical(t$auto_run_id, rid),
                        logical(1))))
 
 # join on call_id: exactly one gate record and one trace row per call,
-# even though tool and args are identical across all four
+# even though tool and args are identical across the four writes
 gid <- vapply(gates, `[[`, "", "call_id")
 tid <- vapply(trows, `[[`, "", "call_id")
 expect_equal(sort(gid), sort(tid))
 expect_equal(anyDuplicated(gid), 0L)
-expect_equal(length(unique(c(gid, tid))), 4L)
+expect_equal(length(unique(c(gid, tid))), 5L)
 
 for (g in gates) {
     tr <- trows[[match(g$call_id, tid)]]
     expect_equal(tr$tool, g$tool)
-    # the complete authority chain is in the gate record itself
-    expect_equal(g$policy_approval, "allow")
+    if (identical(g$authority, "policy")) {
+        # policy denial: recorded, joined, and untouched by the monitor
+        expect_equal(g$action, "deny")
+        expect_equal(g$policy_approval, "deny")
+        expect_null(g$request_id)
+        expect_false(isTRUE(tr$success))
+        expect_true(grepl("policy denied", tr$result))
+        next
+    }
+    # the complete authority chain is in the gate record itself. The
+    # policy verdict is whatever policy truly said (the permissions
+    # overlay promotes these writes to "ask"); what matters is that it
+    # was recorded and was not a denial.
+    expect_true(g$policy_approval %in% c("allow", "ask"))
     expect_true(isTRUE(g$envelope_ok))
     expect_equal(g$authority, "monitor")
     expect_true(nzchar(g$request_id))
@@ -497,14 +567,31 @@ for (g in gates) {
         expect_true(grepl("monitor refused", tr$result))
     }
 }
-# alternation reconstructed: approve/refuse/approve/refuse by seq order
+# order reconstructed by seq: approve/refuse/approve/refuse, then deny
 ord <- order(vapply(gates, function(g) g$seq, numeric(1)))
 expect_equal(vapply(gates[ord], `[[`, "", "action"),
-             c("proceed", "refuse", "proceed", "refuse"))
-# and each gate record carries the budget snapshot it decided against
+             c("proceed", "refuse", "proceed", "refuse", "deny"))
+# and each gate record carries the budget snapshot it decided against,
+# including whether cost was even known
 expect_true(all(vapply(gates, function(g) is.numeric(g$spend_cost),
                        logical(1))))
+expect_true(all(vapply(gates, function(g) is.logical(g$spend_cost_known),
+                       logical(1))))
 expect_equal(gates[ord][[4L]]$tool_calls, 2L)   # two executed before it
+
+# the worker conversation partitions by run: every transcript message
+# written during the run carries the run id
+tr_path <- corteza:::session_transcript_path(
+    ctx$disk_session$session$sessionId)
+tmsgs <- lapply(readLines(tr_path), jsonlite::fromJSON,
+                simplifyVector = FALSE)
+tmsgs <- Filter(function(m) !is.null(m$role), tmsgs)   # drop the header
+run_msgs <- Filter(function(m) identical(m$auto_run_id, rid), tmsgs)
+expect_true(length(run_msgs) >= 2L)              # goal prompt + reply
+expect_true(any(vapply(run_msgs, function(m) identical(m$role, "user"),
+                       logical(1))))
+expect_true(any(vapply(run_msgs, function(m) identical(m$role, "assistant"),
+                       logical(1))))
 
 # ---- run id joins: trace entries and the monitor header ---------------
 

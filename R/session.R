@@ -421,10 +421,15 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #' @param usage Token usage list (for assistant messages)
 #' @param agent_id Agent ID
 #' @return Invisible path to transcript file
+#' @param auto_run_id Auto-run id when this message belongs to an auto
+#'   run; NULL (the attended default) writes no field, so the attended
+#'   message format is unchanged. This is what lets two runs with the
+#'   same goal in one session be partitioned from the transcript alone.
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
-                              agent_id = DEFAULT_AGENT_ID) {
+                              agent_id = DEFAULT_AGENT_ID,
+                              auto_run_id = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -438,6 +443,9 @@ transcript_append <- function(session, role, content, provider = NULL,
                 role = role,
                 content = list(list(type = "text", text = content))
     )
+    if (!is.null(auto_run_id)) {
+        msg$auto_run_id <- auto_run_id
+    }
 
     if (role == "assistant") {
         msg$stopReason <- "stop"

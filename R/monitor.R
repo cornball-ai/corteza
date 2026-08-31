@@ -709,12 +709,16 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 #' supervisor wired there would never be consulted for the edits that
 #' matter. See the comment at the gate call site in \code{R/turn.R}.
 #'
-#' Returns one of three actions:
+#' Returns one of four actions:
 #' \itemize{
 #'   \item \code{"proceed"} — run the call; also stands in for approval,
 #'     so the human prompt is skipped.
 #'   \item \code{"refuse"} — the model is told no and the turn continues.
 #'   \item \code{"escalate"} — the turn aborts for a human.
+#'   \item \code{"deny"} — policy already refused the call; echoed back
+#'     mechanically (first, before budget, envelope, or monitor) so the
+#'     denial is recorded like every other decision. Never a judgment
+#'     this gate makes on its own.
 #' }
 #'
 #' @param monitor_id Subagent id from \code{monitor_spawn()}.
@@ -764,7 +768,8 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                  reason = paste("budget check failed:", conditionMessage(e)))
         })
         if (isTRUE(res$stop)) {
-            list(action = "escalate", reason = res$reason %||% "over budget")
+            list(action = "escalate", reason = res$reason %||% "over budget",
+                 kind = res$kind)
         } else {
             NULL
         }
@@ -780,13 +785,28 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
         decisions <<- decisions + 1L
         envelope_ok <- NULL
         budget_event <- NULL
+        limit_kind <- NULL
 
-        # Before anything else, including the envelope: a run that has
-        # spent its budget stops here rather than one turn later.
-        result <- over_budget("call")
-        if (!is.null(result)) {
-            authority <- "budget"
-            budget_event <- "call"
+        # Policy denial first, mechanically, before budget, envelope,
+        # or monitor -- none of them get a say in a call policy already
+        # refused, and nothing model-driven runs on this path. The
+        # branch exists so a denied call leaves the same structured
+        # record as every other decision; the handler surfaces the
+        # identical policy-denied message it always has.
+        if (identical(decision$approval %||% "", "deny")) {
+            result <- list(action = "deny",
+                           reason = decision$reason %||% "")
+            authority <- "policy"
+        } else {
+            # Before anything else, including the envelope: a run that
+            # has spent its budget stops here rather than one turn
+            # later.
+            result <- over_budget("call")
+            if (!is.null(result)) {
+                authority <- "budget"
+                budget_event <- "call"
+                limit_kind <- result$kind
+            }
         }
 
         if (is.null(result)) {
@@ -814,6 +834,7 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                     result <- post
                     authority <- "budget"
                     budget_event <- "monitor"
+                    limit_kind <- post$kind
                 } else {
                     result <- list(action = switch(v$verdict,
                             approve = "proceed",
@@ -869,6 +890,7 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                                       policy_reason = decision$reason,
                                       envelope_ok = envelope_ok,
                                       budget_event = budget_event,
+                                      limit_kind = limit_kind,
                                       request_id = request_id,
                                       verdict = raw_verdict)),
                      error = function(e) NULL)

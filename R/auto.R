@@ -445,6 +445,15 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     # unrecorded is the one state this layer exists to rule out.
     run_id <- auto_new_run_id()
     log_path <- auto_log_path(run_id)
+    # Uniqueness is enforced where it matters -- at the file. A pid
+    # reused within the same second is the one collision the id scheme
+    # itself cannot rule out, and appending two runs to one file would
+    # make auto_log_read() pair the first start with the last end. The
+    # counter advances on every attempt, so this terminates.
+    while (file.exists(log_path)) {
+        run_id <- auto_new_run_id()
+        log_path <- auto_log_path(run_id)
+    }
     log_broken <- FALSE
     record <- function(type, ...) {
         ok <- auto_log_append(log_path, type, run_id = run_id, ...)
@@ -461,6 +470,51 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
            provider = ctx$provider %||% NA_character_,
            model = ctx$model %||% NA_character_)
 
+    # One terminal-record builder for every way a run can end. The
+    # abnormal endings are precisely the ones whose evidence matters
+    # most, so the fallback must not write a thinner record than the
+    # normal path: whatever state exists at unwind time -- loops, spend,
+    # executed calls, the filesystem delta -- goes in. Before state
+    # exists (config or spawn failure) those fields are honestly absent
+    # rather than fabricated as zeros with meaning.
+    ended <- FALSE
+    unexpected <- NULL
+    state <- NULL
+    finish <- function(category, reason, kind = NULL) {
+        if (ended) {
+            return(invisible(NULL))
+        }
+        ended <<- TRUE
+        st <- state
+        extra <- list()
+        if (!is.null(st)) {
+            fin <- tryCatch(worktree_digest(cwd), error = function(e) NULL)
+            if (!is.null(fin)) {
+                fd <- worktree_delta(st$baseline, fin)
+                extra <- list(
+                              changed = isTRUE(fd$changed),
+                              files_changed = length(fd$added) +
+                              length(fd$removed) + length(fd$modified),
+                              delta = auto_delta_evidence(st$baseline, fin,
+                                                          fd))
+            }
+            extra$loops <- max(st$loop - 1L, 0L)
+            extra$tool_calls <- st$tool_calls
+            extra$spend <- list(
+                                cost = st$spend$cost %||% 0,
+                                tokens = st$spend$tokens %||% 0,
+                                cost_known = isTRUE(st$spend$cost_known %||%
+                        TRUE))
+            extra$duration_min <- round(as.numeric(difftime(Sys.time(),
+                        st$started, units = "mins")), 2)
+        } else {
+            extra$loops <- 0L
+            extra$tool_calls <- 0L
+        }
+        do.call(record, c(list("run_end", stop_category = category,
+                               stop_reason = reason, stop_kind = kind),
+                          extra))
+    }
     # Every unwind that skips the normal ending still closes the file:
     # an error escaping the loop, an interrupt outside a turn, an
     # escalation nothing caught. Only hard termination -- the process
@@ -468,20 +522,15 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     # missing run_end is documented to mean. Ordinary errors are
     # captured with their message by the tryCatch sites below; anything
     # else ends as unexpected_exit.
-    ended <- FALSE
-    unexpected <- NULL
     on.exit({
-        if (!ended) {
-            record("run_end",
-                   stop_category = if (is.null(unexpected)) {
-                    "unexpected_exit"
-                } else {
-                    "unexpected_error"
-                },
-                   stop_reason = unexpected %||%
-                   paste("non-local exit before run_end (interrupt, or a",
-                         "condition outside the loop)"))
-        }
+        finish(if (is.null(unexpected)) {
+            "unexpected_exit"
+        } else {
+            "unexpected_error"
+        },
+               unexpected %||%
+               paste("non-local exit before run_end (interrupt, or a",
+                     "condition outside the loop)"))
     }, add = TRUE)
 
     # Config resolution can throw (unreadable config files); a run that
@@ -517,10 +566,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     bad <- auto_validate_bounds(auto)
     if (length(bad) > 0L) {
         say("refusing to start: %s", paste(bad, collapse = "; "))
-        record("run_end", stop_category = "refused_start",
-               stop_reason = paste(bad, collapse = "; "),
-               loops = 0L, tool_calls = 0L)
-        ended <- TRUE
+        finish("refused_start", paste(bad, collapse = "; "))
         return(invisible(NULL))
     }
 
@@ -672,10 +718,12 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
                policy_reason = d$policy_reason,
                envelope_ok = d$envelope_ok,
                budget_event = d$budget_event,
+               limit_kind = d$limit_kind,
                request_id = d$request_id, verdict = d$verdict,
                loop = max(state$loop - 1L, 1L),
                spend_cost = state$spend$cost %||% 0,
                spend_tokens = state$spend$tokens %||% 0,
+               spend_cost_known = isTRUE(state$spend$cost_known %||% TRUE),
                tool_calls = state$tool_calls)
     })
 
@@ -798,7 +846,15 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         auto_continuation_prompt(goal, loop_now, auto$max_loops)
     }
 
-    run_repl_loop(ctx)
+    # A calling handler, not a tryCatch: the message is captured for the
+    # terminal record while the error still propagates to the caller
+    # (and the on.exit fallback then writes unexpected_error with it).
+    withCallingHandlers(
+                        run_repl_loop(ctx),
+                        error = function(e) {
+        unexpected <<- paste("error escaped the loop:",
+                             conditionMessage(e))
+    })
     say("stopped: %s", stop_reason)
     say("spent $%.4f over %d tool calls in %.1f min",
         state$spend$cost %||% 0, state$tool_calls,
@@ -806,24 +862,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     state$stop_reason <- stop_reason
     state$stop_category <- stop_cat
     state$run_id <- run_id
-
-    final <- worktree_digest(cwd)
-    final_delta <- worktree_delta(state$baseline, final)
-    record("run_end", stop_category = stop_cat, stop_reason = stop_reason,
-           stop_kind = stop_kind,
-           loops = max(state$loop - 1L, 0L),
-           tool_calls = state$tool_calls,
-           spend = list(cost = state$spend$cost %||% 0,
-                        tokens = state$spend$tokens %||% 0,
-                        cost_known = isTRUE(state$spend$cost_known %||% TRUE)),
-           changed = isTRUE(final_delta$changed),
-           files_changed = length(final_delta$added) +
-           length(final_delta$removed) + length(final_delta$modified),
-           delta = auto_delta_evidence(state$baseline, final, final_delta),
-           duration_min = round(as.numeric(difftime(Sys.time(),
-                    state$started,
-                    units = "mins")), 2))
-    ended <- TRUE
+    finish(stop_cat, stop_reason, stop_kind)
     invisible(state)
 }
 

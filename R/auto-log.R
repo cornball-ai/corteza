@@ -38,15 +38,18 @@ auto_log_path <- function(run_id, agent_id = DEFAULT_AGENT_ID) {
 #' New run id: start-time sortable, unique without touching the RNG.
 #'
 #' Generated before anything is validated, so a refused start still has
-#' an id to be logged under. Uniqueness comes from pid (across
-#' processes) plus a per-process counter (within one), never from
-#' `sample()`: observability must not mutate the user's `.Random.seed`,
-#' and an id drawn from the RNG would also repeat under `set.seed()`.
+#' an id to be logged under. Uniqueness within a process comes from an
+#' unbounded counter, across concurrent processes from the full pid --
+#' never from `sample()`: observability must not mutate the user's
+#' `.Random.seed`, and an id drawn from the RNG would also repeat under
+#' `set.seed()`. The one case ids cannot rule out on their own (a pid
+#' recycled within the same second) is closed by the caller checking
+#' the log file does not already exist before writing to it.
 #' @noRd
 auto_new_run_id <- function() {
     .auto_run_counter$n <- .auto_run_counter$n + 1L
-    sprintf("%s-%04x%02x", format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"),
-            Sys.getpid() %% 65536L, .auto_run_counter$n %% 256L)
+    sprintf("%s-%x-%x", format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"),
+            Sys.getpid(), .auto_run_counter$n)
 }
 
 #' Append one record to a run log. Never throws.

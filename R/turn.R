@@ -360,7 +360,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             text
         }
 
-        if (identical(decision$approval, "deny")) {
+        # Policy denial, attended path. In auto mode the same denial
+        # routes through the gate below instead -- not so the monitor
+        # can weigh in (it cannot; the gate's deny branch is mechanical
+        # and first) but so the denial leaves the same structured,
+        # call_id-carrying record as every other decision. The
+        # model-visible message is identical on both paths.
+        if (identical(decision$approval, "deny") &&
+            !is.function(session$auto_gate)) {
             return(outcome_text(
                                 "deny",
                                 nudge(sprintf("[corteza policy denied: %s]",
@@ -408,6 +415,16 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             }
             )
             action <- gate$action %||% "escalate"
+            if (identical(action, "deny")) {
+                # Policy's verdict, surfaced through the gate purely so
+                # it was recorded; same message as the attended branch.
+                return(outcome_text(
+                                    "deny",
+                                    nudge(sprintf("[corteza policy denied: %s]",
+                                decision$reason)),
+                                    FALSE
+                    ))
+            }
             if (identical(action, "escalate")) {
                 stop(auto_escalate_condition(gate$reason %||% "unspecified",
                         call$tool %||% "?"))
