@@ -310,6 +310,78 @@ expect_equal(corteza:::.monitor_render_args(list()), "  (none)")
 expect_true(grepl("path: R/x.R",
                   corteza:::.monitor_render_args(list(path = "R/x.R"))))
 
+# ---- .monitor_query against subagent_query's real return type ----
+#
+# The bug a live run found and every stubbed test missed: subagent_query()
+# returns the reply as a CHARACTER SCALAR, not a list with $reply.
+# Reading $reply off it raised "$ operator is invalid for atomic vectors"
+# on every approval query, so the monitor could never return a verdict
+# and every auto run escalated on its first tool call. The tests stubbed
+# monitor_ask_approval, one layer above the mistake.
+#
+# Pin the contract first, so a change on the subagent side breaks here
+# rather than at runtime.
+expect_true(is.character(corteza:::.format_subagent_reply(
+    list(reply = "VERDICT: approve"))))
+expect_equal(length(corteza:::.format_subagent_reply(
+    list(reply = "VERDICT: approve"))), 1L)
+
+with_query_stub <- function(fn, expr) {
+    ns <- asNamespace("corteza")
+    old <- get("subagent_query", envir = ns)
+    unlockBinding("subagent_query", ns)
+    assign("subagent_query", fn, envir = ns)
+    on.exit({
+        assign("subagent_query", old, envir = ns)
+    }, add = TRUE)
+    force(expr)
+}
+
+# A character reply -- what the real function returns -- parses.
+v <- with_query_stub(
+    function(id, prompt, wait = TRUE, timeout = 60L, return_name = NULL) {
+        "REQUEST: a1\nVERDICT: approve\nREASON: fine"
+    },
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "read_file", args = list(path = "x")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "approve")
+expect_equal(v$reason, "fine")
+
+# The progress question too, in its own vocabulary.
+v <- with_query_stub(
+    function(id, prompt, wait = TRUE, timeout = 60L, return_name = NULL) {
+        "REQUEST: p1\nVERDICT: continue\nREASON: on track"
+    },
+    corteza:::monitor_ask_progress("mon", "goal", "reply", "diff", loop = 1L))
+expect_equal(v$verdict, "continue")
+
+# A multi-element character vector is joined rather than silently taking
+# the first element.
+v <- with_query_stub(
+    function(...) c("REQUEST: a1", "VERDICT: refuse", "REASON: no"),
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "bash", args = list(command = "rm -rf /")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "refuse")
+
+# A list-shaped reply still works, so a change on either side degrades to
+# an escalation rather than an error.
+v <- with_query_stub(
+    function(...) list(reply = "REQUEST: a1\nVERDICT: approve"),
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "read_file", args = list(path = "x")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "approve")
+
+# An unexpected shape escalates instead of throwing.
+v <- with_query_stub(
+    function(...) 42L,
+    corteza:::monitor_ask_approval(
+        "mon", list(tool = "read_file", args = list(path = "x")),
+        list(approval = "ask", reason = "r"), request_id = "a1"))
+expect_equal(v$verdict, "escalate")
+
 # ---- monitor_auto_gate wiring ----
 #
 # No network: monitor_in_envelope rejects before any query is attempted,

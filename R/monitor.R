@@ -626,8 +626,26 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
                     reason = paste("monitor unreachable:",
                                    conditionMessage(result))))
     }
-    parse_monitor_verdict(as.character(result$reply %||% ""),
-                          allowed = allowed, request_id = request_id)
+    # subagent_query() returns the reply as a character scalar -- see
+    # .format_subagent_reply() -- not a list with a $reply field.
+    # Reading $reply off it raised "$ operator is invalid for atomic
+    # vectors" on every approval query, so the monitor could never
+    # return a verdict and every auto run escalated on its first tool
+    # call. Nothing caught it because the tests stubbed this function's
+    # callers rather than exercising the contract underneath it.
+    #
+    # The list branch is kept because a `return_name` query does return
+    # a richer object; taking whichever shape arrives costs nothing and
+    # means a change on either side degrades to an escalation rather
+    # than an error.
+    text <- if (is.character(result)) {
+        paste(result, collapse = "\n")
+    } else if (is.list(result)) {
+        paste(as.character(result$reply %||% ""), collapse = "\n")
+    } else {
+        ""
+    }
+    parse_monitor_verdict(text, allowed = allowed, request_id = request_id)
 }
 
 #' Render tool arguments for the monitor prompt.

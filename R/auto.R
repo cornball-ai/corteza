@@ -432,7 +432,9 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         format(auto$max_tool_calls))
 
     monitor_id <- monitor_spawn(goal, ctx$session, config)
-    say("monitor %s watching (read-only, no network)", substr(monitor_id, 1L, 8L))
+    # Full id: session_id() returns a readable slug ("bold_lagrange"),
+    # not a UUID, so truncating to 8 characters just mangles it.
+    say("monitor %s watching (read-only, no network)", monitor_id)
 
     state <- auto_state(ctx$session, cwd)
     state$last_snapshot <- state$baseline
