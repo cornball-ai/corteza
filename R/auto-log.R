@@ -30,15 +30,25 @@ auto_log_path <- function(run_id, agent_id = DEFAULT_AGENT_ID) {
     file.path(auto_log_dir(agent_id), paste0(run_id, ".jsonl"))
 }
 
-#' New run id: start-time sortable, with entropy against collisions.
+#' Per-process run counter for id uniqueness.
+#' @noRd
+.auto_run_counter <- new.env(parent = emptyenv())
+.auto_run_counter$n <- 0L
+
+#' New run id: start-time sortable, unique without touching the RNG.
 #'
 #' Generated before anything is validated, so a refused start still has
-#' an id to be logged under.
+#' an id to be logged under. Uniqueness comes from pid (across
+#' processes) plus a per-process counter (within one), never from
+#' `sample()`: observability must not mutate the user's `.Random.seed`,
+#' and an id drawn from the RNG would also repeat under `set.seed()`.
 #' @noRd
 auto_new_run_id <- function() {
-    paste0(format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"), "-",
-           paste(format(as.hexmode(sample.int(256L, 4L) - 1L), width = 2L),
-                 collapse = ""))
+    .auto_run_counter$n <- .auto_run_counter$n + 1L
+    sprintf("%s-%04x%02x",
+            format(Sys.time(), "%Y%m%dT%H%M%S", tz = "UTC"),
+            Sys.getpid() %% 65536L,
+            .auto_run_counter$n %% 256L)
 }
 
 #' Append one record to a run log. Never throws.
@@ -63,6 +73,7 @@ auto_log_append <- function(path, type, ...) {
         if (!dir.exists(dir)) {
             dir.create(dir, recursive = TRUE, mode = "0700")
         }
+        fresh <- !file.exists(path)
         rec <- c(list(type = type,
                       ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")),
                  list(...))
@@ -70,6 +81,11 @@ auto_log_append <- function(path, type, ...) {
         json <- jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null",
                                  na = "null", digits = NA)
         cat(json, "\n", file = path, append = TRUE, sep = "")
+        # Owner-only, explicitly: the log carries goals, paths, and
+        # tool arguments, and umask is not a policy.
+        if (fresh) {
+            Sys.chmod(path, mode = "0600")
+        }
         TRUE
     }), error = function(e) FALSE)
 }

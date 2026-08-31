@@ -611,11 +611,15 @@ trace_path <- function(session_id, agent_id = DEFAULT_AGENT_ID) {
 #' @param auto_run_id Auto-run id when this call executed inside an
 #'   auto run; NULL (the attended default) writes no field at all, so
 #'   the format of attended traces is unchanged.
+#' @param call_id Per-call id minted at the auto gate; NULL outside
+#'   auto runs. This is what joins one trace row to one gate record
+#'   when the same tool is called twice with the same arguments.
 #' @return Invisible path to trace file
 #' @noRd
 trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                       approved_by = NULL, turn = NULL,
-                      agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL) {
+                      agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL,
+                      call_id = NULL) {
     path <- trace_path(session_id, agent_id)
 
     dir <- dirname(path)
@@ -650,6 +654,9 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
     )
     if (!is.null(auto_run_id)) {
         entry$auto_run_id <- auto_run_id
+    }
+    if (!is.null(call_id)) {
+        entry$call_id <- call_id
     }
 
     json <- jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")

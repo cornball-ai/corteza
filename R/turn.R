@@ -389,6 +389,15 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # or "escalate" (abort the whole turn for a human).
         gate_approved <- FALSE
         if (is.function(session$auto_gate)) {
+            # One id per gated call, minted before anything decides.
+            # Every artifact this call produces -- the gate record, the
+            # observer event (and through it the trace row), the
+            # monitor's approval request -- carries it, so two calls to
+            # the same tool with the same args (one refused, one run)
+            # reconstruct unambiguously from disk. turn_number cannot do
+            # this job: it also counts denials and intercepts.
+            session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
+            call$call_id <- sprintf("c%d", session$auto_call_seq)
             gate <- tryCatch(
                              session$auto_gate(call, decision),
                              # A gate that errored did not approve anything.

@@ -93,8 +93,18 @@ new_log <- function(before) {
 
 id1 <- corteza:::auto_new_run_id()
 id2 <- corteza:::auto_new_run_id()
-expect_true(grepl("^[0-9]{8}T[0-9]{6}-[0-9a-f]{8}$", id1))
+expect_true(grepl("^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$", id1))
 expect_false(identical(id1, id2))
+
+# id generation must not touch the user's RNG state: same seed before
+# and after, and two ids under the same seed still differ.
+set.seed(42)
+seed_before <- .Random.seed
+ida <- corteza:::auto_new_run_id()
+expect_identical(.Random.seed, seed_before)
+set.seed(42)
+idb <- corteza:::auto_new_run_id()
+expect_false(identical(ida, idb))
 
 # append/read round trip through the writer, not hand-built JSON
 p <- file.path(tempdir(), "auto-log-rt.jsonl")
@@ -108,6 +118,10 @@ lg <- corteza:::auto_log_read(p)
 expect_equal(length(lg$records), 3L)
 expect_equal(lg$start$type, "run_start")
 expect_equal(lg$end$stop_category, "ended")
+# fresh log files are owner-only, explicitly
+if (identical(.Platform$OS.type, "unix")) {
+    expect_equal(as.character(file.mode(p)), "600")
+}
 # every record carries a timestamp and the run id
 expect_true(all(vapply(lg$records, function(r) nzchar(r$ts %||% ""),
                        logical(1))))
@@ -146,8 +160,9 @@ lg <- corteza:::auto_log_read(f)
 expect_equal(lg$start$goal, "goal")
 expect_equal(lg$end$stop_category, "refused_start")
 expect_equal(lg$end$loops, 0L)
-# refused before the monitor: no monitor record
+# refused before the monitor: config was recorded, the monitor never was
 types <- vapply(lg$records, `[[`, "", "type")
+expect_true("config" %in% types)
 expect_false("monitor" %in% types)
 
 # ---- a full run: start, monitor, progress, categorized end ------------
@@ -176,16 +191,24 @@ expect_true("monitor" %in% types)
 mon <- lg$records[types == "monitor"][[1L]]
 expect_equal(mon$monitor_id, "mon-stub")
 
-# caps recorded as configured for the run
-expect_equal(lg$start$caps$max_loops, 10L)
-expect_false(isTRUE(lg$start$allow_exec))
-expect_equal(lg$start$allow_exec_source, "config")
+# caps and exec provenance recorded in the config record; identity in
+# run_start (which precedes config resolution)
+cfg_rec <- lg$records[types == "config"][[1L]]
+expect_equal(cfg_rec$caps$max_loops, 10L)
+expect_false(isTRUE(cfg_rec$allow_exec))
+expect_true(cfg_rec$allow_exec_source %in%
+            c("default", "global_config"))
+expect_false(isTRUE(cfg_rec$allow_exec_vetoed))
 expect_equal(lg$start$session_id, "auto-log-test")
+# run_start is the first record: identity precedes all validation
+expect_equal(vapply(lg$records, `[[`, "", "type")[[1L]], "run_start")
 
-# one progress record per monitor consultation, verdicts in order
+# one progress record per monitor consultation, verdicts in order,
+# each naming the request id its transcript exchange used
 prog <- lg$records[types == "progress"]
 expect_equal(length(prog), 2L)
 expect_equal(vapply(prog, `[[`, "", "verdict"), c("continue", "stop"))
+expect_equal(vapply(prog, `[[`, "", "request_id"), c("p1", "p2"))
 expect_true(isTRUE(prog[[1L]]$changed))          # the turn edited a file
 
 # the monitor stopped the run, and the category says so mechanically
@@ -194,6 +217,11 @@ expect_true(grepl("stub verdict 2", lg$end$stop_reason))
 expect_equal(lg$end$loops, 2L)
 expect_true(lg$end$files_changed >= 2L)          # f1.txt, f2.txt
 expect_equal(lg$end$spend$cost, 0.02)
+# durable delta evidence: paths and hashes, not just a count
+added_paths <- vapply(lg$end$delta$added, `[[`, "", "path")
+expect_true(all(c("f1.txt", "f2.txt") %in% added_paths))
+expect_true(all(nzchar(vapply(lg$end$delta$added, `[[`, "", "hash"))))
+expect_false(isTRUE(lg$end$delta$truncated))
 
 # run ids are consistent across every record and match the filename
 ids <- vapply(lg$records, `[[`, "", "run_id")
@@ -212,7 +240,32 @@ with_stubs(stub_monitor(character()),
 f <- new_log(before)
 lg <- corteza:::auto_log_read(f)
 expect_equal(lg$end$stop_category, "limit")
+expect_equal(lg$end$stop_kind, "loops")
 expect_true(grepl("max_loops", lg$end$stop_reason))
+
+# every limit the checker can fire carries its machine-readable kind
+base_state <- list(loop = 1L, started = Sys.time(), tool_calls = 0L,
+                   stalled = 0L,
+                   spend = list(cost = 0, tokens = 0, cost_known = TRUE))
+base_auto <- list(max_loops = 10L, max_minutes = 30, max_cost = 5,
+                  max_tokens = 2e6, max_tool_calls = 300L, stall_loops = 2L)
+fire <- function(state_patch = list(), auto_patch = list()) {
+    s <- utils::modifyList(base_state, state_patch)
+    a <- utils::modifyList(base_auto, auto_patch)
+    corteza:::auto_check_limits(s, a)
+}
+expect_equal(fire(list(loop = 11L))$kind, "loops")
+expect_equal(fire(list(started = Sys.time() - 3600))$kind, "minutes")
+expect_equal(fire(list(tool_calls = 300L))$kind, "tool_calls")
+expect_equal(fire(list(spend = list(cost = 9, tokens = 0,
+                                    cost_known = TRUE)))$kind, "cost")
+expect_equal(fire(list(spend = list(cost = 0, tokens = 3e6,
+                                    cost_known = TRUE)))$kind, "tokens")
+expect_equal(fire(list(stalled = 2L))$kind, "stall")
+expect_equal(fire(list(spend = list(cost = 0, tokens = 0,
+                                    cost_known = FALSE)),
+                  list(max_tokens = Inf))$kind, "unbounded")
+expect_null(fire()$kind)                          # no stop, no kind
 
 # ---- errored turn is categorized "error" ------------------------------
 
@@ -227,6 +280,28 @@ f <- new_log(before)
 lg <- corteza:::auto_log_read(f)
 expect_equal(lg$end$stop_category, "error")
 expect_true(grepl("turn exploded", lg$end$stop_reason))
+
+# ---- a throwing monitor spawn closes the record before propagating ----
+
+reset_wt()
+before <- logs_before()
+err <- tryCatch({
+    with_stubs(list(spawn = function(...) stop("no child processes"),
+                    progress = function(...) list(verdict = "continue",
+                                                  reason = "")),
+               capture.output(corteza:::run_auto_loop(
+                   auto_ctx(function(prompt, session) list(reply = "x")),
+                   "goal", max_loops = 3L)))
+    NULL
+}, error = function(e) conditionMessage(e))
+expect_true(grepl("no child processes", err))     # the error still reaches
+f <- new_log(before)
+lg <- corteza:::auto_log_read(f)
+expect_equal(lg$end$stop_category, "unexpected_error")
+expect_true(grepl("monitor spawn failed", lg$end$stop_reason))
+expect_true(grepl("no child processes", lg$end$stop_reason))
+# a closed record means "no run_end" keeps meaning hard termination
+expect_false(is.null(lg$end))
 
 # ---- gate decisions: authority travels with the record ----------------
 
@@ -248,20 +323,28 @@ gate <- corteza:::monitor_auto_gate(
     on_decision = function(d) seen[[length(seen) + 1L]] <<- d)
 
 # 1. envelope refusal: exec tool with allow_exec off (the default)
-r <- gate(list(tool = "bash", args = list(command = "ls")),
+r <- gate(list(tool = "bash", call_id = "c-env",
+               args = list(command = "ls")),
           list(approval = "allow", reason = "policy"))
 expect_equal(r$action, "escalate")
 expect_equal(seen[[1L]]$authority, "envelope")
 expect_null(seen[[1L]]$request_id)               # monitor never consulted
+expect_false(isTRUE(seen[[1L]]$envelope_ok))     # evaluated and refused
+expect_equal(seen[[1L]]$call_id, "c-env")
+expect_equal(seen[[1L]]$policy_approval, "allow")
+expect_equal(seen[[1L]]$policy_reason, "policy")
 
 # 2. monitor approval: an in-envelope write consults the monitor
-r <- gate(list(tool = "write_file",
+r <- gate(list(tool = "write_file", call_id = "c-mon",
                args = list(path = file.path(wt, "ok.txt"), content = "x")),
           list(approval = "allow", reason = "policy"))
 expect_equal(r$action, "proceed")
 expect_equal(seen[[2L]]$authority, "monitor")
 expect_equal(seen[[2L]]$verdict, "approve")
 expect_true(nzchar(seen[[2L]]$request_id %||% ""))
+expect_true(isTRUE(seen[[2L]]$envelope_ok))      # evaluated and passed
+expect_null(seen[[2L]]$budget_event)             # budget never decided
+expect_equal(seen[[2L]]$call_id, "c-mon")
 
 # 3. budget stop decides before the envelope and is attributed to it
 gate_b <- corteza:::monitor_auto_gate(
@@ -273,6 +356,8 @@ r <- gate_b(list(tool = "write_file",
             list(approval = "allow", reason = "policy"))
 expect_equal(r$action, "escalate")
 expect_equal(seen[[3L]]$authority, "budget")
+expect_equal(seen[[3L]]$budget_event, "call")     # pre-envelope phase
+expect_null(seen[[3L]]$envelope_ok)               # never evaluated
 
 # 4. post-query budget stop: monitor consulted, budget overrides
 calls <- 0L
@@ -291,6 +376,7 @@ r <- gate_p(list(tool = "write_file",
             list(approval = "allow", reason = "policy"))
 expect_equal(r$action, "escalate")
 expect_equal(seen[[4L]]$authority, "budget")
+expect_equal(seen[[4L]]$budget_event, "monitor")  # post-query phase
 expect_equal(seen[[4L]]$verdict, "approve")      # the overridden verdict kept
 expect_true(nzchar(seen[[4L]]$request_id %||% ""))
 
@@ -315,6 +401,110 @@ r <- gate_t(list(tool = "write_file",
 expect_equal(r$action, "proceed")
 
 assign("monitor_ask_approval", old_ask, envir = ns)
+
+# ---- ACCEPTANCE: reconstruct authority from disk alone ----------------
+#
+# Four IDENTICAL tool calls (same tool, same args) inside one run, the
+# monitor alternating approve/refuse. Afterwards, every conclusion below
+# is drawn ONLY from the files: the run's JSONL and the session trace.
+# No in-memory state, no ordering assumptions beyond what the records
+# themselves carry. This is the property the log exists to provide: two
+# calls that look the same from the outside -- one refused, one executed
+# -- must reconstruct unambiguously.
+
+reset_wt()
+flips <- 0L
+handler_turn <- function(prompt, session) {
+    h <- corteza:::.make_tool_handler(session, function(name, args) {
+        list(content = list(list(type = "text", text = "wrote it")))
+    })
+    for (i in 1:4) {
+        h("write_file", list(path = file.path(wt, "same.txt"),
+                             content = "identical"))
+    }
+    list(reply = "made identical calls", session = session,
+         usage = list(cost = 0.001, total_tokens = 10L))
+}
+ctx <- auto_ctx(handler_turn)
+ctx$session$sessionId <- "accept-join"
+# The production trace observer, not a copy: if chat()'s observer ever
+# stops passing call_id, this test fails.
+ctx$session$on_tool <- list(corteza:::chat_trace_observer(ctx$session))
+
+before <- logs_before()
+res <- with_stubs(
+    list(spawn = function(...) "mon-stub",
+         progress = function(...) list(verdict = "stop", reason = "done")),
+    capture.output({
+        ns2 <- asNamespace("corteza")
+        old2 <- get("monitor_ask_approval", envir = ns2)
+        unlockBinding("monitor_ask_approval", ns2)
+        assign("monitor_ask_approval",
+               function(id, call, decision, request_id = NULL,
+                        timeout = 120L) {
+            flips <<- flips + 1L
+            if (flips %% 2L == 1L) {
+                list(verdict = "approve", reason = "fine")
+            } else {
+                list(verdict = "refuse", reason = "not this one")
+            }
+        }, envir = ns2)
+        on.exit(assign("monitor_ask_approval", old2, envir = ns2),
+                add = TRUE)
+        corteza:::run_auto_loop(ctx, "make identical calls", max_loops = 1L)
+    }))
+
+# --- reconstruction, from files only ---
+f <- new_log(before)
+lg <- corteza:::auto_log_read(f)
+rid <- lg$start$run_id
+gates <- Filter(function(r) identical(r$type, "gate"), lg$records)
+expect_equal(length(gates), 4L)
+
+trace_file <- corteza:::trace_path("accept-join")
+trows <- lapply(readLines(trace_file), jsonlite::fromJSON,
+                simplifyVector = FALSE)
+# every trace row belongs to this run and names its call
+expect_true(all(vapply(trows, function(t) identical(t$auto_run_id, rid),
+                       logical(1))))
+
+# join on call_id: exactly one gate record and one trace row per call,
+# even though tool and args are identical across all four
+gid <- vapply(gates, `[[`, "", "call_id")
+tid <- vapply(trows, `[[`, "", "call_id")
+expect_equal(sort(gid), sort(tid))
+expect_equal(anyDuplicated(gid), 0L)
+expect_equal(length(unique(c(gid, tid))), 4L)
+
+for (g in gates) {
+    tr <- trows[[match(g$call_id, tid)]]
+    expect_equal(tr$tool, g$tool)
+    # the complete authority chain is in the gate record itself
+    expect_equal(g$policy_approval, "allow")
+    expect_true(isTRUE(g$envelope_ok))
+    expect_equal(g$authority, "monitor")
+    expect_true(nzchar(g$request_id))
+    if (identical(g$action, "proceed")) {
+        # approved -> the trace row shows the executed result
+        expect_equal(g$verdict, "approve")
+        expect_true(isTRUE(tr$success))
+        expect_true(grepl("wrote it", tr$result))
+    } else {
+        # refused -> the trace row shows the refusal the model saw
+        expect_equal(g$action, "refuse")
+        expect_equal(g$verdict, "refuse")
+        expect_false(isTRUE(tr$success))
+        expect_true(grepl("monitor refused", tr$result))
+    }
+}
+# alternation reconstructed: approve/refuse/approve/refuse by seq order
+ord <- order(vapply(gates, function(g) g$seq, numeric(1)))
+expect_equal(vapply(gates[ord], `[[`, "", "action"),
+             c("proceed", "refuse", "proceed", "refuse"))
+# and each gate record carries the budget snapshot it decided against
+expect_true(all(vapply(gates, function(g) is.numeric(g$spend_cost),
+                       logical(1))))
+expect_equal(gates[ord][[4L]]$tool_calls, 2L)   # two executed before it
 
 # ---- run id joins: trace entries and the monitor header ---------------
 

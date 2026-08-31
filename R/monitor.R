@@ -343,6 +343,17 @@ auto_envelope_config <- function(cwd = getwd(), allow_exec = NULL) {
     vetoed <- identical(project$allow_exec, FALSE)
     config$auto <- config$auto %||% list()
     config$auto$allow_exec <- isTRUE(granted) && !vetoed
+    # Provenance for the run record: which layer produced the grant (or
+    # the default), and whether a project veto then cut it off. Together
+    # with the effective value these reconstruct the whole resolution.
+    config$auto$allow_exec_source <- if (!is.null(allow_exec)) {
+        "call_site"
+    } else if (!is.null(global$allow_exec)) {
+        "global_config"
+    } else {
+        "default"
+    }
+    config$auto$allow_exec_vetoed <- vetoed
     config$auto$never_broker <- unique(c(
             as.character(global$never_broker %||% character()),
             as.character(project$never_broker %||% character())
@@ -372,6 +383,11 @@ get_auto_config <- function(config = list()) {
          stall_loops = as.integer(cfg$stall_loops %||% 2L),
          # Off unless explicitly granted; see auto_envelope_config().
          allow_exec = isTRUE(cfg$allow_exec %||% FALSE),
+         # Provenance from auto_envelope_config(), carried through for
+         # the run record. "unresolved" marks a config that never went
+         # through the resolution (tests building auto blocks by hand).
+         allow_exec_source = cfg$allow_exec_source %||% "unresolved",
+         allow_exec_vetoed = isTRUE(cfg$allow_exec_vetoed),
          # Tools the monitor may never broker, whatever it thinks.
          # Empty by default: the envelope is about what a call touches,
          # not which tool it is. This is here for a user who wants a
@@ -762,16 +778,20 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
         request_id <- NULL
         raw_verdict <- NULL
         decisions <<- decisions + 1L
+        envelope_ok <- NULL
+        budget_event <- NULL
 
         # Before anything else, including the envelope: a run that has
         # spent its budget stops here rather than one turn later.
         result <- over_budget("call")
         if (!is.null(result)) {
             authority <- "budget"
+            budget_event <- "call"
         }
 
         if (is.null(result)) {
             env <- monitor_in_envelope(call, decision, config, cwd)
+            envelope_ok <- isTRUE(env$ok)
             if (!isTRUE(env$ok)) {
                 # Outside the envelope the monitor is not consulted at
                 # all. No model judgment decides what a model is allowed
@@ -793,6 +813,7 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                 if (!is.null(post)) {
                     result <- post
                     authority <- "budget"
+                    budget_event <- "monitor"
                 } else {
                     result <- list(action = switch(v$verdict,
                             approve = "proceed",
@@ -831,12 +852,23 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
             }
         }
         if (is.function(on_decision)) {
+            # The whole chain, not just the outcome: what policy said
+            # coming in, whether the envelope was evaluated and how it
+            # ruled, which budget phase fired (pre-envelope "call" or
+            # post-query "monitor"), and the monitor's raw verdict --
+            # even when a budget stop overrode it. Nothing here has to
+            # be recovered from a reason string later.
             tryCatch(on_decision(list(
                                       seq = decisions,
+                                      call_id = call$call_id,
                                       tool = call$tool %||% NA_character_,
                                       action = result$action,
                                       authority = authority,
                                       reason = result$reason,
+                                      policy_approval = decision$approval,
+                                      policy_reason = decision$reason,
+                                      envelope_ok = envelope_ok,
+                                      budget_event = budget_event,
                                       request_id = request_id,
                                       verdict = raw_verdict)),
                      error = function(e) NULL)
