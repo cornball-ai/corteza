@@ -1,3 +1,17 @@
+# corteza 0.7.1.36
+
+- **Auto runs write a record of authority**: one append-only JSONL per
+  run under `agents/<agent>/auto/<run_id>.jsonl`. `run_start` is
+  written before validation (a refused start still appears), each gate
+  consultation gets a record naming the deciding authority (budget /
+  envelope / monitor / accounting) — envelope-refused calls previously
+  left no trace anywhere — each monitor progress verdict is recorded,
+  and `run_end` carries a mechanical stop category, spend, executed
+  calls, and the worktree delta. A file with no `run_end` is a run
+  whose process died. The `auto_run_id` also stamps main-session trace
+  entries written during the run and the monitor's transcript header,
+  so the three surfaces join; attended formats are unchanged.
+
 # corteza 0.7.1.35
 
 - **`/auto [--loops N] <goal>` runs bounded unattended iterations**,
