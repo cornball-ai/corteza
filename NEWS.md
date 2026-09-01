@@ -7,7 +7,11 @@
   bodies especially, need more than that default: a response the
   budget cuts off ends the turn with `[Output truncated: max_tokens]`
   (llm.api#39) instead of the model's answer. Resolution follows the
-  `web_search`/`base_url` idiom via `.session_max_tokens()`.
+  `web_search`/`base_url` idiom via `.session_max_tokens()`; both
+  boundaries validate (single positive whole number — `as.integer()`
+  alone would truncate fractions and pass NA through). Requires
+  llm.api >= 0.1.9.5: forwarding a budget onto an older llm.api walks
+  straight into the silent-truncation bug #39 fixes.
 
 # corteza 0.7.1.36
 

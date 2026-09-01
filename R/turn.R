@@ -146,8 +146,28 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$plan_mode <- isTRUE(plan_mode)
     s$web_search <- web_search
     s$base_url <- base_url
-    s$max_tokens <- if (!is.null(max_tokens)) as.integer(max_tokens)
+    s$max_tokens <- .check_max_tokens(max_tokens, "new_session(max_tokens=)")
     s
+}
+
+# Validate an output-token budget at a resolution boundary. NULL passes
+# through (means "defer"); anything else must be a single positive whole
+# number that survives as.integer() intact -- as.integer alone silently
+# truncates fractions and turns Inf/overflow into NA, and an NA or
+# nonsense budget must not reach the provider request. No upper bound
+# here: model output ceilings differ per provider, and an oversized
+# value fails loudly at the API with a clear message.
+.check_max_tokens <- function(x, where) {
+    if (is.null(x)) {
+        return(NULL)
+    }
+    ok <- is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x) &&
+    x >= 1 && x == trunc(x) && x <= .Machine$integer.max
+    if (!isTRUE(ok)) {
+        stop("max_tokens must be a single positive whole number; got ",
+             deparse(x), " via ", where, call. = FALSE)
+    }
+    as.integer(x)
 }
 
 # Providers whose wire format llm.api wires provider-native (server-side)
@@ -173,11 +193,11 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # session$max_tokens wins, then config$max_tokens. NULL means "not set
 # on the corteza side"; llm.api then applies its own provider default.
 .session_max_tokens <- function(session) {
-    mt <- session$max_tokens %||% session$config$max_tokens
-    if (is.null(mt)) {
-        return(NULL)
-    }
-    as.integer(mt)
+    # Validated even though new_session() already checks its own arg:
+    # config$max_tokens arrives here unchecked, and a session field can
+    # be assigned directly.
+    .check_max_tokens(session$max_tokens %||% session$config$max_tokens,
+                      "session/config max_tokens")
 }
 
 # Resolve the endpoint for the openai_compatible provider. Explicit
