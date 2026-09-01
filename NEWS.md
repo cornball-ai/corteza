@@ -1,3 +1,18 @@
+# corteza 0.7.1.39
+
+- **Continual harness**: a self-improving store of one-line lessons
+  the agent records as it works and that ride into every later
+  session's context. `harness_note(title, fact, evidence)` is a tool
+  the model calls the moment it verifies a durable fact (approval-
+  gated by default); `/refine` reviews the conversation into proposed
+  edits shown one at a time for approval, with `/refine list`,
+  `/refine rollback <id>`, and `/refine promote <id>`. Entries carry
+  ids, versions, provenance, and evidence; every applied edit records
+  before/after snapshots so rollback is a generated inverse; the base
+  system prompt is never in the store. Project scope lives in
+  `.corteza/harness.json`, global in the user data dir. Injection is
+  the whole store while small (empty store adds nothing to context).
+
 # corteza 0.7.1.38
 
 - **`new_session()` gains `max_tokens`**: a per-response output-token
