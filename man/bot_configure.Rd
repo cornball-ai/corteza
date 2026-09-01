@@ -15,7 +15,8 @@ bot_configure(
   bots = NULL,
   models = NULL,
   model_badge = c("never", "non_default", "always"),
-  display_name = NULL
+  display_name = NULL,
+  fallback = NULL
 )
 }
 \arguments{
@@ -71,6 +72,15 @@ always room-accurate).}
 
 \item{display_name}{Character or NULL. Base display name the badge
 rename builds on. Defaults to the localpart of the bot's user id.}
+
+\item{fallback}{Character vector or NULL. What \code{\link{turn}}
+tries, in order, when the default provider refuses a request with
+a limit error (rate, usage, or quota). Same \code{"model provider"}
+shape as \code{models}, e.g. \code{c("gpt-5.5 openai_codex",
+"claude-haiku-4-5 anthropic")}. A provider that hit a limit is
+skipped for \code{fallback_cooldown_minutes} (config key, default
+30) before the primary is tried again. NULL (default) means a
+limit error is reported like any other error.}
 }
 \value{
 The saved configuration, invisibly.
