@@ -184,7 +184,11 @@ load_config <- function(cwd = getwd()) {
     }
     if (is.null(config$permissions[["harness_note"]])) {
         config$permissions[["harness_note"]] <-
-        if (isTRUE(config$harness_auto)) "allow" else "ask"
+        if (isTRUE(config$harness_auto)) {
+            "allow"
+        } else {
+            "ask"
+        }
     }
 
     # Rate limits per provider

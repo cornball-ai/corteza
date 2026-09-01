@@ -291,8 +291,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             # directory. Falls back to getwd() when the session
             # doesn't carry one.
             call_skill(name, as.list(args),
-                       ctx = list(session = session,
-                                  cwd = session$cwd %||% getwd()),
+                       ctx = list(session = session, cwd = session$cwd %||% getwd()),
                        dry_run = session_dry_run())
         }
     }

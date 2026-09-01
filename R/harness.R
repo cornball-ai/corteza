@@ -102,8 +102,7 @@ harness_load <- function(path) {
 #' arrived with the repo.
 #' @noRd
 harness_project_trusted <- function(cwd = getwd()) {
-    global <- tryCatch(
-                       load_config_file(corteza_config_path("config.json")),
+    global <- tryCatch(load_config_file(corteza_config_path("config.json")),
                        error = function(e) NULL)
     isTRUE(global$harness_trust_project)
 }
@@ -117,14 +116,13 @@ harness_save <- function(store, path) {
     # other's half-written bytes.
     tmp <- tempfile(paste0(basename(path), "."), tmpdir = dirname(path))
     ok <- tryCatch({
-        writeLines(jsonlite::toJSON(store, auto_unbox = TRUE,
-                                    null = "null", pretty = TRUE), tmp)
+        writeLines(jsonlite::toJSON(store, auto_unbox = TRUE, null = "null",
+                                    pretty = TRUE), tmp)
         Sys.chmod(tmp, "600")
         TRUE
     }, error = function(e) {
         unlink(tmp)
-        stop("harness store write failed: ", conditionMessage(e),
-             call. = FALSE)
+        stop("harness store write failed: ", conditionMessage(e), call. = FALSE)
     })
     # file.rename returns FALSE rather than erroring (full disk, bad
     # perms, cross-device). Reporting success there loses the write
@@ -157,9 +155,8 @@ harness_with_lock <- function(path, expr, timeout = 5, stale = 60) {
         }
         # Break a lock whose owner died: mtime older than `stale`.
         age <- tryCatch(
-                        as.numeric(difftime(Sys.time(),
-                                            file.info(lock)$mtime,
-                                            units = "secs")),
+                        as.numeric(difftime(Sys.time(), file.info(lock)$mtime,
+                    units = "secs")),
                         error = function(e) 0)
         if (!is.na(age) && age > stale) {
             unlink(lock, recursive = TRUE)
@@ -229,7 +226,7 @@ harness_apply <- function(edits, scope = "project", cwd = getwd(),
     # is the critical section, not just the save. Loading outside it
     # lets a concurrent writer's entries be dropped by our save.
     harness_with_lock(path, .harness_apply_locked(edits, path, scope,
-                                                  trigger, evidence))
+            trigger, evidence))
 }
 
 # The locked body of harness_apply(). Separated so the lock wrapper
@@ -451,8 +448,7 @@ harness_context_block <- function(cwd = getwd(), config = NULL) {
     if (omitted > 0L) {
         out <- c(out, sprintf("- (%d older lessons omitted)", omitted))
     }
-    paste(out,
-          collapse = "\n")
+    paste(out, collapse = "\n")
 }
 
 #' Record a one-line lesson in the continual harness store

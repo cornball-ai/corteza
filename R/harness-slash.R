@@ -194,7 +194,7 @@ run_refine <- function(ctx, args = character()) {
                         edit$path %||% "general",
                         edit$content %||% "(delete)",
                         edit$reason %||% "-",
-                        if (nzchar(ev)) ev else "(none given)")
+            if (nzchar(ev)) ev else "(none given)")
         cat(desc, "\n")
         ans <- tolower(trimws(readline("apply? [y/N] ")))
         if (ans %in% c("y", "yes")) {
