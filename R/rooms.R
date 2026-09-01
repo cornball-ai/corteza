@@ -200,6 +200,14 @@ bot_save_config <- function(cfg) {
 #'   uses the default provider). The menu always lists the configured
 #'   default and the live local Ollama inventory; this key adds hosted
 #'   models that can't be discovered automatically.
+#' @param fallback Character vector or NULL. What \code{\link{turn}}
+#'   tries, in order, when the default provider refuses a request with
+#'   a limit error (rate, usage, or quota). Same \code{"model provider"}
+#'   shape as \code{models}, e.g. \code{c("gpt-5.5 openai_codex",
+#'   "claude-haiku-4-5 anthropic")}. A provider that hit a limit is
+#'   skipped for \code{fallback_cooldown_minutes} (config key, default
+#'   30) before the primary is tried again. NULL (default) means a
+#'   limit error is reported like any other error.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -219,7 +227,7 @@ bot_configure <- function(server, user, password, room, model = NULL,
                           auto_approve_asks = FALSE, bots = NULL,
                           models = NULL,
                           model_badge = c("never", "non_default", "always"),
-                          display_name = NULL) {
+                          display_name = NULL, fallback = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     bot_require_mx()
@@ -233,13 +241,20 @@ bot_configure <- function(server, user, password, room, model = NULL,
                  paste(bad, collapse = ", "), call. = FALSE)
         }
     }
-    if (!is.null(models)) {
-        models <- as.character(models)
-        models <- models[nzchar(trimws(models))]
-        if (!length(models)) {
-            models <- NULL
+    specs <- function(x) {
+        if (is.null(x)) {
+            return(NULL)
+        }
+        x <- as.character(x)
+        x <- x[nzchar(trimws(x))]
+        if (length(x)) {
+            x
+        } else {
+            NULL
         }
     }
+    models <- specs(models)
+    fallback <- specs(fallback)
 
     cfg <- chat.api::chat_matrix_configure(
         server, user, password, room,
@@ -247,7 +262,7 @@ bot_configure <- function(server, user, password, room, model = NULL,
         extra = list(model = model, provider = provider,
                      tools_filter = tools_filter,
                      auto_approve_asks = isTRUE(auto_approve_asks),
-                     bots = bots, models = models,
+                     bots = bots, models = models, fallback = fallback,
                      model_badge = model_badge,
                      display_name = display_name))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
@@ -1584,6 +1599,10 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # Limit fallback chain and cooldown come from the Matrix config, not
+    # the room's cwd config: the account whose limit trips is the bot's.
+    s$fallback <- cfg$fallback
+    s$fallback_cooldown <- cfg$fallback_cooldown_minutes
     # Creation-time defaults, the baseline the model badge compares
     # against: only a /model switch makes the live values differ.
     s$default_model <- s$model

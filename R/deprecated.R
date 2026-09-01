@@ -24,14 +24,14 @@ matrix_configure <- function(server, user, password, room, model = NULL,
                              auto_approve_asks = FALSE, bots = NULL,
                              models = NULL,
                              model_badge = c("never", "non_default", "always"),
-                             display_name = NULL) {
+                             display_name = NULL, fallback = NULL) {
     .Deprecated("bot_configure")
     bot_configure(server = server, user = user, password = password,
                   room = room, model = model, provider = provider,
                   tools_filter = tools_filter,
                   auto_approve_asks = auto_approve_asks, bots = bots,
                   models = models, model_badge = model_badge,
-                  display_name = display_name)
+                  display_name = display_name, fallback = fallback)
 }
 
 #' Deprecated: use bot_send()

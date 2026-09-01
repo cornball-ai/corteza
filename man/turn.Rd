@@ -36,6 +36,19 @@ is not part of the CLI's tool path. Pass an explicit
 \code{function(name, args) -> list} executor only when dispatching
 tools somewhere other than the in-process registry.
 
+When the provider refuses the request with a limit error (HTTP 429,
+503, or 529, or a body naming a rate, usage, or quota limit) and the
+session has a fallback chain, the turn is retried on the next
+\code{"model provider"} entry in that chain. The chain comes from
+\code{session$fallback} (the Matrix config's \code{fallback} key, see
+\code{\link{bot_configure}}) or the cwd config's \code{fallback}
+key. A provider that hit a limit is skipped process-wide for
+\code{fallback_cooldown_minutes} (default 30), after which the
+primary is tried again. A limit hit after tool calls have already
+run is not retried: the error surfaces and the next turn takes the
+fallback, so no tool call runs twice. Errors that are not limits
+are rethrown untouched.
+
 }
 \examples{
 \dontrun{
