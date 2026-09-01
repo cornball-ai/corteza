@@ -562,8 +562,8 @@ run_repl_loop <- function(ctx) {
                 # promote. One shared implementation (run_refine) for
                 # chat() and the CLI, like /flush below.
                 refine_result <- .repl_interruptible(
-                                                     run_refine(ctx, parts[-1]),
-                                                     ctx$palette)
+                    run_refine(ctx, parts[-1]),
+                    ctx$palette)
                 if (inherits(refine_result, "repl_interrupted")) {
                     next
                 }

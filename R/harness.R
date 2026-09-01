@@ -36,8 +36,7 @@ harness_path <- function(scope = c("project", "global"), cwd = getwd()) {
 #' Empty store skeleton.
 #' @noRd
 harness_empty <- function() {
-    list(schema = 1L,
-         entries = setNames(list(), character(0)),
+    list(schema = 1L, entries = setNames(list(), character(0)),
          refinements = list())
 }
 
@@ -51,8 +50,8 @@ harness_load <- function(path) {
     store <- tryCatch(
                       jsonlite::fromJSON(path, simplifyVector = FALSE),
                       error = function(e) {
-        warning("harness store unreadable, treating as empty: ", path,
-                " (", conditionMessage(e), ")", call. = FALSE)
+        warning("harness store unreadable, treating as empty: ", path, " (",
+                conditionMessage(e), ")", call. = FALSE)
         NULL
     })
     if (!is.list(store) || is.null(store$schema)) {
@@ -132,16 +131,15 @@ harness_apply <- function(edits, scope = "project", cwd = getwd(),
     for (edit in edits) {
         action <- edit$action %||% "create"
         if (identical(action, "delete")) {
-            id <- edit$id %||% stop("delete edit needs an id",
-                                    call. = FALSE)
+            id <- edit$id %||% stop("delete edit needs an id", call. = FALSE)
             before <- store$entries[[id]]
             if (is.null(before)) {
                 next
             }
             store$entries[[id]] <- NULL
             applied[[length(applied) + 1L]] <-
-                list(action = "delete", id = id, before = before,
-                     after = NULL, reason = edit$reason %||% NA)
+            list(action = "delete", id = id, before = before, after = NULL,
+                 reason = edit$reason %||% NA)
             next
         }
         entry <- list(id = edit$id %||% .harness_slug(edit$title %||% ""),
@@ -169,9 +167,9 @@ harness_apply <- function(edits, scope = "project", cwd = getwd(),
         entry$updated <- now
         store$entries[[entry$id]] <- entry
         applied[[length(applied) + 1L]] <-
-            list(action = if (is.null(before)) "create" else "update",
-                 id = entry$id, before = before, after = entry,
-                 reason = edit$reason %||% NA)
+        list(action = if (is.null(before)) "create" else "update",
+             id = entry$id, before = before, after = entry,
+             reason = edit$reason %||% NA)
     }
 
     if (!length(applied)) {
@@ -197,8 +195,7 @@ harness_apply <- function(edits, scope = "project", cwd = getwd(),
 #' Roll back one refinement by applying the generated inverse of its
 #' recorded edits, as a new refinement (nothing is erased).
 #' @noRd
-harness_rollback <- function(refinement_id, scope = "project",
-                             cwd = getwd()) {
+harness_rollback <- function(refinement_id, scope = "project", cwd = getwd()) {
     store <- harness_load(harness_path(scope, cwd))
     refs <- Filter(function(r) identical(r$id, refinement_id),
                    store$refinements)
@@ -246,7 +243,11 @@ harness_context_block <- function(cwd = getwd(), config = NULL) {
                      decreasing = TRUE)
         for (e in entries[ord]) {
             model <- e$provenance$model %||% NULL
-            tag <- if (!is.null(model)) paste0(" (via ", model, ")") else ""
+            if (!is.null(model)) {
+                tag <- paste0(" (via ", model, ")")
+            } else {
+                tag <- ""
+            }
             line <- sprintf("- [%s] %s%s", scope, e$content, tag)
             if (sum(nchar(lines)) + nchar(line) > max_chars) {
                 omitted <- omitted + 1L
@@ -293,7 +294,11 @@ harness_context_block <- function(cwd = getwd(), config = NULL) {
 #' @keywords internal
 tool_harness_note <- function(title, fact, evidence = NULL,
                               scope = "project", ctx = list()) {
-    scope <- if (identical(scope, "global")) "global" else "project"
+    if (identical(scope, "global")) {
+        scope <- "global"
+    } else {
+        scope <- "project"
+    }
     session <- ctx$session
     model <- tryCatch(.resolve_model(session), error = function(e) NULL)
     cwd <- ctx$cwd %||% getwd()
@@ -310,6 +315,6 @@ tool_harness_note <- function(title, fact, evidence = NULL,
     }
     list(content = list(list(type = "text",
                              text = sprintf("Recorded [%s] %s: %s",
-                                            scope, .harness_slug(title),
-                                            fact))))
+                    scope, .harness_slug(title),
+                    fact))))
 }

@@ -4,21 +4,21 @@
 # per-edit readline; nothing applies without a yes.
 
 .REFINE_SYSTEM <- paste(
-    "You maintain a small store of one-line lessons for an AI agent.",
-    "Given the current entries and a recent conversation transcript,",
-    "propose at most 8 edits that make the store more useful for",
-    "future sessions. Record only durable, verified facts backed by",
-    "the transcript -- reject one-off noise, unsupported hypotheses,",
-    "and transient tool output. Falsified hypotheses are worth",
-    "recording. Each entry content is ONE exact line under 300",
-    "characters. Never propose anything about the base system prompt.",
-    "Respond with ONLY a JSON object, no code fences:",
-    '{"summary": "...", "edits": [{"action": "create|update|delete",',
-    '"kind": "memory|prompt", "id": "existing-id-for-update-or-delete",',
-    '"title": "short title (create only)", "content": "the one line",',
-    '"path": "grouping, default general", "evidence": "receipt if any",',
-    '"reason": "why this edit"}]}',
-    "An empty edits array is a valid answer.")
+                        "You maintain a small store of one-line lessons for an AI agent.",
+                        "Given the current entries and a recent conversation transcript,",
+                        "propose at most 8 edits that make the store more useful for",
+                        "future sessions. Record only durable, verified facts backed by",
+                        "the transcript -- reject one-off noise, unsupported hypotheses,",
+                        "and transient tool output. Falsified hypotheses are worth",
+                        "recording. Each entry content is ONE exact line under 300",
+                        "characters. Never propose anything about the base system prompt.",
+                        "Respond with ONLY a JSON object, no code fences:",
+                        '{"summary": "...", "edits": [{"action": "create|update|delete",',
+                        '"kind": "memory|prompt", "id": "existing-id-for-update-or-delete",',
+                        '"title": "short title (create only)", "content": "the one line",',
+                        '"path": "grouping, default general", "evidence": "receipt if any",',
+                        '"reason": "why this edit"}]}',
+                        "An empty edits array is a valid answer.")
 
 # Flatten session history into readable text for the refine pass.
 # Handles both content shapes (string, and anthropic block lists);
@@ -62,9 +62,9 @@
     for (scope in c("project", "global")) {
         store <- harness_load(harness_path(scope, cwd))
         for (e in store$entries) {
-            out <- c(out, sprintf("[%s] %s (v%s, %s): %s", scope,
-                                  e$id, e$version %||% 1L,
-                                  e$kind %||% "memory", e$content))
+            out <- c(out, sprintf("[%s] %s (v%s, %s): %s", scope, e$id,
+                                  e$version %||% 1L, e$kind %||% "memory",
+                                  e$content))
         }
     }
     out
@@ -75,7 +75,11 @@
 #' @noRd
 run_refine <- function(ctx, args = character()) {
     cwd <- ctx$cwd %||% getwd()
-    sub <- if (length(args)) args[[1L]] else ""
+    if (length(args)) {
+        sub <- args[[1L]]
+    } else {
+        sub <- ""
+    }
 
     if (identical(sub, "list")) {
         rows <- .harness_overview(cwd)
@@ -92,9 +96,12 @@ run_refine <- function(ctx, args = character()) {
             cat("usage: /refine rollback <refinement-id> [--global]\n")
             return(invisible(NULL))
         }
-        scope <- if ("--global" %in% args) "global" else "project"
-        ref <- tryCatch(harness_rollback(args[[2L]], scope = scope,
-                                         cwd = cwd),
+        if ("--global" %in% args) {
+            scope <- "global"
+        } else {
+            scope <- "project"
+        }
+        ref <- tryCatch(harness_rollback(args[[2L]], scope = scope, cwd = cwd),
                         error = function(e) {
             cat(conditionMessage(e), "\n")
             NULL
@@ -138,21 +145,21 @@ run_refine <- function(ctx, args = character()) {
     }
     overview <- .harness_overview(cwd)
     prompt <- paste(
-        "Current store:",
+                    "Current store:",
         if (length(overview)) paste(overview, collapse = "\n") else "(empty)",
-        "",
-        "Recent transcript:",
-        .harness_history_text(history),
-        sep = "\n")
+                    "",
+                    "Recent transcript:",
+                    .harness_history_text(history),
+                    sep = "\n")
     cat("Reviewing the conversation for durable lessons...\n")
     resp <- tryCatch(
-        llm.api::chat(prompt = prompt, system = .REFINE_SYSTEM,
-                      model = .resolve_model(session),
-                      provider = session$provider),
-        error = function(e) {
-            cat("Refine pass failed:", conditionMessage(e), "\n")
-            NULL
-        })
+                     llm.api::chat(prompt = prompt, system = .REFINE_SYSTEM,
+                                   model = .resolve_model(session),
+                                   provider = session$provider),
+                     error = function(e) {
+        cat("Refine pass failed:", conditionMessage(e), "\n")
+        NULL
+    })
     if (is.null(resp)) {
         return(invisible(NULL))
     }
