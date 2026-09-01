@@ -95,6 +95,14 @@ default_local_model <- function() {
 #'   NULL falls back to \code{config$base_url}, then llm.api's own
 #'   \code{OPENAI_COMPATIBLE_BASE_URL} environment variable. Ignored
 #'   for every other provider.
+#' @param max_tokens Integer or NULL. Per-response output-token budget,
+#'   forwarded to \code{llm.api::agent}. NULL falls back to
+#'   \code{config$max_tokens}, then llm.api's provider default (4096
+#'   on Anthropic). Agent turns that write long tool calls -- big
+#'   \code{run_r} bodies especially -- need more than that default:
+#'   a response the budget cuts off ends the whole turn with
+#'   \code{[Output truncated: max_tokens]} instead of the model's
+#'   answer.
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -110,7 +118,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
                         verbose = FALSE, plan_mode = FALSE,
-                        web_search = NULL, base_url = NULL) {
+                        web_search = NULL, base_url = NULL,
+                        max_tokens = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -138,6 +147,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$plan_mode <- isTRUE(plan_mode)
     s$web_search <- web_search
     s$base_url <- base_url
+    s$max_tokens <- if (!is.null(max_tokens)) as.integer(max_tokens)
     s
 }
 
@@ -158,6 +168,17 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # cost is per actual search, not per turn).
 .session_web_search <- function(session) {
     session$web_search %||% session$config$web_search %||% TRUE
+}
+
+# Resolve the per-response output-token budget. Explicit
+# session$max_tokens wins, then config$max_tokens. NULL means "not set
+# on the corteza side"; llm.api then applies its own provider default.
+.session_max_tokens <- function(session) {
+    mt <- session$max_tokens %||% session$config$max_tokens
+    if (is.null(mt)) {
+        return(NULL)
+    }
+    as.integer(mt)
 }
 
 # Resolve the endpoint for the openai_compatible provider. Explicit
@@ -782,6 +803,14 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
 
     if (ws_active) {
         agent_args$web_search <- ws
+    }
+
+    # Output-token budget rides llm.api::agent's `...` into the request
+    # body. Only sent when set: NULL leaves llm.api's provider default
+    # in place rather than pinning it from here.
+    mt <- .session_max_tokens(session)
+    if (!is.null(mt)) {
+        agent_args$max_tokens <- mt
     }
 
     # For openai_compatible the endpoint is corteza-configured, not built
