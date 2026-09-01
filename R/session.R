@@ -377,7 +377,8 @@ session_add_message <- function(session, role, content) {
 #' @param agent_id Agent ID
 #' @return Invisible path to transcript file
 #' @noRd
-transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID) {
+transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
+                                    extra = NULL) {
     path <- session_transcript_path(id, agent_id)
 
     dir <- dirname(path)
@@ -397,6 +398,13 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID) {
                    timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
                    cwd = normalizePath(cwd, mustWork = FALSE)
     )
+    # Optional caller-supplied fields (e.g. the auto_run_id a monitor
+    # subagent was spawned for). NULLs are dropped so the attended
+    # header format is byte-for-byte what it always was.
+    if (is.list(extra)) {
+        extra <- extra[!vapply(extra, is.null, logical(1))]
+        header[names(extra)] <- extra
+    }
 
     json <- jsonlite::toJSON(header, auto_unbox = TRUE)
     cat(json, "\n", file = path, append = FALSE)
@@ -413,10 +421,14 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID) {
 #' @param usage Token usage list (for assistant messages)
 #' @param agent_id Agent ID
 #' @return Invisible path to transcript file
+#' @param auto_run_id Auto-run id when this message belongs to an auto
+#'   run; NULL (the attended default) writes no field, so the attended
+#'   message format is unchanged. This is what lets two runs with the
+#'   same goal in one session be partitioned from the transcript alone.
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
-                              agent_id = DEFAULT_AGENT_ID) {
+                              agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -430,6 +442,9 @@ transcript_append <- function(session, role, content, provider = NULL,
                 role = role,
                 content = list(list(type = "text", text = content))
     )
+    if (!is.null(auto_run_id)) {
+        msg$auto_run_id <- auto_run_id
+    }
 
     if (role == "assistant") {
         msg$stopReason <- "stop"
@@ -600,11 +615,18 @@ trace_path <- function(session_id, agent_id = DEFAULT_AGENT_ID) {
 #' @param approved_by How tool was approved
 #' @param turn Conversation turn number
 #' @param agent_id Agent ID
+#' @param auto_run_id Auto-run id when this call executed inside an
+#'   auto run; NULL (the attended default) writes no field at all, so
+#'   the format of attended traces is unchanged.
+#' @param call_id Per-call id minted at the auto gate; NULL outside
+#'   auto runs. This is what joins one trace row to one gate record
+#'   when the same tool is called twice with the same arguments.
 #' @return Invisible path to trace file
 #' @noRd
 trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                       approved_by = NULL, turn = NULL,
-                      agent_id = DEFAULT_AGENT_ID) {
+                      agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL,
+                      call_id = NULL) {
     path <- trace_path(session_id, agent_id)
 
     dir <- dirname(path)
@@ -637,6 +659,12 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                   elapsed_ms = elapsed_ms,
                   approved_by = approved_by
     )
+    if (!is.null(auto_run_id)) {
+        entry$auto_run_id <- auto_run_id
+    }
+    if (!is.null(call_id)) {
+        entry$call_id <- call_id
+    }
 
     json <- jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
     cat(json, "\n", file = path, append = TRUE)

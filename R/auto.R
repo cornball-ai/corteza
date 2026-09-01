@@ -232,25 +232,29 @@ auto_spend_baseline <- function(session) {
 #' @return List with `stop` (logical) and `reason` (character).
 #' @noRd
 auto_check_limits <- function(state, auto) {
-    halt <- function(why) list(stop = TRUE, reason = why)
+    # `kind` is the machine-readable half of the answer. The reason
+    # string is for the operator; tooling reading the run log gets the
+    # kind, so "which cap fired" never requires parsing prose.
+    halt <- function(why, kind) list(stop = TRUE, reason = why, kind = kind)
 
     if (state$loop > auto$max_loops) {
-        return(halt(sprintf("reached max_loops (%d)", auto$max_loops)))
+        return(halt(sprintf("reached max_loops (%d)", auto$max_loops), "loops"))
     }
     elapsed <- as.numeric(difftime(Sys.time(), state$started, units = "mins"))
     if (is.finite(auto$max_minutes) && elapsed >= auto$max_minutes) {
         return(halt(sprintf("hit the time cap (%.1f of %g minutes)", elapsed,
-                            auto$max_minutes)))
+                            auto$max_minutes), "minutes"))
     }
     if (state$tool_calls >= auto$max_tool_calls) {
-        return(halt(sprintf("hit the tool-call cap (%d)", auto$max_tool_calls)))
+        return(halt(sprintf("hit the tool-call cap (%d)", auto$max_tool_calls),
+                    "tool_calls"))
     }
     spend <- state$spend %||% list(cost = 0, tokens = 0, cost_known = TRUE)
     note <- ""
     if (isTRUE(spend$cost_known)) {
         if (is.finite(auto$max_cost) && (spend$cost %||% 0) >= auto$max_cost) {
             return(halt(sprintf("hit the spend cap ($%.4f of $%g)",
-                                spend$cost, auto$max_cost)))
+                                spend$cost, auto$max_cost), "cost"))
         }
     } else {
         # No price available. This is NOT automatically a failure, and
@@ -268,7 +272,8 @@ auto_check_limits <- function(state, auto) {
         # enforceable, and then it stops.
         if (!is.finite(auto$max_tokens)) {
             return(halt(paste("no model price available and no token cap to",
-                              "fall back on, so nothing bounds this run")))
+                              "fall back on, so nothing bounds this run"),
+                        "unbounded"))
         }
         note <- sprintf(paste("no model price available (subscription or",
                               "cost-blind provider); bounding on the token cap",
@@ -277,12 +282,12 @@ auto_check_limits <- function(state, auto) {
     if (is.finite(auto$max_tokens) &&
         (spend$tokens %||% 0) >= auto$max_tokens) {
         return(halt(sprintf("hit the token cap (%.0f of %g)",
-                            spend$tokens, auto$max_tokens)))
+                            spend$tokens, auto$max_tokens), "tokens"))
     }
     if (state$stalled >= auto$stall_loops) {
         return(halt(sprintf(
                             "nothing changed on disk for %d consecutive iterations",
-                            state$stalled)))
+                            state$stalled), "stall"))
     }
     list(stop = FALSE, reason = "", note = note)
 }
@@ -426,16 +431,132 @@ auto_validate_bounds <- function(auto) {
 #' @noRd
 run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     cwd <- ctx$cwd %||% getwd()
-    config <- auto_envelope_config(cwd, allow_exec = allow_exec)
-    auto <- get_auto_config(config)
-    if (!is.null(max_loops)) {
-        auto$max_loops <- as.integer(max_loops)
-    }
     palette <- ctx$palette %||% list()
     say <- function(fmt, ...) {
         cat(sprintf("%s[auto] %s%s\n", palette$dim %||% "",
                     sprintf(fmt, ...), palette$reset %||% ""))
     }
+
+    # The run gets its identity before anything else -- before config
+    # resolution, which reads files and can itself fail. A start the
+    # bounds (or the config) refuse still appears on the record, as
+    # run_start + run_end in the same file. record() never throws
+    # (auto_log_append), but a failing log is said once -- silently
+    # unrecorded is the one state this layer exists to rule out.
+    run_id <- auto_new_run_id()
+    log_path <- auto_log_path(run_id)
+    # Uniqueness is enforced where it matters -- at the file. A pid
+    # reused within the same second is the one collision the id scheme
+    # itself cannot rule out, and appending two runs to one file would
+    # make auto_log_read() pair the first start with the last end. The
+    # counter advances on every attempt, so this terminates.
+    while (file.exists(log_path)) {
+        run_id <- auto_new_run_id()
+        log_path <- auto_log_path(run_id)
+    }
+    log_broken <- FALSE
+    record <- function(type, ...) {
+        ok <- auto_log_append(log_path, type, run_id = run_id, ...)
+        if (!ok && !log_broken) {
+            log_broken <<- TRUE
+            say("run log writes failing (%s); run continues unrecorded",
+                log_path)
+        }
+        invisible(ok)
+    }
+    record("run_start", version = AUTO_LOG_VERSION, goal = goal,
+           cwd = cwd,
+           session_id = ctx$disk_session$sessionId %||% NA_character_,
+           provider = ctx$provider %||% NA_character_,
+           model = ctx$model %||% NA_character_)
+
+    # One terminal-record builder for every way a run can end. The
+    # abnormal endings are precisely the ones whose evidence matters
+    # most, so the fallback must not write a thinner record than the
+    # normal path: whatever state exists at unwind time -- loops, spend,
+    # executed calls, the filesystem delta -- goes in. Before state
+    # exists (config or spawn failure) those fields are honestly absent
+    # rather than fabricated as zeros with meaning.
+    ended <- FALSE
+    unexpected <- NULL
+    state <- NULL
+    finish <- function(category, reason, kind = NULL) {
+        if (ended) {
+            return(invisible(NULL))
+        }
+        ended <<- TRUE
+        st <- state
+        extra <- list()
+        if (!is.null(st)) {
+            fin <- tryCatch(worktree_digest(cwd), error = function(e) NULL)
+            if (!is.null(fin)) {
+                fd <- worktree_delta(st$baseline, fin)
+                extra <- list(
+                              changed = isTRUE(fd$changed),
+                              files_changed = length(fd$added) +
+                              length(fd$removed) + length(fd$modified),
+                              delta = auto_delta_evidence(st$baseline, fin, fd))
+            }
+            extra$loops <- max(st$loop - 1L, 0L)
+            extra$tool_calls <- st$tool_calls
+            extra$spend <- list(
+                                cost = st$spend$cost %||% 0,
+                                tokens = st$spend$tokens %||% 0,
+                                cost_known = isTRUE(st$spend$cost_known %||% TRUE))
+            extra$duration_min <- round(as.numeric(difftime(Sys.time(),
+                        st$started, units = "mins")), 2)
+        } else {
+            extra$loops <- 0L
+            extra$tool_calls <- 0L
+        }
+        do.call(record, c(list("run_end", stop_category = category,
+                               stop_reason = reason, stop_kind = kind),
+                          extra))
+    }
+    # Every unwind that skips the normal ending still closes the file:
+    # an error escaping the loop, an interrupt outside a turn, an
+    # escalation nothing caught. Only hard termination -- the process
+    # dying -- leaves a file with no run_end, which is exactly what a
+    # missing run_end is documented to mean. Ordinary errors are
+    # captured with their message by the tryCatch sites below; anything
+    # else ends as unexpected_exit.
+    on.exit({
+        finish(if (is.null(unexpected)) {
+                "unexpected_exit"
+            } else {
+                "unexpected_error"
+            },
+               unexpected %||%
+               paste("non-local exit before run_end (interrupt, or a",
+                     "condition outside the loop)"))
+    }, add = TRUE)
+
+    # Config resolution can throw (unreadable config files); a run that
+    # dies here must still close its record.
+    config <- tryCatch(auto_envelope_config(cwd, allow_exec = allow_exec),
+                       error = function(e) {
+        unexpected <<- paste("config resolution failed:", conditionMessage(e))
+        stop(e)
+    })
+    auto <- get_auto_config(config)
+    if (!is.null(max_loops)) {
+        auto$max_loops <- as.integer(max_loops)
+    }
+    record("config",
+           caps = list(max_loops = auto$max_loops,
+                       max_minutes = auto$max_minutes,
+                       max_cost = auto$max_cost,
+                       max_tokens = auto$max_tokens,
+                       max_tool_calls = auto$max_tool_calls,
+                       stall_loops = auto$stall_loops),
+           allow_exec = isTRUE(auto$allow_exec),
+           allow_exec_source = if (!is.null(allow_exec)) {
+            "call_site"
+        } else {
+            auto$allow_exec_source
+        },
+           allow_exec_vetoed = isTRUE(auto$allow_exec_vetoed),
+           never_broker = auto$never_broker)
 
     # Refuse a nonsense budget rather than interpreting it. A bound of 0
     # or NA would otherwise still permit the first worker turn, since the
@@ -443,23 +564,55 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     bad <- auto_validate_bounds(auto)
     if (length(bad) > 0L) {
         say("refusing to start: %s", paste(bad, collapse = "; "))
+        finish("refused_start", paste(bad, collapse = "; "))
         return(invisible(NULL))
     }
 
     say("goal: %s", goal)
+    say("run %s", run_id)
     say("caps: %d loops, %g min, $%g, %s tool calls",
         auto$max_loops, auto$max_minutes, auto$max_cost,
         format(auto$max_tool_calls))
 
-    monitor_id <- monitor_spawn(goal, ctx$session, config)
+    # Stamped before the monitor spawns, not after: the spawn writes the
+    # child's transcript header, and the header picks the run id up from
+    # the parent session at that moment. Restored on exit no matter how
+    # the run ends, so attended trace entries never carry a stale run.
+    prev_run_id <- ctx$session$auto_run_id
+    ctx$session$auto_run_id <- run_id
+    # Per-run call ids: c1 is this run's first gated call. The run_id on
+    # every record keeps ids from colliding across runs.
+    ctx$session$auto_call_seq <- 0L
+    on.exit(ctx$session$auto_run_id <- prev_run_id, add = TRUE)
+
+    # A spawn failure is an ordinary error the operator will see, but
+    # the run record must say it too -- this is the named case where "no
+    # run_end means the process died" used to be false.
+    monitor_id <- tryCatch(monitor_spawn(goal, ctx$session, config),
+                           error = function(e) {
+        unexpected <<- paste("monitor spawn failed:", conditionMessage(e))
+        stop(e)
+    })
     # Full id: session_id() returns a readable slug ("bold_lagrange"),
     # not a UUID, so truncating to 8 characters just mangles it.
     say("monitor %s watching (read-only, no network)", monitor_id)
+    record("monitor", monitor_id = monitor_id)
 
     state <- auto_state(ctx$session, cwd)
     state$last_snapshot <- state$baseline
     state$tool_baseline <- ctx$session$turn_number %||% 0L
     stop_reason <- "ended"
+    # Category set at the same site as the reason, never parsed back out
+    # of the reason string: free-form text is for the operator, the
+    # category is for tooling, and deriving one from the other is how
+    # they drift.
+    stop_cat <- "ended"
+    stop_kind <- NULL
+    stop_it <- function(category, reason, kind = NULL) {
+        stop_cat <<- category
+        stop_reason <<- reason
+        stop_kind <<- kind
+    }
 
     # Restore the session to its attended shape no matter how the run
     # ends -- interrupt, error, escalation. A session left carrying a
@@ -527,7 +680,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
             say("%s", lim$note)
         }
         if (isTRUE(lim$stop)) {
-            stop_reason <<- lim$reason
+            stop_it("limit", lim$reason, lim$kind)
         }
         lim
     }
@@ -548,6 +701,28 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         if (!identical(action, "proceed")) {
             say("monitor %s %s: %s", action, call$tool %||% "?", reason)
         }
+    },
+        on_decision = function(d) {
+        # One record per gate consultation, envelope refusals included
+        # -- the calls that previously left no trace anywhere. The loop
+        # counter is pre-incremented when the prompt is handed out, so
+        # the turn now executing is state$loop - 1. The spend fields are
+        # the budget snapshot the decision was made against (state was
+        # refreshed by budget_check just before the gate decided).
+        record("gate", seq = d$seq, call_id = d$call_id, tool = d$tool,
+               action = d$action, authority = d$authority,
+               reason = d$reason,
+               policy_approval = d$policy_approval,
+               policy_reason = d$policy_reason,
+               envelope_ok = d$envelope_ok,
+               budget_event = d$budget_event,
+               limit_kind = d$limit_kind,
+               request_id = d$request_id, verdict = d$verdict,
+               loop = max(state$loop - 1L, 1L),
+               spend_cost = state$spend$cost %||% 0,
+               spend_tokens = state$spend$tokens %||% 0,
+               spend_cost_known = isTRUE(state$spend$cost_known %||% TRUE),
+               tool_calls = state$tool_calls)
     })
 
     ctx$read_input <- function(prompt_str) {
@@ -576,12 +751,18 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         # stop the run rather than just the turn inside it.
         status <- ctx$last_turn_status %||% "ok"
         if (!identical(status, "ok")) {
-            stop_reason <<- switch(status,
-                                   escalate = paste("escalated:", ctx$auto_halt %||% "?"),
-                                   interrupt = "interrupted",
-                                   denied = "a tool call was denied",
-                                   error = paste("turn errored:", ctx$last_turn_error %||% "?"),
-                                   paste("turn ended:", status))
+            stop_it(switch(status,
+                           escalate = "escalate",
+                           interrupt = "interrupt",
+                           denied = "denied",
+                           error = "error",
+                           "turn_ended"),
+                    switch(status,
+                           escalate = paste("escalated:", ctx$auto_halt %||% "?"),
+                           interrupt = "interrupted",
+                           denied = "a tool call was denied",
+                           error = paste("turn errored:", ctx$last_turn_error %||% "?"),
+                           paste("turn ended:", status)))
             return(character(0))
         }
 
@@ -599,7 +780,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
 
         limits <- auto_check_limits(state, auto)
         if (isTRUE(limits$stop)) {
-            stop_reason <<- limits$reason
+            stop_it("limit", limits$reason, limits$kind)
             return(character(0))
         }
 
@@ -608,11 +789,15 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         # stop authority: "done" gets checked against what moved on disk.
         claimed <- auto_parse_status(reply)
         run_delta <- worktree_delta(state$baseline, current)
+        # Explicit request id, so the progress record and the monitor's
+        # transcript name the same exchange.
+        progress_req <- sprintf("p%d", state$loop - 1L)
         verdict <- monitor_ask_progress(
                                         monitor_id, goal, reply,
                                         paste0(format_worktree_delta(run_delta),
                 "\n\nWorker self-report: AUTO_STATUS: ", claimed),
                                         loop = state$loop - 1L, max_loops = auto$max_loops,
+                                        request_id = progress_req,
                                         timeout = auto$monitor_timeout)
 
         # The progress query itself cost tokens, so re-read the budget
@@ -621,9 +806,17 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         # query, even when that query is what ended the run.
         refresh_spend()
 
+        record("progress", loop = state$loop - 1L,
+               request_id = progress_req,
+               verdict = verdict$verdict, reason = verdict$reason,
+               claimed = claimed,
+               changed = isTRUE(run_delta$changed),
+               files_changed = length(run_delta$added) +
+               length(run_delta$removed) + length(run_delta$modified))
+
         if (!identical(verdict$verdict, "continue")) {
-            stop_reason <<- sprintf("monitor said %s: %s", verdict$verdict,
-                                    verdict$reason)
+            stop_it("monitor", sprintf("monitor said %s: %s",
+                                       verdict$verdict, verdict$reason))
             return(character(0))
         }
 
@@ -634,7 +827,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         # and still buy a whole further worker turn.
         post <- auto_check_limits(state, auto)
         if (isTRUE(post$stop)) {
-            stop_reason <<- post$reason
+            stop_it("limit", post$reason, post$kind)
             return(character(0))
         }
 
@@ -651,13 +844,55 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         auto_continuation_prompt(goal, loop_now, auto$max_loops)
     }
 
-    run_repl_loop(ctx)
+    # A calling handler, not a tryCatch: the message is captured for the
+    # terminal record while the error still propagates to the caller
+    # (and the on.exit fallback then writes unexpected_error with it).
+    withCallingHandlers(
+                        run_repl_loop(ctx),
+                        error = function(e) {
+        unexpected <<- paste("error escaped the loop:", conditionMessage(e))
+    })
     say("stopped: %s", stop_reason)
     say("spent $%.4f over %d tool calls in %.1f min",
         state$spend$cost %||% 0, state$tool_calls,
         as.numeric(difftime(Sys.time(), state$started, units = "mins")))
     state$stop_reason <- stop_reason
+    state$stop_category <- stop_cat
+    state$run_id <- run_id
+    finish(stop_cat, stop_reason, stop_kind)
     invisible(state)
+}
+
+#' Durable evidence of what a run changed.
+#'
+#' Paths plus content hashes, per changed file, so the run's actual
+#' result stays reconstructable after the checkout moves on -- a count
+#' and a boolean stop meaning anything the moment anyone touches the
+#' tree again. Capped per category: a run that somehow rewrites
+#' thousands of files still gets a bounded record, with the truncation
+#' stated rather than silent.
+#'
+#' @param baseline,final Named hash vectors from `worktree_digest()`.
+#' @param delta List from `worktree_delta(baseline, final)`.
+#' @param cap Max entries per category.
+#' @return List with `added`, `removed`, `modified` (each a list of
+#'   path+hash records) and `truncated`.
+#' @noRd
+auto_delta_evidence <- function(baseline, final, delta, cap = 1000L) {
+    take <- function(paths) utils::head(paths, cap)
+    truncated <- length(delta$added) > cap || length(delta$removed) > cap ||
+    length(delta$modified) > cap
+    list(
+         added = lapply(take(delta$added), function(p) {
+        list(path = p, hash = unname(final[[p]]))
+    }),
+         removed = lapply(take(delta$removed), function(p) {
+        list(path = p, hash = unname(baseline[[p]]))
+    }),
+         modified = lapply(take(delta$modified), function(p) {
+        list(path = p, base = unname(baseline[[p]]), final = unname(final[[p]]))
+    }),
+         truncated = truncated)
 }
 
 #' Read the worker's self-reported status out of its reply.

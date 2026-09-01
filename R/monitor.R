@@ -343,6 +343,17 @@ auto_envelope_config <- function(cwd = getwd(), allow_exec = NULL) {
     vetoed <- identical(project$allow_exec, FALSE)
     config$auto <- config$auto %||% list()
     config$auto$allow_exec <- isTRUE(granted) && !vetoed
+    # Provenance for the run record: which layer produced the grant (or
+    # the default), and whether a project veto then cut it off. Together
+    # with the effective value these reconstruct the whole resolution.
+    config$auto$allow_exec_source <- if (!is.null(allow_exec)) {
+        "call_site"
+    } else if (!is.null(global$allow_exec)) {
+        "global_config"
+    } else {
+        "default"
+    }
+    config$auto$allow_exec_vetoed <- vetoed
     config$auto$never_broker <- unique(c(
             as.character(global$never_broker %||% character()),
             as.character(project$never_broker %||% character())
@@ -372,6 +383,11 @@ get_auto_config <- function(config = list()) {
          stall_loops = as.integer(cfg$stall_loops %||% 2L),
          # Off unless explicitly granted; see auto_envelope_config().
          allow_exec = isTRUE(cfg$allow_exec %||% FALSE),
+         # Provenance from auto_envelope_config(), carried through for
+         # the run record. "unresolved" marks a config that never went
+         # through the resolution (tests building auto blocks by hand).
+         allow_exec_source = cfg$allow_exec_source %||% "unresolved",
+         allow_exec_vetoed = isTRUE(cfg$allow_exec_vetoed),
          # Tools the monitor may never broker, whatever it thinks.
          # Empty by default: the envelope is about what a call touches,
          # not which tool it is. This is here for a user who wants a
@@ -693,12 +709,16 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 #' supervisor wired there would never be consulted for the edits that
 #' matter. See the comment at the gate call site in \code{R/turn.R}.
 #'
-#' Returns one of three actions:
+#' Returns one of four actions:
 #' \itemize{
 #'   \item \code{"proceed"} — run the call; also stands in for approval,
 #'     so the human prompt is skipped.
 #'   \item \code{"refuse"} — the model is told no and the turn continues.
 #'   \item \code{"escalate"} — the turn aborts for a human.
+#'   \item \code{"deny"} — policy already refused the call; echoed back
+#'     mechanically (first, before budget, envelope, or monitor) so the
+#'     denial is recorded like every other decision. Never a judgment
+#'     this gate makes on its own.
 #' }
 #'
 #' @param monitor_id Subagent id from \code{monitor_spawn()}.
@@ -720,14 +740,23 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 #'   would charge a refused call, or one halted by the recheck, against a
 #'   budget it never spent.
 #' @param on_verdict Optional function(call, action, reason) for display.
+#' @param on_decision Optional function(record) receiving one structured
+#'   record per gate consultation: which authority decided (budget,
+#'   envelope, monitor, accounting), the action, the reason, and -- when
+#'   the monitor was consulted -- the request id and raw verdict. This
+#'   is observability, not authority: errors are swallowed like
+#'   \code{on_verdict}'s, because a broken recorder must not block work.
+#'   The caller is expected to notice its own write failures (see
+#'   \code{auto_log_append()}).
 #' @return A function(call, decision) -> list(action, reason).
 #' @noRd
 monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                               budget_check = NULL, on_approved = NULL,
-                              on_verdict = NULL) {
+                              on_verdict = NULL, on_decision = NULL) {
     auto <- get_auto_config(config)
     force(monitor_id)
     counter <- 0L
+    decisions <- 0L
 
     over_budget <- function(event) {
         if (!is.function(budget_check)) {
@@ -739,39 +768,80 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                  reason = paste("budget check failed:", conditionMessage(e)))
         })
         if (isTRUE(res$stop)) {
-            list(action = "escalate", reason = res$reason %||% "over budget")
+            list(action = "escalate", reason = res$reason %||% "over budget",
+                 kind = res$kind)
         } else {
             NULL
         }
     }
 
     function(call, decision) {
-        # Before anything else, including the envelope: a run that has
-        # spent its budget stops here rather than one turn later.
-        result <- over_budget("call")
+        # Attribution travels with the result: every branch that decides
+        # also names itself, so the record cannot drift from the logic
+        # the way a post-hoc classification of reason strings would.
+        authority <- NULL
+        request_id <- NULL
+        raw_verdict <- NULL
+        decisions <<- decisions + 1L
+        envelope_ok <- NULL
+        budget_event <- NULL
+        limit_kind <- NULL
+
+        # Policy denial first, mechanically, before budget, envelope,
+        # or monitor -- none of them get a say in a call policy already
+        # refused, and nothing model-driven runs on this path. The
+        # branch exists so a denied call leaves the same structured
+        # record as every other decision; the handler surfaces the
+        # identical policy-denied message it always has.
+        if (identical(decision$approval %||% "", "deny")) {
+            result <- list(action = "deny", reason = decision$reason %||% "")
+            authority <- "policy"
+        } else {
+            # Before anything else, including the envelope: a run that
+            # has spent its budget stops here rather than one turn
+            # later.
+            result <- over_budget("call")
+            if (!is.null(result)) {
+                authority <- "budget"
+                budget_event <- "call"
+                limit_kind <- result$kind
+            }
+        }
 
         if (is.null(result)) {
             env <- monitor_in_envelope(call, decision, config, cwd)
+            envelope_ok <- isTRUE(env$ok)
             if (!isTRUE(env$ok)) {
                 # Outside the envelope the monitor is not consulted at
                 # all. No model judgment decides what a model is allowed
                 # to judge.
                 result <- list(action = "escalate", reason = env$reason)
+                authority <- "envelope"
             } else {
                 counter <<- counter + 1L
                 req <- sprintf("a%d", counter)
                 v <- monitor_ask_approval(monitor_id, call, decision,
                     request_id = req,
                     timeout = auto$monitor_timeout)
+                request_id <- req
+                raw_verdict <- v$verdict
                 # The query itself cost tokens. Re-read the budget before
                 # acting on the answer, or an approval bought with the
                 # last of the budget still authorizes the call.
-                result <- over_budget("monitor") %||%
-                list(action = switch(v$verdict,
-                                     approve = "proceed",
-                                     refuse = "refuse",
-                                     "escalate"),
-                     reason = v$reason)
+                post <- over_budget("monitor")
+                if (!is.null(post)) {
+                    result <- post
+                    authority <- "budget"
+                    budget_event <- "monitor"
+                    limit_kind <- post$kind
+                } else {
+                    result <- list(action = switch(v$verdict,
+                            approve = "proceed",
+                            refuse = "refuse",
+                            "escalate"),
+                                   reason = v$reason)
+                    authority <- "monitor"
+                }
             }
         }
 
@@ -798,7 +868,31 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                                action = "escalate",
                                reason = paste("executed-call accounting failed, refusing to",
                         "run uncounted:", counted))
+                authority <- "accounting"
             }
+        }
+        if (is.function(on_decision)) {
+            # The whole chain, not just the outcome: what policy said
+            # coming in, whether the envelope was evaluated and how it
+            # ruled, which budget phase fired (pre-envelope "call" or
+            # post-query "monitor"), and the monitor's raw verdict --
+            # even when a budget stop overrode it. Nothing here has to
+            # be recovered from a reason string later.
+            tryCatch(on_decision(list(
+                                      seq = decisions,
+                                      call_id = call$call_id,
+                                      tool = call$tool %||% NA_character_,
+                                      action = result$action,
+                                      authority = authority,
+                                      reason = result$reason,
+                                      policy_approval = decision$approval,
+                                      policy_reason = decision$reason,
+                                      envelope_ok = envelope_ok,
+                                      budget_event = budget_event,
+                                      limit_kind = limit_kind,
+                                      request_id = request_id,
+                                      verdict = raw_verdict)),
+                     error = function(e) NULL)
         }
         if (is.function(on_verdict)) {
             tryCatch(on_verdict(call, result$action, result$reason),

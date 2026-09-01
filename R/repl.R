@@ -850,7 +850,12 @@ run_repl_loop <- function(ctx) {
             prompt <- paste(c(ctx$pending_r_context, prompt), collapse = "\n\n")
             ctx$pending_r_context <- character(0)
         }
-        transcript_append(ctx$disk_session$session, "user", prompt)
+        # auto_run_id is set for the life of an auto run and NULL
+        # otherwise, so attended messages keep their exact format while
+        # a run's worker conversation partitions cleanly from disk --
+        # including two runs with the same goal in one session.
+        transcript_append(ctx$disk_session$session, "user", prompt,
+                          auto_run_id = ctx$session$auto_run_id)
 
         cat(sprintf("%s\u25cf%s Thinking with %s%s%s\n",
                     ctx$palette$cyan, ctx$palette$reset,
@@ -882,7 +887,8 @@ run_repl_loop <- function(ctx) {
             marker <- user_deny_marker(c$tool %||% "?")
             apply_exit_marker(ctx$session, prompt, pre_turn_len, marker,
                               placeholder = "[Denied by user before execution]")
-            transcript_append(ctx$disk_session$session, "assistant", marker)
+            transcript_append(ctx$disk_session$session, "assistant", marker,
+                              auto_run_id = ctx$session$auto_run_id)
             NULL
         },
                            corteza_auto_escalate = function(c) {
@@ -903,7 +909,8 @@ run_repl_loop <- function(ctx) {
             marker <- auto_escalate_marker(ctx$auto_halt)
             apply_exit_marker(ctx$session, prompt, pre_turn_len, marker,
                               placeholder = "[Halted before execution]")
-            transcript_append(ctx$disk_session$session, "assistant", marker)
+            transcript_append(ctx$disk_session$session, "assistant", marker,
+                              auto_run_id = ctx$session$auto_run_id)
             NULL
         },
                            interrupt = function(c) {
@@ -916,7 +923,8 @@ run_repl_loop <- function(ctx) {
             cat(sprintf("\n%sInterrupted.%s\n", ctx$palette$yellow, ctx$palette$reset))
             marker <- user_interrupt_marker()
             apply_exit_marker(ctx$session, prompt, pre_turn_len, marker)
-            transcript_append(ctx$disk_session$session, "assistant", marker)
+            transcript_append(ctx$disk_session$session, "assistant", marker,
+                              auto_run_id = ctx$session$auto_run_id)
             NULL
         },
                            error = function(e) {
@@ -955,7 +963,8 @@ run_repl_loop <- function(ctx) {
             ctx$last_assistant_response <- reply
         }
         cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")
-        transcript_append(ctx$disk_session$session, "assistant", reply)
+        transcript_append(ctx$disk_session$session, "assistant", reply,
+                          auto_run_id = ctx$session$auto_run_id)
 
         # Archival hook: opt-in via config$archival$enabled. Mutates
         # turn_session$history in place when triggers fire.

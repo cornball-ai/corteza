@@ -749,9 +749,13 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
     # Initialize the durable transcript file. Disk space is cheap;
     # context is expensive -- the in-memory child history may later be
     # compacted, but the on-disk transcript is append-only and never
-    # rewritten. Header writes are idempotent.
+    # rewritten. Header writes are idempotent. A child spawned inside an
+    # auto run (the hall monitor above all) carries that run's id in its
+    # header, so the monitor's transcript joins the run log without any
+    # change to the spawn API.
     tryCatch(
-             transcript_write_header(id, cwd, agent_id = paste0("subagent-", id)),
+             transcript_write_header(id, cwd, agent_id = paste0("subagent-", id),
+                                     extra = list(auto_run_id = parent_session$auto_run_id %||% NULL)),
              error = function(e) {
         log_event("subagent_transcript_init_failed", subagent_id = id,
                   error = conditionMessage(e), level = "warn")

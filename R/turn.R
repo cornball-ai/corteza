@@ -360,7 +360,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             text
         }
 
-        if (identical(decision$approval, "deny")) {
+        # Policy denial, attended path. In auto mode the same denial
+        # routes through the gate below instead -- not so the monitor
+        # can weigh in (it cannot; the gate's deny branch is mechanical
+        # and first) but so the denial leaves the same structured,
+        # call_id-carrying record as every other decision. The
+        # model-visible message is identical on both paths.
+        if (identical(decision$approval, "deny") &&
+            !is.function(session$auto_gate)) {
             return(outcome_text(
                                 "deny",
                                 nudge(sprintf("[corteza policy denied: %s]",
@@ -389,6 +396,15 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # or "escalate" (abort the whole turn for a human).
         gate_approved <- FALSE
         if (is.function(session$auto_gate)) {
+            # One id per gated call, minted before anything decides.
+            # Every artifact this call produces -- the gate record, the
+            # observer event (and through it the trace row), the
+            # monitor's approval request -- carries it, so two calls to
+            # the same tool with the same args (one refused, one run)
+            # reconstruct unambiguously from disk. turn_number cannot do
+            # this job: it also counts denials and intercepts.
+            session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
+            call$call_id <- sprintf("c%d", session$auto_call_seq)
             gate <- tryCatch(
                              session$auto_gate(call, decision),
                              # A gate that errored did not approve anything.
@@ -399,6 +415,16 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             }
             )
             action <- gate$action %||% "escalate"
+            if (identical(action, "deny")) {
+                # Policy's verdict, surfaced through the gate purely so
+                # it was recorded; same message as the attended branch.
+                return(outcome_text(
+                                    "deny",
+                                    nudge(sprintf("[corteza policy denied: %s]",
+                                decision$reason)),
+                                    FALSE
+                    ))
+            }
             if (identical(action, "escalate")) {
                 stop(auto_escalate_condition(gate$reason %||% "unspecified",
                         call$tool %||% "?"))
