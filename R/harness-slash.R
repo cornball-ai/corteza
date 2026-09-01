@@ -173,13 +173,28 @@ run_refine <- function(ctx, args = character()) {
     if (nzchar(plan$summary %||% "")) {
         cat(plan$summary, "\n\n")
     }
+    # The 8-edit maximum is a contract, not a request: a prompt cannot
+    # enforce it, and a review screen that scrolls past a user's
+    # patience is how unreviewed edits get approved.
+    edits <- plan$edits
+    if (length(edits) > 8L) {
+        cat("Proposal had", length(edits), "edits; reviewing the first 8.\n")
+        edits <- edits[1:8]
+    }
     approved <- list()
-    for (edit in plan$edits) {
-        desc <- sprintf("%s %s: %s\n  reason: %s",
+    for (edit in edits) {
+        # Show everything the approval is supposed to be based on --
+        # evidence above all, since an entry without a receipt is a
+        # claim, and the user is the one deciding whether to trust it.
+        ev <- edit$evidence %||% ""
+        desc <- sprintf("%s %s [%s/%s]: %s\n  reason: %s\n  evidence: %s",
                         edit$action %||% "create",
                         edit$id %||% .harness_slug(edit$title %||% ""),
+                        edit$kind %||% "memory",
+                        edit$path %||% "general",
                         edit$content %||% "(delete)",
-                        edit$reason %||% "-")
+                        edit$reason %||% "-",
+                        if (nzchar(ev)) ev else "(none given)")
         cat(desc, "\n")
         ans <- tolower(trimws(readline("apply? [y/N] ")))
         if (ans %in% c("y", "yes")) {

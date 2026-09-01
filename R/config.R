@@ -166,13 +166,25 @@ load_config <- function(cwd = getwd()) {
 
     # Continual harness: every harness_note write is approval-gated by
     # default (propose-then-approve), through the same per-tool
-    # permissions overlay /permissions uses. A user can set it to
-    # "allow" in config to let notes apply silently.
+    # permissions overlay /permissions uses.
+    #
+    # harness_auto is the discoverable name for "record lessons
+    # without asking" -- the same thing as setting the harness_note
+    # permission to "allow", which is where it is implemented, so
+    # there is one enforcement path and not two. Notes still land in
+    # the refinements ledger and stay reversible via /refine rollback:
+    # auto means unprompted, not unaccountable. An explicit
+    # permissions entry wins, so a user who set the permission by hand
+    # keeps it.
+    if (is.null(config$harness_auto)) {
+        config$harness_auto <- FALSE
+    }
     if (is.null(config$permissions)) {
         config$permissions <- list()
     }
     if (is.null(config$permissions[["harness_note"]])) {
-        config$permissions[["harness_note"]] <- "ask"
+        config$permissions[["harness_note"]] <-
+        if (isTRUE(config$harness_auto)) "allow" else "ask"
     }
 
     # Rate limits per provider
