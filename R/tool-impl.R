@@ -1218,6 +1218,10 @@ register_builtin_skills <- function() {
     register_skill_from_fn("git_diff", tool_git_diff, available = .in_git_repo)
     register_skill_from_fn("git_log", tool_git_log, available = .in_git_repo)
 
+    # Continual harness: one-line lesson capture, approval-gated via
+    # the per-tool permissions default ("ask") in load_config().
+    register_skill_from_fn("harness_note", tool_harness_note)
+
     # Subagent tools
     register_skill_from_fn("spawn_subagent", tool_spawn_subagent)
     register_skill_from_fn("query_subagent", tool_query_subagent)

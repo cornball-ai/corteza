@@ -272,6 +272,7 @@ chat_help_text <- function() {
           "  /review [ref]                 Review local changes with the current model",
           "  /last [N]                     Show tool output (1=most recent)",
           "  /outputs                      List recent tool outputs",
+          "  /refine [list|rollback <id>|promote <id>]  Review the conversation into one-line lessons (continual harness)",
           "  /sessions                     List sessions for this directory",
           "  /trace [N]                    Show last N tool executions (default 20)",
           "  /permissions [allow|ask|deny] Show, or switch, tool approval for this session",

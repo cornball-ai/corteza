@@ -81,6 +81,15 @@ load_context <- function(cwd = getwd()) {
             ))
     }
 
+    # Continual-harness lessons: one-line facts from earlier sessions,
+    # both scopes, whole-store while small. Empty stores render
+    # nothing, so sessions without lessons see byte-identical context.
+    harness_text <- tryCatch(harness_context_block(cwd, config),
+                             error = function(e) "")
+    if (nzchar(harness_text)) {
+        b <- add_context(b, harness_text)
+    }
+
     # Live subagents block: surfaced when archival has produced one or
     # more holder subagents in this process. The LLM sees ids + tasks
     # and chooses query_subagent vs spawn_subagent as a normal tool
