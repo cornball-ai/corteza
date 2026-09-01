@@ -1,3 +1,14 @@
+# corteza 0.7.1.36
+
+- **`turn()` falls back to other providers on limit errors.** A new
+  `fallback` config key (Matrix config and `.corteza/config.json`; a
+  `bot_configure()` argument) lists `"model provider"` pairs to try when
+  the primary answers with HTTP 429/503/529 or a rate, usage, or quota
+  message. The provider that tripped is skipped process-wide for
+  `fallback_cooldown_minutes` (default 30), then the primary is tried
+  again. A limit hit after tool calls have run is not retried, so no
+  tool call executes twice. Other errors pass through unchanged.
+
 # corteza 0.7.1.35
 
 - **`/auto [--loops N] <goal>` runs bounded unattended iterations**,
