@@ -284,7 +284,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # honored dry-run via opts$dry_run but every other surface
         # would silently execute the tool during a "preview".
         tool_executor <- function(name, args) {
-            call_skill(name, as.list(args), ctx = list(session = session),
+            # cwd travels with the session, not the process: a tool
+            # that resolves a project path (harness_note's store, say)
+            # must land in the session's project, and a bot or
+            # embedded session rarely shares the process working
+            # directory. Falls back to getwd() when the session
+            # doesn't carry one.
+            call_skill(name, as.list(args),
+                       ctx = list(session = session, cwd = session$cwd %||% getwd()),
                        dry_run = session_dry_run())
         }
     }
