@@ -164,6 +164,17 @@ load_config <- function(cwd = getwd()) {
         config$context_include_memory_logs <- FALSE
     }
 
+    # Continual harness: every harness_note write is approval-gated by
+    # default (propose-then-approve), through the same per-tool
+    # permissions overlay /permissions uses. A user can set it to
+    # "allow" in config to let notes apply silently.
+    if (is.null(config$permissions)) {
+        config$permissions <- list()
+    }
+    if (is.null(config$permissions[["harness_note"]])) {
+        config$permissions[["harness_note"]] <- "ask"
+    }
+
     # Rate limits per provider
     # Example: { "anthropic": { "tokens_per_hour": 100000, "requests_per_minute": 60 } }
     if (is.null(config$rate_limits)) {

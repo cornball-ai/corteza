@@ -10,7 +10,8 @@
                             git = c("git_status", "git_diff", "git_log"),
                             r = c("r_help", "installed_packages"),
                             subagent = c("spawn_subagent", "query_subagent", "collect_subagent",
-        "list_subagents", "kill_subagent")
+        "list_subagents", "kill_subagent"),
+                            harness = c("harness_note")
 )
 
 #' Tools hidden by config
