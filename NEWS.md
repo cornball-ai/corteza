@@ -1,3 +1,27 @@
+# corteza 0.7.1.40
+
+- **Harness hardening** (review follow-up to the previous release).
+  A project `.corteza/harness.json` travels with a cloned repo, so it
+  is third-party data: entries are validated as they load, and
+  project lessons render in a separate "Untrusted project notes"
+  block that tells the model to treat them as reference material and
+  never as instructions, unless the project is trusted via
+  `harness_trust_project` in the *global* config. Rollback is now a
+  compare-and-swap that refuses when an entry changed after the
+  refinement being reverted, instead of silently destroying the later
+  edit. Store writes use a unique temp file, check `file.rename()`,
+  and hold a lock across the whole read-modify-write so concurrent
+  sessions can't discard each other's entries. `/refine` shows
+  evidence, kind, and path with each proposed edit and enforces the
+  8-edit maximum in code.
+- **`harness_auto`**: config flag for recording lessons without
+  prompting (implemented as the default for the `harness_note`
+  permission, so there is one enforcement path; explicit permissions
+  still win). Auto-recorded notes remain in the ledger and reversible.
+- Fixed: the in-process tool executor passed no `cwd`, so
+  `harness_note` wrote to the process working directory instead of
+  the session's project. Found by the new end-to-end approval tests.
+
 # corteza 0.7.1.39
 
 - **Continual harness**: a self-improving store of one-line lessons
