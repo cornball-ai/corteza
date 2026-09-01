@@ -15,7 +15,8 @@ new_session(
   verbose = FALSE,
   plan_mode = FALSE,
   web_search = NULL,
-  base_url = NULL
+  base_url = NULL,
+  max_tokens = NULL
 )
 }
 \arguments{
@@ -59,6 +60,15 @@ corporate gateway). \code{\link{turn}} applies it via
 NULL falls back to \code{config$base_url}, then llm.api's own
 \code{OPENAI_COMPATIBLE_BASE_URL} environment variable. Ignored
 for every other provider.}
+
+\item{max_tokens}{Integer or NULL. Per-response output-token budget,
+forwarded to \code{llm.api::agent}. NULL falls back to
+\code{config$max_tokens}, then llm.api's provider default (4096
+on Anthropic). Agent turns that write long tool calls -- big
+\code{run_r} bodies especially -- need more than that default:
+a response the budget cuts off ends the whole turn with
+\code{[Output truncated: max_tokens]} instead of the model's
+answer.}
 }
 \value{
 An environment holding the session state.

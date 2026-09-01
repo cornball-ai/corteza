@@ -1,3 +1,14 @@
+# corteza 0.7.1.37
+
+- **`new_session()` gains `max_tokens`**: a per-response output-token
+  budget forwarded to `llm.api::agent` (NULL defers to
+  `config$max_tokens`, then llm.api's provider default — 4096 on
+  Anthropic). Agent turns that write long tool calls, big `run_r`
+  bodies especially, need more than that default: a response the
+  budget cuts off ends the turn with `[Output truncated: max_tokens]`
+  (llm.api#39) instead of the model's answer. Resolution follows the
+  `web_search`/`base_url` idiom via `.session_max_tokens()`.
+
 # corteza 0.7.1.36
 
 - **Auto runs write a record of authority**: one append-only JSONL per
