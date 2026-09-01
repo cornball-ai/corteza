@@ -140,3 +140,37 @@ expect_true(grepl("Already recorded", res_dup$content[[1L]]$text, fixed = TRUE))
 # default config forces approval on the tool
 cfg <- corteza:::load_config(td2)
 expect_identical(cfg$permissions[["harness_note"]], "ask")
+
+# --- harness-slash.R helpers (offline; subset assertions so a
+#     non-empty real global store can't make these flaky) ---
+
+# .harness_overview lists project entries with scope/version/kind.
+# By this point the corrupt-file test above wiped the store, so the
+# surviving project entries are the two Facts and catalog-size.
+ov <- corteza:::.harness_overview(td)
+expect_true(any(grepl("[project] catalog-size", ov, fixed = TRUE)))
+expect_true(any(grepl("The public catalog has 25 games.", ov,
+                      fixed = TRUE)))
+expect_true(any(grepl("[project] fact-one", ov, fixed = TRUE)))
+# format is "[scope] id (vN, kind): content"
+expect_true(all(grepl("^\\[(project|global)\\] .+ \\(v[0-9]+, ",
+                      ov)))
+
+# .harness_history_text truncates to the last max_chars and reduces
+# tool traffic to names, not dumps.
+long_hist <- lapply(1:500, function(i) {
+    list(role = "assistant",
+         content = list(list(type = "text",
+                             text = paste(rep("word", 20), collapse = " ")),
+                        list(type = "tool_use", name = "run_r",
+                             input = list(code = paste(rep("x", 500),
+                                                       collapse = "")))))
+})
+tt <- corteza:::.harness_history_text(long_hist, max_chars = 2000L)
+expect_true(nchar(tt) <= 2000L)
+expect_true(grepl("[tool: run_r]", tt, fixed = TRUE))
+# the 500-char code body is never inlined
+expect_false(grepl(paste(rep("x", 100), collapse = ""), tt, fixed = TRUE))
+
+# empty / short history: helper still returns a string
+expect_identical(corteza:::.harness_history_text(list()), "")
