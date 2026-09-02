@@ -135,8 +135,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
                         verbose = FALSE, plan_mode = FALSE,
-                        web_search = NULL, base_url = NULL, max_tokens = NULL,
-                        reasoning_effort = NULL,
+                        web_search = NULL, base_url = NULL,
+                        max_tokens = NULL, reasoning_effort = NULL,
                         thinking_budget_tokens = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
@@ -167,7 +167,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$base_url <- base_url
     s$max_tokens <- .check_max_tokens(max_tokens, "new_session(max_tokens=)")
     s$reasoning_effort <- .check_reasoning_effort(reasoning_effort,
-                                                  "new_session(reasoning_effort=)")
+        "new_session(reasoning_effort=)")
     s$thinking_budget_tokens <-
     .check_max_tokens(thinking_budget_tokens,
                       "new_session(thinking_budget_tokens=)",

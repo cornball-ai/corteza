@@ -16,7 +16,9 @@ new_session(
   plan_mode = FALSE,
   web_search = NULL,
   base_url = NULL,
-  max_tokens = NULL
+  max_tokens = NULL,
+  reasoning_effort = NULL,
+  thinking_budget_tokens = NULL
 )
 }
 \arguments{
@@ -69,6 +71,25 @@ on Anthropic). Agent turns that write long tool calls -- big
 a response the budget cuts off ends the whole turn with
 \code{[Output truncated: max_tokens]} instead of the model's
 answer.}
+
+\item{reasoning_effort}{Character or NULL. How hard a reasoning
+model should think before answering, e.g. \code{"low"},
+\code{"medium"}, \code{"high"}. Forwarded to
+\code{llm.api::agent} only for the \code{"openai"} and
+\code{"openai_codex"} providers, whose wire carries it; on
+Anthropic the equivalent knob is \code{thinking_budget_tokens}.
+NULL falls back to \code{config$reasoning_effort}, then the
+provider default. Not validated against a fixed set: the provider
+owns the vocabulary, so an unknown value is refused by the API
+rather than dropped here.}
+
+\item{thinking_budget_tokens}{Integer or NULL. Extended-thinking
+budget for Anthropic models, forwarded to \code{llm.api::agent}
+for the \code{"anthropic"} and \code{"anthropic_claude"}
+providers only. Must be at least 1024 and below
+\code{max_tokens}, both enforced by llm.api. NULL falls back to
+\code{config$thinking_budget_tokens}, then the provider default
+(thinking off).}
 }
 \value{
 An environment holding the session state.
