@@ -124,6 +124,13 @@
             !.web_search_supported(cand$provider)) {
             args$web_search <- NULL
         }
+        # Same reason as web_search above: these were gated for the
+        # primary's wire, and this loop just rewrote the provider under
+        # them. A reasoning_effort meant for codex is an unknown body
+        # field on the anthropic wire (400), and a 400 is not a limit
+        # error -- so leaving it in would make the fallback fail harder
+        # than no fallback at all.
+        args <- .gate_reasoning_args(args, cand$provider)
 
         before <- length(session$history %||% list())
         result <- tryCatch(.call(args), error = function(e) e)
