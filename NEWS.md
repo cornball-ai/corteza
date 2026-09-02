@@ -1,3 +1,16 @@
+# corteza 0.7.1.42
+
+- **`reasoning_effort` now works on Anthropic too.** Claude's depth
+  control is `output_config.effort`, not the thinking budget, and its
+  scale is `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` -- the API
+  names it in the 400 when refused. Rather than add a second setting,
+  `reasoning_effort` is routed to whichever field the provider's wire
+  uses, so a session sets it once and it means the same thing on either
+  family. Routing is symmetric, because a limit fallback re-routes per
+  candidate and a one-hop-only value would silently vanish on the
+  provider that answered. `thinking_budget_tokens` is unchanged and
+  still Anthropic-only; the two are independent.
+
 # corteza 0.7.1.41
 
 - **A limit fallback no longer sends a provider a history it cannot

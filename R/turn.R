@@ -105,14 +105,16 @@ default_local_model <- function() {
 #'   answer.
 #' @param reasoning_effort Character or NULL. How hard a reasoning
 #'   model should think before answering, e.g. \code{"low"},
-#'   \code{"medium"}, \code{"high"}. Forwarded to
-#'   \code{llm.api::agent} only for the \code{"openai"} and
-#'   \code{"openai_codex"} providers, whose wire carries it; on
-#'   Anthropic the equivalent knob is \code{thinking_budget_tokens}.
-#'   NULL falls back to \code{config$reasoning_effort}, then the
-#'   provider default. Not validated against a fixed set: the provider
-#'   owns the vocabulary, so an unknown value is refused by the API
-#'   rather than dropped here.
+#'   \code{"medium"}, \code{"high"}. One setting, routed to whichever
+#'   field the provider's wire uses: \code{reasoning_effort} on
+#'   \code{"openai"} / \code{"openai_codex"}, \code{output_config$effort}
+#'   on \code{"anthropic"} / \code{"anthropic_claude"}. Dropped for
+#'   providers with no effort control. NULL falls back to
+#'   \code{config$reasoning_effort}, then the provider default. Not
+#'   validated against a fixed set, because the scales differ: Anthropic
+#'   accepts \code{"low"}, \code{"medium"}, \code{"high"},
+#'   \code{"xhigh"} and \code{"max"}, and an unknown value is refused by
+#'   the API with a message naming the alternatives.
 #' @param thinking_budget_tokens Integer or NULL. Extended-thinking
 #'   budget for Anthropic models, forwarded to \code{llm.api::agent}
 #'   for the \code{"anthropic"} and \code{"anthropic_claude"}
@@ -232,27 +234,51 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     x
 }
 
-# Providers whose wire carries a reasoning-effort setting. llm.api maps
-# reasoning_effort onto the Responses `reasoning$effort` field for the
-# codex wire; on the anthropic wire the equivalent knob is
-# thinking_budget_tokens, and an unknown field there would be spliced
-# into the request body and rejected.
+# Providers whose wire spells reasoning effort as `reasoning_effort`.
+# llm.api maps it onto the Responses `reasoning$effort` field for the
+# codex wire.
 .reasoning_effort_providers <- c("openai", "openai_codex")
 
 .anthropic_providers <- c("anthropic", "anthropic_claude")
 
-# Drop reasoning args the given provider's wire can't carry. Applied by
-# turn() for the session's own provider and again by
-# .agent_with_fallback() for each candidate, because a fallback rewrites
-# provider under args that were gated for the primary: a codex session
-# carrying reasoning_effort into an anthropic fallback would splice an
-# unknown field into the Messages body and 400. That failure defeats the
-# fallback itself -- a 400 is not a limit error, so the turn stops
-# instead of trying the next provider.
+# Route reasoning args to the spelling the provider's wire uses, and
+# drop what it cannot carry at all.
+#
+# Effort is one idea with two spellings. On the openai/codex wire it is
+# the top-level `reasoning_effort`; on the Anthropic Messages wire it is
+# `output_config.effort`, whose scale the API states itself:
+#
+#   API error (400): output_config.effort: Input should be 'low',
+#   'medium', 'high', 'xhigh' or 'max'
+#
+# So a session sets `reasoning_effort` once and it means the same thing
+# on either family, rather than the caller keeping track of which
+# provider spells it which way. The value is still not validated here --
+# the scales differ per provider and the API refuses an unknown one with
+# a message naming the alternatives, as above.
+#
+# Anthropic rejects unknown top-level body fields outright ("Extra
+# inputs are not permitted"), and llm.api splices every extra into the
+# body verbatim (R/agent.R:600), so routing is not cosmetic: sending the
+# wrong spelling is a 400. Applied by turn() for the session's own
+# provider and again by .agent_with_fallback() for each candidate,
+# because a fallback rewrites provider under args routed for the
+# primary. That failure defeats the fallback itself -- a 400 is not a
+# limit error, so the turn stops instead of trying the next provider.
+#
+# thinking_budget_tokens is a separate Anthropic knob (extended
+# thinking) and is left where it is; the two are independent, and
+# Agno's ARC harness runs effort "max" with thinking off.
 .gate_reasoning_args <- function(args, provider) {
-    if (!is.null(args$reasoning_effort) &&
-        !provider %in% .reasoning_effort_providers) {
-        args$reasoning_effort <- NULL
+    effort <- args$reasoning_effort %||% args$output_config$effort
+    args$reasoning_effort <- NULL
+    args$output_config <- NULL
+    if (!is.null(effort)) {
+        if (provider %in% .reasoning_effort_providers) {
+            args$reasoning_effort <- effort
+        } else if (provider %in% .anthropic_providers) {
+            args$output_config <- list(effort = effort)
+        }
     }
     if (!is.null(args$thinking_budget_tokens) &&
         !provider %in% .anthropic_providers) {
@@ -943,12 +969,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
 
     # Reasoning depth. Both settings mean "how hard to think", but they
-    # are different fields on different wires: reasoning_effort rides
-    # `...` into the request body (consumed on the Responses/codex
-    # wire), thinking_budget_tokens is a named llm.api arg that warns
-    # and ignores off Anthropic. .gate_reasoning_args() keeps each to
-    # the wire that carries it. Only sent when set, so the provider
-    # default stands otherwise.
+    # reach the provider differently: reasoning_effort rides `...` into
+    # the request body under whichever name that wire uses (see
+    # .gate_reasoning_args), thinking_budget_tokens is a named llm.api
+    # arg that warns and ignores off Anthropic. Only sent when set, so
+    # the provider default stands otherwise.
     re <- .session_reasoning_effort(session)
     if (!is.null(re)) {
         agent_args$reasoning_effort <- re

@@ -67,28 +67,50 @@ for (bad in list(0, -1, Inf, NA_real_, "8192", c(1, 2))) {
 }
 
 # -- the wire gate ----------------------------------------------------
-# Each setting survives only on a provider whose wire carries it.
-# reasoning_effort rides `...` into the body, so on the anthropic wire
-# it would be an unknown top-level field (400); thinking_budget_tokens
-# is a named llm.api arg that warns and ignores anywhere else.
+# One effort setting, routed to the field the provider's wire uses:
+# top-level reasoning_effort on openai/codex, output_config$effort on
+# Anthropic (whose API states the scale itself -- "Input should be
+# 'low', 'medium', 'high', 'xhigh' or 'max'"). Anthropic refuses
+# unknown top-level fields outright, so sending the wrong spelling is a
+# 400, not a no-op. thinking_budget_tokens is separate and Anthropic-only.
 both <- list(reasoning_effort = "high", thinking_budget_tokens = 8192L,
              max_tokens = 32000L)
 for (p in c("openai", "openai_codex")) {
     g <- corteza:::.gate_reasoning_args(both, p)
     expect_identical(g$reasoning_effort, "high")
+    expect_null(g$output_config)
     expect_null(g$thinking_budget_tokens)
     expect_identical(g$max_tokens, 32000L)   # unrelated args untouched
 }
 for (p in c("anthropic", "anthropic_claude")) {
     g <- corteza:::.gate_reasoning_args(both, p)
     expect_null(g$reasoning_effort)
+    expect_identical(g$output_config, list(effort = "high"))
     expect_identical(g$thinking_budget_tokens, 8192L)
+    expect_identical(g$max_tokens, 32000L)
 }
 for (p in c("ollama", "moonshot", "openai_compatible")) {
     g <- corteza:::.gate_reasoning_args(both, p)
     expect_null(g$reasoning_effort)
+    expect_null(g$output_config)
     expect_null(g$thinking_budget_tokens)
 }
+
+# Routing is idempotent and reversible: re-gating already-routed args
+# for the other family moves the effort across rather than losing it.
+# This is the fallback path -- args routed for the primary get re-gated
+# per candidate -- so a value that could only survive one hop would
+# silently drop the setting on the provider that answered.
+anth <- corteza:::.gate_reasoning_args(list(reasoning_effort = "max"),
+                                       "anthropic_claude")
+expect_identical(anth$output_config, list(effort = "max"))
+back <- corteza:::.gate_reasoning_args(anth, "openai_codex")
+expect_identical(back$reasoning_effort, "max")
+expect_null(back$output_config)
+again <- corteza:::.gate_reasoning_args(anth, "anthropic")
+expect_identical(again$output_config, list(effort = "max"))
+# and off both families it goes away entirely rather than half-routed
+expect_null(corteza:::.gate_reasoning_args(anth, "moonshot")$output_config)
 
 # -- turn() forwarding ------------------------------------------------
 # Stubs the agent in llm.api's namespace; tools = list() keeps the whole
@@ -120,14 +142,15 @@ local({
     expect_identical(captured$reasoning_effort, "high")
     expect_false("thinking_budget_tokens" %in% names(captured))
 
-    # anthropic: thinking budget forwarded, effort dropped
+    # anthropic: thinking budget forwarded as-is, effort re-spelled
     captured <- NULL
-    out <- corteza::turn("hi", sess("anthropic", reasoning_effort = "high",
+    out <- corteza::turn("hi", sess("anthropic", reasoning_effort = "max",
                                     thinking_budget_tokens = 8192),
                          tools = list())
     expect_identical(out$reply, "ok")
     expect_identical(captured$thinking_budget_tokens, 8192L)
     expect_false("reasoning_effort" %in% names(captured))
+    expect_identical(captured$output_config, list(effort = "max"))
 
     # neither set: neither key present, so the provider default stands
     captured <- NULL
