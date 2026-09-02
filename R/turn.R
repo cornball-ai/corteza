@@ -122,6 +122,21 @@ default_local_model <- function() {
 #'   \code{max_tokens}, both enforced by llm.api. NULL falls back to
 #'   \code{config$thinking_budget_tokens}, then the provider default
 #'   (thinking off).
+#' @param cache Character or NULL. Anthropic prompt-cache TTL:
+#'   \code{"none"}, \code{"5m"} or \code{"1h"}. Anthropic-only, and
+#'   dropped for other providers so they never see a field their wire
+#'   rejects. NULL falls back to \code{config$cache}, then llm.api's
+#'   default (\code{"none"}). Caching is a billing setting, not a
+#'   behavioural one: the model receives byte-identical input either
+#'   way, so turning it on cannot change a result. llm.api (>= 0.1.9.6,
+#'   the Imports floor) marks both the system prompt and the tail of the
+#'   message history, so each request in an agent loop reads the
+#'   previous request's context from cache and pays fresh input only
+#'   for what was appended since; on a long tool loop that is most of
+#'   the input bill. The floor is there because an older llm.api marks
+#'   the system prompt alone and would silently deliver a fraction of
+#'   that with this set. \code{turn()$usage} reports what was read and
+#'   written.
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -139,7 +154,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         verbose = FALSE, plan_mode = FALSE,
                         web_search = NULL, base_url = NULL,
                         max_tokens = NULL, reasoning_effort = NULL,
-                        thinking_budget_tokens = NULL) {
+                        thinking_budget_tokens = NULL, cache = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -174,7 +189,27 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     .check_max_tokens(thinking_budget_tokens,
                       "new_session(thinking_budget_tokens=)",
                       what = "thinking_budget_tokens")
+    s$cache <- .check_cache(cache, "new_session(cache=)")
     s
+}
+
+# Validate a prompt-cache TTL. NULL passes through so a later
+# resolution step can fall back to config. Unlike reasoning_effort this
+# IS a closed set: llm.api runs match.arg over exactly these three, so
+# anything else is a caller error we can name here rather than a
+# partial-match surprise ("5" silently becoming "5m") further down.
+.cache_values <- c("none", "5m", "1h")
+
+.check_cache <- function(x, where) {
+    if (is.null(x)) {
+        return(NULL)
+    }
+    if (!is.character(x) || length(x) != 1L || is.na(x) ||
+        !x %in% .cache_values) {
+        stop(where, ": cache must be one of ",
+             paste(sQuote(.cache_values), collapse = ", "), call. = FALSE)
+    }
+    x
 }
 
 # Validate an output-token budget at a resolution boundary. NULL passes
@@ -284,6 +319,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         !provider %in% .anthropic_providers) {
         args$thinking_budget_tokens <- NULL
     }
+    # Prompt caching is Anthropic-only. llm.api does warn and degrade to
+    # "none" itself, but that warning would then fire on every turn of
+    # every non-Anthropic session -- including each fallback candidate --
+    # for a setting the caller set once at the top. Drop it here so the
+    # warning stays a signal about a genuinely misdirected call.
+    if (!is.null(args$cache) && !provider %in% .anthropic_providers) {
+        args$cache <- NULL
+    }
     args
 }
 
@@ -293,6 +336,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     .check_reasoning_effort(session$reasoning_effort %||%
                             session$config$reasoning_effort,
                             "session/config reasoning_effort")
+}
+
+# Resolve the prompt-cache TTL: explicit session field wins, then
+# config. NULL means "llm.api's default", which is "none".
+.session_cache <- function(session) {
+    .check_cache(session$cache %||% session$config$cache,
+                 "session/config cache")
 }
 
 # Resolve the Anthropic extended-thinking budget. llm.api enforces the
@@ -981,6 +1031,10 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tb <- .session_thinking_budget(session)
     if (!is.null(tb)) {
         agent_args$thinking_budget_tokens <- tb
+    }
+    ch <- .session_cache(session)
+    if (!is.null(ch)) {
+        agent_args$cache <- ch
     }
     agent_args <- .gate_reasoning_args(agent_args, session$provider)
 

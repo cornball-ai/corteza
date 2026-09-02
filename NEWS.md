@@ -1,3 +1,20 @@
+# corteza 0.7.1.43
+
+- **Anthropic prompt caching is plumbed through.** `new_session(cache =
+  "5m")` (or `"1h"`, or `"none"`) reaches `llm.api::agent(cache = )`,
+  with `config$cache` as the fallback. Anthropic-only, and stripped for
+  other providers -- per candidate during a fallback too -- so a codex
+  session never carries it and llm.api's off-Anthropic warning stays
+  meaningful. Validated as a closed set, because llm.api's `match.arg`
+  would otherwise partial-match `"5"` to `"5m"` silently. Billing-only:
+  the model sees byte-identical input, so this cannot change a result.
+  With llm.api 0.1.9.6, now the Imports floor, the marker covers the
+  message history as well as the system prompt, so each request in a
+  tool loop reads the previous request's context from cache and pays
+  fresh input only for what was appended since. The floor is raised
+  because an older llm.api marks the system prompt alone and would
+  silently deliver a fraction of that.
+
 # corteza 0.7.1.42
 
 - **`reasoning_effort` now works on Anthropic too.** Claude's depth
