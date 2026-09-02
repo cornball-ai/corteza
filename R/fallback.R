@@ -102,6 +102,60 @@
     invisible(NULL)
 }
 
+# What wire's shape is this history in?
+#
+# A conversation's history carries the content vocabulary of the wire
+# that produced it, and llm.api replays what it is handed: an
+# unrecognised block list goes to the provider verbatim
+# (llm.api R/openai-codex.R:216 matches neither its llm_content nor its
+# character branch and passes the list straight through). The
+# vocabularies do not overlap, and the receiving API rejects the
+# difference outright rather than ignoring it -- an Anthropic history
+# replayed on the Responses wire returns
+#   API error (400): Invalid value: 'thinking'.
+# which is what a Matrix bot on anthropic_claude produced the moment
+# an Anthropic usage limit sent it down its `gpt-5.5 openai_codex`
+# fallback mid-conversation.
+#
+# Detected from the history rather than tracked alongside it, because
+# the wire that produced it is not always the session's own provider:
+# once a fallback answers a turn, the session's primary is unchanged
+# while its history belongs to the candidate that replied.
+#
+# "portable" means nothing wire-specific was found -- plain text, or no
+# history at all -- and any provider can take it.
+.history_shape <- function(history) {
+    anthropic_blocks <- c("thinking", "redacted_thinking", "tool_use",
+                          "tool_result")
+    for (msg in history %||% list()) {
+        if (!is.list(msg)) {
+            next
+        }
+        if (identical(msg$type, ".openai_codex_output") ||
+            identical(msg$type, "function_call_output")) {
+            return("responses")
+        }
+        content <- msg$content
+        if (is.list(content) && !inherits(content, "llm_content")) {
+            for (b in content) {
+                if (is.list(b) && is.character(b$type) &&
+                    length(b$type) == 1L && b$type %in% anthropic_blocks) {
+                    return("anthropic")
+                }
+            }
+        }
+    }
+    "portable"
+}
+
+# Can this provider be handed a history in that shape? Chat-completions
+# wires (moonshot, ollama, openai_compatible) accept neither vocabulary,
+# so they are only reachable with a portable history.
+.history_compatible <- function(shape, provider) {
+    switch(shape, anthropic = provider %in% .anthropic_providers,
+           responses = provider %in% c("openai", "openai_codex"), TRUE)
+}
+
 # Run llm.api::agent with agent_args, walking the session's fallback
 # chain on limit errors. `.call` is the seam tests replace; production
 # leaves it at the real agent.
@@ -111,10 +165,25 @@
     chain <- c(list(primary), .session_fallback(session))
     minutes <- .fallback_cooldown(session)
     last_error <- NULL
+    shape <- .history_shape(agent_args$history)
 
     for (i in seq_along(chain)) {
         cand <- chain[[i]]
         if (.fallback_limited(cand$provider)) {
+            next
+        }
+        # A candidate that cannot read this history is not a fallback.
+        # Sending it anyway trades a limit error the caller can wait out
+        # for a 400 that ends the turn -- and because a 400 is not a
+        # limit error, it also stops the walk before reaching a
+        # candidate that WOULD have answered. Skipped rather than
+        # answered with the history stripped: a bot that silently
+        # forgets the conversation is worse than one that says it is
+        # rate limited.
+        if (i > 1L && !.history_compatible(shape, cand$provider)) {
+            message(sprintf(paste("turn: skipping fallback %s/%s -- it cannot",
+                                  "replay a %s-shaped history"),
+                            cand$provider, cand$model, shape))
             next
         }
         args <- agent_args

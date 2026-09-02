@@ -1,5 +1,16 @@
 # corteza 0.7.1.41
 
+- **A limit fallback no longer sends a provider a history it cannot
+  read.** A conversation's history carries the content vocabulary of
+  the wire that produced it, and llm.api replays what it is handed, so
+  an Anthropic history diverted onto a Responses-wire fallback came
+  back as `API error (400): Invalid value: 'thinking'` -- and since a
+  400 is not a limit error, that ended the turn instead of continuing
+  down the chain. A Matrix bot on `anthropic_claude` hit this the
+  moment an Anthropic usage limit sent it to its `openai_codex`
+  fallback mid-conversation. Candidates whose wire cannot replay the
+  history's shape are now skipped (with a message), so the walk reaches
+  one that can.
 - **Reasoning depth is now a session setting.** `new_session()` takes
   `reasoning_effort` (`"low"`/`"medium"`/`"high"`, forwarded on the
   `openai` and `openai_codex` wires) and `thinking_budget_tokens`
