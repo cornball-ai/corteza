@@ -74,14 +74,16 @@ answer.}
 
 \item{reasoning_effort}{Character or NULL. How hard a reasoning
 model should think before answering, e.g. \code{"low"},
-\code{"medium"}, \code{"high"}. Forwarded to
-\code{llm.api::agent} only for the \code{"openai"} and
-\code{"openai_codex"} providers, whose wire carries it; on
-Anthropic the equivalent knob is \code{thinking_budget_tokens}.
-NULL falls back to \code{config$reasoning_effort}, then the
-provider default. Not validated against a fixed set: the provider
-owns the vocabulary, so an unknown value is refused by the API
-rather than dropped here.}
+\code{"medium"}, \code{"high"}. One setting, routed to whichever
+field the provider's wire uses: \code{reasoning_effort} on
+\code{"openai"} / \code{"openai_codex"}, \code{output_config$effort}
+on \code{"anthropic"} / \code{"anthropic_claude"}. Dropped for
+providers with no effort control. NULL falls back to
+\code{config$reasoning_effort}, then the provider default. Not
+validated against a fixed set, because the scales differ: Anthropic
+accepts \code{"low"}, \code{"medium"}, \code{"high"},
+\code{"xhigh"} and \code{"max"}, and an unknown value is refused by
+the API with a message naming the alternatives.}
 
 \item{thinking_budget_tokens}{Integer or NULL. Extended-thinking
 budget for Anthropic models, forwarded to \code{llm.api::agent}
