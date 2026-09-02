@@ -103,6 +103,23 @@ default_local_model <- function() {
 #'   a response the budget cuts off ends the whole turn with
 #'   \code{[Output truncated: max_tokens]} instead of the model's
 #'   answer.
+#' @param reasoning_effort Character or NULL. How hard a reasoning
+#'   model should think before answering, e.g. \code{"low"},
+#'   \code{"medium"}, \code{"high"}. Forwarded to
+#'   \code{llm.api::agent} only for the \code{"openai"} and
+#'   \code{"openai_codex"} providers, whose wire carries it; on
+#'   Anthropic the equivalent knob is \code{thinking_budget_tokens}.
+#'   NULL falls back to \code{config$reasoning_effort}, then the
+#'   provider default. Not validated against a fixed set: the provider
+#'   owns the vocabulary, so an unknown value is refused by the API
+#'   rather than dropped here.
+#' @param thinking_budget_tokens Integer or NULL. Extended-thinking
+#'   budget for Anthropic models, forwarded to \code{llm.api::agent}
+#'   for the \code{"anthropic"} and \code{"anthropic_claude"}
+#'   providers only. Must be at least 1024 and below
+#'   \code{max_tokens}, both enforced by llm.api. NULL falls back to
+#'   \code{config$thinking_budget_tokens}, then the provider default
+#'   (thinking off).
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -118,7 +135,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         provider = "anthropic", tools_filter = NULL,
                         system = NULL, approval_cb = NULL, max_turns = 10L,
                         verbose = FALSE, plan_mode = FALSE,
-                        web_search = NULL, base_url = NULL, max_tokens = NULL) {
+                        web_search = NULL, base_url = NULL,
+                        max_tokens = NULL, reasoning_effort = NULL,
+                        thinking_budget_tokens = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -147,6 +166,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     s$web_search <- web_search
     s$base_url <- base_url
     s$max_tokens <- .check_max_tokens(max_tokens, "new_session(max_tokens=)")
+    s$reasoning_effort <- .check_reasoning_effort(reasoning_effort,
+        "new_session(reasoning_effort=)")
+    s$thinking_budget_tokens <-
+    .check_max_tokens(thinking_budget_tokens,
+                      "new_session(thinking_budget_tokens=)",
+                      what = "thinking_budget_tokens")
     s
 }
 
@@ -157,14 +182,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # nonsense budget must not reach the provider request. No upper bound
 # here: model output ceilings differ per provider, and an oversized
 # value fails loudly at the API with a clear message.
-.check_max_tokens <- function(x, where) {
+.check_max_tokens <- function(x, where, what = "max_tokens") {
     if (is.null(x)) {
         return(NULL)
     }
     ok <- is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x) &&
     x >= 1 && x == trunc(x) && x <= .Machine$integer.max
     if (!isTRUE(ok)) {
-        stop("max_tokens must be a single positive whole number; got ",
+        stop(what, " must be a single positive whole number; got ",
              deparse(x), " via ", where, call. = FALSE)
     }
     as.integer(x)
@@ -187,6 +212,71 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # cost is per actual search, not per turn).
 .session_web_search <- function(session) {
     session$web_search %||% session$config$web_search %||% TRUE
+}
+
+# Validate a reasoning-effort setting at a resolution boundary. NULL
+# passes through (means "provider default").
+.check_reasoning_effort <- function(x, where) {
+    if (is.null(x)) {
+        return(NULL)
+    }
+    ok <- is.character(x) && length(x) == 1L && !is.na(x) && nzchar(x)
+    if (!isTRUE(ok)) {
+        stop("reasoning_effort must be a single non-empty string ",
+             "(e.g. \"low\", \"medium\", \"high\"); got ", deparse(x),
+             " via ", where, call. = FALSE)
+    }
+    # Deliberately not an enum: the provider owns the vocabulary and
+    # adds to it, so an unknown value is refused loudly by the API
+    # rather than silently dropped here.
+    x
+}
+
+# Providers whose wire carries a reasoning-effort setting. llm.api maps
+# reasoning_effort onto the Responses `reasoning$effort` field for the
+# codex wire; on the anthropic wire the equivalent knob is
+# thinking_budget_tokens, and an unknown field there would be spliced
+# into the request body and rejected.
+.reasoning_effort_providers <- c("openai", "openai_codex")
+
+.anthropic_providers <- c("anthropic", "anthropic_claude")
+
+# Drop reasoning args the given provider's wire can't carry. Applied by
+# turn() for the session's own provider and again by
+# .agent_with_fallback() for each candidate, because a fallback rewrites
+# provider under args that were gated for the primary: a codex session
+# carrying reasoning_effort into an anthropic fallback would splice an
+# unknown field into the Messages body and 400. That failure defeats the
+# fallback itself -- a 400 is not a limit error, so the turn stops
+# instead of trying the next provider.
+.gate_reasoning_args <- function(args, provider) {
+    if (!is.null(args$reasoning_effort) &&
+        !provider %in% .reasoning_effort_providers) {
+        args$reasoning_effort <- NULL
+    }
+    if (!is.null(args$thinking_budget_tokens) &&
+        !provider %in% .anthropic_providers) {
+        args$thinking_budget_tokens <- NULL
+    }
+    args
+}
+
+# Resolve the reasoning-effort setting: explicit session field wins,
+# then config. NULL means "provider default".
+.session_reasoning_effort <- function(session) {
+    .check_reasoning_effort(session$reasoning_effort %||%
+                            session$config$reasoning_effort,
+                            "session/config reasoning_effort")
+}
+
+# Resolve the Anthropic extended-thinking budget. llm.api enforces the
+# provider's own floor (1024) and the max_tokens ceiling, so this only
+# has to agree that it is a positive whole number.
+.session_thinking_budget <- function(session) {
+    .check_max_tokens(session$thinking_budget_tokens %||%
+                      session$config$thinking_budget_tokens,
+                      "session/config thinking_budget_tokens",
+                      what = "thinking_budget_tokens")
 }
 
 # Resolve the per-response output-token budget. Explicit
@@ -851,6 +941,23 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(mt)) {
         agent_args$max_tokens <- mt
     }
+
+    # Reasoning depth. Both settings mean "how hard to think", but they
+    # are different fields on different wires: reasoning_effort rides
+    # `...` into the request body (consumed on the Responses/codex
+    # wire), thinking_budget_tokens is a named llm.api arg that warns
+    # and ignores off Anthropic. .gate_reasoning_args() keeps each to
+    # the wire that carries it. Only sent when set, so the provider
+    # default stands otherwise.
+    re <- .session_reasoning_effort(session)
+    if (!is.null(re)) {
+        agent_args$reasoning_effort <- re
+    }
+    tb <- .session_thinking_budget(session)
+    if (!is.null(tb)) {
+        agent_args$thinking_budget_tokens <- tb
+    }
+    agent_args <- .gate_reasoning_args(agent_args, session$provider)
 
     # For openai_compatible the endpoint is corteza-configured, not built
     # into llm.api. Apply it through llm.api's own setter (so we don't

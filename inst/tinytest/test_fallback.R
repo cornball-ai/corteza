@@ -210,3 +210,110 @@ expect_error(suppressMessages(corteza:::.agent_with_fallback(base_args,
 expect_equal(length(log$calls), 1L)
 
 corteza:::.fallback_reset()
+
+# -- cross-wire history ------------------------------------------------
+# A history carries the content vocabulary of the wire that produced it,
+# and llm.api replays what it is handed. Sending an Anthropic history
+# down a Responses-wire fallback is the 400 a Matrix bot hit the moment
+# an Anthropic usage limit diverted it mid-conversation:
+#   API error (400): Invalid value: 'thinking'.
+
+# .history_shape(): nothing wire-specific is portable.
+expect_identical(corteza:::.history_shape(NULL), "portable")
+expect_identical(corteza:::.history_shape(list()), "portable")
+expect_identical(corteza:::.history_shape(list(
+    list(role = "user", content = "hi"),
+    list(role = "assistant", content = "hello"))), "portable")
+# A Responses-shaped block list is portable to the wires that speak it;
+# the shape test only fires on vocabulary that cannot cross.
+expect_identical(corteza:::.history_shape(list(
+    list(role = "assistant",
+         content = list(list(type = "output_text", text = "x"))))),
+    "portable")
+
+# Anthropic markers.
+expect_identical(corteza:::.history_shape(list(
+    list(role = "assistant",
+         content = list(list(type = "thinking", thinking = "hmm"),
+                        list(type = "text", text = "hi"))))), "anthropic")
+expect_identical(corteza:::.history_shape(list(
+    list(role = "assistant",
+         content = list(list(type = "tool_use", id = "t1", name = "run_r"))))),
+    "anthropic")
+expect_identical(corteza:::.history_shape(list(
+    list(role = "user",
+         content = list(list(type = "tool_result", tool_use_id = "t1"))))),
+    "anthropic")
+
+# Responses markers, both entry types the codex wire leaves in history.
+expect_identical(corteza:::.history_shape(list(
+    list(type = ".openai_codex_output", output = list()))), "responses")
+expect_identical(corteza:::.history_shape(list(
+    list(type = "function_call_output", call_id = "c1", output = "ok"))),
+    "responses")
+
+# Junk entries don't derail detection.
+expect_identical(corteza:::.history_shape(list("a string", NULL,
+    list(role = "assistant",
+         content = list(list(type = "thinking", thinking = "x"))))),
+    "anthropic")
+
+# .history_compatible(): chat-completions wires speak neither
+# vocabulary, so they are only reachable with a portable history.
+for (p in c("anthropic", "anthropic_claude", "openai", "openai_codex",
+            "moonshot", "ollama")) {
+    expect_true(corteza:::.history_compatible("portable", p))
+}
+expect_true(corteza:::.history_compatible("anthropic", "anthropic"))
+expect_true(corteza:::.history_compatible("anthropic", "anthropic_claude"))
+expect_false(corteza:::.history_compatible("anthropic", "openai_codex"))
+expect_false(corteza:::.history_compatible("anthropic", "moonshot"))
+expect_true(corteza:::.history_compatible("responses", "openai_codex"))
+expect_true(corteza:::.history_compatible("responses", "openai"))
+expect_false(corteza:::.history_compatible("responses", "anthropic_claude"))
+expect_false(corteza:::.history_compatible("responses", "ollama"))
+
+# The bot's actual chain: anthropic_claude primary, then codex, then an
+# API-key haiku. With an Anthropic-shaped history the codex candidate is
+# skipped and haiku answers -- where before, codex returned a 400 that
+# (not being a limit error) stopped the walk before haiku was reached.
+corteza:::.fallback_reset()
+log <- new.env(); log$calls <- list()
+anth_hist <- list(list(role = "user", content = "play"),
+                  list(role = "assistant",
+                       content = list(list(type = "thinking",
+                                           thinking = "considering"),
+                                      list(type = "text", text = "ok"))))
+hist_args <- c(base_args, list(history = anth_hist))
+run <- with_msgs(corteza:::.agent_with_fallback(hist_args, new_fb_session(),
+    .call = make_call(list(
+        anthropic_claude = function(args) stop("API error (429): rate limit"),
+        openai_codex = function(args) {
+            stop("API error (400): Invalid value: 'thinking'.")
+        },
+        anthropic = list(content = "haiku answered")), log)))
+expect_equal(run$value$content, "haiku answered")
+providers <- vapply(log$calls, function(c) c$provider, character(1))
+expect_equal(providers, c("anthropic_claude", "anthropic"))
+expect_false("openai_codex" %in% providers)
+expect_true(any(grepl("cannot replay an anthropic-shaped history|cannot replay a anthropic-shaped history",
+                      run$msgs)))
+
+# The primary is never skipped for shape. A session switched to codex by
+# hand still gets its own provider tried, even carrying an Anthropic
+# history: refusing to call the provider the user chose would be worse
+# than the provider's own error.
+corteza:::.fallback_reset()
+log <- new.env(); log$calls <- list()
+codex_primary <- list(prompt = "hi", model = "gpt-5.5",
+                      provider = "openai_codex", history = anth_hist)
+s_cx <- new.env()
+s_cx$provider <- "openai_codex"
+s_cx$fallback <- NULL
+s_cx$history <- anth_hist
+out <- corteza:::.agent_with_fallback(codex_primary, s_cx,
+    .call = make_call(list(openai_codex = list(content = "tried")), log))
+expect_equal(out$content, "tried")
+expect_equal(length(log$calls), 1L)
+
+corteza:::.fallback_reset()
