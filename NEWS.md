@@ -1,3 +1,16 @@
+# corteza 0.7.1.41
+
+- **Reasoning depth is now a session setting.** `new_session()` takes
+  `reasoning_effort` (`"low"`/`"medium"`/`"high"`, forwarded on the
+  `openai` and `openai_codex` wires) and `thinking_budget_tokens`
+  (Anthropic extended thinking). Both resolve session-field-then-config
+  like `max_tokens`, so `reasoning_effort` or `thinking_budget_tokens`
+  in `.corteza/config.json` reaches the CLI, `chat()`, and Matrix
+  surfaces without further wiring. Each is dropped for providers whose
+  wire cannot carry it -- including after a limit fallback rewrites the
+  provider, where an effort setting meant for codex would otherwise
+  reach the Anthropic Messages body as an unknown field and 400.
+
 # corteza 0.7.1.40
 
 - **Harness hardening** (review follow-up to the previous release).
