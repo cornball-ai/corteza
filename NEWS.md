@@ -8,8 +8,12 @@
   meaningful. Validated as a closed set, because llm.api's `match.arg`
   would otherwise partial-match `"5"` to `"5m"` silently. Billing-only:
   the model sees byte-identical input, so this cannot change a result.
-  llm.api's sole breakpoint is on the system message, so a long-history
-  session saves little until the message history is cached as well.
+  With llm.api 0.1.9.6, now the Imports floor, the marker covers the
+  message history as well as the system prompt, so each request in a
+  tool loop reads the previous request's context from cache and pays
+  fresh input only for what was appended since. The floor is raised
+  because an older llm.api marks the system prompt alone and would
+  silently deliver a fraction of that.
 
 # corteza 0.7.1.42
 

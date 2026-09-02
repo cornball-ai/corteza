@@ -33,7 +33,7 @@ Imports:
     curl,
     digest,
     jsonlite,
-    llm.api (>= 0.1.9.5),
+    llm.api (>= 0.1.9.6),
     printify,
     processx,
     saber,

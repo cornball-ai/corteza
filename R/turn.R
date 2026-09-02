@@ -122,17 +122,21 @@ default_local_model <- function() {
 #'   \code{max_tokens}, both enforced by llm.api. NULL falls back to
 #'   \code{config$thinking_budget_tokens}, then the provider default
 #'   (thinking off).
-#' @param cache Character or NULL. Anthropic prompt-cache TTL for the
-#'   cacheable prefix: \code{"none"}, \code{"5m"} or \code{"1h"}.
-#'   Anthropic-only, and dropped for other providers so they never see
-#'   a field their wire rejects. NULL falls back to
-#'   \code{config$cache}, then llm.api's default (\code{"none"}).
-#'   Caching is a billing setting, not a behavioural one: the model
-#'   receives byte-identical input either way, so turning it on cannot
-#'   change a result. What it saves depends entirely on how much of
-#'   the request sits inside the cached prefix -- llm.api places its
-#'   only breakpoint on the system message, so a session whose cost is
-#'   dominated by a long message history will see little from this.
+#' @param cache Character or NULL. Anthropic prompt-cache TTL:
+#'   \code{"none"}, \code{"5m"} or \code{"1h"}. Anthropic-only, and
+#'   dropped for other providers so they never see a field their wire
+#'   rejects. NULL falls back to \code{config$cache}, then llm.api's
+#'   default (\code{"none"}). Caching is a billing setting, not a
+#'   behavioural one: the model receives byte-identical input either
+#'   way, so turning it on cannot change a result. llm.api (>= 0.1.9.6,
+#'   the Imports floor) marks both the system prompt and the tail of the
+#'   message history, so each request in an agent loop reads the
+#'   previous request's context from cache and pays fresh input only
+#'   for what was appended since; on a long tool loop that is most of
+#'   the input bill. The floor is there because an older llm.api marks
+#'   the system prompt alone and would silently deliver a fraction of
+#'   that with this set. \code{turn()$usage} reports what was read and
+#'   written.
 #'
 #' @return An environment holding the session state.
 #' @examples
