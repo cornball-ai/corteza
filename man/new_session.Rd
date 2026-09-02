@@ -18,7 +18,8 @@ new_session(
   base_url = NULL,
   max_tokens = NULL,
   reasoning_effort = NULL,
-  thinking_budget_tokens = NULL
+  thinking_budget_tokens = NULL,
+  cache = NULL
 )
 }
 \arguments{
@@ -92,6 +93,18 @@ providers only. Must be at least 1024 and below
 \code{max_tokens}, both enforced by llm.api. NULL falls back to
 \code{config$thinking_budget_tokens}, then the provider default
 (thinking off).}
+
+\item{cache}{Character or NULL. Anthropic prompt-cache TTL for the
+cacheable prefix: \code{"none"}, \code{"5m"} or \code{"1h"}.
+Anthropic-only, and dropped for other providers so they never see
+a field their wire rejects. NULL falls back to
+\code{config$cache}, then llm.api's default (\code{"none"}).
+Caching is a billing setting, not a behavioural one: the model
+receives byte-identical input either way, so turning it on cannot
+change a result. What it saves depends entirely on how much of
+the request sits inside the cached prefix -- llm.api places its
+only breakpoint on the system message, so a session whose cost is
+dominated by a long message history will see little from this.}
 }
 \value{
 An environment holding the session state.

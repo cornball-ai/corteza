@@ -196,3 +196,111 @@ local({
     expect_identical(seen[[2]]$provider, "anthropic")
     expect_identical(seen[[2]]$max_tokens, 32000L)
 })
+
+# -- prompt cache TTL -------------------------------------------------
+# Same shape as reasoning_effort (session field over config, gated per
+# provider), with one deliberate difference: this IS a closed set.
+# llm.api runs match.arg over c("none","5m","1h"), which partial-matches,
+# so an unchecked "5" would silently become "5m" rather than erroring.
+c1 <- new.env()
+expect_null(corteza:::.session_cache(c1))
+c1$config <- list(cache = "5m")
+expect_identical(corteza:::.session_cache(c1), "5m")
+c1$cache <- "1h"
+expect_identical(corteza:::.session_cache(c1), "1h")
+c1$cache <- NULL
+expect_identical(corteza:::.session_cache(c1), "5m")
+
+ns_cache <- corteza::new_session(channel = "console", provider = "anthropic",
+                                 cache = "1h")
+expect_identical(ns_cache$cache, "1h")
+expect_null(ns_default$cache)
+
+for (good in c("none", "5m", "1h")) {
+    expect_identical(corteza::new_session(channel = "console",
+                                          provider = "anthropic",
+                                          cache = good)$cache, good)
+}
+# "5" is the one that matters: match.arg would accept it downstream.
+for (bad in list("5", "5min", "", NA_character_, c("5m", "1h"), 5, TRUE)) {
+    expect_error(corteza::new_session(channel = "console",
+                                      provider = "anthropic", cache = bad),
+                 pattern = "cache must be one of")
+}
+c_bad <- new.env()
+c_bad$config <- list(cache = "30m")
+expect_error(corteza:::.session_cache(c_bad), pattern = "cache must be one of")
+
+# Anthropic-only, and stripped rather than left for llm.api to warn
+# about on every turn of a non-Anthropic session.
+cached <- list(cache = "5m", max_tokens = 32000L)
+for (p in c("anthropic", "anthropic_claude")) {
+    expect_identical(corteza:::.gate_reasoning_args(cached, p)$cache, "5m")
+}
+for (p in c("openai", "openai_codex", "ollama", "moonshot")) {
+    g <- corteza:::.gate_reasoning_args(cached, p)
+    expect_null(g$cache)
+    expect_identical(g$max_tokens, 32000L)   # unrelated args untouched
+}
+
+# turn() forwards it on Anthropic and omits the key entirely elsewhere,
+# so llm.api's own default ("none") stands rather than an explicit NULL
+# reaching match.arg.
+local({
+    ns <- asNamespace("llm.api")
+    orig <- get("agent", envir = ns, inherits = FALSE)
+    captured <- NULL
+    assignInNamespace("agent", function(...) {
+        captured <<- list(...)
+        list(content = "ok", history = list(),
+             usage = list(input_tokens = 1L, output_tokens = 1L))
+    }, ns = "llm.api")
+    on.exit(assignInNamespace("agent", orig, ns = "llm.api"), add = TRUE)
+
+    sess <- function(provider, ...) {
+        corteza::new_session(channel = "console", provider = provider,
+                             model_map = list(cloud = "test-model",
+                                              local = NULL),
+                             web_search = FALSE, ...)
+    }
+
+    out <- corteza::turn("hi", sess("anthropic", cache = "1h"), tools = list())
+    expect_identical(out$reply, "ok")
+    expect_identical(captured$cache, "1h")
+
+    captured <- NULL
+    out <- corteza::turn("hi", sess("openai_codex", cache = "1h"),
+                         tools = list())
+    expect_identical(out$reply, "ok")
+    expect_false("cache" %in% names(captured))
+
+    captured <- NULL
+    out <- corteza::turn("hi", sess("anthropic"), tools = list())
+    expect_identical(out$reply, "ok")
+    expect_false("cache" %in% names(captured))
+})
+
+# A fallback rewrites provider under args built for the primary, so the
+# strip has to happen per candidate, not once up front.
+local({
+    corteza:::.fallback_reset()
+    on.exit(corteza:::.fallback_reset(), add = TRUE)
+
+    seen <- list()
+    fake <- function(args) {
+        seen[[length(seen) + 1L]] <<- args
+        if (identical(args$provider, "anthropic")) {
+            stop("rate limit exceeded for this organization")
+        }
+        list(content = "ok", history = list(), usage = list())
+    }
+
+    s <- new.env()
+    s$config <- list(fallback = "gpt-test openai_codex")
+    args <- list(model = "claude-test", provider = "anthropic", cache = "5m")
+
+    res <- corteza:::.agent_with_fallback(args, s, .call = fake)
+    expect_identical(res$content, "ok")
+    expect_identical(seen[[1]]$cache, "5m")      # anthropic primary keeps it
+    expect_null(seen[[2]]$cache)                 # codex candidate does not
+})
