@@ -192,11 +192,23 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
         # process, which exists only to serve this one subagent.
         options(corteza.allowed_paths = as.character(allowed_paths))
     }
+    instruction_catalog <- build_instruction_catalog(getwd())
+    instruction_header <- if (instruction_reader_selected(tools_filter)) {
+        format_instruction_catalog(instruction_catalog)
+    } else {
+        ""
+    }
+    if (nzchar(instruction_header)) {
+        system <- paste(c(system, instruction_header), collapse = "\n\n")
+    }
     session <- new_session(channel = "console", provider = provider,
                            tools_filter = tools_filter, system = system,
                            max_turns = as.integer(max_turns),
                            plan_mode = isTRUE(plan_mode),
                            web_search = web_search)
+    session$is_subagent <- TRUE
+    session$config <- load_config(getwd())
+    session$instruction_catalog <- instruction_catalog
     if (!is.null(model)) {
         session$model_map$cloud <- model
     }
@@ -443,24 +455,25 @@ SUBAGENT_DEFAULTS <- list(
                           max_concurrent = 3L,
                           timeout_minutes = 30L,
                           allow_nested = FALSE,
-                          default_tools = c("read_file", "grep_files", "r_help", "web_search",
-        "fetch_url")
+                          default_tools = c("read_file", "skill_instructions", "grep_files",
+        "r_help", "web_search", "fetch_url")
 )
 
 SUBAGENT_PRESETS <- list(
-                         investigate = c("read_file", "grep_files", "r_help", "web_search",
-        "fetch_url"),
-                         work = c("read_file", "grep_files", "r_help", "web_search", "fetch_url",
+                         investigate = c("read_file", "skill_instructions", "grep_files",
+        "r_help", "web_search", "fetch_url"),
+                         work = c("read_file", "skill_instructions", "grep_files",
+                                  "r_help", "web_search", "fetch_url",
                                   "bash", "write_file", "replace_in_file", "list_files",
                                   "git_status", "git_diff", "git_log", "run_r"),
-                         minimal = c("read_file", "grep_files"),
+                         minimal = c("read_file", "skill_instructions", "grep_files"),
                          # Hall monitor: supervises an unattended auto run. Read-only
                          # by construction -- a supervisor that can act is not a
                          # supervisor. No web_search/fetch_url either: it reads the
                          # worker's transcript, which is attacker-influenceable text,
                          # so it gets no outbound channel. See PRESET_WEB_SEARCH below;
                          # the tool list alone does not deliver that.
-                         monitor = c("read_file", "grep_files", "list_files",
+                         monitor = c("read_file", "skill_instructions", "grep_files", "list_files",
                                      "git_status", "git_diff", "git_log")
 )
 
@@ -1130,7 +1143,10 @@ subagent_live_token_count <- function(info) {
                 list(history = sess$history %||% list()),
                 system_prompt = sess$system, tools = tools),
              limit = if (is.null(model)) NA_integer_ else
-             corteza::context_limit_for_model(model),
+             corteza::context_limit_for_model(
+                model,
+                provider = .subagent_state$session$provider
+            ),
              model = model)
     }),
                        error = function(e) list(tokens = NA_integer_, limit = NA_integer_,

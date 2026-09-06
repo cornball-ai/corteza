@@ -1,21 +1,24 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{tool_run_r}
 \alias{tool_run_r}
-\title{Execute R code in the session's global environment.}
+\title{Execute R code in a persistent environment.}
 \usage{
-tool_run_r(code)
+tool_run_r(code, envir = globalenv())
 }
 \arguments{
 \item{code}{(character) R code to execute.}
+
+\item{envir}{(environment) Persistent environment in which assignments
+should land. Defaults to \code{globalenv()} for backwards compatibility.}
 }
 \value{
 An MCP tool-result list.
 }
 \description{
-New bindings are auto-captured into the workspace cache. Large
-result values (data frames, matrices, long vectors, objects over
-~10 KB) are stashed via `with_handle()` and returned as a `str()`
-summary plus a short `.h_NNN` handle the LLM can reference in a
-later `run_r` call or inspect with `read_handle`.
+By default, code runs in the host's global environment, preserving the
+original \code{run_r} contract. Pass a private persistent environment to
+give an agent or capability its own R scope. Scoped evaluation retains
+assignments and handles but does not copy bindings into the host workspace
+cache.
 }
 \keyword{internal}

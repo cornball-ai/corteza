@@ -4,13 +4,17 @@
 \title{Find the largest cut point in `history` that doesn't split a
 tool_use / tool_result pair.}
 \usage{
-compact_find_cut(history, keep_recent_turns = 1L)
+compact_find_cut(history, keep_recent_turns = 1L, keep_recent_tokens = 20000L)
 }
 \arguments{
 \item{history}{Live in-memory history list.}
 
 \item{keep_recent_turns}{Number of recent user→assistant turns to
 keep verbatim (a turn starts at a user message).}
+
+\item{keep_recent_tokens}{Approximate recent-history tokens to retain when
+one user prompt has grown into a long tool trajectory. The cut still lands
+only at a complete tool-call/result boundary.}
 }
 \description{
 Returns the number of entries that can safely be summarized

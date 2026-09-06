@@ -76,11 +76,16 @@ rename builds on. Defaults to the localpart of the bot's user id.}
 \item{fallback}{Character vector or NULL. What \code{\link{turn}}
 tries, in order, when the default provider refuses a request with
 a limit error (rate, usage, or quota). Same \code{"model provider"}
-shape as \code{models}, e.g. \code{c("gpt-5.5 openai_codex",
+shape as \code{models}, e.g. \code{c("gpt-5.6-sol openai_codex",
 "claude-haiku-4-5 anthropic")}. A provider that hit a limit is
 skipped for \code{fallback_cooldown_minutes} (config key, default
-30) before the primary is tried again. NULL (default) means a
-limit error is reported like any other error.}
+30). Set \code{fallback_primary_retry_at} to a weekly boundary such
+as \code{"Mon 03:00"} to retry the primary after its account resets.
+\code{anthropic_claude} and \code{openai_codex} are subscription
+providers; a fallback onto an API-key provider such as \code{anthropic}
+or \code{openai} is labeled as billable usage prominently in the reply.
+\code{reasoning_effort}, when configured, applies to every candidate.
+NULL (default) means a limit error is reported like any other error.}
 }
 \value{
 The saved configuration, invisibly.

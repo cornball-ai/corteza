@@ -35,8 +35,8 @@ back to \code{config$provider}, then \code{"anthropic"}.}
 Tool filter passed through to \code{get_tools()}. NULL is treated
 as \code{"all"}.}
 
-\item{system}{Character or NULL. System prompt. NULL auto-builds via
-\code{load_context(cwd)} when \code{load_project_context = TRUE},
+\item{system}{Character or NULL. System prompt. NULL auto-builds via the
+saber-backed context manifest when \code{load_project_context = TRUE},
 otherwise left NULL (channel supplies its own).}
 
 \item{approval_cb}{Function or NULL. Approval callback for
@@ -47,8 +47,8 @@ the session with (each entry a list with \code{role} and
 \code{content}).}
 
 \item{load_project_context}{Logical. When TRUE, auto-call
-\code{load_context(cwd)} to assemble the system prompt. Channels
-with their own short system prompt (like matrix) pass FALSE.}
+the saber manifest and rendered system prompt. Channels that supply
+their own system prompt pass FALSE.}
 
 \item{validate_api_key}{Logical. When TRUE, error if the provider's
 API key env var is unset or empty.}
@@ -69,8 +69,9 @@ from \code{config$base_url} (falling back to the
 endpoint or model errors here rather than at the first request.}
 }
 \value{
-A session environment from \code{\link{new_session}}, with
-  an extra \code{cwd} field set.
+A session environment from \code{\link{new_session}}, with an
+  extra \code{cwd} field and, for an auto-built system prompt, a
+  \code{context_manifest} field.
 }
 \description{
 Performs pre-turn setup common to all channels:
@@ -84,7 +85,8 @@ environment variable is set.
 skill docs from \code{tools::R_user_dir("corteza", "data")/skills}
 and \code{<cwd>/.corteza/skills}.
 \item Loads skill packages declared in the config.
-\item Optionally builds the system prompt via \code{load_context(cwd)}.
+\item Optionally builds the system prompt and source manifest via
+\code{load_context_bundle(cwd)}.
 \item Returns a \code{new_session()} built from the above.
 }
 

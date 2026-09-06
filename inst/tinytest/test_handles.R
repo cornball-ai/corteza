@@ -112,6 +112,35 @@ expect_true(exists(h2$handle, envir = globalenv(), inherits = FALSE))
 corteza:::clear_handles()
 expect_false(exists(h2$handle, envir = globalenv(), inherits = FALSE))
 
+# Scoped evaluators retain their own handles. A handle created in one scope
+# must not become visible to another scope or to global run_r.
+scope_a <- new.env(parent = baseenv())
+scope_b <- new.env(parent = baseenv())
+scoped <- corteza::tool_run_r("matrix(1:4, 2, 2)", envir = scope_a)
+expect_false(isTRUE(scoped$isError))
+expect_true(grepl("stored as .h_001", scoped$content[[1]]$text, fixed = TRUE))
+expect_true(exists(".h_001", envir = scope_a, inherits = FALSE) == FALSE)
+
+scoped <- corteza::tool_run_r("dim(.h_001)", envir = scope_a)
+expect_true(grepl("2 2", scoped$content[[1]]$text, fixed = TRUE))
+other <- corteza::tool_run_r("dim(.h_001)", envir = scope_b)
+expect_true(grepl("object '.h_001' not found", other$content[[1]]$text,
+                  fixed = TRUE))
+global <- corteza::tool_run_r("exists('.h_001', inherits = FALSE)")
+expect_true(grepl("FALSE", global$content[[1]]$text, fixed = TRUE))
+
+# Output-cap handles are scoped too, including large scalar strings that do
+# not meet the ordinary large-object heuristic.
+capped <- corteza::tool_run_r("paste(rep('x', 6000), collapse = '')",
+                              envir = scope_b)
+expect_true(grepl("tool output truncated", capped$content[[1]]$text,
+                  fixed = TRUE))
+expect_true(grepl("full output stored as: .h_001", capped$content[[1]]$text,
+                  fixed = TRUE))
+expect_true(grepl("TRUE", corteza::tool_run_r(
+    "nchar(paste(.h_001, collapse = '\\n')) > 6000", envir = scope_b
+)$content[[1]]$text, fixed = TRUE))
+
 # --- read_handle ops ---------------------------------------------------
 
 corteza:::clear_handles()

@@ -1,3 +1,63 @@
+# corteza 0.7.1.44
+
+- **Context compaction now belongs to the shared agent lifecycle.** `turn()`
+  checks the live context before a run and after each complete assistant/tool
+  result batch, so direct callers cannot bypass it. A single long autonomous
+  prompt can be split at a safe call/result boundary while retaining a recent
+  token tail; Anthropic, OpenAI Chat, and Responses/Codex native histories are
+  all pairing-aware. A real context-window overflow gets one compact-and-
+  continue retry without inventing a user message, and usage from both attempts
+  is retained. CLI and `chat()` manual/automatic compaction now use this same
+  path and durably record summaries through a pre-rewrite lifecycle hook.
+  Codex compaction omits unsupported sampling controls, and caught summarizer
+  failures are exposed through a lifecycle hook instead of remaining silent.
+- **Compaction briefs can be domain-specific.** `new_session(compaction_prompt = )`
+  lets a long-running host state what evidence and working state its summary must
+  preserve, while NULL retains corteza's existing coding-agent brief.
+- **Context accounting understands Codex and provider products.** Responses
+  output, function-call results, and opaque reasoning state are no longer
+  reported as near-empty history. Context-window lookup can distinguish the
+  public API's model limit from the smaller ChatGPT Codex working window.
+
+- **Instruction skills are now compact, lazy, and session-scoped.** Startup
+  discovers exact `SKILL.md` files recursively, puts only their names,
+  one-line descriptions, and stable ids in the prompt, and exposes the
+  read-only `skill_instructions` tool for exact body or relative-resource
+  retrieval. Each CLI, console, Matrix room, and subagent owns an immutable
+  hash snapshot; changed, foreign, traversal, and symlink-escaping resources
+  are refused. Explicit `instruction_roots` merge by stable root id and
+  `instruction_disabled` ids union across global and project config.
+  Instruction documents remain separate from executable tools, and the
+  legacy full-body `format_skill_docs()` contract remains available.
+
+- **System context is now a provenance-carrying saber manifest.** Corteza
+  requires saber 0.7.2.3 at its published commit, renders compact shared and
+  project instructions through its manifest API, and retains the source
+  metadata on CLI, `chat()`, and Matrix sessions. `/context` reports included
+  and skipped sources, their token estimates, reasons, and paths/origins
+  without exposing their bodies. The migration removes corteza's obsolete
+  inlined `saber::agent_context()` fallback and the eager package-help layer
+  that duplicated tool schemas at substantial token cost; package help remains
+  available on demand. Claude-specific global instructions and basename-
+  matched memory are no longer guessed implicitly—operators can add any such
+  files explicitly through `context_files`.
+
+- **`run_r` can now be capability-scoped without changing its default.**
+  `tool_run_r(code, envir = ...)` accepts a caller-owned persistent R
+  environment whose assignments and large-result handles remain private to
+  that scope. Existing calls still evaluate in `globalenv()` and retain
+  workspace auto-capture; the model-facing tool schema still exposes only
+  `code`, so hosts—not models—select the execution boundary.
+
+- **Limit failover now finishes interrupted tool runs without replaying
+  completed tools.** Provider-native histories are bridged to portable text
+  when the next candidate uses a different wire. Matrix configs also honor
+  `reasoning_effort` and can set `fallback_primary_retry_at` (for example,
+  `"Mon 03:00"`) so a limited primary is retried at its weekly reset while
+  the fallback serves requests in the meantime. Every fallback reply now names
+  the actual model/provider; crossing from subscription providers onto an
+  API-key provider produces an intentionally loud billable-usage banner.
+
 # corteza 0.7.1.43
 
 - **Anthropic prompt caching is plumbed through.** `new_session(cache =

@@ -767,14 +767,24 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     # live.
     transferred <- TRUE
 
-    # Refresh system prompt so the new subagent shows up in the live
-    # listing on the next turn. load_context reads the registry fresh.
-    new_system <- tryCatch(
-                           load_context(turn_session$cwd %||% getwd()),
-                           error = function(e) NULL
+    # Refresh the rendered prompt and its provenance together so /context
+    # describes the prompt the next turn will actually receive. Consumer-owned
+    # prefix sources (notably Matrix room guidance) must survive the rebuild.
+    new_context <- tryCatch(
+                            load_context_bundle(
+            turn_session$cwd %||% getwd(),
+            prefix_sources = turn_session$context_prefix_sources %||%
+            list(),
+            include_instruction_catalog =
+            instruction_reader_selected(turn_session$tools_filter)
+        ),
+                            error = function(e) NULL
     )
-    if (!is.null(new_system)) {
-        turn_session$system <- new_system
+    if (!is.null(new_context$system)) {
+        turn_session$system <- new_context$system
+        turn_session$context_manifest <- new_context$manifest
+        turn_session$context_prefix_sources <- new_context$prefix_sources
+        turn_session$instruction_catalog <- new_context$instruction_catalog
     }
     invisible()
 }

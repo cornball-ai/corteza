@@ -203,11 +203,16 @@ bot_save_config <- function(cfg) {
 #' @param fallback Character vector or NULL. What \code{\link{turn}}
 #'   tries, in order, when the default provider refuses a request with
 #'   a limit error (rate, usage, or quota). Same \code{"model provider"}
-#'   shape as \code{models}, e.g. \code{c("gpt-5.5 openai_codex",
+#'   shape as \code{models}, e.g. \code{c("gpt-5.6-sol openai_codex",
 #'   "claude-haiku-4-5 anthropic")}. A provider that hit a limit is
 #'   skipped for \code{fallback_cooldown_minutes} (config key, default
-#'   30) before the primary is tried again. NULL (default) means a
-#'   limit error is reported like any other error.
+#'   30). Set \code{fallback_primary_retry_at} to a weekly boundary such
+#'   as \code{"Mon 03:00"} to retry the primary after its account resets.
+#'   \code{anthropic_claude} and \code{openai_codex} are subscription
+#'   providers; a fallback onto an API-key provider such as \code{anthropic}
+#'   or \code{openai} is labeled as billable usage prominently in the reply.
+#'   \code{reasoning_effort}, when configured, applies to every candidate.
+#'   NULL (default) means a limit error is reported like any other error.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -1282,14 +1287,31 @@ bot_default_system <- function(cfg, room_id = NULL, cwd = NULL,
     paste(parts, collapse = "\n")
 }
 
-bot_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
-    parts <- c(
-               bot_default_system(cfg, cwd = cwd, description = description,
+bot_room_context_bundle <- function(cfg, cwd, description = NULL,
+                                    room_name = NULL, tools_filter = NULL) {
+    matrix_source <- context_text_source(
+        id = "matrix_system",
+        kind = "runtime",
+        text = bot_default_system(cfg, cwd = cwd, description = description,
                                   room_name = room_name),
-               load_context(cwd)
+        order = -400,
+        origin = "corteza::bot_default_system",
+        scope = "matrix"
     )
-    parts <- parts[!is.na(parts) & nzchar(parts)]
-    paste(parts, collapse = "\n\n")
+    if (is.null(matrix_source)) {
+        prefix_sources <- list()
+    } else {
+        prefix_sources <- list(matrix_source)
+    }
+    load_context_bundle(
+                        cwd, prefix_sources = prefix_sources,
+                        include_instruction_catalog = instruction_reader_selected(tools_filter)
+    )
+}
+
+bot_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
+    bot_room_context_bundle(cfg, cwd, description = description,
+                            room_name = room_name)$system
 }
 
 # Agent name for path-building. "@cornelius:cornball.ai" -> "Cornelius".
@@ -1578,11 +1600,14 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     info <- bot_channel_info(chat, room_id)
     room_cwd <- bot_room_cwd(cfg, info$topic)
 
+    context_manifest <- NULL
     if (is.null(system)) {
         parsed <- bot_parse_topic(info$topic)
-        system <- bot_room_system(cfg, cwd = room_cwd,
-                                  description = parsed$description,
-                                  room_name = info$name)
+        context_bundle <- bot_room_context_bundle(cfg, cwd = room_cwd,
+            description = parsed$description, room_name = info$name,
+            tools_filter = tools_filter)
+        system <- context_bundle$system
+        context_manifest <- context_bundle$manifest
     }
 
     s <- session_setup(
@@ -1599,10 +1624,20 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
-    # Limit fallback chain and cooldown come from the Matrix config, not
+    if (!is.null(context_manifest)) {
+        s$context_manifest <- context_manifest
+        s$context_prefix_sources <- context_bundle$prefix_sources
+        s$instruction_catalog <- context_bundle$instruction_catalog
+    }
+    # Reasoning and limit fallback policy come from the Matrix config, not
     # the room's cwd config: the account whose limit trips is the bot's.
+    s$reasoning_effort <- .check_reasoning_effort(
+        cfg$reasoning_effort, "Matrix config reasoning_effort"
+    )
     s$fallback <- cfg$fallback
     s$fallback_cooldown <- cfg$fallback_cooldown_minutes
+    s$fallback_primary_retry_at <- cfg$fallback_primary_retry_at
+    .fallback_primary_retry_at(s)
     # Creation-time defaults, the baseline the model badge compares
     # against: only a /model switch makes the live values differ.
     s$default_model <- s$model

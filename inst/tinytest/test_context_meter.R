@@ -47,6 +47,32 @@ block_files <- corteza:::format_context_block(
 expect_true(grepl("Context files (2)", block_files, fixed = TRUE))
 expect_true(grepl("  a.md", block_files, fixed = TRUE))
 expect_true(grepl("  b.md", block_files, fixed = TRUE))
+# Saber provenance supersedes the legacy file list and never leaks bodies.
+source_meta <- data.frame(
+    id = c("runtime", "missing_file"),
+    kind = c("runtime", "context"),
+    included = c(TRUE, FALSE),
+    emitted_tokens = c(12, 0),
+    reason = c("included", "missing"),
+    requested_path = c("", "missing.md"),
+    path = c("", "/tmp/missing.md"),
+    origin = c("corteza::runtime", "config"),
+    text = c("SECRET_BODY", "SECRET_BODY"),
+    stringsAsFactors = FALSE
+)
+block_sources <- corteza:::format_context_block(
+    used = 1000, limit = 100000,
+    breakdown = list(system = 1000),
+    files = "legacy.md",
+    sources = source_meta,
+    palette = no_color
+)
+expect_true(grepl("Context sources (1 included, 1 skipped)",
+                  block_sources, fixed = TRUE))
+expect_true(grepl("runtime [runtime]", block_sources, fixed = TRUE))
+expect_true(grepl("missing: missing.md", block_sources, fixed = TRUE))
+expect_false(grepl("legacy.md", block_sources, fixed = TRUE))
+expect_false(grepl("SECRET_BODY", block_sources, fixed = TRUE))
 
 # Filled-cell counts: at 0% none; at 50% half; at 100% all. Bar now
 # takes breakdown + limit and segments cells per component.

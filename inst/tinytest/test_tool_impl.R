@@ -37,6 +37,24 @@ local({
     expect_true(exists(other, envir = globalenv(), inherits = FALSE))
 })
 
+# An explicit environment gives a caller persistent R state without exposing
+# it to the host global environment. This is the primitive used by recursive
+# agents and capability-scoped harnesses.
+local({
+    scoped <- new.env(parent = baseenv())
+    name <- "._corteza_scoped_test"
+    suppressWarnings(rm(list = name, envir = globalenv()))
+
+    result <- corteza::tool_run_r(sprintf("%s <- 41L; NULL", name),
+                                  envir = scoped)
+    expect_false(isTRUE(result$isError))
+    expect_true(exists(name, envir = scoped, inherits = FALSE))
+    expect_false(exists(name, envir = globalenv(), inherits = FALSE))
+
+    result <- corteza::tool_run_r(sprintf("%s + 1L", name), envir = scoped)
+    expect_true(grepl("42", result$content[[1]]$text, fixed = TRUE))
+})
+
 # Test run_r_script: fresh-subprocess execution via callr::rscript().
 # Smoke test was missing entirely before; the prior implementation called
 # system2("r", c("-f", tmp)) which failed everywhere ("-f" is not a valid

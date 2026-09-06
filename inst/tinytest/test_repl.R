@@ -208,3 +208,32 @@ sess_filt$tools_filter <- c("read_file")
 tools_out <- corteza:::chat_format_tools_list(sess_filt)
 expect_true(grepl("read_file", tools_out, fixed = TRUE))
 expect_false(grepl("write_file", tools_out, fixed = TRUE))
+
+# 11. The shared REPL installs its durable compaction hook exactly once,
+# preserves an existing caller hook, and accounts for the summarizer request.
+# Direct turn() callers install their own persistence hook; this pins the
+# interactive path that used to own auto-compaction outside turn().
+ctx_compact <- base_ctx(character())
+ctx_compact$config <- list(memory_flush_enabled = FALSE)
+ctx_compact$disk_session <- NULL
+ctx_compact$session <- new.env(parent = emptyenv())
+ctx_compact$session$sessionId <- "compact-test"
+prior_compaction <- NULL
+ctx_compact$session$on_compaction <- function(event) {
+    prior_compaction <<- event
+}
+expect_true(isTRUE(corteza:::.repl_install_compaction_hook(ctx_compact)))
+expect_false(isTRUE(corteza:::.repl_install_compaction_hook(ctx_compact)))
+
+compact_event <- list(
+    reason = "threshold",
+    summary = "older work summarized",
+    usage = list(input_tokens = 12L, output_tokens = 3L,
+                 total_tokens = 15L, cost = 0.01)
+)
+ctx_compact$session$on_compaction(compact_event)
+expect_identical(prior_compaction, compact_event)
+expect_equal(length(ctx_compact$session$spend$segments), 1L)
+expect_equal(ctx_compact$session$spend$segments[[1L]]$input_tokens, 12L)
+expect_equal(ctx_compact$session$spend$segments[[1L]]$output_tokens, 3L)
+expect_equal(ctx_compact$session$spend$segments[[1L]]$cost, 0.01)

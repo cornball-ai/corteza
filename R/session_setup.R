@@ -17,7 +17,8 @@
 #'     skill docs from \code{tools::R_user_dir("corteza", "data")/skills}
 #'     and \code{<cwd>/.corteza/skills}.
 #'   \item Loads skill packages declared in the config.
-#'   \item Optionally builds the system prompt via \code{load_context(cwd)}.
+#'   \item Optionally builds the system prompt and source manifest via
+#'     \code{load_context_bundle(cwd)}.
 #'   \item Returns a \code{new_session()} built from the above.
 #' }
 #'
@@ -31,8 +32,8 @@
 #' @param tools Character vector, NULL, or the string \code{"all"}.
 #'   Tool filter passed through to \code{get_tools()}. NULL is treated
 #'   as \code{"all"}.
-#' @param system Character or NULL. System prompt. NULL auto-builds via
-#'   \code{load_context(cwd)} when \code{load_project_context = TRUE},
+#' @param system Character or NULL. System prompt. NULL auto-builds via the
+#'   saber-backed context manifest when \code{load_project_context = TRUE},
 #'   otherwise left NULL (channel supplies its own).
 #' @param approval_cb Function or NULL. Approval callback for
 #'   \code{"ask"} verdicts; see \code{\link{new_session}}.
@@ -40,8 +41,8 @@
 #'   the session with (each entry a list with \code{role} and
 #'   \code{content}).
 #' @param load_project_context Logical. When TRUE, auto-call
-#'   \code{load_context(cwd)} to assemble the system prompt. Channels
-#'   with their own short system prompt (like matrix) pass FALSE.
+#'   the saber manifest and rendered system prompt. Channels that supply
+#'   their own system prompt pass FALSE.
 #' @param validate_api_key Logical. When TRUE, error if the provider's
 #'   API key env var is unset or empty.
 #' @param verbose Logical. Passed through to \code{new_session}.
@@ -57,8 +58,9 @@
 #'   \code{OPENAI_COMPATIBLE_BASE_URL} environment variable); a missing
 #'   endpoint or model errors here rather than at the first request.
 #'
-#' @return A session environment from \code{\link{new_session}}, with
-#'   an extra \code{cwd} field set.
+#' @return A session environment from \code{\link{new_session}}, with an
+#'   extra \code{cwd} field and, for an auto-built system prompt, a
+#'   \code{context_manifest} field.
 #' @examples
 #' \dontrun{
 #' # Requires the relevant provider API key in the environment.
@@ -125,8 +127,16 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     load_skill_packages(config)
     options(corteza.tools = tools)
 
+    context_manifest <- NULL
+    instruction_catalog <- build_instruction_catalog(cwd)
     if (is.null(system) && isTRUE(load_project_context)) {
-        system <- load_context(cwd)
+        context_bundle <- load_context_bundle(
+            cwd,
+            instruction_catalog = instruction_catalog,
+            include_instruction_catalog = instruction_reader_selected(tools)
+        )
+        system <- context_bundle$system
+        context_manifest <- context_bundle$manifest
     }
 
     session <- new_session(
@@ -144,5 +154,10 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     )
     session$cwd <- cwd
     session$config <- config
+    session$instruction_catalog <- instruction_catalog
+    if (!is.null(context_manifest)) {
+        session$context_manifest <- context_manifest
+        session$context_prefix_sources <- context_bundle$prefix_sources
+    }
     session
 }

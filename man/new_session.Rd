@@ -19,7 +19,8 @@ new_session(
   max_tokens = NULL,
   reasoning_effort = NULL,
   thinking_budget_tokens = NULL,
-  cache = NULL
+  cache = NULL,
+  compaction_prompt = NULL
 )
 }
 \arguments{
@@ -109,6 +110,11 @@ the input bill. The floor is there because an older llm.api marks
 the system prompt alone and would silently deliver a fraction of
 that with this set. \code{turn()$usage} reports what was read and
 written.}
+
+\item{compaction_prompt}{Character or NULL. Optional domain-specific
+instructions for summarizing older history during context compaction.
+NULL uses corteza's general coding-agent summary brief. The prompt
+affects only the summarizer; the main agent system prompt is unchanged.}
 }
 \value{
 An environment holding the session state.

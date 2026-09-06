@@ -27,7 +27,7 @@
 # otherwise a whole-file read gets sliced into 50-line re-reads. Still
 # bounded: a pathological multi-megabyte file stashes to a handle rather
 # than wedging the model.
-.tool_output_read_tools <- c("read_file", "git_diff")
+.tool_output_read_tools <- c("read_file", "skill_instructions", "git_diff")
 .tool_output_read_max_chars <- 100000L
 .tool_output_read_max_lines <- 2000L
 
@@ -45,13 +45,14 @@
 #' @param text Flattened tool-result string (length-1 character). Other
 #'   shapes pass through untouched.
 #' @param tool Tool name, for the marker.
+#' @param store Handle store that should own an oversized result.
 #' @param max_chars,max_lines Caps that trigger truncation.
 #' @param preview_lines,preview_chars Size of the preview head kept in
 #'   the marker.
 #' @return A length-1 character string: either `text` unchanged or a
 #'   truncation marker.
 #' @noRd
-admit_tool_result <- function(text, tool = "tool",
+admit_tool_result <- function(text, tool = "tool", store = .handle_store,
                               max_chars = .tool_output_max_chars,
                               max_lines = .tool_output_max_lines,
                               preview_lines = .tool_output_preview_lines,
@@ -81,7 +82,7 @@ admit_tool_result <- function(text, tool = "tool",
     stash <- with_handle(lines, summary_fn = function(x) {
         sprintf("captured %s output: %d lines, %d chars", tool, n_lines,
                 n_chars)
-    })
+    }, store = store)
 
     preview <- .tool_output_preview(lines, preview_lines, preview_chars)
     sprintf(paste0(

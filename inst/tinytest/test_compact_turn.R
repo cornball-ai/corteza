@@ -3,6 +3,32 @@
 # pure history-rewrite. The summarizer call itself is gated to
 # at_home in test_subagent_callr.R.
 
+# Summarizer provider arguments --------
+
+run_compact_summary_provider_test <- function() {
+    original_chat <- get("chat", envir = asNamespace("llm.api"))
+    on.exit(assignInNamespace("chat", original_chat, ns = "llm.api"),
+            add = TRUE)
+    seen <- NULL
+    stub_chat <- function(...) {
+        seen <<- list(...)
+        list(content = "summary", usage = list())
+    }
+    assignInNamespace("chat", stub_chat, ns = "llm.api")
+    slice <- list(list(role = "user", content = "earlier work"))
+
+    codex <- corteza:::compact_summarize_slice(
+        slice, provider = "openai_codex", model = "gpt-5.6-sol")
+    expect_equal(as.character(codex), "summary")
+    expect_null(seen$temperature)
+
+    anthropic <- corteza:::compact_summarize_slice(
+        slice, provider = "anthropic", model = "claude-opus-5")
+    expect_equal(as.character(anthropic), "summary")
+    expect_equal(seen$temperature, 0.3)
+}
+run_compact_summary_provider_test()
+
 # Threshold resolution --------
 
 cfg_base <- list(
@@ -116,6 +142,93 @@ expect_equal(
     corteza:::compact_find_cut(multi_tool_turn, keep_recent_turns = 1L),
     0L,
     info = "tool_result-only user msgs must not split a single turn")
+
+# Codex Responses uses role-less output/result entries. A natural cut before
+# the latest user prompt may include a complete call pair, but must walk back
+# if the call is in the prefix and its result is in the retained tail.
+codex_pair <- list(
+    list(role = "user", content = "first"),
+    list(type = ".openai_codex_output", output = list(
+        list(type = "function_call", call_id = "call_1", name = "run_r",
+             arguments = '{"code":"1+1"}')
+    )),
+    list(type = "function_call_output", call_id = "call_1", output = "2"),
+    list(role = "user", content = "continue"),
+    list(type = ".openai_codex_output", output = list(
+        list(type = "message", role = "assistant",
+             content = list(list(type = "output_text", text = "done")))
+    ))
+)
+expect_equal(corteza:::compact_find_cut(codex_pair, 1L), 3L)
+expect_true(corteza:::compact_prefix_has_unmatched_tool_use(
+    codex_pair, 2L))
+expect_false(corteza:::compact_prefix_has_unmatched_tool_use(
+    codex_pair, 3L))
+
+# Pi-style split-turn compaction: one autonomous user request may grow into
+# hundreds of complete assistant/tool rounds. With a deliberately tiny retained
+# token tail, compact through the last complete pair while keeping the newest
+# call and result together.
+anthropic_trajectory <- list(
+    list(role = "user", content = "play"),
+    list(role = "assistant", content = list(
+        list(type = "tool_use", id = "a", name = "run_r", input = list()))),
+    list(role = "user", content = list(
+        list(type = "tool_result", tool_use_id = "a", content = "a ok"))),
+    list(role = "assistant", content = list(
+        list(type = "tool_use", id = "b", name = "run_r", input = list()))),
+    list(role = "user", content = list(
+        list(type = "tool_result", tool_use_id = "b", content = "b ok"))),
+    list(role = "assistant", content = list(
+        list(type = "tool_use", id = "c", name = "run_r", input = list()))),
+    list(role = "user", content = list(
+        list(type = "tool_result", tool_use_id = "c", content = "c ok")))
+)
+anthropic_cut <- corteza:::compact_find_cut(
+    anthropic_trajectory, keep_recent_tokens = 1L)
+expect_equal(anthropic_cut, 5L)
+expect_false(corteza:::compact_prefix_has_unmatched_tool_use(
+    anthropic_trajectory, anthropic_cut))
+expect_false(corteza:::compact_tail_starts_with_tool_result(
+    anthropic_trajectory, anthropic_cut))
+anthropic_rewrite <- corteza:::compact_rewrite_history(
+    anthropic_trajectory, anthropic_cut, "earlier progress")
+expect_equal(anthropic_rewrite[[1L]]$role, "user")
+expect_equal(anthropic_rewrite[[2L]]$role, "assistant")
+
+codex_trajectory <- list(
+    list(role = "user", content = "play"),
+    list(type = ".openai_codex_output", output = list(
+        list(type = "function_call", call_id = "a", name = "run_r",
+             arguments = "{}"))),
+    list(type = "function_call_output", call_id = "a", output = "a ok"),
+    list(type = ".openai_codex_output", output = list(
+        list(type = "function_call", call_id = "b", name = "run_r",
+             arguments = "{}"))),
+    list(type = "function_call_output", call_id = "b", output = "b ok"),
+    list(type = ".openai_codex_output", output = list(
+        list(type = "function_call", call_id = "c", name = "run_r",
+             arguments = "{}"))),
+    list(type = "function_call_output", call_id = "c", output = "c ok")
+)
+codex_cut <- corteza:::compact_find_cut(
+    codex_trajectory, keep_recent_tokens = 1L)
+expect_equal(codex_cut, 5L)
+expect_false(corteza:::compact_prefix_has_unmatched_tool_use(
+    codex_trajectory, codex_cut))
+expect_false(corteza:::compact_tail_starts_with_tool_result(
+    codex_trajectory, codex_cut))
+codex_rewrite <- corteza:::compact_rewrite_history(
+    codex_trajectory, codex_cut, "earlier progress")
+expect_equal(codex_rewrite[[1L]]$role, "user")
+expect_equal(codex_rewrite[[2L]]$type, ".openai_codex_output")
+
+# Plain character content is not a block list and must not make the pairing
+# scanner throw while it checks a mixed provider-native history.
+expect_false(corteza:::compact_prefix_has_unmatched_tool_use(
+    list(list(role = "user", content = "plain"),
+         list(role = "assistant", content = "reply"),
+         list(role = "user", content = "next")), 2L))
 
 # compact_entry_is_tool_result_only --------
 

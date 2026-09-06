@@ -217,8 +217,11 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
 
     for (nm in names(fml)) {
         # `...` is never exposed to the LLM; `ctx` is the server-side
-        # sentinel that register_skill_from_fn injects at call time.
-        if (nm == "..." || nm == "ctx") {
+        # sentinel that register_skill_from_fn injects at call time. `envir`
+        # is likewise a host-owned R capability boundary: an R environment
+        # cannot be represented in JSON, and allowing the model to select one
+        # would defeat scoped evaluators such as ARC's private run_r workspace.
+        if (nm %in% c("...", "ctx", "envir")) {
             next
         }
         # An empty formal (required arg) is the empty symbol. Binding

@@ -164,6 +164,57 @@
             pct_str, palette$reset %||% "")
 }
 
+#' Render saber source provenance without exposing source bodies
+#' @noRd
+.context_sources_block <- function(sources, palette = ansi_colors()) {
+    if (!is.data.frame(sources) || nrow(sources) == 0L) {
+        return(sprintf("%sNo context sources recorded.%s",
+                       palette$dim %||% "", palette$reset %||% ""))
+    }
+
+    field <- function(name, default) {
+        if (name %in% names(sources)) {
+            sources[[name]]
+        } else {
+            rep(default, nrow(sources))
+        }
+    }
+    included <- as.logical(field("included", FALSE))
+    included[is.na(included)] <- FALSE
+    ids <- as.character(field("id", "?"))
+    kinds <- as.character(field("kind", "context"))
+    tokens <- as.numeric(field("emitted_tokens", 0))
+    tokens[is.na(tokens)] <- 0
+    requested <- as.character(field("requested_path", ""))
+    paths <- as.character(field("path", ""))
+    origins <- as.character(field("origin", ""))
+    reasons <- as.character(field("reason", ""))
+
+    location <- ifelse(nzchar(requested), requested,
+                       ifelse(nzchar(paths), paths, origins))
+    location <- gsub("[\r\n]+", " ", location)
+    reasons <- gsub("[\r\n]+", " ", reasons)
+
+    rows <- vapply(seq_len(nrow(sources)), function(i) {
+        marker <- if (included[[i]]) "in" else "skip"
+        detail <- location[[i]]
+        if (!included[[i]] && nzchar(reasons[[i]])) {
+            detail <- if (nzchar(detail)) {
+                sprintf("%s: %s", reasons[[i]], detail)
+            } else {
+                reasons[[i]]
+            }
+        }
+        suffix <- if (nzchar(detail)) paste0(" — ", detail) else ""
+        sprintf("  %-4s %6s  %s [%s]%s", marker,
+                format_tokens(tokens[[i]]), ids[[i]], kinds[[i]], suffix)
+    }, character(1L), USE.NAMES = FALSE)
+
+    c(sprintf("%sContext sources (%d included, %d skipped):%s",
+              palette$bold %||% "", sum(included), sum(!included),
+              palette$reset %||% ""), rows)
+}
+
 #' Render the full /context block.
 #'
 #' @param used Live token estimate.
@@ -176,6 +227,8 @@
 #' @param files Character vector of additional context files; empty
 #'   means render the "No context files loaded." short note.
 #' @param palette ANSI palette.
+#' @param sources A saber manifest's source metadata. When supplied, this
+#'   replaces the legacy file list and never renders source bodies.
 #' @param bar_width Bar width in cells (default 50).
 #' @return Character scalar (multi-line, no trailing newline).
 #' @noRd
@@ -183,7 +236,7 @@ format_context_block <- function(used, limit, breakdown, compact_pct = 90,
                                  warn_pct = 75, high_pct = 90, crit_pct = 95,
                                  files = character(0L),
                                  palette = ansi_colors(), bar_width = 50L,
-                                 status_info = NULL) {
+                                 status_info = NULL, sources = NULL) {
     used <- as.integer(round(used %||% 0))
     limit <- as.integer(round(limit %||% 0))
     if (limit > 0L) {
@@ -255,7 +308,9 @@ format_context_block <- function(used, limit, breakdown, compact_pct = 90,
         }
     }
 
-    files_block <- if (length(files) > 0L) {
+    context_block <- if (!is.null(sources)) {
+        .context_sources_block(sources, palette)
+    } else if (length(files) > 0L) {
         c(sprintf("%sContext files (%d):%s",
                   palette$bold %||% "", length(files),
                   palette$reset %||% ""),
@@ -266,5 +321,6 @@ format_context_block <- function(used, limit, breakdown, compact_pct = 90,
                 palette$dim %||% "", palette$reset %||% "")
     }
 
-    paste(c(status_lines, header, bar, rows, "", files_block), collapse = "\n")
+    paste(c(status_lines, header, bar, rows, "", context_block),
+          collapse = "\n")
 }

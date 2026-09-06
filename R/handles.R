@@ -23,12 +23,12 @@
 
 #' Mint the next handle id for the current session.
 #' @noRd
-.next_handle_id <- function() {
-    existing <- ls(.handle_store, all.names = TRUE)
+.next_handle_id <- function(store = .handle_store) {
+    existing <- ls(store, all.names = TRUE)
     n <- length(existing) + 1L
     repeat {
         id <- sprintf(".h_%03d", n)
-        if (!exists(id, envir = .handle_store, inherits = FALSE)) {
+        if (!exists(id, envir = store, inherits = FALSE)) {
             return(id)
         }
         n <- n + 1L
@@ -80,9 +80,10 @@
 #'   description string. Defaults to [.default_summary()].
 #' @return A list with `summary` (character) and `handle` (character).
 #' @noRd
-with_handle <- function(value, summary_fn = .default_summary) {
-    id <- .next_handle_id()
-    assign(id, value, envir = .handle_store)
+with_handle <- function(value, summary_fn = .default_summary,
+                        store = .handle_store) {
+    id <- .next_handle_id(store)
+    assign(id, value, envir = store)
     list(summary = summary_fn(value), handle = id)
 }
 
@@ -91,20 +92,39 @@ with_handle <- function(value, summary_fn = .default_summary) {
 #' @param handle A handle id, e.g. `.h_001`.
 #' @return The stashed value, or NULL if the handle is unknown.
 #' @noRd
-get_handle <- function(handle) {
+get_handle <- function(handle, store = .handle_store) {
     if (!is.character(handle) || length(handle) != 1L) {
         return(NULL)
     }
-    if (!exists(handle, envir = .handle_store, inherits = FALSE)) {
+    if (!exists(handle, envir = store, inherits = FALSE)) {
         return(NULL)
     }
-    get(handle, envir = .handle_store)
+    get(handle, envir = store)
 }
 
 #' List all active handle ids.
 #' @noRd
-list_handles <- function() {
-    ls(.handle_store, all.names = TRUE)
+list_handles <- function(store = .handle_store) {
+    ls(store, all.names = TRUE)
+}
+
+#' Return the handle store owned by an evaluation environment.
+#'
+#' The historical global evaluation path keeps using the package-level store.
+#' A scoped persistent evaluator gets a private store attached to its owning
+#' environment, so handles cannot cross agent or capability boundaries.
+#' @noRd
+handle_store_for <- function(envir = globalenv()) {
+    stopifnot(is.environment(envir))
+    if (identical(envir, globalenv())) {
+        return(.handle_store)
+    }
+    store <- attr(envir, "corteza_handle_store", exact = TRUE)
+    if (!is.environment(store)) {
+        store <- new.env(parent = emptyenv())
+        attr(envir, "corteza_handle_store") <- store
+    }
+    store
 }
 
 #' Drop all handles from the process-local store (for tests). Also
@@ -127,12 +147,12 @@ clear_handles <- function() {
 #' Return an environment suitable for evaluating user code such that
 #' stashed handles are visible as regular R names.
 #'
-#' The returned env inherits from `parent` (usually `globalenv()`), and
-#' every handle in the store is copied in as a top-level binding. This
-#' keeps handle lookup scoped to the `run_r` call and avoids leaking
-#' handle symbols into the user's globalenv.
+#' Every handle in the store is copied into `parent` as a top-level binding.
+#' For ordinary `run_r`, `parent` is `globalenv()`; custom executors can pass
+#' a private persistent environment without reimplementing handle behavior.
 #' @noRd
-handle_eval_env <- function(parent = globalenv()) {
+handle_eval_env <- function(parent = globalenv(),
+                            store = handle_store_for(parent)) {
     # Earlier versions (PR #36) returned a CHILD env of globalenv,
     # which sandboxed handle symbols nicely but silently broke
     # `<-` persistence across tool_run_r() calls -- assignments
@@ -143,10 +163,9 @@ handle_eval_env <- function(parent = globalenv()) {
     # they had to use `<<-` to make anything stick.
     #
     # Restored to: copy handles INTO globalenv (under their hidden
-    # `.h_NNN` names, which `ls()` doesn't show by default) and
-    # return globalenv. eval(envir = globalenv()) makes `<-` write
-    # to the right place. The `parent` argument is now ignored;
-    # kept for API parity.
+    # `.h_NNN` names, which `ls()` doesn't show by default) and return
+    # that same persistent environment. eval(envir = parent) makes `<-`
+    # write to the right place.
     # R CMD check NOTEs the literal `envir = globalenv()` pattern
     # because most packages shouldn't write to the user's globalenv.
     # For corteza this is intentional: handles need to be visible
@@ -166,23 +185,35 @@ handle_eval_env <- function(parent = globalenv()) {
     # always reflects the current store, and remove globalenv
     # bindings the package previously created that are no longer
     # in the store.
-    ge <- globalenv()
-    current <- list_handles()
-    previously_managed <- ls(.handle_managed, all.names = TRUE)
-    stale <- setdiff(previously_managed, current)
+    stopifnot(is.environment(parent))
+    is_global <- identical(parent, globalenv())
+    managed <- if (is_global) {
+        ls(.handle_managed, all.names = TRUE)
+    } else {
+        attr(parent, "corteza_managed_handles", exact = TRUE) %||% character()
+    }
+    current <- list_handles(store)
+    stale <- setdiff(managed, current)
     for (h in stale) {
         # Only remove if the binding still exists; user code might
         # have rm()'d it already, in which case rm() would error.
-        if (exists(h, envir = ge, inherits = FALSE)) {
-            rm(list = h, envir = ge)
+        if (exists(h, envir = parent, inherits = FALSE)) {
+            rm(list = h, envir = parent)
         }
-        rm(list = h, envir = .handle_managed)
+        if (is_global) {
+            rm(list = h, envir = .handle_managed)
+        }
     }
     for (h in current) {
-        assign(h, get(h, envir = .handle_store), envir = ge)
-        assign(h, TRUE, envir = .handle_managed)
+        assign(h, get(h, envir = store), envir = parent)
+        if (is_global) {
+            assign(h, TRUE, envir = .handle_managed)
+        }
     }
-    ge
+    if (!is_global) {
+        attr(parent, "corteza_managed_handles") <- current
+    }
+    parent
 }
 
 #' Read / inspect a stashed handle.

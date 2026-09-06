@@ -30,6 +30,9 @@ MODEL_CONTEXT_LIMITS <- list(
                              "claude-3-opus-20240229" = 200000L,
                              "claude-3-haiku-20240307" = 200000L,
                              # OpenAI
+                             "gpt-5.6-sol" = 1050000L,
+                             "gpt-5.6-terra" = 1050000L,
+                             "gpt-5.6-luna" = 1050000L,
                              "gpt-4o" = 128000L,
                              "gpt-4o-mini" = 128000L,
                              "gpt-4-turbo" = 128000L,
@@ -41,6 +44,16 @@ MODEL_CONTEXT_LIMITS <- list(
                              "mistral" = 32000L,
                              "mixtral" = 32000L,
                              "qwen2.5" = 32000L
+)
+
+# Product endpoints can expose a smaller working window than the public API
+# model. The ChatGPT Codex model catalog currently advertises 272K for
+# gpt-5.6-sol, while the public API model advertises 1.05M. Keep that
+# distinction explicit instead of pretending a model name alone identifies a
+# request budget.
+PROVIDER_MODEL_CONTEXT_LIMITS <- list(
+                                      openai_codex = list("gpt-5.6-sol" = 272000L, "gpt-5.6-terra" = 272000L,
+        "gpt-5.6-luna" = 272000L)
 )
 
 #' Provider-specific default model name.
@@ -66,17 +79,35 @@ default_provider_model <- function(provider) {
 #' `"claude-3-5-sonnet"` resolves to the dated entry, and a longer
 #' model id with a known prefix also resolves).
 #' @param model Model name (character).
+#' @param provider Optional provider/product endpoint. Provider-specific
+#'   limits take precedence over the public model limit.
 #' @return Context limit in tokens (integer). Returns 128000L when
 #'   no entry matches.
 #' @keywords internal
 #' @export
-context_limit_for_model <- function(model) {
+context_limit_for_model <- function(model, provider = NULL) {
     # No model named (NULL, length-0, NA, or empty) -> fall through to
     # the default rather than indexing MODEL_CONTEXT_LIMITS[[model]],
     # which errors on a zero-length or NA subscript. A function with an
     # "unknown model" fallback must not crash on "no model".
     if (length(model) != 1L || is.na(model) || !nzchar(model)) {
         return(128000L)
+    }
+    provider_limits <- if (length(provider) == 1L && !is.na(provider) &&
+        nzchar(provider)) {
+        PROVIDER_MODEL_CONTEXT_LIMITS[[provider]]
+    } else {
+        NULL
+    }
+    if (!is.null(provider_limits)) {
+        if (!is.null(provider_limits[[model]])) {
+            return(provider_limits[[model]])
+        }
+        for (name in names(provider_limits)) {
+            if (startsWith(model, name) || startsWith(name, model)) {
+                return(provider_limits[[name]])
+            }
+        }
     }
     if (!is.null(MODEL_CONTEXT_LIMITS[[model]])) {
         return(MODEL_CONTEXT_LIMITS[[model]])
@@ -162,6 +193,15 @@ estimate_text_tokens <- function(text) {
 #' @return Character.
 #' @keywords internal
 message_text <- function(message) {
+    # OpenAI Responses/Codex stores assistant turns and tool results in
+    # provider-native entries without role/content. Preserve their visible
+    # surface here instead of reporting every such entry as empty.
+    if (identical(message$type, ".openai_codex_output")) {
+        return(.compact_codex_output_text(message$output))
+    }
+    if (identical(message$type, "function_call_output")) {
+        return(paste(as.character(message$output %||% ""), collapse = "\n"))
+    }
     content <- message$content
     if (is.list(content)) {
         if (length(content) > 0L && !is.null(content[[1]]$text)) {
@@ -175,6 +215,42 @@ message_text <- function(message) {
                      collapse = "\n"))
     }
     as.character(content %||% "")
+}
+
+# Estimate one provider-native history entry. Codex Responses output is sent
+# back to the provider verbatim, including function-call arguments and opaque
+# reasoning state, so measuring only its rendered answer text is badly low.
+# Count the ordinary JSON surface at the normal chars/4 rate. Encrypted
+# reasoning is an opaque encoding rather than natural-language text; chars/24
+# is a conservative token proxy calibrated against the provider's reported
+# input usage, without pretending the ciphertext itself is tokenized as prose.
+.estimate_history_entry_tokens <- function(message) {
+    if (is.list(message) && identical(message$type, ".openai_codex_output")) {
+        output <- message$output %||% list()
+        encrypted_chars <- 0
+        visible <- lapply(output, function(item) {
+            if (!is.list(item)) {
+                return(item)
+            }
+            encrypted <- item$encrypted_content
+            if (is.character(encrypted)) {
+                encrypted_chars <<- encrypted_chars +
+                sum(nchar(encrypted, type = "chars"))
+            }
+            item$encrypted_content <- NULL
+            item
+        })
+        visible_json <- tryCatch(
+                                 jsonlite::toJSON(visible, auto_unbox = TRUE, null = "null"),
+                                 error = function(e) ""
+        )
+        return(as.integer(
+                          estimate_text_tokens(visible_json) + ceiling(encrypted_chars / 24)
+            ))
+    }
+    estimate_text_tokens(sprintf("%s: %s",
+                                 message$role %||% message$type %||% "unknown",
+                                 message_text(message)))
 }
 
 #' Token estimate for a list of messages (history).
@@ -191,10 +267,8 @@ estimate_history_tokens <- function(messages) {
     if (length(messages) == 0L) {
         return(0L)
     }
-    text_tokens <- sum(vapply(messages, function(m) {
-        estimate_text_tokens(sprintf("%s: %s", m$role %||% "unknown",
-                                     message_text(m)))
-    }, integer(1)))
+    text_tokens <- sum(vapply(messages, .estimate_history_entry_tokens,
+                              integer(1)))
     as.integer(text_tokens + length(messages) * 6L)
 }
 
@@ -249,13 +323,15 @@ estimate_live_context_tokens <- function(session, system_prompt = NULL,
 #' @param model Model name used to look up the context limit.
 #' @param system_prompt Optional system prompt.
 #' @param tools Optional tools list.
+#' @param provider Optional provider/product endpoint passed to
+#'   [context_limit_for_model()].
 #' @return Numeric percentage in `[0, +Inf)`.
 #' @keywords internal
 #' @export
 context_usage_pct <- function(session, model, system_prompt = NULL,
-                              tools = NULL) {
+                              tools = NULL, provider = NULL) {
     used <- estimate_live_context_tokens(session, system_prompt, tools)
-    limit <- context_limit_for_model(model)
+    limit <- context_limit_for_model(model, provider = provider)
     if (is.null(limit) || limit <= 0L) {
         return(0)
     }

@@ -15,6 +15,16 @@ expect_equal(length(s$history), 1L)
 # Invalid channel rejected
 expect_error(corteza::new_session("bogus"))
 
+# Domain-specific compaction guidance is optional and validated.
+s_compact <- corteza::new_session("cli",
+                                  compaction_prompt = "Preserve evidence.")
+expect_equal(s_compact$compaction_prompt, "Preserve evidence.")
+expect_null(corteza::new_session("cli")$compaction_prompt)
+expect_error(corteza::new_session("cli", compaction_prompt = ""),
+             pattern = "single non-empty string")
+expect_error(corteza::new_session("cli", compaction_prompt = c("a", "b")),
+             pattern = "single non-empty string")
+
 # base_url is carried on the session and defaults to NULL.
 s <- corteza::new_session("cli")
 expect_null(s$base_url)
