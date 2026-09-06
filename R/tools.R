@@ -3,7 +3,9 @@
 
 # Built-in tool categories for filtering
 .builtin_categories <- list(
-                            file = c("read_file", "write_file", "replace_in_file", "list_files"),
+                            file = c("read_file", "skill_instructions", "write_file",
+                                     "replace_in_file", "list_files"),
+                            instruction = c("skill_instructions"),
                             code = c("run_r", "run_r_script", "bash", "cmd"),
                             search = c("grep_files"),
                             web = c("web_search", "fetch_url"),

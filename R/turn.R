@@ -461,6 +461,21 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                        dry_run = session_dry_run())
         }
     }
+    # A custom executor may need the provider's read-only call metadata to
+    # enforce semantics that span a batch of tool calls. Preserve the
+    # historical two-argument contract while opting executors that declare
+    # `context` (or `...`) into that metadata.
+    executor_formals <- tryCatch(names(formals(tool_executor)),
+                                 error = function(e) character())
+    executor_wants_context <- "context" %in% executor_formals ||
+    "..." %in% executor_formals
+    execute <- function(name, args, context) {
+        if (executor_wants_context) {
+            tool_executor(name, args, context = context)
+        } else {
+            tool_executor(name, args)
+        }
+    }
     function(name, args, context = NULL) {
         internal_name <- unsanitize_tool_name(name)
         call <- list(
@@ -522,7 +537,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # which passes dry_run = TRUE down to skill_run).
         if (session_dry_run()) {
             raw <- tryCatch(
-                            tool_executor(internal_name, as.list(args)),
+                            execute(internal_name, as.list(args), context),
                             error = function(e) err(paste("Tool error:",
                         conditionMessage(e)))
             )
@@ -680,7 +695,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             ))
 
         raw <- tryCatch(
-                        tool_executor(internal_name, as.list(args)),
+                        execute(internal_name, as.list(args), context),
                         error = function(e) err(paste("Tool error:", conditionMessage(e)))
         )
         success <- !isTRUE(raw$isError)
@@ -887,6 +902,32 @@ observer_progress <- function() {
     }
 }
 
+# Add the two llm.api usage trees produced when an over-window request is
+# compacted and retried. Unknown numeric accounting stays unknown rather than
+# being silently converted to zero; this matters most for cost.
+.turn_add_usage <- function(left, right) {
+    left <- left %||% list()
+    right <- right %||% list()
+    out <- list()
+    for (name in union(names(left), names(right))) {
+        x <- left[[name]]
+        y <- right[[name]]
+        if (is.list(x) || is.list(y)) {
+            out[[name]] <- .turn_add_usage(x, y)
+        } else if (is.numeric(x) || is.numeric(y)) {
+            values <- c(as.numeric(x %||% 0), as.numeric(y %||% 0))
+            if (anyNA(values)) {
+                out[[name]] <- NA_real_
+            } else {
+                out[[name]] <- sum(values)
+            }
+        } else {
+            out[[name]] <- y %||% x
+        }
+    }
+    out
+}
+
 #' Run one agent turn
 #'
 #' Sends \code{prompt} to the configured LLM with tool use enabled. Every
@@ -908,11 +949,13 @@ observer_progress <- function() {
 #' \code{session$fallback} (the Matrix config's \code{fallback} key, see
 #' \code{\link{bot_configure}}) or the cwd config's \code{fallback}
 #' key. A provider that hit a limit is skipped process-wide for
-#' \code{fallback_cooldown_minutes} (default 30), after which the
-#' primary is tried again. A limit hit after tool calls have already
-#' run is not retried: the error surfaces and the next turn takes the
-#' fallback, so no tool call runs twice. Errors that are not limits
-#' are rethrown untouched.
+#' \code{fallback_cooldown_minutes} (default 30); a configured
+#' \code{fallback_primary_retry_at} can hold the primary until a weekly
+#' reset boundary. Provider-native histories are bridged when the wire
+#' changes, and a partially completed tool run resumes from its captured
+#' results so no completed tool call runs twice. Fallback replies identify
+#' their actual model/provider; API-key fallbacks carry a prominent billable
+#' usage warning. Errors that are not limits are rethrown untouched.
 #'
 #' @param prompt Character. User prompt.
 #' @param session A session environment created by \code{\link{new_session}}.
@@ -923,8 +966,9 @@ observer_progress <- function() {
 #'   the in-process skill registry (filtered by \code{session$tools_filter}).
 #'   Pass explicit schemas when running against a remote skill source.
 #'
-#' @return A list with \code{reply} (character) and \code{session} (the
-#'   updated session environment; also mutated in place).
+#' @return A list with \code{reply} (character), \code{session} (the
+#'   updated session environment; also mutated in place), and \code{route}
+#'   (the actual model/provider and fallback credential mode).
 #' @examples
 #' \dontrun{
 #' # Requires ANTHROPIC_API_KEY (or the configured provider's key) and
@@ -968,6 +1012,32 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
                                   channel = session$channel)
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
+    # Compaction belongs to the shared agent lifecycle, not to a particular
+    # REPL surface. Resolve the session's configuration once and use the same
+    # existing compactor both before the run and at llm.api's quiescent
+    # between-turn checkpoint. Direct callers (ARC included) therefore cannot
+    # bypass context management by calling turn() without run_repl_loop().
+    compact_config <- session$config %||%
+    load_config(session$cwd %||% getwd())
+    compact_session_history <- function(history, force = FALSE,
+                                        reason = "threshold") {
+        session$history <- history %||% list()
+        args <- list(
+                     session = session,
+                     config = compact_config,
+                     kind = session$kind %||% NULL,
+                     tools = tools,
+                     system = system,
+                     reason = reason
+        )
+        if (isTRUE(force)) {
+            args$threshold <- 0
+            args$min_messages <- 2L
+        }
+        isTRUE(do.call(maybe_compact_turn_session, args))
+    }
+    compact_session_history(session$history %||% list(), reason = "preflight")
+
     # Pass a history_callback to llm.api so session$history mirrors
     # intermediate state continuously: after each assistant message
     # and after each tool_result lands, the callback overwrites
@@ -994,6 +1064,15 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if ("history_callback" %in% names(formals(llm.api::agent))) {
         agent_args$history_callback <- function(history) {
             session$history <- history
+        }
+    }
+    if ("checkpoint_callback" %in% names(formals(llm.api::agent))) {
+        agent_args$checkpoint_callback <- function(history, context) {
+            session$last_checkpoint_context <- context
+            if (compact_session_history(history, reason = "checkpoint")) {
+                return(list(history = session$history))
+            }
+            NULL
         }
     }
 
@@ -1053,14 +1132,50 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
 
     response <- .agent_with_fallback(agent_args, session)
 
+    # Pi pairs proactive threshold compaction with one compact-and-retry on an
+    # actual context overflow. llm.api deliberately excludes the incomplete
+    # assistant response from returned history, so it is safe to compact that
+    # authoritative history and continue it without re-appending the prompt.
+    context_overflow <- isTRUE(response$truncated) &&
+    identical(response$truncation_reason, "model_context_window_exceeded")
+    if (context_overflow) {
+        overflow_response <- response
+        session$history <- response$history %||% session$history
+        if (compact_session_history(session$history, force = TRUE,
+                                    reason = "context_overflow")) {
+            retry_args <- agent_args
+            # `$<- NULL` removes a list element in R. Preserve the named NULL:
+            # llm.api distinguishes an explicit continuation from a missing
+            # required argument.
+            retry_args["prompt"] <- list(NULL)
+            retry_args$history <- session$history
+            response <- .agent_with_fallback(retry_args, session)
+            response$usage <- .turn_add_usage(overflow_response$usage,
+                response$usage)
+            response$turns <- as.integer(overflow_response$turns %||% 0L) +
+            as.integer(response$turns %||% 0L)
+            response$citations <- c(overflow_response$citations %||% list(),
+                                    response$citations %||% list())
+            response$searches <- c(overflow_response$searches %||% list(),
+                                   response$searches %||% list())
+            response$corteza_overflow_retry <- TRUE
+            response$corteza_overflow_recovered <- !(
+                isTRUE(response$truncated) &&
+                identical(response$truncation_reason,
+                          "model_context_window_exceeded")
+            )
+        }
+    }
+
     if (!is.null(response$history)) {
         session$history <- response$history
     }
 
     list(
-         reply = response$content,
+         reply = .fallback_reply(response),
          session = session,
          usage = response$usage,
+         route = response$corteza_route,
          raw = response
     )
 }

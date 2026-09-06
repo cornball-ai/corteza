@@ -1,6 +1,6 @@
 Package: corteza
 Title: AI Agent Runtime
-Version: 0.7.1.43
+Version: 0.7.1.44
 Authors@R: c(
     person("Troy", "Hernandez", role = c("aut", "cre"),
            email = "troy@cornball.ai",
@@ -25,6 +25,8 @@ License: Apache License (>= 2)
 URL: https://github.com/cornball-ai/corteza
 BugReports: https://github.com/cornball-ai/corteza/issues
 Additional_repositories: https://cornball-ai.github.io/drat
+Remotes:
+    cornball-ai/saber@f41579a105aa7b7f6c778d3d6f47ff34a5ab1fea
 Depends:
     R (>= 4.4.0)
 Imports:
@@ -33,10 +35,10 @@ Imports:
     curl,
     digest,
     jsonlite,
-    llm.api (>= 0.1.9.6),
+    llm.api (>= 0.1.9.9),
     printify,
     processx,
-    saber,
+    saber (>= 0.7.2.3),
     utils
 Suggests:
     chat.api (>= 0.0.1.24),

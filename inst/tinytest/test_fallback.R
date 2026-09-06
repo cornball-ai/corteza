@@ -4,13 +4,13 @@ corteza:::.fallback_reset()
 
 # .parse_model_spec(): "model provider", bare model takes the default,
 # empty or provider-less specs are NULL.
-expect_equal(corteza:::.parse_model_spec("gpt-5.5 openai_codex"),
-             list(model = "gpt-5.5", provider = "openai_codex"))
+expect_equal(corteza:::.parse_model_spec("gpt-5.6-sol openai_codex"),
+             list(model = "gpt-5.6-sol", provider = "openai_codex"))
 expect_equal(corteza:::.parse_model_spec("  claude-haiku-4-5   anthropic  "),
              list(model = "claude-haiku-4-5", provider = "anthropic"))
-expect_equal(corteza:::.parse_model_spec("gpt-5.5", default_provider = "openai"),
-             list(model = "gpt-5.5", provider = "openai"))
-expect_null(corteza:::.parse_model_spec("gpt-5.5"))
+expect_equal(corteza:::.parse_model_spec("gpt-5.6-sol", default_provider = "openai"),
+             list(model = "gpt-5.6-sol", provider = "openai"))
+expect_null(corteza:::.parse_model_spec("gpt-5.6-sol"))
 expect_null(corteza:::.parse_model_spec(""))
 expect_null(corteza:::.parse_model_spec(NULL, default_provider = "openai"))
 
@@ -19,9 +19,9 @@ expect_null(corteza:::.parse_model_spec(NULL, default_provider = "openai"))
 s <- new.env()
 s$provider <- "anthropic_claude"
 expect_equal(corteza:::.session_fallback(s), list())
-s$config <- list(fallback = c("gpt-5.5 openai_codex", "", "claude-haiku-4-5"))
+s$config <- list(fallback = c("gpt-5.6-sol openai_codex", "", "claude-haiku-4-5"))
 expect_equal(corteza:::.session_fallback(s),
-             list(list(model = "gpt-5.5", provider = "openai_codex"),
+             list(list(model = "gpt-5.6-sol", provider = "openai_codex"),
                   list(model = "claude-haiku-4-5", provider = "anthropic_claude")))
 s$fallback <- "qwen3.5:9b ollama"
 expect_equal(corteza:::.session_fallback(s),
@@ -39,6 +39,29 @@ expect_equal(corteza:::.fallback_cooldown(c1), 30)
 c1$fallback_cooldown <- -1
 expect_equal(corteza:::.fallback_cooldown(c1), 30)
 
+# The primary may stay cooling until an account's weekly reset; fallback
+# candidates continue to use the ordinary minute cooldown.
+reset <- new.env()
+reset$fallback_primary_retry_at <- "  Mon   03:00 "
+reset$fallback_cooldown <- 30
+expect_identical(corteza:::.fallback_primary_retry_at(reset), "Mon 03:00")
+tz <- Sys.timezone()
+if (is.na(tz) || !nzchar(tz)) tz <- "UTC"
+friday <- as.POSIXct("2026-09-04 10:00:00", tz = tz)
+next_reset <- corteza:::.fallback_deadline(reset, primary = TRUE,
+                                           now = friday)
+expect_identical(format(next_reset, tz = tz, usetz = FALSE),
+                 "2026-09-07 03:00:00")
+on_reset <- as.POSIXct("2026-09-07 03:00:00", tz = tz)
+next_week <- corteza:::.fallback_deadline(reset, primary = TRUE,
+                                          now = on_reset)
+expect_identical(format(next_week, tz = tz, usetz = FALSE),
+                 "2026-09-14 03:00:00")
+expect_equal(as.numeric(difftime(
+    corteza:::.fallback_deadline(reset, primary = FALSE, now = friday),
+    friday, units = "mins")), 30)
+reset$fallback_primary_retry_at <- "Monday at three"
+expect_error(corteza:::.fallback_primary_retry_at(reset), "Mon 03:00")
 # .is_limit_error(): llm.api status prefixes and limit bodies, not
 # ordinary client errors or context-length "exceeded".
 lim <- function(msg) corteza:::.is_limit_error(simpleError(msg))
@@ -68,12 +91,14 @@ make_call <- function(script, log) {
     function(args) {
         log$calls <- c(log$calls, list(list(model = args$model,
                                             provider = args$provider,
-                                            web_search = args$web_search)))
+                                            web_search = args$web_search,
+                                            prompt = args$prompt,
+                                            history = args$history)))
         step <- script[[args$provider]]
         if (is.function(step)) step(args) else step
     }
 }
-new_fb_session <- function(fallback = c("gpt-5.5 openai_codex",
+new_fb_session <- function(fallback = c("gpt-5.6-sol openai_codex",
                                         "claude-haiku-4-5 anthropic")) {
     s <- new.env()
     s$provider <- "anthropic_claude"
@@ -92,6 +117,11 @@ out <- corteza:::.agent_with_fallback(base_args, new_fb_session(),
     .call = make_call(list(anthropic_claude = list(content = "primary")), log))
 expect_equal(out$content, "primary")
 expect_equal(length(log$calls), 1L)
+expect_identical(out$corteza_route$provider, "anthropic_claude")
+expect_false(out$corteza_route$fallback)
+expect_true(out$corteza_route$subscription)
+expect_false(out$corteza_route$api_key)
+expect_null(corteza:::.fallback_notice(out$corteza_route))
 expect_false(corteza:::.fallback_limited("anthropic_claude"))
 
 # Run a call while collecting its message() output, muffled.
@@ -114,10 +144,18 @@ run <- with_msgs(corteza:::.agent_with_fallback(base_args, new_fb_session(),
         openai_codex = list(content = "codex")), log)))
 expect_equal(run$value$content, "codex")
 expect_true(any(grepl("anthropic_claude/claude-opus-5 hit a limit", run$msgs)))
-expect_true(any(grepl("openai_codex/gpt-5.5 answered", run$msgs)))
+expect_true(any(grepl("openai_codex/gpt-5.6-sol answered", run$msgs)))
 expect_equal(vapply(log$calls, `[[`, "", "provider"),
              c("anthropic_claude", "openai_codex"))
-expect_equal(log$calls[[2]]$model, "gpt-5.5")
+expect_equal(log$calls[[2]]$model, "gpt-5.6-sol")
+expect_identical(run$value$corteza_route$provider, "openai_codex")
+expect_identical(run$value$corteza_route$fallback_level, 1L)
+expect_true(run$value$corteza_route$subscription)
+expect_false(run$value$corteza_route$api_key)
+expect_true(grepl("Automatic subscription failover",
+                  corteza:::.fallback_reply(run$value), fixed = TRUE))
+expect_false(grepl("PAID API KEY", corteza:::.fallback_reply(run$value),
+                   fixed = TRUE))
 expect_true(corteza:::.fallback_limited("anthropic_claude"))
 expect_false(corteza:::.fallback_limited("openai_codex"))
 
@@ -142,6 +180,14 @@ out <- suppressMessages(corteza:::.agent_with_fallback(base_args, new_fb_session
 expect_equal(out$content, "haiku")
 expect_equal(vapply(log$calls, `[[`, "", "provider"),
              c("anthropic_claude", "openai_codex", "anthropic"))
+expect_identical(out$corteza_route$provider, "anthropic")
+expect_identical(out$corteza_route$fallback_level, 2L)
+expect_false(out$corteza_route$subscription)
+expect_true(out$corteza_route$api_key)
+paid_reply <- corteza:::.fallback_reply(out)
+expect_true(grepl("PAID API KEY FALLBACK", paid_reply, fixed = TRUE))
+expect_true(grepl("BILLABLE USAGE", paid_reply, fixed = TRUE))
+expect_true(grepl("claude-haiku-4-5 via anthropic", paid_reply, fixed = TRUE))
 expect_true(corteza:::.fallback_limited("openai_codex"))
 
 # Every provider limited: the last limit error is what surfaces.
@@ -171,20 +217,37 @@ expect_error(corteza:::.agent_with_fallback(base_args, new_fb_session(),
 expect_equal(length(log$calls), 1L)
 expect_false(corteza:::.fallback_limited("anthropic_claude"))
 
-# A limit hit after the run made progress (history grew, so tools ran)
-# is not retried: cooldown is set, the error surfaces, no second call.
+# A limit hit after tools ran resumes on the fallback from portable history.
+# The completed result becomes context, not a tool call that can run twice.
 corteza:::.fallback_reset()
 log <- new.env(); log$calls <- list()
 s_prog <- new_fb_session()
-expect_error(suppressMessages(corteza:::.agent_with_fallback(base_args, s_prog,
+run <- with_msgs(corteza:::.agent_with_fallback(base_args, s_prog,
     .call = make_call(list(
         anthropic_claude = function(args) {
-            s_prog$history <- list(list(role = "user", content = "hi"),
-                                   list(role = "assistant", content = "..."))
+            s_prog$history <- list(
+                list(role = "user", content = "hi"),
+                list(role = "assistant", content = list(
+                    list(type = "thinking", thinking = "secret"),
+                    list(type = "text", text = "Checking."),
+                    list(type = "tool_use", id = "t1", name = "read_file")
+                )),
+                list(role = "user", content = list(
+                    list(type = "tool_result", tool_use_id = "t1",
+                         content = "file contents")
+                ))
+            )
             stop("API error (429): mid-run")
-        }), log))),
-    "mid-run")
-expect_equal(length(log$calls), 1L)
+        },
+        openai_codex = list(content = "resumed")), log)))
+expect_equal(run$value$content, "resumed")
+expect_equal(vapply(log$calls, `[[`, "", "provider"),
+             c("anthropic_claude", "openai_codex"))
+expect_true(grepl("file contents", log$calls[[2L]]$prompt, fixed = TRUE))
+expect_true(grepl("Do not repeat", log$calls[[2L]]$prompt, fixed = TRUE))
+expect_false(grepl("secret", paste(unlist(log$calls[[2L]]$history),
+                                   collapse = " "), fixed = TRUE))
+expect_true(any(grepl("resuming interrupted run", run$msgs)))
 expect_true(corteza:::.fallback_limited("anthropic_claude"))
 
 # Native web search is dropped for a fallback provider that lacks it.
@@ -273,10 +336,9 @@ expect_true(corteza:::.history_compatible("responses", "openai"))
 expect_false(corteza:::.history_compatible("responses", "anthropic_claude"))
 expect_false(corteza:::.history_compatible("responses", "ollama"))
 
-# The bot's actual chain: anthropic_claude primary, then codex, then an
-# API-key haiku. With an Anthropic-shaped history the codex candidate is
-# skipped and haiku answers -- where before, codex returned a 400 that
-# (not being a limit error) stopped the walk before haiku was reached.
+# The bot's actual chain: an Anthropic-shaped conversation is flattened
+# before Codex receives it. Thinking payloads are dropped; visible context
+# remains, so the first fallback can answer instead of returning a wire 400.
 corteza:::.fallback_reset()
 log <- new.env(); log$calls <- list()
 anth_hist <- list(list(role = "user", content = "play"),
@@ -288,24 +350,24 @@ hist_args <- c(base_args, list(history = anth_hist))
 run <- with_msgs(corteza:::.agent_with_fallback(hist_args, new_fb_session(),
     .call = make_call(list(
         anthropic_claude = function(args) stop("API error (429): rate limit"),
-        openai_codex = function(args) {
-            stop("API error (400): Invalid value: 'thinking'.")
-        },
-        anthropic = list(content = "haiku answered")), log)))
-expect_equal(run$value$content, "haiku answered")
+        openai_codex = list(content = "codex answered")), log)))
+expect_equal(run$value$content, "codex answered")
 providers <- vapply(log$calls, function(c) c$provider, character(1))
-expect_equal(providers, c("anthropic_claude", "anthropic"))
-expect_false("openai_codex" %in% providers)
-expect_true(any(grepl("cannot replay an anthropic-shaped history|cannot replay a anthropic-shaped history",
-                      run$msgs)))
+expect_equal(providers, c("anthropic_claude", "openai_codex"))
+bridged <- log$calls[[2L]]$history
+expect_identical(corteza:::.history_shape(bridged), "portable")
+expect_true(grepl("ok", paste(unlist(bridged), collapse = " "), fixed = TRUE))
+expect_false(grepl("considering", paste(unlist(bridged), collapse = " "),
+                   fixed = TRUE))
+expect_true(any(grepl("bridged anthropic-shaped history", run$msgs,
+                      fixed = TRUE)))
 
-# The primary is never skipped for shape. A session switched to codex by
-# hand still gets its own provider tried, even carrying an Anthropic
-# history: refusing to call the provider the user chose would be worse
-# than the provider's own error.
+# The primary is never skipped for shape, but its history is bridged. This
+# is also the Monday-reset path: Claude can resume a conversation whose last
+# successful turns came from the OpenAI Responses wire (and vice versa).
 corteza:::.fallback_reset()
 log <- new.env(); log$calls <- list()
-codex_primary <- list(prompt = "hi", model = "gpt-5.5",
+codex_primary <- list(prompt = "hi", model = "gpt-5.6-sol",
                       provider = "openai_codex", history = anth_hist)
 s_cx <- new.env()
 s_cx$provider <- "openai_codex"
@@ -315,5 +377,48 @@ out <- corteza:::.agent_with_fallback(codex_primary, s_cx,
     .call = make_call(list(openai_codex = list(content = "tried")), log))
 expect_equal(out$content, "tried")
 expect_equal(length(log$calls), 1L)
+primary_history <- log$calls[[1L]]$history
+expect_identical(corteza:::.history_shape(primary_history), "portable")
+expect_false(grepl("considering", paste(unlist(primary_history), collapse = " "),
+                   fixed = TRUE))
+
+# turn() exposes the chosen route and the paid warning reaches every client,
+# including Matrix/FluffyChat, without client-specific UI support.
+local({
+    corteza:::.fallback_reset()
+    on.exit(corteza:::.fallback_reset(), add = TRUE)
+    ns <- asNamespace("llm.api")
+    original <- get("agent", envir = ns, inherits = FALSE)
+    calls <- character()
+    stub <- function(...) {
+        args <- list(...)
+        calls <<- c(calls, args$provider)
+        if (args$provider %in% c("anthropic_claude", "openai_codex")) {
+            stop("API error (429): account limit")
+        }
+        list(content = "cheap answer", history = list(), usage = list())
+    }
+    assignInNamespace("agent", stub, ns = "llm.api")
+    on.exit(assignInNamespace("agent", original, ns = "llm.api"), add = TRUE)
+
+    session <- corteza::new_session(
+        channel = "console",
+        model_map = list(cloud = "claude-opus-5", local = NULL),
+        provider = "anthropic_claude",
+        web_search = FALSE
+    )
+    session$fallback <- c("gpt-5.6-sol openai_codex",
+                          "claude-haiku-4-5 anthropic")
+    answer <- suppressMessages(corteza::turn("hi", session, tools = list()))
+
+    expect_identical(calls,
+                     c("anthropic_claude", "openai_codex", "anthropic"))
+    expect_identical(answer$route$provider, "anthropic")
+    expect_identical(answer$route$model, "claude-haiku-4-5")
+    expect_true(answer$route$api_key)
+    expect_true(grepl("PAID API KEY FALLBACK", answer$reply, fixed = TRUE))
+    expect_true(grepl("cheap answer", answer$reply, fixed = TRUE))
+    expect_identical(session$last_route, answer$route)
+})
 
 corteza:::.fallback_reset()

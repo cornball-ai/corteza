@@ -438,6 +438,33 @@ cli_approval_cb <- function(cwd) {
   }
 }
 
+# Construct the CLI's live turn session from the same context bundle used for
+# token accounting and /context provenance. Kept as a separate helper so the
+# actual entrypoint path can be exercised without entering the interactive loop.
+cli_new_turn_session <- function(provider, model, context_bundle, history,
+                                 tools, approval_cb, plan_mode = FALSE,
+                                 web_search = NULL) {
+  session <- corteza::new_session(
+    channel = "cli",
+    provider = provider,
+    model_map = list(
+      cloud = corteza:::resolve_provider_model(provider, model),
+      local = corteza::default_local_model()
+    ),
+    system = context_bundle$system,
+    history = history,
+    tools_filter = tools,
+    approval_cb = approval_cb,
+    max_turns = 50L,
+    plan_mode = isTRUE(plan_mode),
+    web_search = web_search
+  )
+  session$context_manifest <- context_bundle$manifest
+  session$context_prefix_sources <- context_bundle$prefix_sources
+  session$instruction_catalog <- context_bundle$instruction_catalog
+  session
+}
+
 # ============================================================================
 # CLI status helpers
 # ============================================================================
@@ -538,11 +565,19 @@ run_agent <- function(opts) {
   # Load skill docs (SKILL.md files)
   corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
   corteza:::load_skill_docs(file.path(cwd, ".corteza", "skills"))
-  skill_docs <- corteza:::list_skill_docs()
-
   # Load context files
   context_files <- corteza:::list_context_files(cwd)
-  system_prompt <- corteza:::load_context(cwd)
+  context_bundle <- corteza:::load_context_bundle(
+    cwd,
+    include_instruction_catalog =
+      corteza:::instruction_reader_selected(opts$tools)
+  )
+  system_prompt <- context_bundle$system
+  skill_docs <- vapply(
+    context_bundle$instruction_catalog$entries,
+    function(entry) entry$name,
+    character(1L)
+  )
 
   if (length(context_files) > 0 || length(skill_docs) > 0) {
     cat(sprintf("%sLoaded context:%s\n", color$dim, color$reset))
@@ -640,7 +675,7 @@ run_agent <- function(opts) {
   # Track estimated live context, not cumulative billed API usage.
   session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
   session$tokens <- session_tokens
-  context_limit <- context_limit_for_model(display_model)
+  context_limit <- context_limit_for_model(display_model, provider = provider)
 
   # Show resumed message count
   if (length(session$messages) > 0) {
@@ -685,17 +720,14 @@ run_agent <- function(opts) {
 
   # One persistent turn session for the whole CLI run. Approval is
   # unified through policy(call, config = ...) + cli_approval_cb(cwd).
-  turn_session <- corteza::new_session(
-    channel = "cli",
+  turn_session <- cli_new_turn_session(
     provider = provider,
-    model_map = list(cloud = corteza:::resolve_provider_model(provider, model),
-                     local = corteza::default_local_model()),
-    system = system_prompt,
+    model = model,
+    context_bundle = context_bundle,
     history = api_history,
-    tools_filter = opts$tools,
+    tools = opts$tools,
     approval_cb = cli_approval_cb(cwd),
-    max_turns = 50L,
-    plan_mode = isTRUE(opts$plan_mode),
+    plan_mode = opts$plan_mode,
     web_search = opts$web_search
   )
   turn_session$config <- config

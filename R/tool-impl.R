@@ -427,24 +427,31 @@ tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
 
 # Code execution ----
 
-#' Execute R code in the session's global environment.
+#' Execute R code in a persistent environment.
 #'
-#' New bindings are auto-captured into the workspace cache. Large
-#' result values (data frames, matrices, long vectors, objects over
-#' ~10 KB) are stashed via `with_handle()` and returned as a `str()`
-#' summary plus a short `.h_NNN` handle the LLM can reference in a
-#' later `run_r` call or inspect with `read_handle`.
+#' By default, code runs in the host's global environment, preserving the
+#' original \code{run_r} contract. Pass a private persistent environment to
+#' give an agent or capability its own R scope. Scoped evaluation retains
+#' assignments and handles but does not copy bindings into the host workspace
+#' cache.
 #'
 #' @param code (character) R code to execute.
+#' @param envir (environment) Persistent environment in which assignments
+#'   should land. Defaults to \code{globalenv()} for backwards compatibility.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_run_r <- function(code) {
-    # Snapshot globalenv before eval for workspace auto-capture
-    before <- ls(globalenv())
-
+tool_run_r <- function(code, envir = globalenv()) {
+    stopifnot(is.environment(envir))
+    capture_workspace <- identical(envir, globalenv())
+    if (isTRUE(capture_workspace)) {
+        before <- ls(envir)
+    } else {
+        before <- character()
+    }
+    handle_store <- handle_store_for(envir)
     # Active handles are visible in `code` as regular R names.
-    eval_env <- handle_eval_env(parent = globalenv())
+    eval_env <- handle_eval_env(parent = envir, store = handle_store)
 
     # Evaluate in a two-step dance: get the withVisible() result first
     # (so we have the value, not just its printed representation), then
@@ -470,32 +477,34 @@ tool_run_r <- function(code) {
     # Large visible results get stashed as handles so the LLM sees a
     # summary instead of the full print.
     text <- if (isTRUE(outcome$visible) && .is_large_result(outcome$value)) {
-        stashed <- with_handle(outcome$value)
+        stashed <- with_handle(outcome$value, store = handle_store)
         sprintf("%s\n\n[stored as %s]", stashed$summary, stashed$handle)
     } else {
         outcome$printed
     }
 
-    # Auto-capture new globalenv bindings into the workspace. As of
-    # the handle_eval_env() fix that restored eval in globalenv,
-    # ordinary `<-` assignments land here, so any new visible name
-    # gets captured. Hidden names (`.foo`, `.h_NNN`) are excluded by
-    # default ls() rules.
-    new_names <- setdiff(ls(globalenv()), before)
-    origin <- list(tool = "run_r", args = list(code = code))
-    for (nm in new_names) {
-        val <- get(nm, envir = globalenv())
-        if (object.size(val) < 10e6) {
-            deps <- tryCatch({
-                fn <- eval(parse(text = paste0("function() {", code, "}")))
-                referenced <- codetools::findGlobals(fn)
-                intersect(referenced, ws_names())
-            }, error = function(e) character())
-            ws_put(nm, val, origin = origin, deps = deps)
+    if (isTRUE(capture_workspace)) {
+        # Auto-capture new bindings into the workspace. Hidden names
+        # (`.foo`, `.h_NNN`) are excluded by default ls() rules.
+        new_names <- setdiff(ls(envir), before)
+        origin <- list(tool = "run_r", args = list(code = code))
+        for (nm in new_names) {
+            val <- get(nm, envir = envir)
+            if (object.size(val) < 10e6) {
+                deps <- tryCatch({
+                    fn <- eval(parse(text = paste0("function() {", code, "}")))
+                    referenced <- codetools::findGlobals(fn)
+                    intersect(referenced, ws_names())
+                }, error = function(e) character())
+                ws_put(nm, val, origin = origin, deps = deps)
+            }
         }
     }
 
-    ok(text)
+    # The outer tool handler applies the same universal cap, but it does not
+    # know which private evaluator produced this result. Admit it here first
+    # so any overflow handle belongs to this R scope rather than the process.
+    ok(admit_tool_result(text, tool = "run_r", store = handle_store))
 }
 
 #' Execute R code in a clean subprocess via littler.
@@ -1158,6 +1167,31 @@ tool_kill_subagent <- function(id) {
 register_builtin_skills <- function() {
     # File tools
     register_skill_from_fn("read_file", tool_read_file)
+    register_skill(skill_spec(
+                              "skill_instructions",
+                              paste(
+                                    "Read one instruction document from this session's immutable",
+                                    "catalog, or a snapshotted relative supporting resource."
+            ),
+                              params = list(
+                id = list(
+                          type = "string",
+                          description = "Exact instruction id shown in the catalog.",
+                          required = TRUE
+                ),
+                resource = list(
+                                type = "string",
+                                description = paste(
+                        "Optional relative supporting-file path.",
+                        "Omit to read SKILL.md."
+                    ),
+                                required = FALSE
+                )
+            ),
+                              handler = function(args, ctx) {
+        tool_skill_instructions(args$id, args$resource %||% NULL, ctx = ctx)
+    }
+        ))
     register_skill_from_fn("write_file", tool_write_file)
     register_skill_from_fn("replace_in_file", tool_replace_in_file)
     register_skill_from_fn("list_files", tool_list_files)
@@ -1166,7 +1200,21 @@ register_builtin_skills <- function() {
     register_skill_from_fn("grep_files", tool_grep_files)
 
     # Code execution
-    register_skill_from_fn("run_r", tool_run_r)
+    # `envir` is a host-owned capability boundary, not model input. Keep the
+    # model-facing schema at its historical one-string contract while the
+    # exported R function supports explicit scoped evaluation.
+    register_skill(skill_spec(
+                              "run_r",
+                              paste("Execute R code in the persistent host session.",
+                                    "Assignments survive subsequent run_r calls; large results",
+                                    "are returned as reusable handles."),
+                              params = list(code = list(
+                    type = "string",
+                    description = "R code to execute.",
+                    required = TRUE
+                )),
+                              handler = function(args, ctx) tool_run_r(args$code)
+        ))
     register_skill_from_fn("read_handle", tool_read_handle)
     register_skill_from_fn("run_r_script", tool_run_r_script)
 

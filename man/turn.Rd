@@ -19,8 +19,9 @@ the in-process skill registry (filtered by \code{session$tools_filter}).
 Pass explicit schemas when running against a remote skill source.}
 }
 \value{
-A list with \code{reply} (character) and \code{session} (the
-  updated session environment; also mutated in place).
+A list with \code{reply} (character), \code{session} (the
+  updated session environment; also mutated in place), and \code{route}
+  (the actual model/provider and fallback credential mode).
 }
 \description{
 Sends \code{prompt} to the configured LLM with tool use enabled. Every
@@ -43,11 +44,13 @@ session has a fallback chain, the turn is retried on the next
 \code{session$fallback} (the Matrix config's \code{fallback} key, see
 \code{\link{bot_configure}}) or the cwd config's \code{fallback}
 key. A provider that hit a limit is skipped process-wide for
-\code{fallback_cooldown_minutes} (default 30), after which the
-primary is tried again. A limit hit after tool calls have already
-run is not retried: the error surfaces and the next turn takes the
-fallback, so no tool call runs twice. Errors that are not limits
-are rethrown untouched.
+\code{fallback_cooldown_minutes} (default 30); a configured
+\code{fallback_primary_retry_at} can hold the primary until a weekly
+reset boundary. Provider-native histories are bridged when the wire
+changes, and a partially completed tool run resumes from its captured
+results so no completed tool call runs twice. Fallback replies identify
+their actual model/provider; API-key fallbacks carry a prominent billable
+usage warning. Errors that are not limits are rethrown untouched.
 
 }
 \examples{

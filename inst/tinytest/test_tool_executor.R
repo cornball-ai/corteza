@@ -11,7 +11,7 @@ local({
     }
 
     s <- corteza::new_session("cli",
-                             approval_cb = function(call, decision) TRUE)
+                              approval_cb = function(call, decision) TRUE)
     h <- corteza:::.make_tool_handler(s, tool_executor = custom)
 
     tmp <- tempfile("exec-")
@@ -29,15 +29,32 @@ local({
     expect_equal(seen[[1]]$args$path, tmp)
 })
 
+# Three-argument executors receive llm.api's model-call context.
+local({
+    seen <- NULL
+    custom <- function(name, args, context) {
+        seen <<- list(name = name, args = args, context = context)
+        corteza:::ok("context-ran")
+    }
+    s <- corteza::new_session("cli",
+                              approval_cb = function(call, decision) TRUE)
+    h <- corteza:::.make_tool_handler(s, tool_executor = custom)
+    ctx <- list(agent_turn = 7L, call_index = 2L, call_count = 3L,
+                provider = "test")
+
+    out <- h("list_files", list(path = "/tmp"), context = ctx)
+    expect_equal(out, "context-ran")
+    expect_equal(seen$context, ctx)
+})
+
 # Executor can surface errors via err()
 local({
     s <- corteza::new_session("cli",
-                             approval_cb = function(call, decision) TRUE)
+                              approval_cb = function(call, decision) TRUE)
     failing <- function(name, args) corteza:::err("bad tool")
     h <- corteza:::.make_tool_handler(s, tool_executor = failing)
 
-    op <- options(corteza.personal_paths = character(),
-                  corteza.policy = NULL)
+    op <- options(corteza.personal_paths = character(), corteza.policy = NULL)
     on.exit(options(op), add = TRUE)
 
     out <- h("list_files", list(path = "/tmp"))

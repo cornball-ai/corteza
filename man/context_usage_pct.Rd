@@ -3,7 +3,13 @@
 \alias{context_usage_pct}
 \title{Percent of a model's context window used by a session.}
 \usage{
-context_usage_pct(session, model, system_prompt = NULL, tools = NULL)
+context_usage_pct(
+  session,
+  model,
+  system_prompt = NULL,
+  tools = NULL,
+  provider = NULL
+)
 }
 \arguments{
 \item{session}{Session-like object with `$messages`.}
@@ -13,6 +19,9 @@ context_usage_pct(session, model, system_prompt = NULL, tools = NULL)
 \item{system_prompt}{Optional system prompt.}
 
 \item{tools}{Optional tools list.}
+
+\item{provider}{Optional provider/product endpoint passed to
+[context_limit_for_model()].}
 }
 \value{
 Numeric percentage in `[0, +Inf)`.

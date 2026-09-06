@@ -76,13 +76,21 @@ if (at_home()) local({
     model = "kimi-k2.5",
     provider = "moonshot",
     tools_filter = NULL,
-    auto_approve_asks = FALSE
+    auto_approve_asks = FALSE,
+    reasoning_effort = "xhigh",
+    fallback = "gpt-5.6-sol openai_codex",
+    fallback_cooldown_minutes = 30,
+    fallback_primary_retry_at = "Mon 03:00"
   )
   s <- corteza:::bot_new_session(cfg)
   expect_true(is.environment(s))
   expect_equal(s$channel, "matrix")
   expect_equal(s$provider, "moonshot")
   expect_equal(s$model_map$cloud, "kimi-k2.5")
+  expect_identical(s$reasoning_effort, "xhigh")
+  expect_identical(s$fallback, "gpt-5.6-sol openai_codex")
+  expect_identical(s$fallback_cooldown, 30)
+  expect_identical(s$fallback_primary_retry_at, "Mon 03:00")
   # Default approval_cb declines (auto_approve_asks = FALSE)
   expect_false(s$approval_cb(list(), list()))
 
@@ -807,17 +815,25 @@ local({
         }
     }, add = TRUE)
 
-    sys <- corteza:::bot_room_system(
+    bundle <- corteza:::bot_room_context_bundle(
         list(user_id = "@bot:x", user = "Troy"),
         cwd = tmp,
         room_name = "~/project",
         description = "topic")
+    sys <- bundle$system
 
     expect_true(grepl("You are @bot:x", sys, fixed = TRUE))
     expect_true(grepl("Working directory:", sys, fixed = TRUE))
     expect_true(grepl("Room Project Context", sys, fixed = TRUE))
     expect_true(grepl("saber-context-sentinel", sys, fixed = TRUE))
     expect_true(grepl("Corteza Runtime Environment", sys, fixed = TRUE))
+    expect_true(inherits(bundle$manifest, "saber_context_manifest"))
+    expect_equal(length(bundle$prefix_sources), 1L)
+    expect_identical(bundle$prefix_sources[[1L]]$id, "matrix_system")
+    matrix_source <- bundle$manifest$sources[
+        bundle$manifest$sources$id == "matrix_system", ]
+    expect_equal(nrow(matrix_source), 1)
+    expect_true(matrix_source$included)
 })
 
 # Operator gating: private conversations are for operators only, and

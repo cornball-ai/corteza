@@ -231,7 +231,7 @@ load_config <- function(cwd = getwd()) {
     }
     if (is.null(sub$default_tools)) {
         sub$default_tools <- c("base::readLines", "base::writeLines",
-                               "bash", "grep_files")
+                               "bash", "skill_instructions", "grep_files")
     }
     if (is.null(sub$base_port)) {
         sub$base_port <- 7851L

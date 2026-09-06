@@ -133,3 +133,38 @@ local({
     expect_equal(s$model_map$cloud, "meta-llama/llama-3-70b-instruct")
     expect_equal(corteza:::.session_base_url(s), "https://openrouter.ai/api/v1")
 })
+# Auto-built systems retain saber provenance on the session.
+local({
+    proj <- tempfile("session-context-")
+    cache <- tempfile("session-context-cache-")
+    dir.create(file.path(proj, ".corteza"), recursive = TRUE)
+    writeLines("# Session Agent Context", file.path(proj, "AGENTS.md"))
+    writeLines(
+        '{"context_include_user": false, "context_include_soul": false}',
+        file.path(proj, ".corteza", "config.json")
+    )
+
+    previous_cache <- Sys.getenv("R_USER_CACHE_DIR", unset = NA_character_)
+    Sys.setenv(R_USER_CACHE_DIR = cache)
+    on.exit({
+        unlink(proj, recursive = TRUE)
+        unlink(cache, recursive = TRUE)
+        if (is.na(previous_cache)) {
+            Sys.unsetenv("R_USER_CACHE_DIR")
+        } else {
+            Sys.setenv(R_USER_CACHE_DIR = previous_cache)
+        }
+    }, add = TRUE)
+
+    s <- corteza::session_setup(
+        channel = "console",
+        cwd = proj,
+        provider = "anthropic",
+        model = "claude-test",
+        load_project_context = TRUE,
+        validate_api_key = FALSE
+    )
+    expect_true(inherits(s$context_manifest, "saber_context_manifest"))
+    expect_identical(s$system, saber::context_render(s$context_manifest))
+    expect_true("project_agents" %in% s$context_manifest$sources$id)
+})

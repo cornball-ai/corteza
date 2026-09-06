@@ -65,8 +65,63 @@
     })
 }
 
+# Connect the shared turn-level compactor to the interactive session's durable
+# transcript. The hook runs before live history is rewritten, so failure to
+# record the marker aborts compaction rather than losing the only resumable
+# account of the removed prefix.
+# @noRd
+.repl_install_compaction_hook <- function(ctx) {
+    session <- ctx$session
+    if (isTRUE(session$.repl_compaction_hook_installed)) {
+        return(invisible(FALSE))
+    }
+    previous <- session$on_compaction
+    session$config <- session$config %||% ctx$config
+    session$on_compaction <- function(event) {
+        if (is.function(previous)) {
+            previous(event)
+        }
+
+        flush_ran <- FALSE
+        auto_event <- !identical(event$reason %||% "threshold", "manual")
+        if (auto_event && isTRUE(ctx$config$memory_flush_enabled) &&
+            !isTRUE(session$.compaction_flush_active)) {
+            cat(sprintf("%sFlushing memories before compaction...%s\n",
+                        ctx$palette$dim, ctx$palette$reset))
+            session$.compaction_flush_active <- TRUE
+            on.exit(session$.compaction_flush_active <- FALSE, add = TRUE)
+            flush <- tryCatch(run_memory_flush(ctx), error = function(e) {
+                log_event("memory_flush_failed", error = conditionMessage(e),
+                          level = "warn")
+                NULL
+            })
+            flush_ran <- !is.null(flush)
+            if (flush_ran) {
+                session_accumulate_spend(session, flush$usage)
+            }
+        }
+
+        session_accumulate_spend(session, event$usage)
+        if (!is.null(ctx$disk_session)) {
+            transcript_compact(ctx$disk_session$session, event$summary)
+            disk <- ctx$disk_session$session
+            disk$compactionCount <- (disk$compactionCount %||% 0L) + 1L
+            if (flush_ran) {
+                disk$memoryFlushCompactionCount <-
+                (disk$memoryFlushCompactionCount %||% 0L) + 1L
+            }
+            ctx$disk_session$session <- disk
+            tryCatch(session_save(disk), error = function(e) NULL)
+        }
+        invisible(TRUE)
+    }
+    session$.repl_compaction_hook_installed <- TRUE
+    invisible(TRUE)
+}
+
 # @noRd
 run_repl_loop <- function(ctx) {
+    .repl_install_compaction_hook(ctx)
     while (TRUE) {
         prompt <- ctx$read_input("> ")
         if (length(prompt) == 0L) {
@@ -481,6 +536,7 @@ run_repl_loop <- function(ctx) {
             }
             if (cmd %in% c("/context", "/status")) {
                 files <- ctx$config$context_files %||% character(0)
+                sources <- ctx$session$context_manifest$sources %||% NULL
                 tools <- tryCatch(
                                   skills_as_api_tools(ctx$session$tools_filter),
                                   error = function(e) list()
@@ -493,7 +549,10 @@ run_repl_loop <- function(ctx) {
                 total_tok <- as.integer(sys_tok + tools_tok + hist_tok)
                 disp_model <- ctx$model %||% ctx$session$model_map$cloud %||%
                 "(default)"
-                limit <- context_limit_for_model(disp_model)
+                limit <- context_limit_for_model(
+                    disp_model,
+                    provider = ctx$session$provider %||% ctx$provider
+                )
                 # Codex-style header: corteza version, model, dir,
                 # session id. /status is now an alias of /context
                 # showing the same block.
@@ -516,44 +575,42 @@ run_repl_loop <- function(ctx) {
                         high_pct = ctx$config$context_high_pct %||% 90L,
                         crit_pct = ctx$config$context_crit_pct %||% 95L,
                         files = files,
+                        sources = sources,
                         palette = ctx$palette,
                         status_info = status_info
                     ), "\n", sep = "")
                 next
             }
             if (cmd == "/compact") {
-                # Live conversation state in chat() lives on
-                # turn_session$history; disk_session$session$messages
-                # only contains what was loaded at startup (or the
-                # last compaction marker) because chat() persists via
-                # transcript_append, not session_add_message. Wrap
-                # the live history in a session-shaped list so the
-                # shared do_compact() sees the actual current turns.
                 live_messages <- ctx$session$history %||% list()
                 if (length(live_messages) < 2L) {
                     cat("Nothing to compact.\n")
                     next
                 }
                 result <- .repl_interruptible(
-                    do_compact(list(messages = live_messages),
-                               ctx$session$provider,
-                               ctx$session$model_map$cloud),
+                    tryCatch(maybe_compact_turn_session(
+                            ctx$session,
+                            ctx$config,
+                            kind = ctx$session$kind %||% NULL,
+                            tools = tryCatch(
+                                skills_as_api_tools(ctx$session$tools_filter),
+                                error = function(e) NULL),
+                            system = ctx$session$system,
+                            threshold = 0,
+                            min_messages = 2L,
+                            reason = "manual"
+                        ), error = function(e) {
+                    message("Compaction failed: ", conditionMessage(e))
+                    FALSE
+                }),
                     ctx$palette)
                 if (inherits(result, "repl_interrupted")) {
                     next
                 }
-                if (!is.null(result) && nzchar(result$summary)) {
-                    ctx$session$history <- list(
-                        list(role = "assistant", content = result$summary)
-                    )
-                    transcript_compact(ctx$disk_session$session, result$summary)
-                    if (!is.null(ctx$disk_session)) {
-                        ds <- ctx$disk_session$session
-                        ds$compactionCount <- (ds$compactionCount %||% 0L) + 1L
-                        ctx$disk_session$session <- ds
-                        tryCatch(session_save(ds), error = function(e) NULL)
-                    }
+                if (isTRUE(result)) {
                     cat("Compacted.\n")
+                } else {
+                    cat("Nothing safe to compact.\n")
                 }
                 next
             }
@@ -999,10 +1056,10 @@ run_repl_loop <- function(ctx) {
         # then print a terse one-line indicator and auto-compact when we
         # cross the compaction threshold.
         sys_tok <- estimate_text_tokens(ctx$session$system %||% "")
-        tools_tok <- estimate_tool_tokens(
-            tryCatch(skills_as_api_tools(ctx$session$tools_filter),
-                     error = function(e) list())
-        )
+        compact_tools <- tryCatch(
+                                  skills_as_api_tools(ctx$session$tools_filter),
+                                  error = function(e) list())
+        tools_tok <- estimate_tool_tokens(compact_tools)
         hist_tok <- estimate_history_tokens(ctx$session$history %||% list())
         used <- as.integer(sys_tok + tools_tok + hist_tok)
         # A model-less chat() session (no explicit model, model_map$cloud
@@ -1011,7 +1068,10 @@ run_repl_loop <- function(ctx) {
         # NULL here regardless.
         model <- ctx$model %||% ctx$session$model_map$cloud %||%
         default_provider_model(ctx$session$provider)
-        limit <- context_limit_for_model(model)
+        limit <- context_limit_for_model(
+            model,
+            provider = ctx$session$provider %||% ctx$provider
+        )
         if (!is.null(limit) && limit > 0L) {
             pct <- 100 * used / limit
         } else {
@@ -1026,58 +1086,23 @@ run_repl_loop <- function(ctx) {
                     compact = compact_pct)
             ), "\n")
 
-        if (pct >= compact_pct && length(ctx$session$history) > 2) {
-            # Optional pre-compaction memory flush so durable facts get
-            # written before the turns that mention them are summarized
-            # away. Tolerate NULL/errors -- a flush failure must not
-            # block compaction.
-            flush_ran <- FALSE
-            flush_interrupted <- FALSE
-            if (isTRUE(ctx$config$memory_flush_enabled)) {
-                cat(sprintf("%sFlushing memories before compaction...%s\n",
-                            ctx$palette$dim, ctx$palette$reset))
-                fr <- .repl_interruptible(
-                    tryCatch(run_memory_flush(ctx), error = function(e) NULL),
-                    ctx$palette)
-                if (inherits(fr, "repl_interrupted")) {
-                    flush_interrupted <- TRUE
-                } else {
-                    flush_ran <- !is.null(fr)
-                }
-            }
-            # An interrupt during the pre-flush skips compaction entirely
-            # rather than firing off another blocking network call.
-            comp <- if (flush_interrupted) {
-                NULL
-            } else {
-                .repl_interruptible(
-                                    tryCatch(
-                        do_compact(
-                                   list(messages = ctx$session$history),
-                                   ctx$session$provider,
-                                   ctx$session$model_map$cloud),
-                        error = function(e) NULL),
+        compact_system <- task_compose_system(
+            .plan_mode_compose_system(ctx$session$system,
+                                      isTRUE(ctx$session$plan_mode)),
+            ctx$session$tasks %||% list(), channel = ctx$session$channel)
+        comp <- .repl_interruptible(
+                                    tryCatch(maybe_compact_turn_session(
+                    ctx$session,
+                    ctx$config,
+                    kind = ctx$session$kind %||% NULL,
+                    tools = compact_tools,
+                    system = compact_system,
+                    reason = "post_turn"
+                ), error = function(e) NULL),
                                     ctx$palette)
-            }
-            if (!inherits(comp, "repl_interrupted") && !is.null(comp) &&
-                nzchar(comp$summary)) {
-                ctx$session$history <- list(
-                    list(role = "assistant", content = comp$summary)
-                )
-                transcript_compact(ctx$disk_session$session, comp$summary)
-                if (!is.null(ctx$disk_session)) {
-                    ds <- ctx$disk_session$session
-                    ds$compactionCount <- (ds$compactionCount %||% 0L) + 1L
-                    if (isTRUE(flush_ran)) {
-                        ds$memoryFlushCompactionCount <-
-                        (ds$memoryFlushCompactionCount %||% 0L) + 1L
-                    }
-                    ctx$disk_session$session <- ds
-                    tryCatch(session_save(ds), error = function(e) NULL)
-                }
-                cat(sprintf("%sAuto-compacted (context was %.0f%%).%s\n",
-                            ctx$palette$dim, pct, ctx$palette$reset))
-            }
+        if (!inherits(comp, "repl_interrupted") && isTRUE(comp)) {
+            cat(sprintf("%sAuto-compacted (context was %.0f%%).%s\n",
+                        ctx$palette$dim, pct, ctx$palette$reset))
         }
     }
 

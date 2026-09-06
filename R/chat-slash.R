@@ -232,13 +232,18 @@ run_memory_flush <- function(ctx) {
                                  max_turns = 20L
     )
     flush_session$config <- config
+    # The parent compactor already chose a safe threshold boundary. Preserve
+    # the complete pre-compaction history while the flush extracts durable
+    # facts; only a real provider overflow may invoke emergency recovery.
+    flush_session$config$context_compact_pct <- Inf
     flush_session$cwd <- ctx$cwd
     flush_session$dry_run <- isTRUE(session$dry_run) ||
     isTRUE(config$dry_run)
 
     tryCatch({
         r <- turn(prompt = flush_prompt, session = flush_session)
-        list(content = r$reply, history = flush_session$history)
+        list(content = r$reply, history = flush_session$history,
+             usage = r$usage)
     }, corteza_user_deny = function(c) {
         message("Memory flush denied -- skipping.")
         NULL

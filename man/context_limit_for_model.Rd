@@ -3,10 +3,13 @@
 \alias{context_limit_for_model}
 \title{Look up the context window for a given model.}
 \usage{
-context_limit_for_model(model)
+context_limit_for_model(model, provider = NULL)
 }
 \arguments{
 \item{model}{Model name (character).}
+
+\item{provider}{Optional provider/product endpoint. Provider-specific
+limits take precedence over the public model limit.}
 }
 \value{
 Context limit in tokens (integer). Returns 128000L when

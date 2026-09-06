@@ -10,15 +10,18 @@ title: Skills
 
 # Skills
 
-A skill is a `SKILL.md` file that teaches the agent how to do something using shell commands. Skills are markdown documentation: the agent reads them and runs `bash` to execute. No code, no compilation, no installation.
+An instruction skill is a `SKILL.md` file that teaches the agent how to do
+something. It is documentation, not an executable tool and not a capability
+grant. It may explain shell commands, R workflows, or how to use tools the
+session already exposes.
 
 corteza has three ways to add tools, and they target different audiences:
 
 | Form | Audience | Config key | Vignette |
 |------|----------|------------|----------|
 | Package skills | R packages as tools | `skill_packages` | `vignette("package-as-skill")` |
-| `SKILL.md` files | Portable, shell-based | `skill_paths` | this one |
-| R skills | R functions, registered directly | `skill_paths` (`.R` files) | this one |
+| Instruction skills | Portable documentation | `instruction_roots` | this one |
+| R skills | R functions registered as tools | standard skill roots | this one |
 
 ## Format
 
@@ -50,7 +53,7 @@ curl -s "wttr.in/London?format=3"
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | snake-case identifier |
-| `description` | yes | One-liner that goes into the system prompt |
+| `description` | yes | One-line catalog summary; folded YAML is supported |
 | `metadata` | no | Optional metadata; the `requires` block declares external deps |
 
 The `metadata.requires` field is openclaw-compatible, so skills written for openclaw work in corteza without modification (and vice versa). Conceptually `requires.bins` is to a skill what `SystemRequirements` is to an R package: a declaration of external binaries the skill needs (`curl`, `jq`, etc). `requires.env` lists environment variables (API keys, tokens). corteza stores both for documentation; it doesn't gate skill loading on them.
@@ -62,16 +65,28 @@ The `metadata.requires` field is openclaw-compatible, so skills written for open
 | Global | `tools::R_user_dir("corteza", "data")/skills/` |
 | Project | `.corteza/skills/` |
 
-Both nested (`my-skill/SKILL.md`) and flat (`my-skill.md`) layouts work. Project-local skills override global ones with the same name.
+Discovery is recursive and includes only files named exactly `SKILL.md`.
+Names do not override each other: lookup uses the stable id derived from the
+configured root id plus the skill directory's relative path. Additional
+roots are configured explicitly through `instruction_roots`; corteza does
+not scan `~/skills` implicitly.
 
 ## How skills get invoked
 
-The agent doesn't call skills directly. It reads the markdown into the system prompt at session start, then generates `bash` commands when the conversation calls for them.
+The agent receives only a compact catalog at session start, then retrieves
+instructions as needed:
 
-1. **Load**: corteza scans the skill paths at session start
-2. **Inject**: frontmatter and body land in the system prompt
-3. **Use**: the LLM reads the docs and generates the right command
-4. **Execute**: the `bash` tool runs it
+1. **Discover**: corteza recursively finds exact `SKILL.md` files.
+2. **Snapshot**: it records the document and relative-resource hashes for
+   this session.
+3. **Advertise**: only name, description, and stable id enter the prompt.
+4. **Read**: `skill_instructions(id)` returns the selected `SKILL.md`;
+   `skill_instructions(id, resource)` reads a snapshotted relative file.
+5. **Act**: the model uses its normal, separately granted tools.
+
+Absolute paths, traversal, foreign ids, symlink escapes, and files changed
+after session start are refused. Opening another session or Matrix room does
+not mutate an existing session's catalog.
 
 ## R skills
 
@@ -132,7 +147,8 @@ mkdir -p .corteza/skills/my-skill
 $EDITOR .corteza/skills/my-skill/SKILL.md
 ```
 
-Add frontmatter and documentation, then restart the session. Skills load at startup, not on the fly.
+Add frontmatter and documentation, then restart the session. Catalogs are
+immutable snapshots, not live filesystem views.
 
 ## Best practices
 

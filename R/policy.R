@@ -78,9 +78,10 @@ resolve_urls <- function(call) {
 
 # Classify the operation class of a tool.
 classify_op <- function(tool_name) {
-    read_tools <- c("read_file", "list_files", "grep_files", "git_log",
-                    "git_diff", "git_status", "web_search", "fetch_url",
-                    "r_help", "installed_packages")
+    read_tools <- c("read_file", "skill_instructions", "list_files",
+                    "grep_files", "git_log", "git_diff", "git_status",
+                    "web_search", "fetch_url", "r_help",
+                    "installed_packages")
     write_tools <- c("write_file", "replace_in_file")
     exec_tools <- c("bash", "cmd", "run_r", "run_r_script")
 

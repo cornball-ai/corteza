@@ -36,6 +36,16 @@ expect_equal(corteza::context_limit_for_model("claude-sonnet-4-20250514"),
 expect_equal(corteza::context_limit_for_model("claude-opus-4-7"), 200000L)
 expect_equal(corteza::context_limit_for_model("claude-sonnet-4-6"), 200000L)
 expect_equal(corteza::context_limit_for_model("claude-haiku-4-5"), 200000L)
+# A model id is not enough to identify the usable window. The public OpenAI API
+# exposes 1.05M for Sol, while the ChatGPT Codex product catalog used by the
+# openai_codex provider exposes a 272K working window.
+expect_equal(corteza::context_limit_for_model("gpt-5.6-sol"), 1050000L)
+expect_equal(corteza::context_limit_for_model(
+    "gpt-5.6-sol", provider = "openai"), 1050000L)
+expect_equal(corteza::context_limit_for_model(
+    "gpt-5.6-sol", provider = "openai_codex"), 272000L)
+expect_equal(corteza::context_limit_for_model(
+    "gpt-5.6-sol-2026-09-01", provider = "openai_codex"), 272000L)
 # Prefix match works either direction (shorter caller, shorter table key).
 expect_equal(corteza::context_limit_for_model("gpt-4o-mini-2024-07-18"),
              128000L)
@@ -73,6 +83,22 @@ block_msg <- list(list(role = "user",
                        content = list(list(type = "text",
                                            text = "hello world"))))
 expect_true(corteza::estimate_history_tokens(block_msg) > 6L)
+
+# OpenAI Responses/Codex history is role-less: assistant output lives under
+# $output and tool results use function_call_output. Both the call arguments
+# and opaque reasoning state are part of the context sent on the next request.
+codex_visible <- list(
+    list(type = ".openai_codex_output", output = list(
+        list(type = "function_call", call_id = "call_1", name = "run_r",
+             arguments = '{"code":"x <- 123456789"}')
+    )),
+    list(type = "function_call_output", call_id = "call_1", output = "[1] 1")
+)
+expect_true(corteza::estimate_history_tokens(codex_visible) > 20L)
+codex_reasoning <- codex_visible
+codex_reasoning[[1L]]$output[[1L]]$encrypted_content <- strrep("x", 2400L)
+expect_true(corteza::estimate_history_tokens(codex_reasoning) >=
+            corteza::estimate_history_tokens(codex_visible) + 100L)
 
 # estimate_tool_tokens ----
 
