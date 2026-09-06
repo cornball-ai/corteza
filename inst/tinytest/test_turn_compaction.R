@@ -103,6 +103,36 @@ run_checkpoint_compaction_test <- function() {
 }
 run_checkpoint_compaction_test()
 
+run_checkpoint_compaction_failure_test <- function() {
+    original_summary <- get("compact_summarize_slice",
+                            envir = asNamespace("corteza"))
+    on.exit(assignInNamespace("compact_summarize_slice", original_summary,
+                              ns = "corteza"), add = TRUE)
+    assignInNamespace("compact_summarize_slice", function(...) NULL,
+                      ns = "corteza")
+
+    session <- corteza::new_session(
+        provider = "openai_codex",
+        model_map = list(cloud = "gpt-5.6-sol", local = "qwen3.5:9b"),
+        verbose = FALSE
+    )
+    session$config <- compact_test_config(0)
+    session$history <- codex_tool_trajectory()
+    session$context_window <- 1L
+    seen <- NULL
+    session$on_compaction_failure <- function(event) seen <<- event
+
+    compacted <- corteza:::maybe_compact_turn_session(
+        session, session$config, tools = list(), system = "test")
+    expect_false(isTRUE(compacted))
+    expect_equal(seen$reason, "summarizer_error")
+    expect_equal(seen$error, "summarizer returned no usable summary")
+    expect_equal(session$last_compaction_failure$error, seen$error)
+    expect_equal(session$history, codex_tool_trajectory())
+}
+run_checkpoint_compaction_failure_test()
+
+
 run_overflow_recovery_test <- function() {
     original_agent <- get("agent", envir = asNamespace("llm.api"))
     original_summary <- get("compact_summarize_slice",

@@ -3,6 +3,32 @@
 # pure history-rewrite. The summarizer call itself is gated to
 # at_home in test_subagent_callr.R.
 
+# Summarizer provider arguments --------
+
+run_compact_summary_provider_test <- function() {
+    original_chat <- get("chat", envir = asNamespace("llm.api"))
+    on.exit(assignInNamespace("chat", original_chat, ns = "llm.api"),
+            add = TRUE)
+    seen <- NULL
+    stub_chat <- function(...) {
+        seen <<- list(...)
+        list(content = "summary", usage = list())
+    }
+    assignInNamespace("chat", stub_chat, ns = "llm.api")
+    slice <- list(list(role = "user", content = "earlier work"))
+
+    codex <- corteza:::compact_summarize_slice(
+        slice, provider = "openai_codex", model = "gpt-5.6-sol")
+    expect_equal(as.character(codex), "summary")
+    expect_null(seen$temperature)
+
+    anthropic <- corteza:::compact_summarize_slice(
+        slice, provider = "anthropic", model = "claude-opus-5")
+    expect_equal(as.character(anthropic), "summary")
+    expect_equal(seen$temperature, 0.3)
+}
+run_compact_summary_provider_test()
+
 # Threshold resolution --------
 
 cfg_base <- list(

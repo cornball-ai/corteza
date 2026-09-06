@@ -8,7 +8,8 @@ compact_summarize_slice(
   provider = "anthropic",
   model = NULL,
   timeout_seconds = 60L,
-  summary_prompt = NULL
+  summary_prompt = NULL,
+  error_callback = NULL
 )
 }
 \arguments{
@@ -23,6 +24,9 @@ compacted; the recent tail is excluded).}
 
 \item{summary_prompt}{Optional caller-supplied summarization instructions.
 NULL uses corteza's general coding-agent brief.}
+
+\item{error_callback}{Optional function called with a caught summarizer
+error before NULL is returned.}
 }
 \description{
 Returns the summary text on success or NULL on any error

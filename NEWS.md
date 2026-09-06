@@ -9,6 +9,8 @@
   continue retry without inventing a user message, and usage from both attempts
   is retained. CLI and `chat()` manual/automatic compaction now use this same
   path and durably record summaries through a pre-rewrite lifecycle hook.
+  Codex compaction omits unsupported sampling controls, and caught summarizer
+  failures are exposed through a lifecycle hook instead of remaining silent.
 - **Compaction briefs can be domain-specific.** `new_session(compaction_prompt = )`
   lets a long-running host state what evidence and working state its summary must
   preserve, while NULL retains corteza's existing coding-agent brief.

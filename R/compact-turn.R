@@ -275,10 +275,13 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #' @param timeout_seconds Hard wall on the summarizer call.
 #' @param summary_prompt Optional caller-supplied summarization instructions.
 #'   NULL uses corteza's general coding-agent brief.
+#' @param error_callback Optional function called with a caught summarizer
+#'   error before NULL is returned.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
                                     model = NULL, timeout_seconds = 60L,
-                                    summary_prompt = NULL) {
+                                    summary_prompt = NULL,
+                                    error_callback = NULL) {
     if (length(slice) == 0L) {
         return(NULL)
     }
@@ -289,16 +292,24 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
                       instructions, conv_text)
     setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+    chat_args <- list(
+                      prompt = prompt,
+                      provider = provider,
+                      model = model,
+                      system = paste(
+                          "You are a helpful assistant that creates",
+                          "concise conversation summaries."))
+    # The subscription Codex endpoint rejects sampling controls. Keep the
+    # summarizer compatible with both current and older llm.api releases.
+    if (!identical(provider, "openai_codex")) {
+        chat_args$temperature <- 0.3
+    }
     result <- tryCatch(
-                       llm.api::chat(
-                                     prompt = prompt,
-                                     provider = provider,
-                                     model = model,
-                                     system = paste("You are a helpful assistant that creates",
-                "concise conversation summaries."),
-                                     temperature = 0.3
-        ),
+                       do.call(llm.api::chat, chat_args),
                        error = function(e) {
+        if (is.function(error_callback)) {
+            error_callback(e)
+        }
         log_event("subagent_compact_failed",
                   reason = "summarizer_error",
                   error = conditionMessage(e), level = "warn")
@@ -432,12 +443,37 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
         return(invisible(FALSE))
     }
     slice <- history[seq_len(cut)]
+    summary_error <- NULL
     summary <- compact_summarize_slice(
                                        slice, provider = session$provider %||% "anthropic",
                                        model = model,
                                        timeout_seconds = as.integer(cc$timeout_seconds %||% 60L),
-                                       summary_prompt = session$compaction_prompt %||% NULL)
+                                       summary_prompt = session$compaction_prompt %||% NULL,
+                                       error_callback = function(e) summary_error <<- e)
     if (is.null(summary) || !nzchar(summary)) {
+        failure <- list(
+                        reason = "summarizer_error",
+                        error = if (is.null(summary_error)) {
+                            "summarizer returned no usable summary"
+                        } else {
+                            conditionMessage(summary_error)
+                        },
+                        tokens_before = used,
+                        threshold_pct = threshold,
+                        context_pct = pct,
+                        context_window = limit,
+                        provider = session$provider,
+                        model = model,
+                        timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ",
+                                           tz = "UTC")
+        )
+        session$last_compaction_failure <- failure
+        if (is.function(session$on_compaction_failure)) {
+            tryCatch(session$on_compaction_failure(failure),
+                     error = function(e) log_event(
+                         "subagent_compact_failure_hook_failed",
+                         error = conditionMessage(e), level = "warn"))
+        }
         return(invisible(FALSE))
     }
     summary_usage <- attr(summary, "usage", exact = TRUE)
@@ -461,6 +497,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     # Lifecycle hooks run before the destructive in-memory rewrite. A durable
     # host such as the ARC driver can persist the exact provider-native prefix;
     # if that checkpoint fails, its error prevents history from being lost.
+    session$last_compaction_failure <- NULL
     if (is.function(session$on_compaction)) {
         session$on_compaction(event)
     }
