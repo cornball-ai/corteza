@@ -273,16 +273,20 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #' @param provider Provider name.
 #' @param model Model name.
 #' @param timeout_seconds Hard wall on the summarizer call.
+#' @param summary_prompt Optional caller-supplied summarization instructions.
+#'   NULL uses corteza's general coding-agent brief.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
-                                    model = NULL, timeout_seconds = 60L) {
+                                    model = NULL, timeout_seconds = 60L,
+                                    summary_prompt = NULL) {
     if (length(slice) == 0L) {
         return(NULL)
     }
     rendered <- vapply(slice, .compact_render_entry, character(1L))
     conv_text <- paste(.compact_trim_total(rendered), collapse = "\n\n")
+    instructions <- summary_prompt %||% .compact_summary_prompt
     prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s",
-                      .compact_summary_prompt, conv_text)
+                      instructions, conv_text)
     setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
     result <- tryCatch(
@@ -431,7 +435,8 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     summary <- compact_summarize_slice(
                                        slice, provider = session$provider %||% "anthropic",
                                        model = model,
-                                       timeout_seconds = as.integer(cc$timeout_seconds %||% 60L))
+                                       timeout_seconds = as.integer(cc$timeout_seconds %||% 60L),
+                                       summary_prompt = session$compaction_prompt %||% NULL)
     if (is.null(summary) || !nzchar(summary)) {
         return(invisible(FALSE))
     }

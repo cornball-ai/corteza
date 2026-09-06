@@ -7,7 +7,8 @@ compact_summarize_slice(
   slice,
   provider = "anthropic",
   model = NULL,
-  timeout_seconds = 60L
+  timeout_seconds = 60L,
+  summary_prompt = NULL
 )
 }
 \arguments{
@@ -19,6 +20,9 @@ compacted; the recent tail is excluded).}
 \item{model}{Model name.}
 
 \item{timeout_seconds}{Hard wall on the summarizer call.}
+
+\item{summary_prompt}{Optional caller-supplied summarization instructions.
+NULL uses corteza's general coding-agent brief.}
 }
 \description{
 Returns the summary text on success or NULL on any error

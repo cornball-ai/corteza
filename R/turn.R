@@ -137,6 +137,10 @@ default_local_model <- function() {
 #'   the system prompt alone and would silently deliver a fraction of
 #'   that with this set. \code{turn()$usage} reports what was read and
 #'   written.
+#' @param compaction_prompt Character or NULL. Optional domain-specific
+#'   instructions for summarizing older history during context compaction.
+#'   NULL uses corteza's general coding-agent summary brief. The prompt
+#'   affects only the summarizer; the main agent system prompt is unchanged.
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -154,7 +158,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         verbose = FALSE, plan_mode = FALSE,
                         web_search = NULL, base_url = NULL,
                         max_tokens = NULL, reasoning_effort = NULL,
-                        thinking_budget_tokens = NULL, cache = NULL) {
+                        thinking_budget_tokens = NULL, cache = NULL,
+                        compaction_prompt = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -190,6 +195,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                       "new_session(thinking_budget_tokens=)",
                       what = "thinking_budget_tokens")
     s$cache <- .check_cache(cache, "new_session(cache=)")
+    if (!is.null(compaction_prompt) &&
+        (!is.character(compaction_prompt) || length(compaction_prompt) != 1L ||
+            is.na(compaction_prompt) || !nzchar(compaction_prompt))) {
+        stop("compaction_prompt must be NULL or a single non-empty string",
+             call. = FALSE)
+    }
+    s$compaction_prompt <- compaction_prompt
     s
 }
 

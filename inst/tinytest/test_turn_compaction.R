@@ -74,12 +74,18 @@ run_checkpoint_compaction_test <- function() {
                           total_tokens = 12, cost = 0.1))
     }
     assignInNamespace("agent", stub_agent, ns = "llm.api")
-    assignInNamespace("compact_summarize_slice", stub_summary, ns = "corteza")
+    seen_summary_prompt <- NULL
+    capture_summary <- function(..., summary_prompt = NULL) {
+        seen_summary_prompt <<- summary_prompt
+        stub_summary()
+    }
+    assignInNamespace("compact_summarize_slice", capture_summary, ns = "corteza")
 
     session <- corteza::new_session(
         provider = "openai_codex",
         model_map = list(cloud = "gpt-5.6-sol", local = "qwen3.5:9b"),
-        verbose = FALSE
+        verbose = FALSE,
+        compaction_prompt = "Preserve domain evidence."
     )
     session$config <- compact_test_config(0)
     seen <- NULL
@@ -88,6 +94,7 @@ run_checkpoint_compaction_test <- function() {
 
     expect_equal(result$reply, "done")
     expect_equal(session$compaction_count, 1L)
+    expect_equal(seen_summary_prompt, "Preserve domain evidence.")
     expect_equal(length(seen$history_before), 7L)
     expect_equal(seen$cut, 5L)
     expect_equal(seen$usage$input_tokens, 2)

@@ -9,6 +9,9 @@
   continue retry without inventing a user message, and usage from both attempts
   is retained. CLI and `chat()` manual/automatic compaction now use this same
   path and durably record summaries through a pre-rewrite lifecycle hook.
+- **Compaction briefs can be domain-specific.** `new_session(compaction_prompt = )`
+  lets a long-running host state what evidence and working state its summary must
+  preserve, while NULL retains corteza's existing coding-agent brief.
 - **Context accounting understands Codex and provider products.** Responses
   output, function-call results, and opaque reasoning state are no longer
   reported as near-empty history. Context-window lookup can distinguish the
