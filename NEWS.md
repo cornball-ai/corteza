@@ -1,3 +1,10 @@
+# corteza 0.7.1.46
+
+- **Provider cooldowns remain recognizable as limit failures.** The internal
+  limit classifier now recognizes corteza's own all-providers-cooling error,
+  allowing durable hosts to wait for the recorded deadline instead of
+  misclassifying a transient cooldown as a permanent failure.
+
 # corteza 0.7.1.45
 
 - **Codex request-buffer overflow is now recoverable.** Long Responses-wire
