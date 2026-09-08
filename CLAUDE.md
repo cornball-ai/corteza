@@ -19,15 +19,6 @@ r -e 'rformat::rformat_dir("R", control_braces = "multi", expand_if = TRUE); tin
 r -e 'tinypkgr::install(); tinytest::run_test_file("inst/tinytest/test_policy.R")'
 ```
 
-- Use `tinypkgr::install()` not `R CMD INSTALL`.
-  `tinypkgr::reload()` is the live-dev variant.
-- `tinyrox` is the doc generator (not roxygen2). Same `@param`,
-  `@return`, `@export` syntax; minimal feature set.
-- `tinytest` is the test framework (not testthat). Tests live in
-  `inst/tinytest/`.
-- Use `r` (littler) for internal commands and `Rscript` for
-  user-facing examples that need to run on Windows.
-
 ## Architecture: three surfaces, one `turn()`
 
 All three user-facing surfaces share `turn()` as the single entry point
@@ -71,12 +62,15 @@ populate it on first use. `skills_as_api_tools()` converts to the
 `llm.api::agent()` format; `sanitize_tool_name()` maps `::` to `__`
 for API compatibility.
 
-**System prompt assembly** (`R/context.R`): layers (1) a preamble,
-(2) `saber::briefing()` (package metadata, recent commits),
-(3) `saber::agent_context()` (CLAUDE.md/AGENTS.md, SOUL.md, USER.md),
-(4) custom `config$context_files`, (5) skill docs, (6) package tool
-docs, (7) a live-subagents block if archival is active. Duplicate
-blocks are deduped by exact match.
+**System prompt assembly** (`R/context.R`): `load_context_bundle()`
+builds source descriptors (preamble, runtime guidance,
+`saber::briefing()`, workspace USER.md/SOUL.md, `config$context_files`,
+the instruction catalog, harness lessons, live subagents) and hands
+them to `saber::context_manifest()`, which also discovers the shared
+instructions file and the project AGENTS.md/CLAUDE.md. saber drops a
+source that resolves to the same canonical path as an earlier one,
+then one with identical content; `saber::context_render()` produces
+the prompt.
 
 ## Policy engine (`R/policy.R`)
 
@@ -164,25 +158,8 @@ Subagents have three valid identifiers:
 
 `subagent_query` and `subagent_kill` accept any of the three.
 
-## Saber for introspection (mandatory before exported-API changes)
-
-```r
-saber::pkg_exports("corteza")
-saber::pkg_help("subagent_spawn", "corteza")
-saber::blast_radius("subagent_spawn", project = ".")
-```
-
-`blast_radius` is required before renaming, moving, or changing the
-signature of any exported function. Skipping it breaks downstream
-packages silently.
-
 ## Test conventions and gotchas
 
-- `at_home()` gates tests that need network, API keys, or writable
-  state. They run locally; `R CMD check` skips them.
-- **Don't use `on.exit()` at the top level of a tinytest file** — it
-  fires immediately, not at script end. Use explicit cleanup at the
-  bottom of the file instead.
 - `corteza:::env[[key]] <- value` doesn't parse the way you'd expect
   for a package-private environment. Use
   `assign(key, value, envir = corteza:::env)`.
@@ -207,10 +184,10 @@ off by default behind `config$legacy_memory_tools_enabled`.
 ## Project context loading
 
 Project context comes from `saber::briefing()` and
-`saber::agent_context()` (recent commits, package summary, AGENTS.md
-or CLAUDE.md, etc.) plus any files explicitly listed in
-`config$context_files`. The `/context` slash command shows live token
-usage broken into system / tools / history.
+`saber::context_manifest()` (recent commits, package summary, the
+shared instructions file, AGENTS.md or CLAUDE.md) plus any files
+explicitly listed in `config$context_files`. The `/context` slash
+command shows live token usage broken into system / tools / history.
 
 ## Matrix credentials rotate: derive, never cache
 
@@ -254,13 +231,10 @@ session outlives many rotations.
 
 ## Things to avoid
 
-- **No `Co-Authored-By` trailers** in commits.
 - **No drive-by cosmetic edits** — don't bundle whitespace or comment
   reformats into substantive PRs.
 - **Don't hide real dependencies behind `requireNamespace()`**. If a
   package is needed for core functionality, declare it in `Imports`.
-- **Don't force-push.** Use incremental commits during PR review;
-  squash at merge time via `gh pr merge --squash`.
 
 ## Repo layout (orientation)
 
