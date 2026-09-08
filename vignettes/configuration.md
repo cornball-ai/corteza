@@ -301,6 +301,12 @@ project paths resolve from the project working directory. The built-in ids
 `corteza-data` and `project` are reserved. corteza does not implicitly
 scan `~/skills`.
 
+A symlink directly under a root is an alias: `<root>/saber ->
+~/saber/inst/skills/saber` yields id `<root-id>:saber`, and the target is
+walked as its own bounded tree. When two roots reach the same `SKILL.md`,
+the more specific root owns the entry. Symlinks below the top level must
+stay inside their root.
+
 Instruction documents are not executable tools. They can teach the model to
 use tools it already has, but do not add capabilities to the executable tool
 registry.

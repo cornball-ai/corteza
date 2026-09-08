@@ -149,29 +149,39 @@ instruction_path_within <- function(path, root) {
 
 # Recursively enumerate a root without allowing a symlink to escape it or a
 # directory cycle to recurse forever. Only exact SKILL.md names are candidates.
-instruction_walk_root <- function(root) {
+#
+# With aliases = TRUE, a symlink directly under the root may point at a
+# directory outside it, such as a package's inst/skills/<skill>. That target
+# is walked as its own bounded subtree, and every file found there keeps the
+# logical path under the alias so ids stay relative to the configured root.
+# Deeper symlinks must still stay inside their bound. Skill resource
+# snapshots never use aliases: a bundle cannot reach outside itself.
+instruction_walk_root <- function(root, aliases = FALSE) {
     diagnostics <- list()
+    empty <- list(skills = character(), skill_logical = character(),
+                  files = character(), logical = character(),
+                  diagnostics = diagnostics, canonical_root = NULL)
     if (!dir.exists(root)) {
-        diagnostics[[1L]] <- instruction_diagnostic("info", "missing_root",
+        empty$diagnostics[[1L]] <- instruction_diagnostic("info", "missing_root",
             "Instruction root does not exist.", root)
-        return(list(skills = character(), files = character(),
-                    diagnostics = diagnostics, canonical_root = NULL))
+        return(empty)
     }
     root_real <- tryCatch(
                           normalizePath(root, winslash = "/", mustWork = TRUE),
                           error = function(e) NULL
     )
     if (is.null(root_real) || !dir.exists(root_real)) {
-        diagnostics[[1L]] <- instruction_diagnostic(
+        empty$diagnostics[[1L]] <- instruction_diagnostic(
             "error", "unreadable_root", "Instruction root cannot be resolved.", root
         )
-        return(list(skills = character(), files = character(),
-                    diagnostics = diagnostics, canonical_root = NULL))
+        return(empty)
     }
 
+    root_key <- instruction_path_key(root_real)
     seen <- character()
     files <- character()
-    visit <- function(dir) {
+    logical <- character()
+    visit <- function(dir, logical_dir, bound) {
         key <- instruction_path_key(dir)
         if (key %in% seen) {
             diagnostics[[length(diagnostics) + 1L]] <<- instruction_diagnostic(
@@ -196,7 +206,13 @@ instruction_walk_root <- function(root) {
                 )
                 next
             }
-            if (!instruction_path_within(real, root_real)) {
+            child_logical <- file.path(logical_dir, basename(child))
+            if (!instruction_path_within(real, bound)) {
+                if (isTRUE(aliases) && identical(key, root_key) &&
+                    dir.exists(real) && nzchar(Sys.readlink(child))) {
+                    visit(real, child_logical, real)
+                    next
+                }
                 diagnostics[[length(diagnostics) + 1L]] <<-
                 instruction_diagnostic(
                                        "warning", "symlink_escape",
@@ -205,19 +221,28 @@ instruction_walk_root <- function(root) {
                 next
             }
             if (dir.exists(real)) {
-                visit(real)
+                visit(real, child_logical, bound)
             } else
             if (file.exists(real)) {
                 files <<- c(files, real)
+                logical <<- c(logical, child_logical)
             }
         }
         invisible()
     }
-    visit(root_real)
-    files <- sort(unique(files))
+    visit(root_real, root_real, root_real)
+    keep <- !duplicated(files)
+    files <- files[keep]
+    logical <- logical[keep]
+    ord <- order(files)
+    files <- files[ord]
+    logical <- logical[ord]
+    is_skill <- basename(files) == "SKILL.md"
     list(
-         skills = files[basename(files) == "SKILL.md"],
+         skills = files[is_skill],
+         skill_logical = logical[is_skill],
          files = files,
+         logical = logical,
          diagnostics = diagnostics,
          canonical_root = root_real
     )
@@ -354,15 +379,16 @@ build_instruction_catalog <- function(cwd = getwd()) {
     candidates <- list()
     for (root_id in names(cfg$roots)) {
         spec <- cfg$roots[[root_id]]
-        walked <- instruction_walk_root(spec$path)
+        walked <- instruction_walk_root(spec$path, aliases = TRUE)
         diagnostics <- c(diagnostics, walked$diagnostics)
         if (is.null(walked$canonical_root)) {
             next
         }
-        for (path in walked$skills) {
+        for (i in seq_along(walked$skills)) {
             candidates[[length(candidates) + 1L]] <- list(root_id = root_id,
                 root = walked$canonical_root,
-                root_specificity = nchar(walked$canonical_root), path = path)
+                root_specificity = nchar(walked$canonical_root),
+                path = walked$skills[[i]], logical = walked$skill_logical[[i]])
         }
     }
 
@@ -385,7 +411,9 @@ build_instruction_catalog <- function(cwd = getwd()) {
     all_skill_dirs <- unique(vapply(chosen, function(x) dirname(x$path),
                                     character(1L)))
     for (candidate in chosen) {
-        rel <- instruction_relative_dir(candidate$path, candidate$root)
+        # The logical path keeps an alias's link name; the real path is what
+        # gets deduplicated across roots, snapshotted, and read.
+        rel <- instruction_relative_dir(candidate$logical, candidate$root)
         id <- instruction_entry_id(candidate$root_id, rel)
         if (id %in% cfg$disabled) {
             next

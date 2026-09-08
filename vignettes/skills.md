@@ -71,6 +71,13 @@ configured root id plus the skill directory's relative path. Additional
 roots are configured explicitly through `instruction_roots`; corteza does
 not scan `~/skills` implicitly.
 
+A symlink directly under a configured root may point at a skill directory
+elsewhere, such as a package's `inst/skills/<skill>`. corteza walks that
+target as an alias and derives the id from the link name, so one flat hub
+of package links can serve corteza, Claude Code, and Codex alike. Symlinks
+deeper than the root's top level must stay inside the root, and a skill's
+own resources never follow a link out of the skill directory.
+
 ## How skills get invoked
 
 The agent receives only a compact catalog at session start, then retrieves
