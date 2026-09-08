@@ -1,3 +1,14 @@
+# corteza 0.7.1.47
+
+- **Instruction roots accept top-level symlink aliases.** A symlink directly
+  under a configured `instruction_roots` entry may point at a skill directory
+  outside the root, such as a package's `inst/skills/<skill>`. corteza walks
+  the target as a bounded alias and derives the id from the link name, so one
+  flat hub of package links can serve corteza, Claude Code, and Codex alike.
+  Deeper symlinks must still stay inside their root, skill resources still
+  cannot reach outside their bundle, and a skill reached through two roots
+  stays a single entry owned by the more specific root.
+
 # corteza 0.7.1.46
 
 - **Provider cooldowns remain recognizable as limit failures.** The internal
