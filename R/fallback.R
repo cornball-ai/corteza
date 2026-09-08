@@ -172,7 +172,8 @@
 .is_limit_error <- function(e) {
     msg <- conditionMessage(e)
     grepl("API error \\((429|503|529)\\)", msg) ||
-    grepl("rate[ _-]?limit|usage[ _-]?limit|too many requests|overloaded|quota",
+    grepl(paste0("rate[ _-]?limit|usage[ _-]?limit|too many requests|",
+                 "overloaded|quota|limit cooldown"),
           msg, ignore.case = TRUE)
 }
 

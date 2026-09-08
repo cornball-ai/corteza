@@ -273,6 +273,93 @@ local({
     unlink(outside, recursive = TRUE)
 })
 
+# A symlink directly under a configured root is an alias for a skill kept
+# elsewhere, such as a package's inst/skills/<skill>. Deeper escapes and
+# escapes from inside a skill bundle are still refused.
+local({
+    root <- tempfile("instruction-alias-")
+    hub <- file.path(root, "hub")
+    pkg <- file.path(root, "pkg", "inst", "skills")
+    project <- file.path(root, "project")
+    cfg_home <- file.path(root, "config-home")
+    dir.create(hub, recursive = TRUE)
+    dir.create(pkg, recursive = TRUE)
+    dir.create(project, recursive = TRUE)
+    .write_instruction(file.path(pkg, "remote"), "Remote", "Package-owned.",
+                       "REMOTE-BODY")
+    writeLines("REMOTE-REF", file.path(pkg, "remote", "reference.md"))
+    .write_instruction(file.path(hub, "local"), "Local", "Hub-owned.", "LOCAL")
+    dir.create(file.path(hub, "nested"))
+    made_alias <- file.symlink(file.path(pkg, "remote"), file.path(hub, "remote"))
+    made_deep <- file.symlink(file.path(pkg, "remote"),
+                              file.path(hub, "nested", "deep"))
+    made_inner <- file.symlink(root, file.path(pkg, "remote", "outward"))
+
+    old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA_character_)
+    Sys.setenv(R_USER_CONFIG_DIR = cfg_home)
+    on.exit({
+        if (is.na(old_config)) {
+            Sys.unsetenv("R_USER_CONFIG_DIR")
+        } else {
+            Sys.setenv(R_USER_CONFIG_DIR = old_config)
+        }
+        unlink(root, recursive = TRUE)
+    }, add = TRUE)
+    codes <- function(x) {
+        vapply(x$diagnostics, function(d) d$code, character(1L))
+    }
+
+    if (isTRUE(made_alias) && isTRUE(made_deep) && isTRUE(made_inner)) {
+        # The default walk still refuses every escape.
+        plain <- corteza:::instruction_walk_root(hub)
+        expect_false(any(grepl("remote", plain$skills, fixed = TRUE)))
+        expect_true(sum(codes(plain) == "symlink_escape") >= 2L)
+
+        walked <- corteza:::instruction_walk_root(hub, aliases = TRUE)
+        remote_real <- normalizePath(file.path(pkg, "remote", "SKILL.md"))
+        expect_true(remote_real %in% walked$skills)
+        expect_true(file.path(normalizePath(hub), "remote", "SKILL.md") %in%
+            walked$skill_logical)
+        expect_false(any(grepl("nested", walked$skills, fixed = TRUE)))
+        # The deep link and the bundle's outward link are the remaining escapes.
+        escaped <- vapply(walked$diagnostics[codes(walked) == "symlink_escape"],
+                          function(d) basename(d$path), character(1L))
+        expect_identical(sort(escaped), c("deep", "outward"))
+
+        global_config <- corteza:::corteza_config_path("config.json")
+        dir.create(dirname(global_config), recursive = TRUE, showWarnings = FALSE)
+        writeLines(sprintf('{"instruction_roots": {"hub": "%s"}}', hub),
+                   global_config)
+        catalog <- corteza:::build_instruction_catalog(project)
+        ids <- names(catalog$entries)
+        expect_true("hub:remote" %in% ids)
+        expect_true("hub:local" %in% ids)
+        expect_false(any(grepl("nested", ids, fixed = TRUE)))
+        expect_true(grepl("REMOTE-BODY",
+                          corteza:::instruction_catalog_read(catalog, "hub:remote"),
+                          fixed = TRUE))
+        expect_true(grepl("REMOTE-REF",
+                          corteza:::instruction_catalog_read(catalog, "hub:remote",
+                                                             "reference.md"),
+                          fixed = TRUE))
+        # Bundle resources never follow a link out of the bundle.
+        expect_false(any(grepl("outward", names(catalog$entries[["hub:remote"]]$resources),
+                               fixed = TRUE)))
+        expect_error(corteza:::instruction_catalog_read(
+                catalog, "hub:remote", "outward/hub/local/SKILL.md"
+            ))
+
+        # When the package root is configured as well, the more specific root
+        # owns the single entry.
+        writeLines(sprintf('{"instruction_roots": {"hub": "%s", "pkg": "%s"}}',
+                           hub, pkg), global_config)
+        both <- corteza:::build_instruction_catalog(project)
+        expect_true("pkg:remote" %in% names(both$entries))
+        expect_false("hub:remote" %in% names(both$entries))
+        expect_true("hub:local" %in% names(both$entries))
+    }
+})
+
 # Filter semantics and model-facing tool classification.
 expect_true(corteza:::instruction_reader_selected(NULL))
 expect_true(corteza:::instruction_reader_selected("core"))

@@ -70,6 +70,8 @@ expect_true(lim("API error (529): Overloaded"))
 expect_true(lim("API error (503): Service Unavailable"))
 expect_true(lim("API error (400): usage_limit_reached"))
 expect_true(lim("insufficient_quota"))
+expect_true(lim(paste("every provider is in a limit cooldown:",
+                      "openai_codex until 20:20")))
 expect_false(lim("API error (400): prompt is too long: context length exceeded"))
 expect_false(lim("API error (401): invalid x-api-key"))
 expect_false(lim("Tool error: bash exited 1"))
