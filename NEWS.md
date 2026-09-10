@@ -1,3 +1,18 @@
+# corteza 0.7.1.48
+
+- **Subagent queries fire by default and never hold the parent
+  indefinitely.** The `query_subagent` tool now defaults to
+  `wait = FALSE`: the prompt starts at once and `collect_subagent`
+  fetches the reply, so several subagents can work in parallel while the
+  parent continues. With `wait = TRUE`, `subagent_query()` fires the same
+  one-shot call and collects with a real deadline (`timeout`, default
+  60 s; `Inf` waits until the child replies). A child that has not
+  replied by then leaves the query pending for `subagent_collect()` or
+  `subagent_kill()` and the call returns NULL, where it previously
+  blocked for as long as the child took. `/ask` in the REPL says so and
+  points at `/collect`; the hall monitor reads a timed-out query as no
+  verdict and escalates, as its contract already said it should.
+
 # corteza 0.7.1.47
 
 - **Instruction roots accept top-level symlink aliases.** A symlink directly
