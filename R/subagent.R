@@ -786,21 +786,28 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #' replies, any tool calls it makes resolve against the child's
 #' in-process skill registry, and history accumulates across queries.
 #'
-#' With `wait = FALSE` the call returns immediately after firing the
-#' prompt; the parent collects the reply later with [subagent_collect()].
-#' A subagent can only carry one in-flight async query at a time:
-#' firing a second one while the first is pending raises an error.
+#' Both paths fire the prompt the same way, as a one-shot call on the
+#' child's `callr::r_session`. With `wait = FALSE` the call returns
+#' immediately and the parent collects the reply later with
+#' [subagent_collect()]. With `wait = TRUE` the call collects on the
+#' parent's behalf, but only up to `timeout` seconds: a child that has
+#' not replied by then is left running with the query pending, and the
+#' call returns NULL so the parent's turn is never held indefinitely.
+#' A subagent can only carry one in-flight query at a time: firing a
+#' second one while the first is pending raises an error.
 #'
 #' @param id Subagent identifier. Accepts the canonical UUID, a unique
 #'   UUID prefix, or the per-session sequence number printed by
 #'   `subagent_list()` / `/agents`.
 #' @param prompt Prompt to send.
-#' @param wait If TRUE (default), block until the child replies and
-#'   return the reply text. If FALSE, fire the prompt and return the
-#'   canonical id invisibly; caller must collect via
+#' @param wait If TRUE (default), block up to `timeout` seconds for the
+#'   child's reply and return the reply text. If FALSE, fire the prompt
+#'   and return the canonical id invisibly; caller must collect via
 #'   [subagent_collect()].
-#' @param timeout Timeout in seconds (currently advisory; callr-level
-#'   hard timeouts are future work).
+#' @param timeout Maximum seconds to block when `wait = TRUE`; `Inf`
+#'   waits until the child replies. On timeout the query stays pending:
+#'   collect it later with [subagent_collect()] or end it with
+#'   [subagent_kill()].
 #' @param return_name Optional single name or `.h_NNN` handle for a
 #'   value the child should hand back. When set, the child must have
 #'   left the result bound under that name (e.g. via `run_r`); the
@@ -808,9 +815,11 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #'   gains a `[stored as .h_NNN]` block referencing it. Requires a
 #'   subagent with `run_r` (the `work` preset). For `wait = FALSE` the
 #'   name is captured now and applied when collected.
-#' @return Reply text (character) when `wait = TRUE`, with a handle
-#'   block appended when `return_name` resolved. Canonical id
-#'   (character, invisibly) when `wait = FALSE`.
+#' @return Reply text (character) when `wait = TRUE` and the child
+#'   replied within `timeout`, with a handle block appended when
+#'   `return_name` resolved; NULL (invisibly) when the timeout elapsed
+#'   and the query is still pending. Canonical id (character,
+#'   invisibly) when `wait = FALSE`.
 #' @examples
 #' \dontrun{
 #' # Requires LLM credentials in the child's environment.
@@ -844,38 +853,39 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
              call. = FALSE)
     }
 
+    # Both paths fire the same one-shot call. session$run() has no
+    # timeout, so a sync query used to hold the parent's turn for as
+    # long as the child took; firing with call() and collecting with a
+    # deadline degrades a slow child into a pending query instead.
+    tryCatch(
+             info$session$call(
+                               function(p, rn) corteza::subagent_turn_prompt(p, rn),
+                               list(p = prompt, rn = return_name)
+        ),
+             error = function(e) {
+        stop("Subagent query failed to start: ",
+             conditionMessage(e), call. = FALSE)
+    }
+    )
+    info$pending <- prompt
+    info$pending_started_at <- Sys.time()
+    .subagent_registry[[canonical]] <- info
+
     if (!isTRUE(wait)) {
-        tryCatch(
-                 info$session$call(
-                                   function(p, rn) corteza::subagent_turn_prompt(p, rn),
-                                   list(p = prompt, rn = return_name)
-            ),
-                 error = function(e) {
-            stop("Subagent query failed to start: ",
-                 conditionMessage(e), call. = FALSE)
-        }
-        )
-        info$pending <- prompt
-        info$pending_started_at <- Sys.time()
-        .subagent_registry[[canonical]] <- info
         log_event("subagent_query_async", subagent_id = canonical,
                   prompt_length = nchar(prompt))
         return(invisible(canonical))
     }
 
-    turn_result <- tryCatch(
-                            info$session$run(
-            function(p, rn) corteza::subagent_turn_prompt(p, rn),
-            list(p = prompt, rn = return_name)
-        ),
-                            error = function(e) {
-        stop("Subagent query failed: ", conditionMessage(e), call. = FALSE)
-    })
-    info <- subagent_accumulate_usage(info, turn_result$usage)
-    .subagent_registry[[canonical]] <- info
     log_event("subagent_query", subagent_id = canonical,
               prompt_length = nchar(prompt))
-    .format_subagent_reply(turn_result)
+    reply <- subagent_collect(canonical, wait = TRUE, timeout = timeout)
+    if (is.null(reply)) {
+        log_event("subagent_query_timeout", subagent_id = canonical,
+                  timeout = timeout, level = "warn")
+        return(invisible(NULL))
+    }
+    reply
 }
 
 #' Collect the result of a previously-fired async subagent query.
@@ -890,9 +900,9 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
 #' @param wait If TRUE (default), block up to `timeout` seconds waiting
 #'   for the child to finish. If FALSE, poll once and return
 #'   immediately.
-#' @param timeout Maximum seconds to block when `wait = TRUE`. On
-#'   timeout the child is left running; caller may collect again later
-#'   or kill explicitly.
+#' @param timeout Maximum seconds to block when `wait = TRUE`; `Inf`
+#'   waits until the child replies. On timeout the child is left
+#'   running; caller may collect again later or kill explicitly.
 #' @return Reply text (character) when ready; NULL when still running.
 #' @examples
 #' \dontrun{
@@ -912,10 +922,14 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     if (is.null(info[["pending"]])) {
         stop("No pending query for subagent ", canonical, call. = FALSE)
     }
-    if (isTRUE(wait)) {
-        timeout_ms <- as.integer(timeout * 1000L)
-    } else {
+    if (!isTRUE(wait)) {
         timeout_ms <- 0L
+    } else if (is.finite(timeout)) {
+        timeout_ms <- as.integer(timeout * 1000)
+    } else {
+        # processx reads -1 as "wait forever"; Inf * 1000 would land as
+        # NA and poll_process() would refuse it.
+        timeout_ms <- -1L
     }
     state <- info$session$poll_process(timeout_ms)
     if (state != "ready") {
@@ -937,6 +951,21 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     }
     log_event("subagent_collect", subagent_id = canonical)
     .format_subagent_reply(msg$result)
+}
+
+#' Is a query still pending on this subagent?
+#'
+#' Lets a caller tell a bounded wait that ran out (slot still pending)
+#' from a query that never started. Unknown ids are FALSE.
+#' @param id Subagent identifier (UUID, prefix, or sequence number).
+#' @return Logical scalar.
+#' @noRd
+.subagent_still_pending <- function(id) {
+    canonical <- resolve_subagent_id(id)
+    if (is.null(canonical)) {
+        return(FALSE)
+    }
+    !is.null(.subagent_registry[[canonical]][["pending"]])
 }
 
 #' Kill a subagent.

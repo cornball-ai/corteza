@@ -12,13 +12,15 @@ UUID prefix, or the per-session sequence number printed by
 
 \item{prompt}{Prompt to send.}
 
-\item{wait}{If TRUE (default), block until the child replies and
-return the reply text. If FALSE, fire the prompt and return the
-canonical id invisibly; caller must collect via
+\item{wait}{If TRUE (default), block up to `timeout` seconds for the
+child's reply and return the reply text. If FALSE, fire the prompt
+and return the canonical id invisibly; caller must collect via
 [subagent_collect()].}
 
-\item{timeout}{Timeout in seconds (currently advisory; callr-level
-hard timeouts are future work).}
+\item{timeout}{Maximum seconds to block when `wait = TRUE`; `Inf`
+waits until the child replies. On timeout the query stays pending:
+collect it later with [subagent_collect()] or end it with
+[subagent_kill()].}
 
 \item{return_name}{Optional single name or `.h_NNN` handle for a
 value the child should hand back. When set, the child must have
@@ -29,9 +31,11 @@ subagent with `run_r` (the `work` preset). For `wait = FALSE` the
 name is captured now and applied when collected.}
 }
 \value{
-Reply text (character) when `wait = TRUE`, with a handle
-  block appended when `return_name` resolved. Canonical id
-  (character, invisibly) when `wait = FALSE`.
+Reply text (character) when `wait = TRUE` and the child
+  replied within `timeout`, with a handle block appended when
+  `return_name` resolved; NULL (invisibly) when the timeout elapsed
+  and the query is still pending. Canonical id (character,
+  invisibly) when `wait = FALSE`.
 }
 \description{
 Sends a prompt to a running subagent. Inside the child it runs
@@ -40,10 +44,15 @@ replies, any tool calls it makes resolve against the child's
 in-process skill registry, and history accumulates across queries.
 }
 \details{
-With `wait = FALSE` the call returns immediately after firing the
-prompt; the parent collects the reply later with [subagent_collect()].
-A subagent can only carry one in-flight async query at a time:
-firing a second one while the first is pending raises an error.
+Both paths fire the prompt the same way, as a one-shot call on the
+child's `callr::r_session`. With `wait = FALSE` the call returns
+immediately and the parent collects the reply later with
+[subagent_collect()]. With `wait = TRUE` the call collects on the
+parent's behalf, but only up to `timeout` seconds: a child that has
+not replied by then is left running with the query pending, and the
+call returns NULL so the parent's turn is never held indefinitely.
+A subagent can only carry one in-flight query at a time: firing a
+second one while the first is pending raises an error.
 
 }
 \examples{

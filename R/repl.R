@@ -353,6 +353,11 @@ run_repl_loop <- function(ctx) {
                 }
                 if (!is.null(res)) {
                     cat(sprintf("%s%s%s\n", ctx$palette$cyan, res, ctx$palette$reset))
+                } else if (.subagent_still_pending(sub_id)) {
+                    # NULL with the slot still pending is the bounded
+                    # wait running out, not an error (those print above).
+                    cat(sprintf("%sStill working; collect with /collect %s%s\n",
+                                ctx$palette$dim, sub_id, ctx$palette$reset))
                 }
                 next
             }

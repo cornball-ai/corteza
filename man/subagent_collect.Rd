@@ -12,9 +12,9 @@ subagent_collect(id, wait = TRUE, timeout = 60L)
 for the child to finish. If FALSE, poll once and return
 immediately.}
 
-\item{timeout}{Maximum seconds to block when `wait = TRUE`. On
-timeout the child is left running; caller may collect again later
-or kill explicitly.}
+\item{timeout}{Maximum seconds to block when `wait = TRUE`; `Inf`
+waits until the child replies. On timeout the child is left
+running; caller may collect again later or kill explicitly.}
 }
 \value{
 Reply text (character) when ready; NULL when still running.

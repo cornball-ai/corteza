@@ -1,7 +1,8 @@
 # Async query/collect — pure-function checks.
 # These exercise the registry-state guards (busy, no-pending,
-# unknown-id) without spinning up a callr child. The full async
-# round-trip is covered in test_subagent_callr.R (at_home-gated).
+# unknown-id) and the bounded sync wait without spinning up a callr
+# child. The full async round-trip is covered in test_subagent_callr.R
+# (at_home-gated).
 
 reg <- corteza:::.subagent_registry
 
@@ -77,6 +78,94 @@ busy_listing <- corteza:::format_subagent_list(corteza::subagent_list())
 expect_true(grepl("busy:", busy_listing))
 expect_true(grepl("checking the deploy log", busy_listing))
 
-# Cleanup: drop stub, restore prior entries.
+# Bounded sync wait. A fake r_session stands in for callr: call()
+# records the fired prompt, poll_process() reports the scripted states
+# in order and remembers the timeouts it was given, read() hands back
+# the child's result.
+fake_session <- function(states, result) {
+    env <- new.env()
+    env$fired <- list()
+    env$polls <- integer()
+    env$states <- states
+    env$call <- function(func, args) {
+        env$fired[[length(env$fired) + 1L]] <- args
+        invisible(NULL)
+    }
+    env$poll_process <- function(timeout) {
+        env$polls <- c(env$polls, as.integer(timeout))
+        state <- env$states[1]
+        if (length(env$states) > 1L) env$states <- env$states[-1]
+        state
+    }
+    env$read <- function() list(result = result, error = NULL)
+    env
+}
+stub_entry <- function(id, session) {
+    list(id = id, seq = 2L, task = "stub", started_at = Sys.time(),
+         timeout = Sys.time() + 600, pending = NULL,
+         pending_started_at = NULL, session = session)
+}
+
+# A child that does not answer inside the deadline: the sync query
+# returns NULL, the prompt stays pending, and the poll got the deadline
+# in milliseconds rather than blocking forever.
+slow_id <- "slow-12345678"
+reg[[slow_id]] <- stub_entry(slow_id, fake_session(
+    c("timeout", "ready"),
+    list(reply = "late pong",
+         usage = list(input_tokens = 1L, output_tokens = 1L, total_tokens = 2L))
+))
+res <- corteza::subagent_query(slow_id, "slow prompt", wait = TRUE, timeout = 0.01)
+expect_null(res)
+expect_equal(reg[[slow_id]][["pending"]], "slow prompt")
+expect_equal(reg[[slow_id]]$session$polls, 10L)
+expect_equal(reg[[slow_id]]$session$fired[[1]]$p, "slow prompt")
+
+# One in flight: the timed-out query still occupies the slot.
+err <- tryCatch(corteza::subagent_query(slow_id, "again", wait = TRUE),
+                error = function(e) e)
+expect_inherits(err, "error")
+expect_true(grepl("is busy with", conditionMessage(err)))
+expect_true(corteza:::.subagent_still_pending(slow_id))
+
+# Collecting later picks up the reply, clears the slot, and books usage.
+got <- corteza::subagent_collect(slow_id, wait = TRUE, timeout = 1)
+expect_equal(got, "late pong")
+expect_null(reg[[slow_id]][["pending"]])
+expect_false(corteza:::.subagent_still_pending(slow_id))
+expect_equal(reg[[slow_id]]$cumulative_total_tokens, 2L)
+
+# A child that answers in time returns the reply directly, and Inf
+# maps to processx's wait-forever sentinel instead of NA.
+fast_id <- "fast-12345678"
+reg[[fast_id]] <- stub_entry(fast_id, fake_session("ready",
+    list(reply = "pong", usage = NULL)))
+expect_equal(corteza::subagent_query(fast_id, "ping", wait = TRUE, timeout = 5),
+             "pong")
+expect_null(reg[[fast_id]][["pending"]])
+expect_equal(reg[[fast_id]]$session$polls, 5000L)
+expect_equal(corteza::subagent_query(fast_id, "ping", wait = TRUE, timeout = Inf),
+             "pong")
+expect_equal(reg[[fast_id]]$session$polls, c(5000L, -1L))
+
+# The model-facing tool fires and collects by default, and says so.
+expect_false(formals(corteza::tool_query_subagent)$wait)
+out <- corteza::tool_query_subagent(fast_id, "queued prompt")
+expect_true(grepl("Queued for subagent", out$content[[1]]$text))
+expect_equal(reg[[fast_id]][["pending"]], "queued prompt")
+out <- corteza::tool_collect_subagent(fast_id, wait = TRUE, timeout = 1)
+expect_equal(out$content[[1]]$text, "pong")
+expect_null(reg[[fast_id]][["pending"]])
+
+# Asked to wait, the tool reports a slow child instead of hanging.
+reg[[slow_id]]$session$states <- "timeout"
+out <- corteza::tool_query_subagent(slow_id, "p", wait = TRUE, timeout = 0.01)
+expect_true(grepl("still working", out$content[[1]]$text))
+expect_true(corteza:::.subagent_still_pending(slow_id))
+
+# Unknown ids are simply not pending.
+expect_false(corteza:::.subagent_still_pending("does-not-exist"))
+
+# Cleanup: drop stubs, restore prior entries.
 rm(list = ls(reg), envir = reg)
 for (nm in names(prior)) reg[[nm]] <- prior[[nm]]
