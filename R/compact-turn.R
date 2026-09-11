@@ -299,11 +299,8 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
                       system = paste(
                                      "You are a helpful assistant that creates",
                                      "concise conversation summaries."))
-    # The subscription Codex endpoint rejects sampling controls. Keep the
-    # summarizer compatible with both current and older llm.api releases.
-    if (!identical(provider, "openai_codex")) {
-        chat_args$temperature <- 0.3
-    }
+    # Compaction does not need a sampling override. Provider-default sampling
+    # keeps it compatible with models that reject or deprecate `temperature`.
     result <- tryCatch(
                        do.call(llm.api::chat, chat_args),
                        error = function(e) {
