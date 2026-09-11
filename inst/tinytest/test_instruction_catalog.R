@@ -24,8 +24,17 @@ local({
     old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA_character_)
     old_data <- Sys.getenv("R_USER_DATA_DIR", unset = NA_character_)
     old_cache <- Sys.getenv("R_USER_CACHE_DIR", unset = NA_character_)
+    # session_setup() writes its `tools` argument to the process-global
+    # corteza.tools option. Without a restore, the "run_r" filter below
+    # outlives this file and test_mcp_handler.R then sees one tool.
+    # base:: on purpose: tinytest masks options() inside a test file and
+    # re-applies at file end whatever the masked call saw as the prior
+    # value. session_setup() sets the option through base, invisible to
+    # that mask, so a masked restore is recorded as the change and undone.
+    old_tools <- getOption("corteza.tools")
     Sys.setenv(R_USER_CONFIG_DIR = cfg_home, R_USER_DATA_DIR = data_home)
     on.exit({
+        base::options(corteza.tools = old_tools)
         if (is.na(old_config)) {
             Sys.unsetenv("R_USER_CONFIG_DIR")
         } else {
