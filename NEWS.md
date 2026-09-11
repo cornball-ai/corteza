@@ -1,4 +1,4 @@
-# corteza 0.7.1.48
+# corteza 0.7.1.47.1
 
 - **Context compaction uses provider-default sampling.** Internal summary calls
   no longer send an unnecessary `temperature`, allowing compaction to work with
