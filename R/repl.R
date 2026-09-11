@@ -341,23 +341,30 @@ run_repl_loop <- function(ctx) {
                 sub_prompt <- paste(parts[3:length(parts)], collapse = " ")
                 cat(sprintf("%sQuerying subagent %s...%s\n",
                             ctx$palette$dim, sub_id, ctx$palette$reset))
+                # Three outcomes, kept apart inside the handler: a reply,
+                # the bounded wait running out (NULL from a successful
+                # call), or an error, which prints here and nowhere else.
                 res <- .repl_interruptible(tryCatch({
-                    subagent_query(sub_id, sub_prompt)
+                    reply <- subagent_query(sub_id, sub_prompt)
+                    if (is.null(reply)) {
+                        structure(sub_id, class = "ask_pending")
+                    } else {
+                        reply
+                    }
                 }, error = function(e) {
                     cat(sprintf("%sError:%s %s\n",
                                 ctx$palette$bright_magenta, ctx$palette$reset, e$message))
-                    NULL
+                    structure(e$message, class = "ask_error")
                 }), ctx$palette)
-                if (inherits(res, "repl_interrupted")) {
+                if (inherits(res, "repl_interrupted") ||
+                    inherits(res, "ask_error")) {
                     next
                 }
-                if (!is.null(res)) {
-                    cat(sprintf("%s%s%s\n", ctx$palette$cyan, res, ctx$palette$reset))
-                } else if (.subagent_still_pending(sub_id)) {
-                    # NULL with the slot still pending is the bounded
-                    # wait running out, not an error (those print above).
+                if (inherits(res, "ask_pending")) {
                     cat(sprintf("%sStill working; collect with /collect %s%s\n",
                                 ctx$palette$dim, sub_id, ctx$palette$reset))
+                } else {
+                    cat(sprintf("%s%s%s\n", ctx$palette$cyan, res, ctx$palette$reset))
                 }
                 next
             }

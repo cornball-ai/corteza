@@ -50,7 +50,7 @@ immediately and the parent collects the reply later with
 [subagent_collect()]. With `wait = TRUE` the call collects on the
 parent's behalf, but only up to `timeout` seconds: a child that has
 not replied by then is left running with the query pending, and the
-call returns NULL so the parent's turn is never held indefinitely.
+call returns NULL, so the wait is bounded by default (`Inf` opts out).
 A subagent can only carry one in-flight query at a time: firing a
 second one while the first is pending raises an error.
 

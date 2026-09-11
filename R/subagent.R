@@ -792,7 +792,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #' [subagent_collect()]. With `wait = TRUE` the call collects on the
 #' parent's behalf, but only up to `timeout` seconds: a child that has
 #' not replied by then is left running with the query pending, and the
-#' call returns NULL so the parent's turn is never held indefinitely.
+#' call returns NULL, so the wait is bounded by default (`Inf` opts out).
 #' A subagent can only carry one in-flight query at a time: firing a
 #' second one while the first is pending raises an error.
 #'
@@ -852,6 +852,11 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
         stop(sprintf("Subagent %s is busy with: %s", canonical, snippet),
              call. = FALSE)
     }
+
+    # Refuse a bad timeout before anything is fired: once the call is
+    # in flight the slot is taken, and an NA that slipped through to
+    # poll_process() used to read as "wait forever".
+    .subagent_poll_ms(timeout, wait)
 
     # Both paths fire the same one-shot call. session$run() has no
     # timeout, so a sync query used to hold the parent's turn for as
@@ -922,15 +927,7 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     if (is.null(info[["pending"]])) {
         stop("No pending query for subagent ", canonical, call. = FALSE)
     }
-    if (!isTRUE(wait)) {
-        timeout_ms <- 0L
-    } else if (is.finite(timeout)) {
-        timeout_ms <- as.integer(timeout * 1000)
-    } else {
-        # processx reads -1 as "wait forever"; Inf * 1000 would land as
-        # NA and poll_process() would refuse it.
-        timeout_ms <- -1L
-    }
+    timeout_ms <- .subagent_poll_ms(timeout, wait)
     state <- info$session$poll_process(timeout_ms)
     if (state != "ready") {
         return(invisible(NULL))
@@ -953,19 +950,32 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     .format_subagent_reply(msg$result)
 }
 
-#' Is a query still pending on this subagent?
+#' Milliseconds for `poll_process()` from a wait/timeout pair.
 #'
-#' Lets a caller tell a bounded wait that ran out (slot still pending)
-#' from a query that never started. Unknown ids are FALSE.
-#' @param id Subagent identifier (UUID, prefix, or sequence number).
-#' @return Logical scalar.
+#' Validates first. `timeout` must be one non-negative number of
+#' seconds or `Inf`; anything else (NA, NaN, a string, a negative
+#' value, a vector) is an error rather than a silent fall-through to
+#' processx's `-1` sentinel, which means wait forever. `Inf`, and a
+#' finite value too large for an integer millisecond count, map to
+#' that sentinel deliberately. `wait = FALSE` polls once (0 ms).
+#' @param timeout Seconds.
+#' @param wait Logical.
+#' @return Integer milliseconds: 0, a positive count, or -1.
 #' @noRd
-.subagent_still_pending <- function(id) {
-    canonical <- resolve_subagent_id(id)
-    if (is.null(canonical)) {
-        return(FALSE)
+.subagent_poll_ms <- function(timeout, wait = TRUE) {
+    if (!is.numeric(timeout) || length(timeout) != 1L || is.na(timeout) ||
+        timeout < 0) {
+        stop("timeout must be a single non-negative number of seconds, or Inf",
+             call. = FALSE)
     }
-    !is.null(.subagent_registry[[canonical]][["pending"]])
+    if (!isTRUE(wait)) {
+        return(0L)
+    }
+    ms <- timeout * 1000
+    if (!is.finite(ms) || ms > .Machine$integer.max) {
+        return(-1L)
+    }
+    as.integer(ms)
 }
 
 #' Kill a subagent.

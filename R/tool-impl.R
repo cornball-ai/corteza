@@ -1087,18 +1087,18 @@ tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
 #'   immediately; collect the reply with `collect_subagent`. If TRUE,
 #'   block up to `timeout` seconds for the reply; on timeout the query
 #'   stays pending and `collect_subagent` fetches it later.
-#' @param timeout (numeric) Maximum seconds to block when `wait = TRUE`.
-#'   Default 60.
 #' @param return_name (string) Optional name or `.h_NNN` handle for a
 #'   value the subagent should hand back. Tell the subagent to leave
 #'   its result bound under this name (it needs `run_r`); the value is
 #'   returned as a handle you can reference in a later `run_r`, instead
 #'   of being inlined into the reply text.
+#' @param timeout (numeric) Maximum seconds to block when `wait = TRUE`.
+#'   Default 60.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_query_subagent <- function(id, prompt, wait = FALSE, timeout = 60,
-                                return_name = NULL) {
+tool_query_subagent <- function(id, prompt, wait = FALSE, return_name = NULL,
+                                timeout = 60) {
     tryCatch({
         result <- subagent_query(id, prompt, wait = wait, timeout = timeout,
                                  return_name = return_name)
