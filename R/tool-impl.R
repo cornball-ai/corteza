@@ -1075,30 +1075,43 @@ tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
     })
 }
 
-#' Send a prompt to a running subagent and get the response.
+#' Send a prompt to a running subagent.
+#'
+#' Fires the prompt and returns at once; collect the reply later with
+#' collect_subagent, so several subagents can run in parallel. wait =
+#' TRUE for a quick answer.
 #'
 #' @param id (character) Subagent ID.
 #' @param prompt (character) Prompt to send.
-#' @param wait (logical) If TRUE (default), block until the child
-#'   replies and return the reply. If FALSE, fire the prompt and
-#'   return immediately; caller collects via `collect_subagent`.
+#' @param wait (logical) If FALSE (default), fire the prompt and return
+#'   immediately; collect the reply with `collect_subagent`. If TRUE,
+#'   block up to `timeout` seconds for the reply; on timeout the query
+#'   stays pending and `collect_subagent` fetches it later.
 #' @param return_name (string) Optional name or `.h_NNN` handle for a
 #'   value the subagent should hand back. Tell the subagent to leave
 #'   its result bound under this name (it needs `run_r`); the value is
 #'   returned as a handle you can reference in a later `run_r`, instead
 #'   of being inlined into the reply text.
+#' @param timeout (numeric) Maximum seconds to block when `wait = TRUE`.
+#'   Default 60.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_query_subagent <- function(id, prompt, wait = TRUE, return_name = NULL) {
+tool_query_subagent <- function(id, prompt, wait = FALSE, return_name = NULL,
+                                timeout = 60) {
     tryCatch({
-        result <- subagent_query(id, prompt, wait = wait,
+        result <- subagent_query(id, prompt, wait = wait, timeout = timeout,
                                  return_name = return_name)
-        if (isTRUE(wait)) {
-            ok(result)
-        } else {
+        if (!isTRUE(wait)) {
             ok(sprintf("Queued for subagent %s; collect with collect_subagent.",
                        result))
+        } else if (is.null(result)) {
+            ok(sprintf(
+                       "Subagent %s still working after %s s; collect with collect_subagent.",
+                       id, format(timeout)
+                ))
+        } else {
+            ok(result)
         }
     }, error = function(e) {
         err(paste("Query failed:", e$message))

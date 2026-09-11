@@ -298,7 +298,7 @@ chat_help_text <- function() {
           "  /spawn <task> --preset <name> investigate (default), work, minimal",
           "  /spawn <task> --tools <a,b,c> Explicit tool filter",
           "  /agents                       List active subagents",
-          "  /ask <id> <prompt>            Query a subagent (blocks for reply)",
+          "  /ask <id> <prompt>            Query a subagent (waits up to 60 s; then /collect)",
           "  /queue <id> <prompt>          Fire a query and return; collect later",
           "  /collect <id>                 Collect a pending reply (NULL if still running)",
           "  /kill <id>                    Terminate a subagent",
