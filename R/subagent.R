@@ -955,9 +955,11 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
 #' Validates first. `timeout` must be one non-negative number of
 #' seconds or `Inf`; anything else (NA, NaN, a string, a negative
 #' value, a vector) is an error rather than a silent fall-through to
-#' processx's `-1` sentinel, which means wait forever. `Inf`, and a
-#' finite value too large for an integer millisecond count, map to
-#' that sentinel deliberately. `wait = FALSE` polls once (0 ms).
+#' processx's `-1` sentinel, which means wait forever. Only `Inf` maps
+#' to that sentinel. A finite value has to fit an integer millisecond
+#' count (about 24.8 days), and one that does not is an error too,
+#' since quietly waiting forever would contradict the bound the caller
+#' asked for. `wait = FALSE` polls once (0 ms).
 #' @param timeout Seconds.
 #' @param wait Logical.
 #' @return Integer milliseconds: 0, a positive count, or -1.
@@ -968,14 +970,20 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
         stop("timeout must be a single non-negative number of seconds, or Inf",
              call. = FALSE)
     }
+    max_seconds <- .Machine$integer.max / 1000
+    if (is.finite(timeout) && timeout > max_seconds) {
+        stop(sprintf(
+                     "timeout must be at most %.0f seconds; use Inf to wait without a bound",
+                     floor(max_seconds)
+            ), call. = FALSE)
+    }
     if (!isTRUE(wait)) {
         return(0L)
     }
-    ms <- timeout * 1000
-    if (!is.finite(ms) || ms > .Machine$integer.max) {
+    if (!is.finite(timeout)) {
         return(-1L)
     }
-    as.integer(ms)
+    as.integer(timeout * 1000)
 }
 
 #' Kill a subagent.

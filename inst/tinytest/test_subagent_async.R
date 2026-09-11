@@ -165,9 +165,14 @@ err <- tryCatch(corteza::subagent_collect(fast_id, wait = TRUE, timeout = NA),
                 error = function(e) e)
 expect_true(grepl("timeout must be", conditionMessage(err)))
 reg[[fast_id]]$pending <- NULL
-# Oversized finite values take the wait-forever sentinel, not NA.
-expect_equal(corteza:::.subagent_poll_ms(1e9), -1L)
+# A finite value past the integer-millisecond range is refused rather
+# than silently becoming the wait-forever sentinel; only Inf is that.
+err <- tryCatch(corteza:::.subagent_poll_ms(1e9), error = function(e) e)
+expect_inherits(err, "error")
+expect_true(grepl("use Inf", conditionMessage(err)))
+expect_equal(corteza:::.subagent_poll_ms(2147483), 2147483000L)
 expect_equal(corteza:::.subagent_poll_ms(2.5), 2500L)
+expect_equal(corteza:::.subagent_poll_ms(Inf), -1L)
 expect_equal(corteza:::.subagent_poll_ms(Inf, wait = FALSE), 0L)
 
 # The model-facing tool fires and collects by default, and says so.
