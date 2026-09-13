@@ -1,3 +1,12 @@
+# corteza 0.7.1.48
+
+- **The default room workspace uses the bot's localpart as written.**
+  `bot_default_cwd()` capitalised the Matrix localpart, so a bot logged in
+  as `@cornelius:cornball.ai` fell back to an empty `~/Cornelius` beside the
+  `~/cornelius` instance directory cerebro runs it from, and created it.
+  The fallback is now `~/cornelius`. An instance directory with other
+  capitalisation, such as `~/LilCasey`, was mismatched before and still is.
+
 # corteza 0.7.1.47
 
 - **Instruction roots accept top-level symlink aliases.** A symlink directly
