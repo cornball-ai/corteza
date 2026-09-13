@@ -371,14 +371,15 @@ expect_error(
   pattern = "Matrix ID"
 )
 
-# Agent name capitalization.
+# Agent name is the localpart as written, so the default workspace matches
+# the instance directory (~/cornelius, not ~/Cornelius).
 expect_equal(
   corteza:::bot_agent_name(list(user_id = "@cornelius:cornball.ai")),
-  "Cornelius"
+  "cornelius"
 )
 expect_equal(
   corteza:::bot_agent_name(list(user_id = "@cloptimus:example")),
-  "Cloptimus"
+  "cloptimus"
 )
 expect_equal(
   corteza:::bot_agent_name(list(user_id = "")),
