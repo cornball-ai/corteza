@@ -3,7 +3,14 @@
 \alias{subagent_query}
 \title{Query a subagent.}
 \usage{
-subagent_query(id, prompt, wait = TRUE, timeout = 60L, return_name = NULL)
+subagent_query(
+  id,
+  prompt,
+  wait = TRUE,
+  timeout = 60L,
+  return_name = NULL,
+  report = FALSE
+)
 }
 \arguments{
 \item{id}{Subagent identifier. Accepts the canonical UUID, a unique
@@ -29,6 +36,12 @@ resolved value is stashed in the parent handle store and the reply
 gains a `[stored as .h_NNN]` block referencing it. Requires a
 subagent with `run_r` (the `work` preset). For `wait = FALSE` the
 name is captured now and applied when collected.}
+
+\item{report}{Logical. When TRUE, require a structured handoff with
+status, notes, findings, concerns, deviations, open questions, and
+feedback. The ordinary character reply remains the return value;
+the report is rendered into it for model callers and retained in
+its `corteza_report` attribute for R callers.}
 }
 \value{
 Reply text (character) when `wait = TRUE` and the child

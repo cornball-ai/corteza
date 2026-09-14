@@ -290,12 +290,12 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
 .self_bounded_call_args <- function(tool_name, call_args, fn_formals,
                                     ctx = list()) {
     owns_timeout <- tool_name %in% .self_bounded_tools &&
-        "timeout" %in% fn_formals
+    "timeout" %in% fn_formals
     if (!owns_timeout || "timeout" %in% names(call_args)) {
         return(call_args)
     }
     configured <- ctx$session$config$skill_timeout %||%
-        ctx$config$skill_timeout
+    ctx$config$skill_timeout
     if (!is.null(configured)) {
         call_args$timeout <- configured
     }
@@ -331,7 +331,7 @@ register_skill_from_fn <- function(tool_name, fn, available = NULL) {
         # declare `ctx` in their signature.
         if ("ctx" %in% fn_formals) call_args$ctx <- ctx
         call_args <- .self_bounded_call_args(tool_name, call_args,
-                                             fn_formals, ctx)
+            fn_formals, ctx)
         do.call(fn, call_args)
     },
                   available = available

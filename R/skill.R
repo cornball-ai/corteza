@@ -422,7 +422,7 @@ call_skill <- function(name, args, ctx = list(), timeout = NULL,
     }
     if (is.null(timeout)) {
         timeout <- ctx$session$config$skill_timeout %||%
-            ctx$config$skill_timeout %||% 30L
+        ctx$config$skill_timeout %||% 30L
     }
     skill_run(skill, args, ctx, timeout, dry_run)
 }

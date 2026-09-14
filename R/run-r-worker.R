@@ -6,6 +6,10 @@
 # real wall-clock bound without throwing a delayed setTimeLimit interrupt into
 # unrelated host code.
 
+# Process-local child state. Each callr worker loads its own namespace, so this
+# environment cannot be shared across sessions or leak into the host process.
+.run_r_worker_state <- new.env(parent = emptyenv())
+
 #' Resolve the configured run_r execution mode.
 #' @noRd
 .run_r_mode <- function(ctx = list()) {
@@ -66,8 +70,7 @@
 #' @noRd
 .run_r_worker_child_init <- function(cwd) {
     worker_init(cwd)
-    assign(".corteza_run_r_workspace",
-           new.env(parent = globalenv()), envir = globalenv())
+    .run_r_worker_state$workspace <- new.env(parent = globalenv())
     invisible(TRUE)
 }
 
@@ -76,8 +79,7 @@
 #' available for inspection.
 #' @noRd
 .run_r_worker_child_eval <- function(code, bindings = list()) {
-    env <- get(".corteza_run_r_workspace", envir = globalenv(),
-               inherits = FALSE)
+    env <- .run_r_worker_state$workspace
     if (length(bindings)) {
         for (name in names(bindings)) {
             assign(name, bindings[[name]], envir = env)
@@ -87,21 +89,21 @@
     started <- Sys.time()
     interrupted <- FALSE
     result <- tryCatch(
-        tool_run_r(code, envir = env),
-        interrupt = function(e) {
-            interrupted <<- TRUE
-            err("run_r was interrupted by its host deadline")
-        }
+                       tool_run_r(code, envir = env),
+                       interrupt = function(e) {
+        interrupted <<- TRUE
+        err("run_r was interrupted by its host deadline")
+    }
     )
     after <- ls(env, all.names = TRUE)
     list(
-        result = result,
-        interrupted = interrupted,
-        elapsed_seconds = as.numeric(difftime(Sys.time(), started,
-                                              units = "secs")),
-        workspace = list(
-            added = setdiff(after, before),
-            removed = setdiff(before, after)
+         result = result,
+         interrupted = interrupted,
+         elapsed_seconds = as.numeric(difftime(Sys.time(), started,
+                units = "secs")),
+         workspace = list(
+                          added = setdiff(after, before),
+                          removed = setdiff(before, after)
         )
     )
 }
@@ -109,21 +111,19 @@
 #' Child-side handle reader for a supervised workspace.
 #' @noRd
 .run_r_worker_child_read_handle <- function(handle, op) {
-    env <- get(".corteza_run_r_workspace", envir = globalenv(),
-               inherits = FALSE)
+    env <- .run_r_worker_state$workspace
     store <- handle_store_for(env)
     value <- get_handle(handle, store = store)
     if (is.null(value) && !exists(handle, envir = store, inherits = FALSE)) {
         return(err(sprintf("Unknown handle: %s", handle)))
     }
     text <- tryCatch(
-        switch(op,
-               str = utils::capture.output(utils::str(value)),
-               head = utils::capture.output(utils::head(value)),
-               summary = utils::capture.output(summary(value)),
-               print = utils::capture.output(print(value)),
-               return(err(sprintf("Unknown op: %s", op)))),
-        error = function(e) paste("Error:", conditionMessage(e))
+                     switch(op, str = utils::capture.output(utils::str(value)),
+                            head = utils::capture.output(utils::head(value)),
+                            summary = utils::capture.output(summary(value)),
+                            print = utils::capture.output(print(value)),
+                            return(err(sprintf("Unknown op: %s", op)))),
+                     error = function(e) paste("Error:", conditionMessage(e))
     )
     ok(paste(text, collapse = "\n"))
 }
@@ -151,7 +151,7 @@
     }
     worker <- session$.run_r_worker
     if (!is.null(worker) && isTRUE(tryCatch(worker$is_alive(),
-                                            error = function(e) FALSE))) {
+                error = function(e) FALSE))) {
         return(worker)
     }
     if (!is.null(worker)) {
@@ -160,11 +160,13 @@
     worker <- callr::r_session$new(wait = TRUE)
     initialized <- tryCatch({
         worker$run(
-            function(path) {
-                library(corteza)
-                corteza:::.run_r_worker_child_init(path)
-            },
-            list(path = cwd)
+                   function(path) {
+            library(corteza)
+            init <- get(".run_r_worker_child_init",
+                        envir = asNamespace("corteza"), inherits = FALSE)
+            init(path)
+        },
+                   list(path = cwd)
         )
         TRUE
     }, error = function(e) {
@@ -177,7 +179,7 @@
     }
     session$.run_r_worker <- worker
     session$.run_r_worker_generation <-
-        as.integer(session$.run_r_worker_generation %||% 0L) + 1L
+    as.integer(session$.run_r_worker_generation %||% 0L) + 1L
     worker
 }
 
@@ -185,12 +187,9 @@
 #' @noRd
 .run_r_execution_result <- function(result, status, timeout, generation,
                                     state_retained, details = list()) {
-    result$execution <- c(list(
-        status = status,
-        timeout_seconds = timeout,
-        worker_generation = generation,
-        state_retained = isTRUE(state_retained)
-    ), details)
+    result$execution <- c(list(status = status, timeout_seconds = timeout,
+                               worker_generation = generation,
+                               state_retained = isTRUE(state_retained)), details)
     result
 }
 
@@ -203,29 +202,30 @@
     generation <- session$.run_r_worker_generation
     bindings <- ctx$run_r_bindings %||% list()
     if (!is.list(bindings) || (length(bindings) &&
-        (is.null(names(bindings)) || any(!nzchar(names(bindings)))))) {
+            (is.null(names(bindings)) || any(!nzchar(names(bindings)))))) {
         return(err("run_r_bindings must be a fully named list"))
     }
 
     call_error <- tryCatch({
         worker$call(
-            function(src, values) {
-                corteza:::.run_r_worker_child_eval(src, values)
-            },
-            list(src = code, values = bindings)
+                    function(src, values) {
+            evaluate <- get(".run_r_worker_child_eval",
+                            envir = asNamespace("corteza"), inherits = FALSE)
+            evaluate(src, values)
+        },
+                    list(src = code, values = bindings)
         )
         NULL
     }, error = function(e) e)
     if (inherits(call_error, "error")) {
-        alive <- isTRUE(tryCatch(worker$is_alive(),
-                                 error = function(e) FALSE))
+        alive <- isTRUE(tryCatch(worker$is_alive(), error = function(e) FALSE))
         if (!alive) {
             .run_r_worker_close(session)
         }
         return(.run_r_execution_result(
-            err(paste("run_r worker failed:", conditionMessage(call_error))),
-            "error", timeout, generation, alive
-        ))
+                                       err(paste("run_r worker failed:", conditionMessage(call_error))),
+                                       "error", timeout, generation, alive
+            ))
     }
     state <- worker$poll_process(as.integer(ceiling(timeout * 1000)))
     timed_out <- !identical(state, "ready")
@@ -237,42 +237,41 @@
     if (!identical(state, "ready")) {
         .run_r_worker_close(session)
         text <- sprintf(paste(
-            "run_r timed out after %s seconds and did not stop cleanly.",
-            "The worker was terminated, so its in-memory workspace was lost.",
-            "Before retrying, reduce or split the computation, reuse a helper,",
-            "parallelize only independent work, or use an approximation."
-        ), format(timeout))
-        return(.run_r_execution_result(
-            err(text), "killed", timeout, generation, FALSE
-        ))
+                              "run_r timed out after %s seconds and did not stop cleanly.",
+                              "The worker was terminated, so its in-memory workspace was lost.",
+                              "Before retrying, reduce or split the computation, reuse a helper,",
+                              "parallelize only independent work, or use an approximation."
+            ), format(timeout))
+        return(.run_r_execution_result(err(text), "killed", timeout,
+                                       generation, FALSE))
     }
 
     msg <- worker$read()
     if (!is.null(msg$error)) {
         return(.run_r_execution_result(
-            err(paste("run_r worker failed:", conditionMessage(msg$error))),
-            "error", timeout, generation, TRUE
-        ))
+                                       err(paste("run_r worker failed:", conditionMessage(msg$error))),
+                                       "error", timeout, generation, TRUE
+            ))
     }
     payload <- msg$result
     if (timed_out || isTRUE(payload$interrupted)) {
         text <- sprintf(paste(
-            "run_r timed out after %s seconds.",
-            "The worker remains available, but assignments completed before",
-            "the interrupt may persist. Inspect state before retrying. Optimize",
-            "or reuse helpers, reduce or split the work, parallelize only safe",
-            "independent work, or approximate when exact work is unnecessary."
-        ), format(timeout))
+                              "run_r timed out after %s seconds.",
+                              "The worker remains available, but assignments completed before",
+                              "the interrupt may persist. Inspect state before retrying. Optimize",
+                              "or reuse helpers, reduce or split the work, parallelize only safe",
+                              "independent work, or approximate when exact work is unnecessary."
+            ), format(timeout))
         return(.run_r_execution_result(
-            err(text), "timeout", timeout, generation, TRUE,
-            list(elapsed_seconds = payload$elapsed_seconds,
-                 workspace = payload$workspace)
-        ))
+                                       err(text), "timeout", timeout, generation, TRUE,
+                                       list(elapsed_seconds = payload$elapsed_seconds,
+                    workspace = payload$workspace)
+            ))
     }
     .run_r_execution_result(
-        payload$result, "ok", timeout, generation, TRUE,
-        list(elapsed_seconds = payload$elapsed_seconds,
-             workspace = payload$workspace)
+                            payload$result, "ok", timeout, generation, TRUE,
+                            list(elapsed_seconds = payload$elapsed_seconds,
+                                 workspace = payload$workspace)
     )
 }
 
@@ -303,18 +302,20 @@
     session <- ctx$session
     worker <- session$.run_r_worker
     if (is.null(worker) || !isTRUE(tryCatch(worker$is_alive(),
-                                            error = function(e) FALSE))) {
+                error = function(e) FALSE))) {
         return(err(sprintf("Unknown handle: %s", handle)))
     }
     result <- tryCatch(
-        worker$run(
-            function(id, action) {
-                corteza:::.run_r_worker_child_read_handle(id, action)
-            },
-            list(id = handle, action = op)
+                       worker$run(
+                                  function(id, action) {
+        read_handle <- get(".run_r_worker_child_read_handle",
+                           envir = asNamespace("corteza"), inherits = FALSE)
+        read_handle(id, action)
+    },
+                                  list(id = handle, action = op)
         ),
-        error = function(e) err(paste("read_handle worker failed:",
-                                     conditionMessage(e)))
+                       error = function(e) err(paste("read_handle worker failed:",
+                conditionMessage(e)))
     )
     result
 }

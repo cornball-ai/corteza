@@ -1243,12 +1243,12 @@ register_builtin_skills <- function() {
                     description = "R code to execute.",
                     required = TRUE
                 ), timeout = list(
-                    type = "number",
-                    description = paste(
+                                  type = "number",
+                                  description = paste(
                         "Optional wall-clock seconds for supervised execution.",
                         "The host may impose a lower maximum."
                     ),
-                    required = FALSE
+                                  required = FALSE
                 )),
                               handler = function(args, ctx) {
         .tool_run_r_session(args$code, args$timeout %||% NULL, ctx)

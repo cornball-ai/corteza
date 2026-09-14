@@ -191,6 +191,13 @@ expect_equal(out$content[[1]]$text, "pong")
 fired <- reg[[fast_id]]$session$fired
 expect_equal(fired[[length(fired)]]$rn, "artifact")
 
+# The additive report flag crosses the parent/child call boundary without
+# moving any existing positional argument.
+out <- corteza::tool_query_subagent(fast_id, "p", TRUE, NULL, 1, TRUE)
+expect_equal(out$content[[1]]$text, "pong")
+fired <- reg[[fast_id]]$session$fired
+expect_true(fired[[length(fired)]]$rp)
+
 # Asked to wait, the tool reports a slow child instead of hanging.
 reg[[slow_id]]$session$states <- "timeout"
 out <- corteza::tool_query_subagent(slow_id, "p", wait = TRUE, timeout = 0.01)

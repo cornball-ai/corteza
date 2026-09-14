@@ -286,12 +286,12 @@ subagent_seed_history <- function(history) {
 #' Structured handoff protocol requested from a subagent.
 #' @noRd
 .SUBAGENT_HANDOFF_INSTRUCTION <- paste(
-    "The parent requested a structured handoff. End your final reply with exactly",
-    "one <corteza_handoff> JSON object containing these keys:",
-    "status ('done', 'partial', or 'blocked'), notes, findings, concerns,",
-    "deviations, open_questions, and feedback. Every field after status is an",
-    "array of concise strings; use [] when empty. Put ordinary prose before the",
-    "trailer, and do not put Markdown fences around the JSON."
+                                       "The parent requested a structured handoff. End your final reply with exactly",
+                                       "one <corteza_handoff> JSON object containing these keys:",
+                                       "status ('done', 'partial', or 'blocked'), notes, findings, concerns,",
+                                       "deviations, open_questions, and feedback. Every field after status is an",
+                                       "array of concise strings; use [] when empty. Put ordinary prose before the",
+                                       "trailer, and do not put Markdown fences around the JSON."
 )
 
 #' Normalize a structured subagent report without trusting its shape.
@@ -340,20 +340,20 @@ subagent_seed_history <- function(history) {
                     report_error = "The child omitted the requested structured handoff."))
     }
     parsed <- tryCatch(
-        jsonlite::fromJSON(parts[2L], simplifyVector = FALSE),
-        error = function(e) e
+                       jsonlite::fromJSON(parts[2L], simplifyVector = FALSE),
+                       error = function(e) e
     )
     if (inherits(parsed, "error")) {
         return(list(reply = reply, report = NULL,
                     report_error = paste("Invalid structured handoff:",
-                                         conditionMessage(parsed))))
+                    conditionMessage(parsed))))
     }
     report <- tryCatch(.normalize_subagent_report(parsed),
                        error = function(e) e)
     if (inherits(report, "error")) {
         return(list(reply = reply, report = NULL,
                     report_error = paste("Invalid structured handoff:",
-                                         conditionMessage(report))))
+                    conditionMessage(report))))
     }
     clean <- sub(pattern, "", reply, perl = TRUE)
     list(reply = trimws(clean), report = report, report_error = NULL)
@@ -363,9 +363,9 @@ subagent_seed_history <- function(history) {
 #' @noRd
 .format_subagent_report <- function(report) {
     lines <- c("Structured handoff", paste0("Status: ", report$status))
-    labels <- c(notes = "Notes", findings = "Findings", concerns = "Concerns",
-                deviations = "Deviations", open_questions = "Open questions",
-                feedback = "Feedback")
+    labels <- c(notes = "Notes", findings = "Findings",
+                concerns = "Concerns", deviations = "Deviations",
+                open_questions = "Open questions", feedback = "Feedback")
     for (field in names(labels)) {
         values <- report[[field]] %||% character()
         if (length(values)) {
