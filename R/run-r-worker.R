@@ -69,7 +69,8 @@
     }
     for (cap in list(ctx$timeout_cap, session_cap)) {
         if (!is.null(cap)) {
-            if (is.numeric(cap) && length(cap) == 1L && !is.na(cap) && cap == 0) {
+            if (is.numeric(cap) && length(cap) == 1L && !is.na(cap) &&
+                cap == 0) {
                 stop("No run_r execution time remains under the host deadline",
                      call. = FALSE)
             }
@@ -180,7 +181,8 @@
                         value = get("get_handle", envir = ns)(id, store = store)))
         }
         if (exists(id, envir = env, inherits = FALSE)) {
-            return(list(found = TRUE, value = get(id, envir = env, inherits = FALSE)))
+            return(list(found = TRUE,
+                        value = get(id, envir = env, inherits = FALSE)))
         }
         list(found = FALSE, value = NULL)
     }, list(id = name))
@@ -199,8 +201,8 @@
     payload <- list(format = "corteza_workspace_v1", names = objects,
                     data = serialize(mget(objects, envir = env, inherits = FALSE),
                                      NULL, refhook = function(ref) {
-                        if (identical(ref, env)) "workspace" else NULL
-                    }))
+        if (identical(ref, env)) "workspace" else NULL
+    }))
     assign(.run_r_worker_checkpoint_key, payload, envir = snapshot)
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     tmp <- paste0(path, ".tmp-", Sys.getpid())
@@ -233,7 +235,8 @@
 #' session has no live worker. Callers must not replace a prior checkpoint with
 #' a stale parent copy when this function errors.
 #' @noRd
-.run_r_worker_save <- function(session, path, exclude = character(), timeout = 30) {
+.run_r_worker_save <- function(session, path, exclude = character(),
+                               timeout = 30) {
     if (!.run_r_worker_is_alive(session)) {
         return(NULL)
     }
@@ -248,13 +251,13 @@
     timeout <- .run_r_timeout_value(timeout, "checkpoint timeout")
     worker <- session$.run_r_worker
     worker$call(
-                              function(target, skipped) {
+                function(target, skipped) {
         save_worker <- get(".run_r_worker_child_save",
                            envir = asNamespace("corteza"),
                            inherits = FALSE)
         save_worker(target, skipped)
     },
-                              list(target = path, skipped = exclude)
+                list(target = path, skipped = exclude)
     )
     state <- worker$poll_process(as.integer(ceiling(timeout * 1000)))
     if (!identical(state, "ready")) {
