@@ -33,6 +33,9 @@
         stop(name, " must be a single positive finite number of seconds",
              call. = FALSE)
     }
+    if (x > floor(.Machine$integer.max / 1000)) {
+        stop(name, " exceeds the supported wall-clock limit", call. = FALSE)
+    }
     as.numeric(x)
 }
 

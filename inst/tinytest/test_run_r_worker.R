@@ -101,6 +101,8 @@ expect_true(grepl("host maximum of 5", too_long$content[[1L]]$text,
 bad <- call_worker(s, "1", timeout = -1)
 expect_true(bad$isError)
 expect_true(grepl("positive finite", bad$content[[1L]]$text, fixed = TRUE))
+expect_error(corteza:::.run_r_timeout_value(1e9, "timeout"),
+             pattern = "supported wall-clock limit")
 
 # A tighter external lease can only narrow the configured/requested timeout.
 capped <- call_worker(s, "1", timeout = 4, cap = 0.5)

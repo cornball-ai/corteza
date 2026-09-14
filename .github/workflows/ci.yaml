@@ -31,6 +31,8 @@ jobs:
           R CMD INSTALL "$RUNNER_TEMP/llm.api"
 
       - name: Dependencies
+        env:
+          GITHUB_PAT: ${{ github.token }}
         run: ./run.sh install_deps
 
       # The Matrix stack is Suggests, and _R_CHECK_FORCE_SUGGESTS_=false

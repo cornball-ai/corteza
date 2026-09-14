@@ -165,7 +165,7 @@ continue to use the host process. Durable or unattended hosts can opt into
 `"worker"`. Each session then owns one persistent `callr::r_session`: R objects,
 attached packages, the working directory, helpers, and handles survive between
 `run_r` calls, but do not enter the host's `.GlobalEnv`. A model may request a
-shorter timeout on an individual call; `skill_timeout_max` is the host-owned
+different timeout on an individual call; `skill_timeout_max` is the host-owned
 ceiling. A host may narrow it further for an expiring external lease.
 
 On a clean interrupt, assignments completed before the deadline remain in the
