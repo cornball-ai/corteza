@@ -110,6 +110,19 @@ unlink(checkpoint)
 empty_session <- corteza::new_session("cli")
 expect_null(corteza:::.run_r_worker_save(empty_session, tempfile()))
 
+# Checkpoint I/O cannot leave a host blocked forever after analysis completes.
+save_session <- new.env(parent = emptyenv())
+save_closed <- FALSE
+save_session$.run_r_worker <- list(
+    is_alive = function() TRUE,
+    call = function(...) invisible(NULL),
+    poll_process = function(...) "timeout",
+    close = function() save_closed <<- TRUE)
+expect_error(corteza:::.run_r_worker_save(save_session, tempfile()),
+             pattern = "checkpoint timed out")
+expect_true(save_closed)
+expect_null(save_session$.run_r_worker)
+
 # A model request cannot raise the host maximum and invalid values are refused.
 too_long <- call_worker(s, "1", timeout = 6)
 expect_true(too_long$isError)

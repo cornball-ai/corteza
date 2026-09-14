@@ -233,7 +233,7 @@
 #' session has no live worker. Callers must not replace a prior checkpoint with
 #' a stale parent copy when this function errors.
 #' @noRd
-.run_r_worker_save <- function(session, path, exclude = character()) {
+.run_r_worker_save <- function(session, path, exclude = character(), timeout = 30) {
     if (!.run_r_worker_is_alive(session)) {
         return(NULL)
     }
@@ -245,7 +245,9 @@
     if (!is.character(exclude) || anyNA(exclude)) {
         stop("worker checkpoint exclusions must be character", call. = FALSE)
     }
-    session$.run_r_worker$run(
+    timeout <- .run_r_timeout_value(timeout, "checkpoint timeout")
+    worker <- session$.run_r_worker
+    worker$call(
                               function(target, skipped) {
         save_worker <- get(".run_r_worker_child_save",
                            envir = asNamespace("corteza"),
@@ -254,6 +256,18 @@
     },
                               list(target = path, skipped = exclude)
     )
+    state <- worker$poll_process(as.integer(ceiling(timeout * 1000)))
+    if (!identical(state, "ready")) {
+        .run_r_worker_close(session)
+        stop("run_r workspace checkpoint timed out; worker terminated and prior checkpoint retained",
+             call. = FALSE)
+    }
+    message <- worker$read()
+    if (!is.null(message$error)) {
+        stop("run_r workspace checkpoint failed: ", conditionMessage(message$error),
+             call. = FALSE)
+    }
+    message$result
 }
 
 #' Close a session's supervised worker, if one exists.
