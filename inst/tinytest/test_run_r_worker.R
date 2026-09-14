@@ -61,7 +61,10 @@ expect_true(grepl("int [1:10, 1:10]", read$content[[1L]]$text, fixed = TRUE))
 # A host can atomically checkpoint the worker without copying values through
 # the callr control channel. Dynamic host bindings and handle aliases can be
 # excluded, while model-authored helpers round-trip through base load().
-call_worker(s, "helper_value <- 99L", bindings = list(fr = list(state = "PLAY")))
+call_worker(
+    s,
+    "helper_value <- 99L; helper_fun <- function() fr$state",
+    bindings = list(fr = list(state = "OLD")))
 checkpoint <- tempfile(fileext = ".RData")
 saved <- corteza:::.run_r_worker_save(s, checkpoint, exclude = "fr")
 expect_true(file.exists(checkpoint))
@@ -71,7 +74,20 @@ expect_false(any(grepl("^\\.h_[0-9]+$", saved)))
 restored <- new.env(parent = emptyenv())
 loaded <- load(checkpoint, envir = restored)
 expect_true("helper_value" %in% loaded)
+expect_true("helper_fun" %in% loaded)
 expect_equal(restored$helper_value, 99L)
+expect_false(exists("fr", envir = environment(restored$helper_fun),
+                    inherits = FALSE))
+
+# Seeding a new worker rehomes a tagged top-level helper. It resolves against
+# the new authoritative binding, not the stale frame present at checkpoint.
+s2 <- make_worker_session()
+rehomed <- call_worker(
+    s2, "helper_fun()",
+    bindings = list(helper_fun = restored$helper_fun,
+                    fr = list(state = "CURRENT")))
+expect_equal(rehomed$content[[1L]]$text, '[1] "CURRENT"')
+corteza:::.run_r_worker_close(s2)
 unlink(checkpoint)
 
 empty_session <- corteza::new_session("cli")

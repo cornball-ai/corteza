@@ -9,6 +9,7 @@
 # Process-local child state. Each callr worker loads its own namespace, so this
 # environment cannot be shared across sessions or leak into the host process.
 .run_r_worker_state <- new.env(parent = emptyenv())
+.run_r_worker_rehome_attr <- "corteza_worker_rehome"
 
 #' Resolve the configured run_r execution mode.
 #' @noRd
@@ -82,7 +83,13 @@
     env <- .run_r_worker_state$workspace
     if (length(bindings)) {
         for (name in names(bindings)) {
-            assign(name, bindings[[name]], envir = env)
+            value <- bindings[[name]]
+            if (is.function(value) &&
+                isTRUE(attr(value, .run_r_worker_rehome_attr, exact = TRUE))) {
+                attr(value, .run_r_worker_rehome_attr) <- NULL
+                environment(value) <- env
+            }
+            assign(name, value, envir = env)
         }
     }
     before <- ls(env, all.names = TRUE)
@@ -134,10 +141,19 @@
     env <- .run_r_worker_state$workspace
     objects <- setdiff(ls(env, all.names = TRUE), exclude)
     objects <- objects[!grepl("^\\.h_[0-9]+$", objects)]
+    snapshot <- new.env(parent = emptyenv())
+    for (name in objects) {
+        value <- get(name, envir = env, inherits = FALSE)
+        if (is.function(value) && identical(environment(value), env)) {
+            environment(value) <- emptyenv()
+            attr(value, .run_r_worker_rehome_attr) <- TRUE
+        }
+        assign(name, value, envir = snapshot)
+    }
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     tmp <- paste0(path, ".tmp-", Sys.getpid())
     on.exit(unlink(tmp), add = TRUE)
-    save(list = objects, envir = env, file = tmp)
+    save(list = objects, envir = snapshot, file = tmp)
     if (!isTRUE(file.rename(tmp, path))) {
         stop("could not atomically replace run_r workspace checkpoint",
              call. = FALSE)
