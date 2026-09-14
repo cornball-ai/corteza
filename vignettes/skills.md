@@ -124,7 +124,13 @@ print(df)
 
 This skill is **stateless**: each `Rscript` call starts a fresh R session.
 
-For **stateful** R (objects persist across turns), corteza's built-in `run_r` tool maintains a long-lived R session in the MCP server process. The agent picks `run_r` for interactive analysis and `Rscript` for portable one-shots.
+For **stateful** R (objects persist across turns), corteza's built-in `run_r`
+tool maintains a long-lived R session. By default that is the host process, for
+compatibility with embedded R callers. With `run_r_mode = "worker"`, it is a
+private persistent `callr::r_session` owned by the corteza session, with the
+same stateful programming model and an enforceable wall-clock deadline. The
+agent picks `run_r` for interactive analysis and `Rscript` for portable
+one-shots.
 
 | Use case | Approach |
 |----------|----------|

@@ -146,6 +146,18 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$skill_timeout)) {
         config$skill_timeout <- 30L
     }
+    # Host ceiling for supervised run_r calls. A model may request a
+    # different timeout, but it cannot raise this bound. Long-running hosts
+    # with a shorter external lease (ARC, for example) can narrow it per call.
+    if (is.null(config$skill_timeout_max)) {
+        config$skill_timeout_max <- 1800L
+    }
+    # Preserve the historical embedded-globalenv contract by default.
+    # Durable/unattended hosts opt into a private persistent callr worker,
+    # which makes the timeout enforceable without leaking interrupts.
+    if (is.null(config$run_r_mode)) {
+        config$run_r_mode <- "in_process"
+    }
 
     # Dry-run mode (validate tools without executing)
     if (is.null(config$dry_run)) {

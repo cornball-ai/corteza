@@ -73,6 +73,35 @@ local({
     expect_true(is.numeric(seen[[2]]$elapsed_ms))
 })
 
+# Additive executor metadata reaches observers without changing the text that
+# existing tool handlers return to the model.
+local({
+    seen <- list()
+    s <- corteza::new_session("cli",
+                             approval_cb = function(call, decision) TRUE)
+    corteza::add_observer(s, function(event) {
+        seen[[length(seen) + 1L]] <<- event
+    })
+    custom <- function(name, args) {
+        out <- corteza:::ok("same text")
+        out$execution <- list(status = "ok", worker_generation = 2L)
+        out$structuredContent <- list(report = list(status = "done"))
+        out
+    }
+    op <- options(corteza.personal_paths = character(),
+                  corteza.policy = function(call) "allow")
+    on.exit(options(op), add = TRUE)
+
+    h <- corteza:::.make_tool_handler(s, tool_executor = custom)
+    result <- h("list_files", list(path = "/tmp"))
+    ran <- Filter(function(event) identical(event$outcome, "ran"), seen)[[1L]]
+
+    expect_equal(result, "same text")
+    expect_equal(ran$execution$status, "ok")
+    expect_equal(ran$execution$worker_generation, 2L)
+    expect_equal(ran$structured$report$status, "done")
+})
+
 # Observer fires on deny.
 local({
     seen <- list()

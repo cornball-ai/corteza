@@ -31,7 +31,11 @@ jobs:
           R CMD INSTALL "$RUNNER_TEMP/llm.api"
 
       - name: Dependencies
-        run: ./run.sh install_deps
+        env:
+          GITHUB_PAT: ${{ github.token }}
+        # run.sh invokes sudo without preserving GITHUB_PAT, reducing pinned
+        # Remotes downloads to GitHub's exhausted anonymous IP allowance.
+        run: sudo -E Rscript -e 'remotes::install_deps(".")'
 
       # The Matrix stack is Suggests, and _R_CHECK_FORCE_SUGGESTS_=false
       # lets check pass without it -- which it did, silently. Every Matrix

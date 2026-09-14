@@ -1,3 +1,21 @@
+# corteza 0.7.1.51
+
+- **Supervised persistent R execution is available without breaking embedded
+  sessions.** `run_r_mode = "worker"` gives a session one private persistent
+  `callr::r_session`, applies `skill_timeout`, bounds model requests with
+  `skill_timeout_max`, retains partial state after a clean interrupt, and routes
+  handle inspection back to the owning worker. The historical in-process
+  `tool_run_r(code, envir=)` contract remains the default. Timeout results tell
+  the agent to inspect retained state and optimize, split, parallelize, or
+  approximate before retrying. The session's `skill_timeout` now also supplies
+  the default argument to self-bounded `bash`, `cmd`, and `run_r_script` calls;
+  explicit caller values continue to win.
+- **Subagents can return Cursor-style structured handoffs.** An optional
+  `report = TRUE` request asks for status, notes, findings, concerns,
+  deviations, open questions, and feedback. The parent still receives a
+  character reply for compatibility; the report is rendered for the model and
+  retained in a `corteza_report` attribute for R callers.
+
 # corteza 0.7.1.50
 
 - **Subagent queries fire by default, and the sync wait is bounded.**

@@ -202,6 +202,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
              call. = FALSE)
     }
     s$compaction_prompt <- compaction_prompt
+    # A supervised run_r worker is created lazily and belongs to this session.
+    # Its R6 finalizer is a fallback; closing here also covers a session env
+    # being collected before the process exits.
+    reg.finalizer(s, function(env) {
+        tryCatch(.run_r_worker_close(env), error = function(e) NULL)
+    }, onexit = TRUE)
     s
 }
 
@@ -470,6 +476,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             # doesn't carry one.
             call_skill(name, as.list(args),
                        ctx = list(session = session, cwd = session$cwd %||% getwd()),
+                       timeout = session$config$skill_timeout %||% 30L,
                        dry_run = session_dry_run())
         }
     }
@@ -583,7 +590,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 
         start <- Sys.time()
 
-        outcome_text <- function(kind, text, success, diff = NULL) {
+        outcome_text <- function(kind, text, success, diff = NULL,
+                                 execution = NULL, structured = NULL) {
             event <- list(
                           call = call,
                           decision = decision,
@@ -594,7 +602,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                     difftime(Sys.time(), start, units = "secs")
                 ) * 1000,
                           turn_number = session$turn_number,
-                          diff = diff
+                          diff = diff,
+                          execution = execution,
+                          structured = structured
             )
             .fire_observers(session, event)
             text
@@ -716,7 +726,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         }
         result_text <- nudge(
                              admit_tool_result(.flatten_mcp_result(raw), tool = internal_name))
-        outcome_text("ran", result_text, success, diff = raw$diff)
+        outcome_text("ran", result_text, success, diff = raw$diff,
+                     execution = raw$execution,
+                     structured = raw$structuredContent)
     }
 }
 

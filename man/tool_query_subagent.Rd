@@ -3,7 +3,14 @@
 \alias{tool_query_subagent}
 \title{Send a prompt to a running subagent.}
 \usage{
-tool_query_subagent(id, prompt, wait = FALSE, return_name = NULL, timeout = 60)
+tool_query_subagent(
+  id,
+  prompt,
+  wait = FALSE,
+  return_name = NULL,
+  timeout = 60,
+  report = FALSE
+)
 }
 \arguments{
 \item{id}{(character) Subagent ID.}
@@ -23,6 +30,10 @@ of being inlined into the reply text.}
 
 \item{timeout}{(numeric) Maximum seconds to block when `wait = TRUE`.
 Default 60.}
+
+\item{report}{(logical) Request a structured completion handoff containing
+findings, concerns, deviations, open questions, and feedback. Default
+FALSE preserves the plain-reply behavior.}
 }
 \value{
 An MCP tool-result list.

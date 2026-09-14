@@ -414,11 +414,15 @@ skills_as_tools <- function() {
 #' @param dry_run If TRUE, validate only without executing
 #' @return Result from skill handler
 #' @noRd
-call_skill <- function(name, args, ctx = list(), timeout = 30L,
+call_skill <- function(name, args, ctx = list(), timeout = NULL,
                        dry_run = FALSE) {
     skill <- get_skill(name)
     if (is.null(skill)) {
         return(err(paste("Unknown skill:", name)))
+    }
+    if (is.null(timeout)) {
+        timeout <- ctx$session$config$skill_timeout %||%
+        ctx$config$skill_timeout %||% 30L
     }
     skill_run(skill, args, ctx, timeout, dry_run)
 }

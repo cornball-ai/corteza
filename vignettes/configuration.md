@@ -150,7 +150,36 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 |-----|------|---------|-------------|
 | `skill_paths` | string[] | `[]` | Legacy executable/file-skill configuration |
 | `skill_packages` | object[] | `[{"package":"base", ...}, {"package":"utils", ...}]` | R packages registered as tools |
-| `skill_timeout` | integer | `30` | Default skill execution timeout (seconds) |
+| `skill_timeout` | number | `30` | Default skill execution timeout (seconds) |
+| `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
+| `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
+
+`skill_timeout` is the default for ordinary skills and for self-bounded tools
+such as `bash`, `cmd`, and `run_r_script`. An explicit tool argument still wins.
+Those self-bounded tools enforce the deadline in processx/callr rather than via
+R's process-global `setTimeLimit()`.
+
+The default `run_r_mode = "in_process"` preserves the historical embedding
+contract: `tool_run_r(code, envir = globalenv())` and existing CLI/chat sessions
+continue to use the host process. Durable or unattended hosts can opt into
+`"worker"`. Each session then owns one persistent `callr::r_session`: R objects,
+attached packages, the working directory, helpers, and handles survive between
+`run_r` calls, but do not enter the host's `.GlobalEnv`. A model may request a
+different timeout on an individual call; `skill_timeout_max` is the host-owned
+ceiling. A host may narrow it further for an expiring external lease.
+
+For a changing deadline, an embedded host may set
+`session$run_r_timeout_cap <- function() seconds_remaining` before calling
+`turn()`. The callback takes no arguments and returns a non-negative number of
+seconds. The standard dispatcher evaluates it before every supervised R call;
+zero refuses execution. A numeric value also works. This host-owned cap can
+only shorten the configured or requested timeout, and needs no custom executor.
+
+On a clean interrupt, assignments completed before the deadline remain in the
+worker for inspection. If the worker cannot stop cleanly, corteza terminates it
+and reports that its in-memory state was lost. In-process mode rejects the new
+model-facing timeout argument because it cannot enforce it without risking a
+late interrupt in unrelated host code.
 
 ### Diagnostics
 
