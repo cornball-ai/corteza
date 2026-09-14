@@ -147,6 +147,28 @@
     ok(paste(text, collapse = "\n"))
 }
 
+#' Resolve a requested subagent artifact in its supervised workspace.
+#' @noRd
+.run_r_worker_return_value <- function(session, name) {
+    if (!.run_r_worker_is_alive(session)) {
+        return(list(found = FALSE, value = NULL))
+    }
+    session$.run_r_worker$run(function(id) {
+        ns <- asNamespace("corteza")
+        state <- get(".run_r_worker_state", envir = ns)
+        env <- state$workspace
+        store <- get("handle_store_for", envir = ns)(env)
+        if (exists(id, envir = store, inherits = FALSE)) {
+            return(list(found = TRUE,
+                        value = get("get_handle", envir = ns)(id, store = store)))
+        }
+        if (exists(id, envir = env, inherits = FALSE)) {
+            return(list(found = TRUE, value = get(id, envir = env, inherits = FALSE)))
+        }
+        list(found = FALSE, value = NULL)
+    }, list(id = name))
+}
+
 #' Child-side atomic checkpoint for a supervised workspace.
 #' @noRd
 .run_r_worker_child_save <- function(path, exclude = character()) {

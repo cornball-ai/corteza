@@ -272,7 +272,10 @@ subagent_seed_history <- function(history) {
 #' name only, no expression evaluation.
 #' @return list(found = logical, value = resolved object or NULL)
 #' @noRd
-.resolve_return_value <- function(name) {
+.resolve_return_value <- function(name, session = NULL) {
+    if (identical(.run_r_mode(list(session = session)), "worker")) {
+        return(.run_r_worker_return_value(session, name))
+    }
     if (name %in% list_handles()) {
         return(list(found = TRUE, value = get_handle(name)))
     }
@@ -545,7 +548,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
                                   "return_name '%s' is not a simple name or .h_NNN handle; no value returned.",
                                   as.character(return_name)[1])
         } else {
-            resolved <- .resolve_return_value(return_name)
+            resolved <- .resolve_return_value(return_name, .subagent_state$session)
             if (resolved$found) {
                 final <- resolved$value
                 final_found <- TRUE

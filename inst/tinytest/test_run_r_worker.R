@@ -58,6 +58,16 @@ read <- corteza:::call_skill(
 expect_false(isTRUE(read$isError))
 expect_true(grepl("int [1:10, 1:10]", read$content[[1L]]$text, fixed = TRUE))
 
+# Existing subagent return_name can retrieve worker objects or handles, and
+# never falls through to a same-named object in the host process.
+worker_artifact <- corteza:::.resolve_return_value(name, s)
+expect_true(worker_artifact$found)
+expect_equal(worker_artifact$value, 41L)
+worker_handle <- corteza:::.resolve_return_value(".h_001", s)
+expect_true(worker_handle$found)
+expect_equal(dim(worker_handle$value), c(10L, 10L))
+expect_false(corteza:::.resolve_return_value("unknown_worker_artifact", s)$found)
+
 # A host can atomically checkpoint the worker without copying values through
 # the callr control channel. Dynamic host bindings and handle aliases can be
 # excluded, while model-authored helpers round-trip through base load().
