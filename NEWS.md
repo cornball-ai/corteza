@@ -1,4 +1,4 @@
-# corteza 0.7.1.48
+# corteza 0.7.1.50
 
 - **Subagent queries fire by default, and the sync wait is bounded.**
   The `query_subagent` tool now defaults to `wait = FALSE`: the prompt
@@ -13,6 +13,21 @@
   before the prompt is fired. `/ask` in the REPL says so and points at
   `/collect`; the hall monitor reads a timed-out query as no verdict and
   escalates, as its contract already said it should.
+
+# corteza 0.7.1.49
+
+- **Context compaction uses provider-default sampling.** Internal summary calls
+  no longer send an unnecessary `temperature`, allowing compaction to work with
+  subscription endpoints and models such as Claude Opus 5 that reject it.
+
+# corteza 0.7.1.48
+
+- **The default room workspace uses the bot's localpart as written.**
+  `bot_default_cwd()` capitalised the Matrix localpart, so a bot logged in
+  as `@cornelius:cornball.ai` fell back to an empty `~/Cornelius` beside the
+  `~/cornelius` instance directory cerebro runs it from, and created it.
+  The fallback is now `~/cornelius`. An instance directory with other
+  capitalisation, such as `~/LilCasey`, was mismatched before and still is.
 
 # corteza 0.7.1.47
 
