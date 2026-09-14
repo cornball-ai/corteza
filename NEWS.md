@@ -1,3 +1,9 @@
+# corteza 0.7.1.49
+
+- **Context compaction uses provider-default sampling.** Internal summary calls
+  no longer send an unnecessary `temperature`, allowing compaction to work with
+  subscription endpoints and models such as Claude Opus 5 that reject it.
+
 # corteza 0.7.1.48
 
 - **The default room workspace uses the bot's localpart as written.**

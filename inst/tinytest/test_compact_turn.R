@@ -17,15 +17,18 @@ run_compact_summary_provider_test <- function() {
     assignInNamespace("chat", stub_chat, ns = "llm.api")
     slice <- list(list(role = "user", content = "earlier work"))
 
-    codex <- corteza:::compact_summarize_slice(
-        slice, provider = "openai_codex", model = "gpt-5.6-sol")
-    expect_equal(as.character(codex), "summary")
-    expect_null(seen$temperature)
-
-    anthropic <- corteza:::compact_summarize_slice(
-        slice, provider = "anthropic", model = "claude-opus-5")
-    expect_equal(as.character(anthropic), "summary")
-    expect_equal(seen$temperature, 0.3)
+    cases <- list(
+        c(provider = "openai_codex", model = "gpt-5.6-sol"),
+        c(provider = "anthropic_claude", model = "claude-opus-5"),
+        c(provider = "anthropic", model = "claude-opus-5"),
+        c(provider = "moonshot", model = "kimi-k2.5")
+    )
+    for (case in cases) {
+        result <- corteza:::compact_summarize_slice(
+            slice, provider = case[["provider"]], model = case[["model"]])
+        expect_equal(as.character(result), "summary")
+        expect_false("temperature" %in% names(seen))
+    }
 }
 run_compact_summary_provider_test()
 
