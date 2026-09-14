@@ -58,6 +58,25 @@ read <- corteza:::call_skill(
 expect_false(isTRUE(read$isError))
 expect_true(grepl("int [1:10, 1:10]", read$content[[1L]]$text, fixed = TRUE))
 
+# A host can atomically checkpoint the worker without copying values through
+# the callr control channel. Dynamic host bindings and handle aliases can be
+# excluded, while model-authored helpers round-trip through base load().
+call_worker(s, "helper_value <- 99L", bindings = list(fr = list(state = "PLAY")))
+checkpoint <- tempfile(fileext = ".RData")
+saved <- corteza:::.run_r_worker_save(s, checkpoint, exclude = "fr")
+expect_true(file.exists(checkpoint))
+expect_true("helper_value" %in% saved)
+expect_false("fr" %in% saved)
+expect_false(any(grepl("^\\.h_[0-9]+$", saved)))
+restored <- new.env(parent = emptyenv())
+loaded <- load(checkpoint, envir = restored)
+expect_true("helper_value" %in% loaded)
+expect_equal(restored$helper_value, 99L)
+unlink(checkpoint)
+
+empty_session <- corteza::new_session("cli")
+expect_null(corteza:::.run_r_worker_save(empty_session, tempfile()))
+
 # A model request cannot raise the host maximum and invalid values are refused.
 too_long <- call_worker(s, "1", timeout = 6)
 expect_true(too_long$isError)

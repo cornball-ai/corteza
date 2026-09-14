@@ -128,6 +128,64 @@
     ok(paste(text, collapse = "\n"))
 }
 
+#' Child-side atomic checkpoint for a supervised workspace.
+#' @noRd
+.run_r_worker_child_save <- function(path, exclude = character()) {
+    env <- .run_r_worker_state$workspace
+    objects <- setdiff(ls(env, all.names = TRUE), exclude)
+    objects <- objects[!grepl("^\\.h_[0-9]+$", objects)]
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    tmp <- paste0(path, ".tmp-", Sys.getpid())
+    on.exit(unlink(tmp), add = TRUE)
+    save(list = objects, envir = env, file = tmp)
+    if (!isTRUE(file.rename(tmp, path))) {
+        stop("could not atomically replace run_r workspace checkpoint",
+             call. = FALSE)
+    }
+    objects
+}
+
+#' Is a session's supervised worker alive?
+#' @noRd
+.run_r_worker_is_alive <- function(session) {
+    if (!is.environment(session) || is.null(session$.run_r_worker)) {
+        return(FALSE)
+    }
+    isTRUE(tryCatch(session$.run_r_worker$is_alive(),
+                    error = function(e) FALSE))
+}
+
+#' Atomically checkpoint a live supervised workspace.
+#'
+#' This is a host-side durability primitive, not a model tool. It writes from
+#' inside the worker, avoiding serialization of large R objects through the
+#' callr control channel. Returns the saved object names, or NULL when the
+#' session has no live worker. Callers must not replace a prior checkpoint with
+#' a stale parent copy when this function errors.
+#' @noRd
+.run_r_worker_save <- function(session, path, exclude = character()) {
+    if (!.run_r_worker_is_alive(session)) {
+        return(NULL)
+    }
+    if (!is.character(path) || length(path) != 1L || is.na(path) ||
+        !nzchar(path)) {
+        stop("worker checkpoint path must be one non-empty string",
+             call. = FALSE)
+    }
+    if (!is.character(exclude) || anyNA(exclude)) {
+        stop("worker checkpoint exclusions must be character", call. = FALSE)
+    }
+    session$.run_r_worker$run(
+                              function(target, skipped) {
+        save_worker <- get(".run_r_worker_child_save",
+                           envir = asNamespace("corteza"),
+                           inherits = FALSE)
+        save_worker(target, skipped)
+    },
+                              list(target = path, skipped = exclude)
+    )
+}
+
 #' Close a session's supervised worker, if one exists.
 #' @noRd
 .run_r_worker_close <- function(session) {
