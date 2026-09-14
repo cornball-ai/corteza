@@ -62,10 +62,19 @@
     }
     # A durable host such as ARC can provide a tighter, per-call deadline
     # derived from an authoritative external lease. It can only narrow.
-    cap <- ctx$timeout_cap
-    if (!is.null(cap)) {
-        cap <- .run_r_timeout_value(cap, "timeout_cap")
-        value <- min(value, cap)
+    session_cap <- session$run_r_timeout_cap
+    if (is.function(session_cap)) {
+        session_cap <- session_cap()
+    }
+    for (cap in list(ctx$timeout_cap, session_cap)) {
+        if (!is.null(cap)) {
+            if (is.numeric(cap) && length(cap) == 1L && !is.na(cap) && cap == 0) {
+                stop("No run_r execution time remains under the host deadline",
+                     call. = FALSE)
+            }
+            cap <- .run_r_timeout_value(cap, "timeout_cap")
+            value <- min(value, cap)
+        }
     }
     value
 }

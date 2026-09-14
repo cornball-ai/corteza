@@ -168,6 +168,13 @@ attached packages, the working directory, helpers, and handles survive between
 different timeout on an individual call; `skill_timeout_max` is the host-owned
 ceiling. A host may narrow it further for an expiring external lease.
 
+For a changing deadline, an embedded host may set
+`session$run_r_timeout_cap <- function() seconds_remaining` before calling
+`turn()`. The callback takes no arguments and returns a non-negative number of
+seconds. The standard dispatcher evaluates it before every supervised R call;
+zero refuses execution. A numeric value also works. This host-owned cap can
+only shorten the configured or requested timeout, and needs no custom executor.
+
 On a clean interrupt, assignments completed before the deadline remain in the
 worker for inspection. If the worker cannot stop cleanly, corteza terminates it
 and reports that its in-memory state was lost. In-process mode rejects the new

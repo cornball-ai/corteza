@@ -109,6 +109,20 @@ capped <- call_worker(s, "1", timeout = 4, cap = 0.5)
 expect_false(isTRUE(capped$isError))
 expect_equal(capped$execution$timeout_seconds, 0.5)
 
+# A host's dynamic deadline works through the standard session dispatcher,
+# without a custom tool executor. It may narrow, never raise, another cap.
+remaining <- 0.4
+s$run_r_timeout_cap <- function() remaining
+expect_equal(call_worker(s, "1", timeout = 4)$execution$timeout_seconds, 0.4)
+expect_equal(call_worker(s, "1", cap = 0.2)$execution$timeout_seconds, 0.2)
+remaining <- 0
+expired <- call_worker(s, "must_not_run <- TRUE")
+expect_true(expired$isError)
+expect_true(grepl("No run_r execution time remains", expired$content[[1]]$text))
+s$run_r_timeout_cap <- NULL
+expect_equal(call_worker(s, "exists('must_not_run', inherits = FALSE)")$content[[1]]$text,
+             "[1] FALSE")
+
 # Interrupt is caught inside the worker. Partial assignments are explicit and
 # inspectable afterward; the process and generation remain the same.
 generation <- s$.run_r_worker_generation
