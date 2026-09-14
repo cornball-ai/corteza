@@ -1314,16 +1314,19 @@ bot_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
                             room_name = room_name)$system
 }
 
-# Agent name for path-building. "@cornelius:cornball.ai" -> "Cornelius".
+# Agent name for path-building: the Matrix localpart, unchanged.
+# "@cornelius:cornball.ai" -> "cornelius", which is also the instance
+# directory cerebro runs the bot from. Capitalising it produced a second,
+# empty ~/Cornelius next to ~/cornelius.
 bot_agent_name <- function(cfg) {
     local <- sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
     if (!nzchar(local)) {
         return("agent")
     }
-    paste0(toupper(substr(local, 1L, 1L)), substr(local, 2L, nchar(local)))
+    local
 }
 
-# Default agent workspace: ~/<Name>. Created on first use.
+# Default agent workspace: ~/<localpart>. Created on first use.
 bot_default_cwd <- function(cfg) {
     dir <- path.expand(file.path("~", bot_agent_name(cfg)))
     dir.create(dir, showWarnings = FALSE, recursive = TRUE)
