@@ -1075,6 +1075,19 @@ tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
     })
 }
 
+#' Preserve an optional machine-readable subagent handoff on a tool result.
+#' @noRd
+.subagent_tool_result <- function(result) {
+    report <- attr(result, "corteza_report", exact = TRUE)
+    out <- ok(as.character(result))
+    if (!is.null(report)) {
+        # MCP clients that understand structuredContent can consume this
+        # directly; existing clients continue to read the same text block.
+        out$structuredContent <- list(report = report)
+    }
+    out
+}
+
 #' Send a prompt to a running subagent.
 #'
 #' Fires the prompt and returns at once; collect the reply later with
@@ -1094,14 +1107,17 @@ tool_spawn_subagent <- function(task, model = NULL, tools = NULL,
 #'   of being inlined into the reply text.
 #' @param timeout (numeric) Maximum seconds to block when `wait = TRUE`.
 #'   Default 60.
+#' @param report (logical) Request a structured completion handoff containing
+#'   findings, concerns, deviations, open questions, and feedback. Default
+#'   FALSE preserves the plain-reply behavior.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
 tool_query_subagent <- function(id, prompt, wait = FALSE, return_name = NULL,
-                                timeout = 60) {
+                                timeout = 60, report = FALSE) {
     tryCatch({
         result <- subagent_query(id, prompt, wait = wait, timeout = timeout,
-                                 return_name = return_name)
+                                 return_name = return_name, report = report)
         if (!isTRUE(wait)) {
             ok(sprintf("Queued for subagent %s; collect with collect_subagent.",
                        result))
@@ -1111,7 +1127,7 @@ tool_query_subagent <- function(id, prompt, wait = FALSE, return_name = NULL,
                        id, format(timeout)
                 ))
         } else {
-            ok(result)
+            .subagent_tool_result(result)
         }
     }, error = function(e) {
         err(paste("Query failed:", e$message))
@@ -1136,7 +1152,7 @@ tool_collect_subagent <- function(id, wait = TRUE, timeout = 60) {
             ok(sprintf("Subagent %s still working; try collect_subagent again.",
                        id))
         } else {
-            ok(result)
+            .subagent_tool_result(result)
         }
     }, error = function(e) {
         err(paste("Collect failed:", e$message))
@@ -1213,9 +1229,10 @@ register_builtin_skills <- function() {
     register_skill_from_fn("grep_files", tool_grep_files)
 
     # Code execution
-    # `envir` is a host-owned capability boundary, not model input. Keep the
-    # model-facing schema at its historical one-string contract while the
-    # exported R function supports explicit scoped evaluation.
+    # `envir` remains a host-owned capability boundary on tool_run_r(). The
+    # model may request a timeout, but the session dispatcher validates it
+    # against a host-owned maximum and only supervised worker mode can enforce
+    # it safely.
     register_skill(skill_spec(
                               "run_r",
                               paste("Execute R code in the persistent host session.",
@@ -1225,10 +1242,34 @@ register_builtin_skills <- function() {
                     type = "string",
                     description = "R code to execute.",
                     required = TRUE
+                ), timeout = list(
+                    type = "number",
+                    description = paste(
+                        "Optional wall-clock seconds for supervised execution.",
+                        "The host may impose a lower maximum."
+                    ),
+                    required = FALSE
                 )),
-                              handler = function(args, ctx) tool_run_r(args$code)
+                              handler = function(args, ctx) {
+        .tool_run_r_session(args$code, args$timeout %||% NULL, ctx)
+    }
         ))
-    register_skill_from_fn("read_handle", tool_read_handle)
+    register_skill(skill_spec(
+                              "read_handle",
+                              paste("Inspect a large value previously returned as a handle.",
+                                    "The handle remains in the same persistent R workspace."),
+                              params = list(
+                handle = list(type = "string", description = "Handle id, e.g. .h_001.",
+                              required = TRUE),
+                op = list(type = "string",
+                          description = "Inspection: str, head, summary, or print.",
+                          enum = c("str", "head", "summary", "print"),
+                          required = FALSE)
+            ),
+                              handler = function(args, ctx) {
+        .tool_read_handle_session(args$handle, args$op %||% "str", ctx)
+    }
+        ))
     register_skill_from_fn("run_r_script", tool_run_r_script)
 
     # Shell tool: prefer bash everywhere for cross-OS consistency. On

@@ -1,0 +1,133 @@
+# Supervised run_r keeps a private persistent workspace and enforces a real
+# wall-clock deadline without changing direct tool_run_r() behavior.
+
+make_worker_session <- function(timeout = 1, maximum = 5) {
+    s <- corteza::new_session("cli")
+    s$cwd <- tempdir()
+    s$config <- list(run_r_mode = "worker", skill_timeout = timeout,
+                     skill_timeout_max = maximum)
+    s
+}
+
+call_worker <- function(session, code, timeout = NULL, bindings = NULL,
+                        cap = NULL) {
+    args <- list(code = code)
+    if (!is.null(timeout)) {
+        args$timeout <- timeout
+    }
+    corteza:::call_skill(
+        "run_r", args,
+        ctx = list(session = session, cwd = session$cwd,
+                   run_r_bindings = bindings, timeout_cap = cap)
+    )
+}
+
+corteza::ensure_skills()
+
+# Historical direct API: same signature and the caller-owned environment.
+scoped <- new.env(parent = globalenv())
+direct <- corteza::tool_run_r("x <- 41L; x + 1L", envir = scoped)
+expect_false(isTRUE(direct$isError))
+expect_equal(get("x", scoped), 41L)
+expect_equal(direct$content[[1L]]$text, "[1] 42")
+
+# Worker state survives calls but does not leak into the host globalenv.
+s <- make_worker_session()
+name <- paste0("worker_only_", Sys.getpid())
+first <- call_worker(s, sprintf("%s <- 41L", name))
+second <- call_worker(s, sprintf("%s + 1L", name))
+expect_false(isTRUE(first$isError))
+expect_false(isTRUE(second$isError))
+expect_equal(second$content[[1L]]$text, "[1] 42")
+expect_false(exists(name, envir = globalenv(), inherits = FALSE))
+expect_equal(second$execution$status, "ok")
+expect_true(second$execution$state_retained)
+
+# Host bindings are synchronized before evaluation and remain worker-local.
+bound <- call_worker(s, "sum(fr)", bindings = list(fr = 1:4))
+expect_equal(bound$content[[1L]]$text, "[1] 10")
+expect_false(exists("fr", envir = globalenv(), inherits = FALSE))
+
+# Handles are owned and read by the same worker.
+large <- call_worker(s, "matrix(1:100, 10, 10)")
+expect_true(grepl("stored as .h_001", large$content[[1L]]$text, fixed = TRUE))
+read <- corteza:::call_skill(
+    "read_handle", list(handle = ".h_001", op = "str"),
+    ctx = list(session = s, cwd = s$cwd)
+)
+expect_false(isTRUE(read$isError))
+expect_true(grepl("int [1:10, 1:10]", read$content[[1L]]$text, fixed = TRUE))
+
+# A model request cannot raise the host maximum and invalid values are refused.
+too_long <- call_worker(s, "1", timeout = 6)
+expect_true(too_long$isError)
+expect_true(grepl("host maximum of 5", too_long$content[[1L]]$text,
+                  fixed = TRUE))
+bad <- call_worker(s, "1", timeout = -1)
+expect_true(bad$isError)
+expect_true(grepl("positive finite", bad$content[[1L]]$text, fixed = TRUE))
+
+# A tighter external lease can only narrow the configured/requested timeout.
+capped <- call_worker(s, "1", timeout = 4, cap = 0.5)
+expect_false(isTRUE(capped$isError))
+expect_equal(capped$execution$timeout_seconds, 0.5)
+
+# Interrupt is caught inside the worker. Partial assignments are explicit and
+# inspectable afterward; the process and generation remain the same.
+generation <- s$.run_r_worker_generation
+timed <- call_worker(s, "partial_value <- 7L; repeat {}", timeout = 0.2)
+expect_true(timed$isError)
+expect_equal(timed$execution$status, "timeout")
+expect_true(timed$execution$state_retained)
+expect_equal(s$.run_r_worker_generation, generation)
+after <- call_worker(s, "partial_value")
+expect_equal(after$content[[1L]]$text, "[1] 7")
+expect_equal(s$.run_r_worker_generation, generation)
+
+# In-process remains the default and an explicit timeout is not falsely
+# represented as enforceable there.
+plain <- corteza::new_session("console")
+plain$config <- list(run_r_mode = "in_process", skill_timeout = 0.01,
+                     skill_timeout_max = 1)
+local_name <- paste0("plain_", Sys.getpid())
+in_process <- corteza:::call_skill(
+    "run_r", list(code = sprintf("%s <- 9L", local_name)),
+    ctx = list(session = plain)
+)
+expect_false(isTRUE(in_process$isError))
+expect_equal(get(local_name, envir = globalenv()), 9L)
+rm(list = local_name, envir = globalenv())
+
+# The new model-facing timeout is never represented as enforceable in the
+# historical in-process mode. Direct tool_run_r(code, envir) is unchanged.
+unsupported <- corteza:::call_skill(
+    "run_r", list(code = "1", timeout = 0.1),
+    ctx = list(session = plain)
+)
+expect_true(unsupported$isError)
+expect_true(grepl("requires run_r_mode", unsupported$content[[1L]]$text))
+
+corteza:::.run_r_worker_close(s)
+expect_null(s$.run_r_worker)
+
+# config$skill_timeout now reaches the shared wrapper for ordinary skills.
+slow_skill <- corteza:::skill_spec(
+    "slow_test_skill", "test", list(),
+    function(args, ctx) {
+        started <- Sys.time()
+        repeat {
+            for (i in 1:5000) value <- i * i
+            if (as.numeric(difftime(Sys.time(), started,
+                                    units = "secs")) >= 0.2) break
+        }
+        corteza:::ok("finished")
+    }
+)
+corteza:::register_skill(slow_skill)
+cfg_session <- corteza::new_session("cli")
+cfg_session$config <- list(skill_timeout = 0.02)
+limited <- corteza:::call_skill(
+    "slow_test_skill", list(), ctx = list(session = cfg_session)
+)
+expect_true(limited$isError)
+expect_true(grepl("timed out", limited$content[[1L]]$text, fixed = TRUE))

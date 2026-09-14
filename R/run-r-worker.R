@@ -1,0 +1,320 @@
+# Supervised persistent R execution.
+#
+# The historical tool_run_r() path intentionally evaluates in the caller's
+# process and remains available for embedded sessions and direct callers. This
+# file adds a session-owned callr worker for unattended runtimes that need a
+# real wall-clock bound without throwing a delayed setTimeLimit interrupt into
+# unrelated host code.
+
+#' Resolve the configured run_r execution mode.
+#' @noRd
+.run_r_mode <- function(ctx = list()) {
+    session <- ctx$session
+    config <- session$config %||% ctx$config %||% list()
+    mode <- config$run_r_mode %||% "in_process"
+    if (!is.character(mode) || length(mode) != 1L || is.na(mode) ||
+        !mode %in% c("in_process", "worker")) {
+        stop("run_r_mode must be 'in_process' or 'worker'", call. = FALSE)
+    }
+    mode
+}
+
+#' Validate one positive finite timeout value.
+#' @noRd
+.run_r_timeout_value <- function(x, name) {
+    valid <- is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x) &&
+    x > 0
+    if (!isTRUE(valid)) {
+        stop(name, " must be a single positive finite number of seconds",
+             call. = FALSE)
+    }
+    as.numeric(x)
+}
+
+#' Resolve a model request against host-owned timeout bounds.
+#' @noRd
+.run_r_timeout <- function(requested = NULL, ctx = list()) {
+    session <- ctx$session
+    config <- session$config %||% ctx$config %||% list()
+    default <- .run_r_timeout_value(config$skill_timeout %||% 30,
+                                    "skill_timeout")
+    maximum <- .run_r_timeout_value(config$skill_timeout_max %||% 1800,
+                                    "skill_timeout_max")
+    if (default > maximum) {
+        stop("skill_timeout must not exceed skill_timeout_max", call. = FALSE)
+    }
+    value <- if (is.null(requested)) {
+        default
+    } else {
+        .run_r_timeout_value(requested, "timeout")
+    }
+    if (value > maximum) {
+        stop(sprintf("timeout exceeds the host maximum of %s seconds",
+                     format(maximum)), call. = FALSE)
+    }
+    # A durable host such as ARC can provide a tighter, per-call deadline
+    # derived from an authoritative external lease. It can only narrow.
+    cap <- ctx$timeout_cap
+    if (!is.null(cap)) {
+        cap <- .run_r_timeout_value(cap, "timeout_cap")
+        value <- min(value, cap)
+    }
+    value
+}
+
+#' Child-side initialization for a supervised run_r worker.
+#' @noRd
+.run_r_worker_child_init <- function(cwd) {
+    worker_init(cwd)
+    assign(".corteza_run_r_workspace",
+           new.env(parent = globalenv()), envir = globalenv())
+    invisible(TRUE)
+}
+
+#' Child-side evaluation. Interrupts become ordinary structured results so the
+#' worker remains alive and any assignments completed before interruption stay
+#' available for inspection.
+#' @noRd
+.run_r_worker_child_eval <- function(code, bindings = list()) {
+    env <- get(".corteza_run_r_workspace", envir = globalenv(),
+               inherits = FALSE)
+    if (length(bindings)) {
+        for (name in names(bindings)) {
+            assign(name, bindings[[name]], envir = env)
+        }
+    }
+    before <- ls(env, all.names = TRUE)
+    started <- Sys.time()
+    interrupted <- FALSE
+    result <- tryCatch(
+        tool_run_r(code, envir = env),
+        interrupt = function(e) {
+            interrupted <<- TRUE
+            err("run_r was interrupted by its host deadline")
+        }
+    )
+    after <- ls(env, all.names = TRUE)
+    list(
+        result = result,
+        interrupted = interrupted,
+        elapsed_seconds = as.numeric(difftime(Sys.time(), started,
+                                              units = "secs")),
+        workspace = list(
+            added = setdiff(after, before),
+            removed = setdiff(before, after)
+        )
+    )
+}
+
+#' Child-side handle reader for a supervised workspace.
+#' @noRd
+.run_r_worker_child_read_handle <- function(handle, op) {
+    env <- get(".corteza_run_r_workspace", envir = globalenv(),
+               inherits = FALSE)
+    store <- handle_store_for(env)
+    value <- get_handle(handle, store = store)
+    if (is.null(value) && !exists(handle, envir = store, inherits = FALSE)) {
+        return(err(sprintf("Unknown handle: %s", handle)))
+    }
+    text <- tryCatch(
+        switch(op,
+               str = utils::capture.output(utils::str(value)),
+               head = utils::capture.output(utils::head(value)),
+               summary = utils::capture.output(summary(value)),
+               print = utils::capture.output(print(value)),
+               return(err(sprintf("Unknown op: %s", op)))),
+        error = function(e) paste("Error:", conditionMessage(e))
+    )
+    ok(paste(text, collapse = "\n"))
+}
+
+#' Close a session's supervised worker, if one exists.
+#' @noRd
+.run_r_worker_close <- function(session) {
+    if (!is.environment(session)) {
+        return(invisible(FALSE))
+    }
+    worker <- session$.run_r_worker
+    if (!is.null(worker)) {
+        tryCatch(worker$close(), error = function(e) NULL)
+        session$.run_r_worker <- NULL
+        return(invisible(TRUE))
+    }
+    invisible(FALSE)
+}
+
+#' Start or return a live session-owned worker.
+#' @noRd
+.run_r_worker <- function(session, cwd = getwd()) {
+    if (!is.environment(session)) {
+        stop("worker run_r requires a session environment", call. = FALSE)
+    }
+    worker <- session$.run_r_worker
+    if (!is.null(worker) && isTRUE(tryCatch(worker$is_alive(),
+                                            error = function(e) FALSE))) {
+        return(worker)
+    }
+    if (!is.null(worker)) {
+        tryCatch(worker$close(), error = function(e) NULL)
+    }
+    worker <- callr::r_session$new(wait = TRUE)
+    initialized <- tryCatch({
+        worker$run(
+            function(path) {
+                library(corteza)
+                corteza:::.run_r_worker_child_init(path)
+            },
+            list(path = cwd)
+        )
+        TRUE
+    }, error = function(e) {
+        tryCatch(worker$close(), error = function(close_error) NULL)
+        stop("Failed to initialize run_r worker: ", conditionMessage(e),
+             call. = FALSE)
+    })
+    if (!isTRUE(initialized)) {
+        stop("Failed to initialize run_r worker", call. = FALSE)
+    }
+    session$.run_r_worker <- worker
+    session$.run_r_worker_generation <-
+        as.integer(session$.run_r_worker_generation %||% 0L) + 1L
+    worker
+}
+
+#' Attach structured execution metadata without changing the MCP text contract.
+#' @noRd
+.run_r_execution_result <- function(result, status, timeout, generation,
+                                    state_retained, details = list()) {
+    result$execution <- c(list(
+        status = status,
+        timeout_seconds = timeout,
+        worker_generation = generation,
+        state_retained = isTRUE(state_retained)
+    ), details)
+    result
+}
+
+#' Execute one expression through the session-owned worker.
+#' @noRd
+.run_r_worker_execute <- function(code, timeout, ctx = list()) {
+    session <- ctx$session
+    cwd <- ctx$cwd %||% session$cwd %||% getwd()
+    worker <- .run_r_worker(session, cwd)
+    generation <- session$.run_r_worker_generation
+    bindings <- ctx$run_r_bindings %||% list()
+    if (!is.list(bindings) || (length(bindings) &&
+        (is.null(names(bindings)) || any(!nzchar(names(bindings)))))) {
+        return(err("run_r_bindings must be a fully named list"))
+    }
+
+    call_error <- tryCatch({
+        worker$call(
+            function(src, values) {
+                corteza:::.run_r_worker_child_eval(src, values)
+            },
+            list(src = code, values = bindings)
+        )
+        NULL
+    }, error = function(e) e)
+    if (inherits(call_error, "error")) {
+        alive <- isTRUE(tryCatch(worker$is_alive(),
+                                 error = function(e) FALSE))
+        if (!alive) {
+            .run_r_worker_close(session)
+        }
+        return(.run_r_execution_result(
+            err(paste("run_r worker failed:", conditionMessage(call_error))),
+            "error", timeout, generation, alive
+        ))
+    }
+    state <- worker$poll_process(as.integer(ceiling(timeout * 1000)))
+    timed_out <- !identical(state, "ready")
+    if (timed_out) {
+        tryCatch(worker$interrupt(), error = function(e) NULL)
+        state <- worker$poll_process(2000L)
+    }
+
+    if (!identical(state, "ready")) {
+        .run_r_worker_close(session)
+        text <- sprintf(paste(
+            "run_r timed out after %s seconds and did not stop cleanly.",
+            "The worker was terminated, so its in-memory workspace was lost.",
+            "Before retrying, reduce or split the computation, reuse a helper,",
+            "parallelize only independent work, or use an approximation."
+        ), format(timeout))
+        return(.run_r_execution_result(
+            err(text), "killed", timeout, generation, FALSE
+        ))
+    }
+
+    msg <- worker$read()
+    if (!is.null(msg$error)) {
+        return(.run_r_execution_result(
+            err(paste("run_r worker failed:", conditionMessage(msg$error))),
+            "error", timeout, generation, TRUE
+        ))
+    }
+    payload <- msg$result
+    if (timed_out || isTRUE(payload$interrupted)) {
+        text <- sprintf(paste(
+            "run_r timed out after %s seconds.",
+            "The worker remains available, but assignments completed before",
+            "the interrupt may persist. Inspect state before retrying. Optimize",
+            "or reuse helpers, reduce or split the work, parallelize only safe",
+            "independent work, or approximate when exact work is unnecessary."
+        ), format(timeout))
+        return(.run_r_execution_result(
+            err(text), "timeout", timeout, generation, TRUE,
+            list(elapsed_seconds = payload$elapsed_seconds,
+                 workspace = payload$workspace)
+        ))
+    }
+    .run_r_execution_result(
+        payload$result, "ok", timeout, generation, TRUE,
+        list(elapsed_seconds = payload$elapsed_seconds,
+             workspace = payload$workspace)
+    )
+}
+
+#' Model-facing run_r dispatcher. Direct tool_run_r() callers retain the
+#' historical in-process contract; sessions may opt into worker mode.
+#' @noRd
+.tool_run_r_session <- function(code, timeout = NULL, ctx = list()) {
+    if (!identical(.run_r_mode(ctx), "worker")) {
+        if (!is.null(timeout)) {
+            return(err(paste("A run_r timeout requires run_r_mode = 'worker';",
+                             "the in-process compatibility mode cannot enforce it safely.")))
+        }
+        return(tool_run_r(code))
+    }
+    effective <- tryCatch(.run_r_timeout(timeout, ctx), error = function(e) e)
+    if (inherits(effective, "error")) {
+        return(err(conditionMessage(effective)))
+    }
+    .run_r_worker_execute(code, effective, ctx)
+}
+
+#' Model-facing handle reader that follows worker-owned handles.
+#' @noRd
+.tool_read_handle_session <- function(handle, op = "str", ctx = list()) {
+    if (!identical(.run_r_mode(ctx), "worker")) {
+        return(tool_read_handle(handle, op))
+    }
+    session <- ctx$session
+    worker <- session$.run_r_worker
+    if (is.null(worker) || !isTRUE(tryCatch(worker$is_alive(),
+                                            error = function(e) FALSE))) {
+        return(err(sprintf("Unknown handle: %s", handle)))
+    }
+    result <- tryCatch(
+        worker$run(
+            function(id, action) {
+                corteza:::.run_r_worker_child_read_handle(id, action)
+            },
+            list(id = handle, action = op)
+        ),
+        error = function(e) err(paste("read_handle worker failed:",
+                                     conditionMessage(e)))
+    )
+    result
+}

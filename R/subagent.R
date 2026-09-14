@@ -283,6 +283,99 @@ subagent_seed_history <- function(history) {
     list(found = FALSE, value = NULL)
 }
 
+#' Structured handoff protocol requested from a subagent.
+#' @noRd
+.SUBAGENT_HANDOFF_INSTRUCTION <- paste(
+    "The parent requested a structured handoff. End your final reply with exactly",
+    "one <corteza_handoff> JSON object containing these keys:",
+    "status ('done', 'partial', or 'blocked'), notes, findings, concerns,",
+    "deviations, open_questions, and feedback. Every field after status is an",
+    "array of concise strings; use [] when empty. Put ordinary prose before the",
+    "trailer, and do not put Markdown fences around the JSON."
+)
+
+#' Normalize a structured subagent report without trusting its shape.
+#' @noRd
+.normalize_subagent_report <- function(x) {
+    if (!is.list(x)) {
+        stop("handoff must be a JSON object", call. = FALSE)
+    }
+    status <- x$status %||% ""
+    if (!is.character(status) || length(status) != 1L || is.na(status) ||
+        !status %in% c("done", "partial", "blocked")) {
+        stop("handoff status must be done, partial, or blocked", call. = FALSE)
+    }
+    fields <- c("notes", "findings", "concerns", "deviations",
+                "open_questions", "feedback")
+    out <- list(status = status)
+    for (field in fields) {
+        value <- x[[field]] %||% list()
+        if (is.list(value)) {
+            value <- unlist(value, recursive = FALSE, use.names = FALSE)
+        }
+        if (!is.atomic(value)) {
+            stop("handoff field '", field, "' must be an array of strings",
+                 call. = FALSE)
+        }
+        value <- as.character(value)
+        value <- value[!is.na(value) & nzchar(trimws(value))]
+        out[[field]] <- unname(value)
+    }
+    out
+}
+
+#' Extract an optional terminal <corteza_handoff> JSON trailer.
+#' @noRd
+.extract_subagent_report <- function(reply, requested = FALSE) {
+    reply <- paste(as.character(reply %||% ""), collapse = "\n")
+    if (!isTRUE(requested)) {
+        return(list(reply = reply, report = NULL, report_error = NULL))
+    }
+    pattern <- paste0("(?s)\\s*<corteza_handoff>\\s*(\\{.*\\})\\s*",
+                      "</corteza_handoff>\\s*$")
+    match <- regexec(pattern, reply, perl = TRUE)
+    parts <- regmatches(reply, match)[[1L]]
+    if (length(parts) != 2L) {
+        return(list(reply = reply, report = NULL,
+                    report_error = "The child omitted the requested structured handoff."))
+    }
+    parsed <- tryCatch(
+        jsonlite::fromJSON(parts[2L], simplifyVector = FALSE),
+        error = function(e) e
+    )
+    if (inherits(parsed, "error")) {
+        return(list(reply = reply, report = NULL,
+                    report_error = paste("Invalid structured handoff:",
+                                         conditionMessage(parsed))))
+    }
+    report <- tryCatch(.normalize_subagent_report(parsed),
+                       error = function(e) e)
+    if (inherits(report, "error")) {
+        return(list(reply = reply, report = NULL,
+                    report_error = paste("Invalid structured handoff:",
+                                         conditionMessage(report))))
+    }
+    clean <- sub(pattern, "", reply, perl = TRUE)
+    list(reply = trimws(clean), report = report, report_error = NULL)
+}
+
+#' Render a structured handoff for the parent model.
+#' @noRd
+.format_subagent_report <- function(report) {
+    lines <- c("Structured handoff", paste0("Status: ", report$status))
+    labels <- c(notes = "Notes", findings = "Findings", concerns = "Concerns",
+                deviations = "Deviations", open_questions = "Open questions",
+                feedback = "Feedback")
+    for (field in names(labels)) {
+        values <- report[[field]] %||% character()
+        if (length(values)) {
+            lines <- c(lines, paste0(labels[[field]], ":"),
+                       paste0("- ", values))
+        }
+    }
+    paste(lines, collapse = "\n")
+}
+
 #' Format a subagent turn result for the parent.
 #'
 #' When the child resolved a value (`final_found`), stash it in the
@@ -295,17 +388,25 @@ subagent_seed_history <- function(history) {
 #' @noRd
 .format_subagent_reply <- function(res) {
     reply <- as.character(res$reply %||% "")
+    blocks <- reply[nzchar(reply)]
     if (isTRUE(res$final_found)) {
         stashed <- with_handle(res$final)
         block <- sprintf("%s\n\n[stored as %s]", stashed$summary,
                          stashed$handle)
-        return(paste(c(reply[nzchar(reply)], block), collapse = "\n\n"))
+        blocks <- c(blocks, block)
     }
     if (!is.null(res$final_note)) {
-        return(paste(c(reply[nzchar(reply)], res$final_note),
-                     collapse = "\n\n"))
+        blocks <- c(blocks, res$final_note)
     }
-    reply
+    if (!is.null(res$report)) {
+        blocks <- c(blocks, .format_subagent_report(res$report))
+    } else if (!is.null(res$report_error)) {
+        blocks <- c(blocks, paste("Structured handoff warning:",
+                                  res$report_error))
+    }
+    out <- paste(blocks, collapse = "\n\n")
+    attr(out, "corteza_report") <- res$report
+    out
 }
 
 #' Forward a prompt to the child-side turn session.
@@ -319,20 +420,30 @@ subagent_seed_history <- function(history) {
 #'   set, after the turn the child resolves it (handle store, then
 #'   globalenv) and ships the value back as `$final` so the parent can
 #'   stash it by handle. A bad or unresolved name yields `$final_note`.
+#' @param report Logical. Ask the child for a structured completion handoff
+#'   containing status, findings, concerns, deviations, questions, and feedback.
 #' @return A list with `$reply` (character, the LLM reply text),
 #'   `$usage` (list with `input_tokens`, `output_tokens`, `total_tokens`,
 #'   and optionally `cost` -- provider-dependent), and, when
 #'   `return_name` is set, `$final` (the resolved value) or
-#'   `$final_note` (why nothing was returned). Callers extract the
+#'   `$final_note` (why nothing was returned). When `report = TRUE`,
+#'   `$report` is the validated structured handoff or `$report_error`
+#'   explains why the child did not provide one. Callers extract the
 #'   reply and accumulate usage into the parent-side registry.
 #' @keywords internal
 #' @export
-subagent_turn_prompt <- function(prompt, return_name = NULL) {
+subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
     if (is.null(.subagent_state$session)) {
         stop("Subagent turn session not initialized", call. = FALSE)
     }
     pre_len <- length(.subagent_state$session$history %||% list())
-    result <- turn(prompt, .subagent_state$session)
+    query <- if (isTRUE(report)) {
+        paste(prompt, .SUBAGENT_HANDOFF_INSTRUCTION, sep = "\n\n")
+    } else {
+        prompt
+    }
+    result <- turn(query, .subagent_state$session)
+    extracted <- .extract_subagent_report(result$reply, requested = report)
 
     # Persist this turn's history slice to disk. The transcript is the
     # durable record (disk space is cheap); the in-memory history will
@@ -446,9 +557,10 @@ subagent_turn_prompt <- function(prompt, return_name = NULL) {
         }
     }
 
-    list(reply = as.character(result$reply %||% ""),
+    list(reply = extracted$reply,
          usage = result$usage %||% list(),
-         final = final, final_found = final_found, final_note = final_note)
+         final = final, final_found = final_found, final_note = final_note,
+         report = extracted$report, report_error = extracted$report_error)
 }
 
 SUBAGENT_DEFAULTS <- list(
@@ -659,6 +771,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                             "- Do not initiate new conversations\n",
                             "- Be concise in responses\n",
                             "- Report completion clearly\n",
+                            "- Follow the structured handoff protocol when a query requests it\n",
         if (!isTRUE(subcfg$allow_nested))
                             "- You cannot spawn additional subagents\n" else "",
                             "\n## Task\n", task
@@ -815,6 +928,11 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #'   gains a `[stored as .h_NNN]` block referencing it. Requires a
 #'   subagent with `run_r` (the `work` preset). For `wait = FALSE` the
 #'   name is captured now and applied when collected.
+#' @param report Logical. When TRUE, require a structured handoff with
+#'   status, notes, findings, concerns, deviations, open questions, and
+#'   feedback. The ordinary character reply remains the return value;
+#'   the report is rendered into it for model callers and retained in
+#'   its `corteza_report` attribute for R callers.
 #' @return Reply text (character) when `wait = TRUE` and the child
 #'   replied within `timeout`, with a handle block appended when
 #'   `return_name` resolved; NULL (invisibly) when the timeout elapsed
@@ -829,7 +947,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 #' }
 #' @export
 subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
-                           return_name = NULL) {
+                           return_name = NULL, report = FALSE) {
     canonical <- resolve_subagent_id(id)
     if (is.null(canonical)) {
         stop("Subagent not found: ", id, call. = FALSE)
@@ -853,6 +971,10 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
              call. = FALSE)
     }
 
+    if (!is.logical(report) || length(report) != 1L || is.na(report)) {
+        stop("report must be TRUE or FALSE", call. = FALSE)
+    }
+
     # Refuse a bad timeout before anything is fired: once the call is
     # in flight the slot is taken, and an NA that slipped through to
     # poll_process() used to read as "wait forever".
@@ -864,8 +986,8 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
     # deadline degrades a slow child into a pending query instead.
     tryCatch(
              info$session$call(
-                               function(p, rn) corteza::subagent_turn_prompt(p, rn),
-                               list(p = prompt, rn = return_name)
+                               function(p, rn, rp) corteza::subagent_turn_prompt(p, rn, rp),
+                               list(p = prompt, rn = return_name, rp = report)
         ),
              error = function(e) {
         stop("Subagent query failed to start: ",

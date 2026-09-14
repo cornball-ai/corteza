@@ -11,6 +11,28 @@ expect_true(all(c("bash", "cmd", "run_r", "run_r_script") %in%
                 corteza:::.self_bounded_tools))
 expect_false("read_file" %in% corteza:::.self_bounded_tools)
 
+# Self-bounded built-ins receive config$skill_timeout as their default at
+# dispatch, while an explicit call argument wins. Unrelated tools are
+# unchanged. This is additive to the functions' historical 30-second default.
+timeout_ctx <- list(session = list(config = list(skill_timeout = 17)))
+from_config <- corteza:::.self_bounded_call_args(
+    "run_r_script", list(code = "1"), c("code", "timeout"), timeout_ctx
+)
+expect_equal(from_config$timeout, 17)
+explicit <- corteza:::.self_bounded_call_args(
+    "run_r_script", list(code = "1", timeout = 4), c("code", "timeout"),
+    timeout_ctx
+)
+expect_equal(explicit$timeout, 4)
+unrelated <- corteza:::.self_bounded_call_args(
+    "read_file", list(path = "x"), c("path", "timeout"), timeout_ctx
+)
+expect_false("timeout" %in% names(unrelated))
+no_config <- corteza:::.self_bounded_call_args(
+    "run_r_script", list(code = "1"), c("code", "timeout"), list()
+)
+expect_false("timeout" %in% names(no_config))
+
 # --- behavioral: skill_run skips the R limit for an exempt tool, keeps
 # it for everyone else. A real timing test, so local-only. ---
 if (at_home()) {
