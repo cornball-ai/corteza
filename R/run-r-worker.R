@@ -10,6 +10,7 @@
 # environment cannot be shared across sessions or leak into the host process.
 .run_r_worker_state <- new.env(parent = emptyenv())
 .run_r_worker_rehome_attr <- "corteza_worker_rehome"
+.run_r_worker_checkpoint_key <- ".corteza_worker_checkpoint"
 
 #' Resolve the configured run_r execution mode.
 #' @noRd
@@ -93,6 +94,22 @@
 #' @noRd
 .run_r_worker_child_eval <- function(code, bindings = list()) {
     env <- .run_r_worker_state$workspace
+    checkpoint <- bindings[[.run_r_worker_checkpoint_key]]
+    if (!is.null(checkpoint)) {
+        if (!identical(checkpoint$format, "corteza_workspace_v1") ||
+            !is.raw(checkpoint$data)) {
+            stop("Invalid run_r workspace checkpoint", call. = FALSE)
+        }
+        restored <- unserialize(checkpoint$data, refhook = function(ref) {
+            if (!identical(ref, "workspace")) {
+                stop("Unknown run_r checkpoint reference", call. = FALSE)
+            }
+            env
+        })
+        bindings[[.run_r_worker_checkpoint_key]] <- NULL
+        restored[names(bindings)] <- bindings
+        bindings <- restored
+    }
     if (length(bindings)) {
         for (name in names(bindings)) {
             value <- bindings[[name]]
@@ -175,19 +192,20 @@
     env <- .run_r_worker_state$workspace
     objects <- setdiff(ls(env, all.names = TRUE), exclude)
     objects <- objects[!grepl("^\\.h_[0-9]+$", objects)]
+    # Preserve the entire object graph, including helpers nested in lists and
+    # child environments and shared references. Replace only the root workspace
+    # reference so exclusions cannot leak back through a closure's environment.
     snapshot <- new.env(parent = emptyenv())
-    for (name in objects) {
-        value <- get(name, envir = env, inherits = FALSE)
-        if (is.function(value) && identical(environment(value), env)) {
-            environment(value) <- emptyenv()
-            attr(value, .run_r_worker_rehome_attr) <- TRUE
-        }
-        assign(name, value, envir = snapshot)
-    }
+    payload <- list(format = "corteza_workspace_v1", names = objects,
+                    data = serialize(mget(objects, envir = env, inherits = FALSE),
+                                     NULL, refhook = function(ref) {
+                        if (identical(ref, env)) "workspace" else NULL
+                    }))
+    assign(.run_r_worker_checkpoint_key, payload, envir = snapshot)
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     tmp <- paste0(path, ".tmp-", Sys.getpid())
     on.exit(unlink(tmp), add = TRUE)
-    save(list = objects, envir = snapshot, file = tmp)
+    save(list = .run_r_worker_checkpoint_key, envir = snapshot, file = tmp)
     if (!isTRUE(file.rename(tmp, path))) {
         stop("could not atomically replace run_r workspace checkpoint",
              call. = FALSE)
@@ -209,7 +227,9 @@
 #'
 #' This is a host-side durability primitive, not a model tool. It writes from
 #' inside the worker, avoiding serialization of large R objects through the
-#' callr control channel. Returns the saved object names, or NULL when the
+#' callr control channel. The file contains a versioned serialized object graph;
+#' loading its envelope and passing it as run_r_bindings restores it on the
+#' next worker call. Returns the saved object names, or NULL when the
 #' session has no live worker. Callers must not replace a prior checkpoint with
 #' a stale parent copy when this function errors.
 #' @noRd
