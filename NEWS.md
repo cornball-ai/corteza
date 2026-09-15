@@ -1,3 +1,15 @@
+# corteza 0.7.1.52
+
+- **Per-tool output caps.** `config$tool_output_caps` raises the 50-line /
+  5000-character tool-result cap for named tools whose results the model must
+  see whole (a host-supplied game board, a table), keyed by tool name with
+  `max_chars` and/or `max_lines`. Other tools keep the universal cap, and a
+  result past the raised cap still stashes to a handle.
+- **Worker process options.** `config$run_r_worker_options` passes named
+  arguments to `callr::r_session_options()` for the supervised `run_r` worker
+  (`env`, `libpath`, `cmdargs`, `arch`), so a strict host can run only the
+  model's R under a sandbox wrapper at `R.home("bin")/<arch>/R`.
+
 # corteza 0.7.1.51
 
 - **Supervised persistent R execution is available without breaking embedded
