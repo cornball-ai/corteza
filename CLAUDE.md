@@ -126,6 +126,11 @@ run_r_script("x")    # Error: object 'x' not found
 
 Implications:
 
+- `run_r` returns what the code writes (`cat`, `print`, messages,
+  warnings) followed by the print of a visible final value, like a
+  console. Output written before an error is kept ahead of the
+  `Error:` line. The supervised worker path calls the same function,
+  so both `run_r_mode`s behave alike.
 - Large outputs from either tool are captured as handles (e.g.
   `.h_001`) for the agent to reference later; those are read-only
   snapshots, not workspace state.

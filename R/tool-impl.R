@@ -453,35 +453,58 @@ tool_run_r <- function(code, envir = globalenv()) {
     # Active handles are visible in `code` as regular R names.
     eval_env <- handle_eval_env(parent = envir, store = handle_store)
 
-    # Evaluate in a two-step dance: get the withVisible() result first
-    # (so we have the value, not just its printed representation), then
-    # separately capture what the print of that value would look like.
-    # Using <<- inside nested capture.output/tryCatch frames is fragile.
-    outcome <- tryCatch({
-        r <- withVisible(eval(parse(text = code), envir = eval_env))
-        printed <- if (isTRUE(r$visible)) {
-            utils::capture.output(print(r$value))
-        } else {
-            character(0)
-        }
-        list(ok = TRUE, value = r$value, visible = r$visible,
-             printed = paste(printed, collapse = "\n"))
-    }, error = function(e) {
-        list(ok = FALSE, message = paste("Error:", e$message))
-    })
+    # Evaluate like a console: everything the code writes to stdout,
+    # every message and warning, then the print of a visible final value.
+    # The error handler sits inside capture.output() so output written
+    # before a failure survives it. Notes accumulate in a private
+    # environment rather than through <<- across the nested frames.
+    acc <- new.env(parent = emptyenv())
+    acc$notes <- character()
+    acc$error <- NULL
+    r <- NULL
+    stream <- utils::capture.output(
+                                    r <- tryCatch(
+            withCallingHandlers(
+                                withVisible(eval(parse(text = code), envir = eval_env)),
+                                message = function(m) {
+        acc$notes <- c(acc$notes, sub("\n$", "", conditionMessage(m)))
+        invokeRestart("muffleMessage")
+    },
+                                warning = function(w) {
+        acc$notes <- c(acc$notes, paste("Warning:", conditionMessage(w)))
+        invokeRestart("muffleWarning")
+    }
+            ),
+            error = function(e) {
+        acc$error <- e
+        NULL
+    }
+        ),
+                                    type = "output"
+    )
+    streams <- c(stream, acc$notes)
 
-    if (!isTRUE(outcome$ok)) {
-        return(ok(outcome$message))
+    if (!is.null(acc$error)) {
+        text <- paste(c(streams, paste("Error:", conditionMessage(acc$error))),
+                      collapse = "\n")
+        return(ok(admit_tool_result(text, tool = "run_r", store = handle_store)))
+    }
+    outcome <- list(value = r$value, visible = isTRUE(r$visible))
+    outcome$printed <- if (outcome$visible) {
+        paste(utils::capture.output(print(outcome$value)), collapse = "\n")
+    } else {
+        character(0)
     }
 
     # Large visible results get stashed as handles so the LLM sees a
     # summary instead of the full print.
-    text <- if (isTRUE(outcome$visible) && .is_large_result(outcome$value)) {
+    text <- if (outcome$visible && .is_large_result(outcome$value)) {
         stashed <- with_handle(outcome$value, store = handle_store)
         sprintf("%s\n\n[stored as %s]", stashed$summary, stashed$handle)
     } else {
         outcome$printed
     }
+    text <- paste(c(streams, text), collapse = "\n")
 
     if (isTRUE(capture_workspace)) {
         # Auto-capture new bindings into the workspace. Hidden names
@@ -1236,6 +1259,8 @@ register_builtin_skills <- function() {
     register_skill(skill_spec(
                               "run_r",
                               paste("Execute R code in the persistent host session.",
+                                    "Returns what the code prints (cat, print, messages,",
+                                    "warnings) followed by the value of the last expression.",
                                     "Assignments survive subsequent run_r calls; large results",
                                     "are returned as reusable handles."),
                               params = list(code = list(
