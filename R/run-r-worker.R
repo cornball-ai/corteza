@@ -300,14 +300,26 @@
 .run_r_worker_session_options <- function(config) {
     extra <- config$run_r_worker_options
     if (is.null(extra)) {
-        return(callr::r_session_options())
-    }
-    if (!is.list(extra) || is.null(names(extra)) ||
-        any(!nzchar(names(extra)))) {
+        extra <- list()
+    } else if (!is.list(extra) || is.null(names(extra)) ||
+               any(!nzchar(names(extra)))) {
         stop("config$run_r_worker_options must be a named list of ",
              "callr::r_session_options() arguments", call. = FALSE)
     }
-    do.call(callr::r_session_options, extra)
+    opts <- do.call(callr::r_session_options, extra)
+    # A bare callr worker starts R with only `base` plus callr's own tools on
+    # the search path, so common helpers from utils/stats/methods (str, tail,
+    # head, setNames, capture.output, ...) are missing. In-process run_r
+    # inherits the front end's default packages, so worker run_r would behave
+    # differently. Start the worker with R's normal default set via
+    # R_DEFAULT_PACKAGES so both run_r_modes see the same base environment. A
+    # host that set R_DEFAULT_PACKAGES itself (in run_r_worker_options$env)
+    # wins.
+    if (!any(names(opts$env) == "R_DEFAULT_PACKAGES")) {
+        opts$env <- c(opts$env,
+                      R_DEFAULT_PACKAGES = "datasets,utils,grDevices,graphics,stats,methods")
+    }
+    opts
 }
 
 #' Start or return a live session-owned worker.
