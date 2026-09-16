@@ -34,6 +34,83 @@
 .compact_max_chars_per_message <- 16000L
 .compact_max_total_chars <- 120000L
 
+#' Per-tool output caps from the session config.
+#'
+#' `config$tool_output_caps` is a named list keyed by tool name; each
+#' entry is a list with `max_chars` and/or `max_lines`. A host whose own
+#' tool returns a large result the model must see whole (a game board,
+#' a table) raises the cap for that tool alone. A field left out keeps
+#' the tool's default budget, which is the read budget for the
+#' content-read tools.
+#'
+#' @param config Session config list, or NULL.
+#' @param tool Tool name.
+#' @return NULL when the tool has no entry, else a list with integer
+#'   `max_chars` and `max_lines`.
+#' @noRd
+.tool_output_caps_for <- function(config, tool) {
+    caps <- config$tool_output_caps
+    if (!is.list(caps) || length(tool) != 1L || is.null(caps[[tool]])) {
+        return(NULL)
+    }
+    spec <- caps[[tool]]
+    if (!is.list(spec)) {
+        stop("config$tool_output_caps$", tool,
+             " must be a list with max_chars and/or max_lines", call. = FALSE)
+    }
+    read <- tool %in% .tool_output_read_tools
+    pick <- function(field, default) {
+        value <- spec[[field]]
+        if (is.null(value)) {
+            return(default)
+        }
+        value <- suppressWarnings(as.numeric(value))
+        if (length(value) != 1L || is.na(value) || value < 1) {
+            stop("config$tool_output_caps$", tool, "$", field,
+                 " must be a positive number", call. = FALSE)
+        }
+        as.integer(min(value, .Machine$integer.max))
+    }
+    list(max_chars = pick("max_chars", if (read) {
+                .tool_output_read_max_chars
+            } else {
+                .tool_output_max_chars
+            }),
+         max_lines = pick("max_lines", if (read) {
+                .tool_output_read_max_lines
+            } else {
+                .tool_output_max_lines
+            }))
+}
+
+#' Reject a malformed `config$tool_output_caps` before any tool runs.
+#' @noRd
+.validate_tool_output_caps <- function(config) {
+    caps <- config$tool_output_caps
+    if (is.null(caps)) {
+        return(invisible(NULL))
+    }
+    if (!is.list(caps) || is.null(names(caps)) || any(!nzchar(names(caps)))) {
+        stop("config$tool_output_caps must be a named list keyed by tool name",
+             call. = FALSE)
+    }
+    for (tool in names(caps)) {
+        .tool_output_caps_for(config, tool)
+    }
+    invisible(NULL)
+}
+
+#' admit_tool_result() under the session's cap for one tool.
+#' @noRd
+.admit_tool_result_for <- function(session, text, tool) {
+    caps <- .tool_output_caps_for(session$config, tool)
+    if (is.null(caps)) {
+        return(admit_tool_result(text, tool = tool))
+    }
+    admit_tool_result(text, tool = tool, max_chars = caps$max_chars,
+                      max_lines = caps$max_lines)
+}
+
 #' Cap a flattened tool-result string before it reaches model context.
 #'
 #' Under both limits the text passes through unchanged. Over either

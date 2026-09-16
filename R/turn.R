@@ -452,6 +452,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 .make_tool_handler <- function(session, tool_executor = NULL) {
+    .validate_tool_output_caps(session$config)
     # Either session$dry_run (set by inst/bin/corteza per REPL
     # iteration) or session$config$dry_run (chat()'s /dryrun toggle)
     # counts. We read at call time so toggles between turns take
@@ -560,8 +561,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                             error = function(e) err(paste("Tool error:",
                         conditionMessage(e)))
             )
-            return(nudge(admit_tool_result(.flatten_mcp_result(raw),
-                        tool = internal_name)))
+            return(nudge(.admit_tool_result_for(
+                        session, .flatten_mcp_result(raw), internal_name)))
         }
 
         # Resolve once up front so policy() and the sticky classifier
@@ -724,8 +725,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
-        result_text <- nudge(
-                             admit_tool_result(.flatten_mcp_result(raw), tool = internal_name))
+        result_text <- nudge(.admit_tool_result_for(
+                session, .flatten_mcp_result(raw), internal_name))
         outcome_text("ran", result_text, success, diff = raw$diff,
                      execution = raw$execution,
                      structured = raw$structuredContent)

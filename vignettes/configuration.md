@@ -129,6 +129,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_compact_pct` | integer | `90` | Auto-compaction threshold |
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
+| `tool_output_caps` | object | `{}` | Per-tool result caps, e.g. `{"game_action": {"max_chars": 400000, "max_lines": 20000}}`; other tools keep the 50-line / 5000-char cap |
 | `context_include_soul` | boolean or null | null | Include `SOUL.md` (null = saber default) |
 | `context_include_user` | boolean or null | null | Include `USER.md` (null = saber default) |
 | `instruction_roots` | object | `{}` | Additional named roots for lazily loaded `SKILL.md` instructions |
@@ -153,6 +154,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `skill_timeout` | number | `30` | Default skill execution timeout (seconds) |
 | `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
+| `run_r_worker_options` | object | `{}` | Named arguments for `callr::r_session_options()` when `run_r_mode` is `"worker"`: `env`, `libpath`, `cmdargs`, `arch`, ... |
 
 `skill_timeout` is the default for ordinary skills and for self-bounded tools
 such as `bash`, `cmd`, and `run_r_script`. An explicit tool argument still wins.
@@ -167,6 +169,20 @@ attached packages, the working directory, helpers, and handles survive between
 `run_r` calls, but do not enter the host's `.GlobalEnv`. A model may request a
 different timeout on an individual call; `skill_timeout_max` is the host-owned
 ceiling. A host may narrow it further for an expiring external lease.
+
+`run_r_worker_options` shapes that worker process without touching the host:
+a private environment or library path, extra command-line arguments, or
+`arch`, which callr resolves to `R.home("bin")/<arch>/R`. A strict host can
+install a wrapper there that starts R inside a sandbox (bubblewrap, say), so
+only the model's R runs confined. `env` replaces callr's default
+(`TERM=dumb`) rather than extending it.
+
+Every tool result is capped at 50 lines or 5000 characters before it reaches
+the model (content reads such as `read_file` get a larger budget), with the
+full text kept behind a handle. `tool_output_caps` raises the cap for named
+tools whose results the model must see whole: a host-supplied game board, a
+table, a structured report. Past the raised cap the result still stashes to
+a handle.
 
 For a changing deadline, an embedded host may set
 `session$run_r_timeout_cap <- function() seconds_remaining` before calling

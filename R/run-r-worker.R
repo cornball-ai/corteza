@@ -288,6 +288,28 @@
     invisible(FALSE)
 }
 
+#' callr options for a session-owned worker.
+#'
+#' `config$run_r_worker_options` is a named list of arguments for
+#' `callr::r_session_options()`, so a host can give the worker its own
+#' environment, library path, command-line arguments, or R binary
+#' layout (`arch`, which callr resolves to `R.home("bin")/<arch>/R`).
+#' That last one lets a strict host run only the model's R under a
+#' sandbox wrapper while the host process itself stays unconfined.
+#' @noRd
+.run_r_worker_session_options <- function(config) {
+    extra <- config$run_r_worker_options
+    if (is.null(extra)) {
+        return(callr::r_session_options())
+    }
+    if (!is.list(extra) || is.null(names(extra)) ||
+        any(!nzchar(names(extra)))) {
+        stop("config$run_r_worker_options must be a named list of ",
+             "callr::r_session_options() arguments", call. = FALSE)
+    }
+    do.call(callr::r_session_options, extra)
+}
+
 #' Start or return a live session-owned worker.
 #' @noRd
 .run_r_worker <- function(session, cwd = getwd()) {
@@ -302,7 +324,8 @@
     if (!is.null(worker)) {
         tryCatch(worker$close(), error = function(e) NULL)
     }
-    worker <- callr::r_session$new(wait = TRUE)
+    worker <- callr::r_session$new(
+                                   options = .run_r_worker_session_options(session$config), wait = TRUE)
     initialized <- tryCatch({
         worker$run(
                    function(path) {
