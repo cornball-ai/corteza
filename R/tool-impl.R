@@ -453,41 +453,55 @@ tool_run_r <- function(code, envir = globalenv()) {
     # Active handles are visible in `code` as regular R names.
     eval_env <- handle_eval_env(parent = envir, store = handle_store)
 
-    # Evaluate like a console: everything the code writes to stdout,
-    # every message and warning, then the print of a visible final value.
-    # The error handler sits inside capture.output() so output written
-    # before a failure survives it. Notes accumulate in a private
-    # environment rather than through <<- across the nested frames.
-    acc <- new.env(parent = emptyenv())
-    acc$notes <- character()
-    acc$error <- NULL
-    r <- NULL
-    stream <- utils::capture.output(
-                                    r <- tryCatch(
-            withCallingHandlers(
-                                withVisible(eval(parse(text = code), envir = eval_env)),
-                                message = function(m) {
-        acc$notes <- c(acc$notes, sub("\n$", "", conditionMessage(m)))
+    # Evaluate like a console: stdout, messages, and warnings interleave
+    # in the order the code emits them, then the print of a visible final
+    # value. Everything streams to one connection so a `message()` before
+    # a `cat()` prints before it, not after. A warning is muffled only
+    # under the default `warn < 2`; with `options(warn = 2)` it is left to
+    # become an error, and code after it does not run. Output written
+    # before an error survives, ahead of the `Error:` line.
+    stream_file <- tempfile("run_r_stream")
+    stream_con <- file(stream_file, open = "wt")
+    sink(stream_con)
+    sink_open <- TRUE
+    close_stream <- function() {
+        if (sink_open) {
+            sink()
+            sink_open <<- FALSE
+        }
+        close(stream_con)
+    }
+    eval_error <- NULL
+    r <- tryCatch(
+                  withCallingHandlers(
+                                      withVisible(eval(parse(text = code), envir = eval_env)),
+                                      message = function(m) {
+        cat(conditionMessage(m), file = stream_con, sep = "")
         invokeRestart("muffleMessage")
     },
-                                warning = function(w) {
-        acc$notes <- c(acc$notes, paste("Warning:", conditionMessage(w)))
-        invokeRestart("muffleWarning")
-    }
-            ),
-            error = function(e) {
-        acc$error <- e
-        NULL
+                                      warning = function(w) {
+        if (getOption("warn") < 2) {
+            cat("Warning: ", conditionMessage(w), "\n", file = stream_con,
+                sep = "")
+            invokeRestart("muffleWarning")
+        }
     }
         ),
-                                    type = "output"
+                  error = function(e) {
+        eval_error <<- e
+        NULL
+    }
     )
-    streams <- c(stream, acc$notes)
+    close_stream()
+    streams <- suppressWarnings(readLines(stream_file))
+    unlink(stream_file)
 
-    if (!is.null(acc$error)) {
-        text <- paste(c(streams, paste("Error:", conditionMessage(acc$error))),
+    if (!is.null(eval_error)) {
+        text <- paste(c(streams, paste("Error:", conditionMessage(eval_error))),
                       collapse = "\n")
-        return(ok(admit_tool_result(text, tool = "run_r", store = handle_store)))
+        result <- ok(admit_tool_result(text, tool = "run_r", store = handle_store))
+        result$r_error <- TRUE
+        return(result)
     }
     outcome <- list(value = r$value, visible = isTRUE(r$visible))
     outcome$printed <- if (outcome$visible) {
@@ -527,7 +541,12 @@ tool_run_r <- function(code, envir = globalenv()) {
     # The outer tool handler applies the same universal cap, but it does not
     # know which private evaluator produced this result. Admit it here first
     # so any overflow handle belongs to this R scope rather than the process.
-    ok(admit_tool_result(text, tool = "run_r", store = handle_store))
+    # `r_error` lets a caller (e.g. an audit log) tell a failed evaluation
+    # from a successful one; the model-facing text and `isError` are
+    # unchanged, since an R error is a normal, non-transport tool result.
+    result <- ok(admit_tool_result(text, tool = "run_r", store = handle_store))
+    result$r_error <- FALSE
+    result
 }
 
 #' Execute R code in a clean subprocess via littler.

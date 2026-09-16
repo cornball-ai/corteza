@@ -23,6 +23,33 @@ expect_equal(text_of(res), "note\n[1] 1")
 res <- corteza::tool_run_r("warning('careful'); 2", envir = e)
 expect_equal(text_of(res), "Warning: careful\n[1] 2")
 
+# streams interleave in emission order, not stdout-then-messages.
+res <- corteza::tool_run_r("cat('a\\n'); message('b'); cat('c\\n'); 9", envir = e)
+expect_equal(text_of(res), "a\nb\nc\n[1] 9")
+res <- corteza::tool_run_r("message('first'); cat('second\\n'); invisible()", envir = e)
+expect_equal(text_of(res), "first\nsecond")
+
+# options(warn = 2) turns a warning into an error: code after it does not
+# run, and the result reports the error rather than swallowing it.
+res <- corteza::tool_run_r(
+    "old <- options(warn = 2); on.exit(options(old)); cat('before\\n'); warning('w'); cat('after\\n')",
+    envir = e)
+expect_true(grepl("before", text_of(res), fixed = TRUE))
+expect_false(grepl("after", text_of(res), fixed = TRUE))
+expect_true(grepl("Error", text_of(res)))
+expect_true(isTRUE(res$r_error))
+expect_equal(getOption("warn"), 0L)
+
+# r_error distinguishes a failed evaluation from a successful one, while
+# the model-facing isError stays FALSE for both (an R error is a normal
+# tool result, not a transport failure).
+ok_res <- corteza::tool_run_r("1 + 1", envir = e)
+expect_false(isTRUE(ok_res$r_error))
+expect_false(isTRUE(ok_res$isError))
+err_res <- corteza::tool_run_r("stop('boom')", envir = e)
+expect_true(isTRUE(err_res$r_error))
+expect_false(isTRUE(err_res$isError))
+
 # output written before an error survives, and the error is still reported.
 res <- corteza::tool_run_r("cat('partial\\n'); stop('boom')", envir = e)
 expect_equal(text_of(res), "partial\nError: boom")
