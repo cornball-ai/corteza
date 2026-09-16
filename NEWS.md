@@ -1,3 +1,17 @@
+# corteza 0.7.1.53
+
+- **`run_r` returns what the code prints.** Text written with `cat()`,
+  `print()`, `message()`, or a warning comes back ahead of the final value's
+  print, like a console, in both `run_r_mode`s. Streams interleave in
+  emission order, so a `message()` before a `cat()` prints before it.
+  Warnings are muffled only under the default `warn < 2`; with
+  `options(warn = 2)` a warning still becomes an error and halts. Output
+  written before an error is kept ahead of the `Error:` line. `tool_run_r()`
+  also returns an `r_error` flag so a caller can tell a failed evaluation
+  from a successful one, without changing the model-facing text or
+  `isError`. Previously only the final value's print was returned and
+  everything else was lost.
+
 # corteza 0.7.1.52
 
 - **Per-tool output caps.** `config$tool_output_caps` raises the 50-line /
