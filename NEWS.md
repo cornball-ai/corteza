@@ -1,3 +1,11 @@
+# corteza 0.7.1.53
+
+- **`run_r` returns what the code prints.** Text written with `cat()`,
+  `print()`, `message()`, or a warning comes back ahead of the final value's
+  print, like a console, in both `run_r_mode`s. Output written before an
+  error is kept ahead of the `Error:` line. Previously only the final
+  value's print was returned and everything else was lost.
+
 # corteza 0.7.1.52
 
 - **Per-tool output caps.** `config$tool_output_caps` raises the 50-line /
