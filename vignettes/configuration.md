@@ -163,12 +163,25 @@ R's process-global `setTimeLimit()`.
 
 The default `run_r_mode = "in_process"` preserves the historical embedding
 contract: `tool_run_r(code, envir = globalenv())` and existing CLI/chat sessions
-continue to use the host process. Durable or unattended hosts can opt into
-`"worker"`. Each session then owns one persistent `callr::r_session`: R objects,
-attached packages, the working directory, helpers, and handles survive between
-`run_r` calls, but do not enter the host's `.GlobalEnv`. A model may request a
-different timeout on an individual call; `skill_timeout_max` is the host-owned
-ceiling. A host may narrow it further for an expiring external lease.
+continue to use the host process. That is the fastest path and shares the
+caller's live `.GlobalEnv`, which is what an interactive session usually wants.
+
+Any session, interactive or unattended, can opt into `"worker"` instead. Choose
+it when you want a real wall-clock kill for hang-prone or untrusted R, where
+`setTimeLimit()` in the host process is not safe, or crash isolation so a
+segfault or a runaway allocation takes down a disposable child rather than your
+session. The cost is per-call serialization and a workspace kept separate from
+the host's `.GlobalEnv`, so it is an opt-in for safety, not the interactive
+default.
+
+Each worker session owns one persistent `callr::r_session`: R objects, attached
+packages, the working directory, helpers, and handles survive between `run_r`
+calls, but do not enter the host's `.GlobalEnv`. The worker starts with R's
+normal default packages (`utils`, `stats`, `methods`, and the rest), so helpers
+like `str()`, `tail()`, and `setNames()` work exactly as in a standard session;
+set `R_DEFAULT_PACKAGES` in `run_r_worker_options$env` to override. A model may
+request a different timeout on an individual call; `skill_timeout_max` is the
+host-owned ceiling. A host may narrow it further for an expiring external lease.
 
 `run_r_worker_options` shapes that worker process without touching the host:
 a private environment or library path, extra command-line arguments, or
