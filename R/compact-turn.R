@@ -526,8 +526,8 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                   timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
     )
     # Lifecycle hooks run before the destructive in-memory rewrite. A durable
-    # host such as the ARC driver can persist the exact provider-native prefix;
-    # if that checkpoint fails, its error prevents history from being lost.
+    # host can persist the exact provider-native prefix here; if that
+    # checkpoint fails, its error prevents history from being lost.
     session$last_compaction_failure <- NULL
     if (is.function(session$on_compaction)) {
         session$on_compaction(event)

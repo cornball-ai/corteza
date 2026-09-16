@@ -61,8 +61,8 @@
         stop(sprintf("timeout exceeds the host maximum of %s seconds",
                      format(maximum)), call. = FALSE)
     }
-    # A durable host such as ARC can provide a tighter, per-call deadline
-    # derived from an authoritative external lease. It can only narrow.
+    # A durable host can provide a tighter, per-call deadline derived from
+    # an authoritative external lease. It can only narrow.
     session_cap <- session$run_r_timeout_cap
     if (is.function(session_cap)) {
         session_cap <- session_cap()
