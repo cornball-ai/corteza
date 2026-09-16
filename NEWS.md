@@ -1,3 +1,14 @@
+# corteza 0.7.1.54
+
+- **Worker `run_r` starts with R's default packages.** A supervised worker
+  (`run_r_mode = "worker"`) is a bare `callr::r_session`, which loads only
+  `base` plus callr's own tools, so common helpers from `utils`/`stats`/
+  `methods` (`str`, `tail`, `head`, `setNames`, `capture.output`, ...) were
+  missing, unlike in-process `run_r` which inherits the front end's default
+  packages. The worker now sets `R_DEFAULT_PACKAGES` to the normal default
+  set so both modes see the same base environment. A host that sets
+  `R_DEFAULT_PACKAGES` in `run_r_worker_options$env` still wins.
+
 # corteza 0.7.1.53
 
 - **`run_r` returns what the code prints.** Text written with `cat()`,

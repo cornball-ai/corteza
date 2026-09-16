@@ -22,6 +22,16 @@ expect_error(corteza:::.run_r_worker_session_options(
 expect_error(corteza:::.run_r_worker_session_options(
     list(run_r_worker_options = list(no_such_option = 1))))
 
+# The worker starts with R's normal default packages so worker run_r matches
+# in-process run_r; a bare callr worker would carry only base plus callr.
+expect_true(any(names(default$env) == "R_DEFAULT_PACKAGES"))
+expect_true(grepl("utils", default$env[["R_DEFAULT_PACKAGES"]], fixed = TRUE))
+expect_true(grepl("stats", default$env[["R_DEFAULT_PACKAGES"]], fixed = TRUE))
+# A host that set R_DEFAULT_PACKAGES itself wins.
+hostpkg <- corteza:::.run_r_worker_session_options(
+    list(run_r_worker_options = list(env = c(R_DEFAULT_PACKAGES = "utils"))))
+expect_equal(hostpkg$env[["R_DEFAULT_PACKAGES"]], "utils")
+
 # ---- worker integration ----
 
 # The worker sees the configured environment; the host does not.
@@ -38,5 +48,12 @@ res <- corteza:::call_skill(
 expect_false(isTRUE(res$isError))
 expect_true(grepl('"set"', res$content[[1L]]$text, fixed = TRUE))
 expect_equal(Sys.getenv("CORTEZA_WORKER_OPTION_TEST"), "")
+# utils/stats helpers are on the worker's search path, not just base.
+res_pkgs <- corteza:::call_skill(
+    "run_r",
+    list(code = 'c(exists("str", mode = "function"), exists("tail", mode = "function"), exists("setNames", mode = "function"))'),
+    ctx = list(session = s, cwd = s$cwd))
+expect_false(isTRUE(res_pkgs$isError))
+expect_false(grepl("FALSE", res_pkgs$content[[1L]]$text, fixed = TRUE))
 corteza:::.run_r_worker_close(s)
 expect_null(s$.run_r_worker)
