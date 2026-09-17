@@ -1,3 +1,12 @@
+# corteza 0.7.1.56
+
+- **`run_r` releases its output sink when a worker call is interrupted.**
+  The supervised worker aborts an over-deadline `run_r` with an interrupt,
+  which unwound past the stream cleanup and left a sink, its file connection,
+  and the temp file open in the persistent worker. With no ceiling, repeated
+  timeouts accumulate sinks, connections, and files over a long run. Cleanup
+  now runs on interrupts as well as on errors and normal returns.
+
 # corteza 0.7.1.55
 
 - **`/auto` runs continuously when no `--loops` is given.** Previously a
