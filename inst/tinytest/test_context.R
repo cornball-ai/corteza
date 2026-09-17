@@ -52,6 +52,10 @@ expect_true(grepl("conversation history and R workspace as persistent scratch st
                   ctx, fixed = TRUE))
 expect_true(grepl("persistent R session", ctx))
 expect_true(grepl("bash tool makes you a general-purpose agent", ctx))
+# Narration policy: belief-state updates with adaptive batching, not a
+# transcript of every command.
+expect_true(grepl("Narrate your belief state", ctx, fixed = TRUE))
+expect_true(grepl("Group related calls under one update", ctx, fixed = TRUE))
 
 # --- Multiple custom files ---
 writeLines(c("# Plan", "", "Phase 1: Core"), file.path(testdir, "PLAN.md"))

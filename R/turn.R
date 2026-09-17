@@ -773,9 +773,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     }
     streak <- session$silent_streak
     session$silent_streak <- 0L
-    paste0(text, "\n\n[corteza] You've made tool calls across ", streak,
-           " turns without telling the user what you're doing. Before your",
-           " next tool call, say in one line what you're doing and why.")
+    paste0(text, "\n\n[corteza] You've run tool calls across ", streak,
+           " turns without a word to the user. Before your next tool call, tell",
+           " them in one line what you've learned and what you're doing next.")
 }
 
 # Resolve the LLM model for the turn. Policy's per-call model routing

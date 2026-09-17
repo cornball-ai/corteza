@@ -17,6 +17,16 @@
   tests. The per-iteration continuation prompt carries only a one-line
   reminder, so the stance survives compaction without repeating the whole
   policy every turn.
+- **Narration guidance targets belief state, not keystrokes.** The system
+  prompt's "communicating while you work" policy now asks for a brief update
+  keyed to meaningful events -- a chunk of work finished, evidence that
+  changes the working hypothesis, a substantially different approach, or
+  several tool calls with nothing said -- rather than a line before every
+  call, and to keep working after an update rather than stop for
+  acknowledgement. Routine calls that only confirm an expectation need no
+  narration. The silent-streak backstop (a nudge after
+  `corteza.narration_streak` tool-call turns, default 3) is reworded to
+  match.
 
 # corteza 0.7.1.54
 
