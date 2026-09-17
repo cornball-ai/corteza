@@ -308,7 +308,45 @@ auto_state <- function(session, dir = getwd()) {
          noted_budget = FALSE)
 }
 
-# ---- The worker's continuation prompt ----
+# ---- The worker's prompts ----
+
+#' The autonomy policy that frames an unattended run.
+#'
+#' Stated in full once, in the first prompt, the way a well-phrased Codex
+#' task states its own: act on reasonable assumptions rather than pausing,
+#' escalate only for an ambiguity that would change the outcome, and judge
+#' completion by evidence. Auto mode governs how freely the worker may act;
+#' it does not define the goal or decide completion -- the model does, and
+#' this is the policy it decides under. The continuation prompt keeps only
+#' a one-line reminder so the stance survives compaction without paying for
+#' the whole policy on every iteration.
+#' @return Character scalar.
+#' @noRd
+auto_autonomy_policy <- function() {
+    paste0(
+           "Work toward this goal autonomously.\n\n",
+           "Make reasonable decisions and act rather than stopping to ask or\n",
+           "to report progress; keep going until the goal is met. Prefer a\n",
+           "sensible assumption over pausing for confirmation.\n\n",
+           "Stop only for a genuine blocker: if you hit an ambiguity that\n",
+           "would materially change the intended outcome -- a public interface\n",
+           "or a behaviour choice -- do not guess. Report AUTO_STATUS: continue\n",
+           "and state plainly that a human decision is needed and why, so it\n",
+           "can be escalated.\n\n",
+           "Judge completion by evidence. Report AUTO_STATUS: done only when\n",
+           "the goal's acceptance criteria are actually satisfied, preferring\n",
+           "objective evidence such as passing tests or checks. Otherwise\n",
+           "report AUTO_STATUS: continue with the next unresolved step."
+    )
+}
+
+#' The first prompt of a run: the goal plus the full autonomy policy.
+#' @param goal The run's goal.
+#' @return Character scalar.
+#' @noRd
+auto_initial_prompt <- function(goal) {
+    paste0("Goal: ", goal, "\n\n", auto_autonomy_policy())
+}
 
 #' Prompt handed to the worker on each iteration.
 #'
@@ -340,7 +378,8 @@ auto_continuation_prompt <- function(goal, loop, max_loops) {
     paste0(header,
            "Original goal: ", goal, "\n\n",
            "Continue from the current session and workspace state. Take the\n",
-           "next concrete step toward the goal.\n\n",
+           "next concrete step toward the goal. Act on reasonable assumptions\n",
+           "rather than pausing to ask or report progress.\n\n",
            "If the acceptance criteria are fully satisfied, report\n",
            "AUTO_STATUS: done with concise evidence. Otherwise report\n",
            "AUTO_STATUS: continue and the next unresolved step.")
@@ -767,10 +806,13 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     })
 
     ctx$read_input <- function(prompt_str) {
-        # First call: hand over the goal and let the loop run turn 1.
+        # First call: hand over the goal, framed by the full autonomy
+        # policy, and let the loop run turn 1. Continuations restate the
+        # goal and a one-line reminder; the policy is stated in full only
+        # here.
         if (state$loop == 1L) {
             state$loop <<- 2L
-            return(goal)
+            return(auto_initial_prompt(goal))
         }
 
         # Ahead of the terminal-status check below, not after it: a run

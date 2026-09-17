@@ -225,6 +225,25 @@ expect_true(grepl("AUTO_STATUS", p))
 # session already holds both, so repeating them costs context every
 # iteration and buys nothing.
 expect_true(nchar(p) < 800L)
+# A one-line autonomy reminder rides along, but not the whole policy:
+# that is stated once, in the initial prompt.
+expect_true(grepl("reasonable assumptions", p))
+
+# Continuous runs render the header without a finite budget.
+pc <- corteza:::auto_continuation_prompt("keep going", 7L, Inf)
+expect_true(grepl("iteration 7", pc))
+expect_true(grepl("no iteration cap", pc))
+
+# ---- initial prompt: the goal plus the full autonomy policy ----
+
+ip <- corteza:::auto_initial_prompt("make the tests pass")
+expect_true(grepl("make the tests pass", ip))
+expect_true(grepl("autonomously", ip))
+# The escalation criterion and the evidence-based stopping condition.
+expect_true(grepl("materially change the intended outcome", ip))
+expect_true(grepl("AUTO_STATUS: done", ip))
+# Fuller than a continuation: the policy lives here, once.
+expect_true(nchar(ip) > nchar(p))
 
 # ---- auto_parse_status ----
 

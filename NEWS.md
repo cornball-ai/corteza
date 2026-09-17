@@ -9,6 +9,14 @@
   explicit iteration cap. The run is never truly unbounded: `max_tool_calls`
   and `stall_loops` stay finite by validation, so a continuous run always
   stops on some cap or a monitor verdict.
+- **Auto runs are framed by an autonomy policy.** The first prompt now states
+  the run's operating policy explicitly -- act on reasonable assumptions
+  rather than pausing to ask or report progress, stop only for an ambiguity
+  that would materially change the intended outcome (and say so for a human
+  rather than guessing), and judge completion by evidence such as passing
+  tests. The per-iteration continuation prompt carries only a one-line
+  reminder, so the stance survives compaction without repeating the whole
+  policy every turn.
 
 # corteza 0.7.1.54
 
