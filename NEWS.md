@@ -1,3 +1,15 @@
+# corteza 0.7.1.55
+
+- **`/auto` runs continuously when no `--loops` is given.** Previously a
+  bare `/auto <goal>` stopped after the configured iteration cap (default
+  10). It now runs continuously, governed by the monitor subagent and the
+  resource caps -- tool calls, tokens, time, cost, and the stall guard --
+  rather than an iteration count, matching the "work until done, stop at
+  the boundary" model of an Auto approval mode. `--loops N` still sets an
+  explicit iteration cap. The run is never truly unbounded: `max_tool_calls`
+  and `stall_loops` stay finite by validation, so a continuous run always
+  stops on some cap or a monitor verdict.
+
 # corteza 0.7.1.54
 
 - **Worker `run_r` starts with R's default packages.** A supervised worker
