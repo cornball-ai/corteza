@@ -682,6 +682,32 @@ expect_equal(turns, 1L)
 expect_true(any(grepl("blocked", res)))
 expect_null(ctx$session$auto_gate)
 
+# The tricky blocked forms must also stop after one turn: an explanation
+# that says "continue", and a separate continue line. The worker keeps
+# changing disk and the monitor would say continue, so only a correctly
+# parsed blocked can end it at turn 1.
+for (blk in c("AUTO_STATUS: blocked - cannot continue without your decision",
+              "AUTO_STATUS: continue\nAUTO_STATUS: blocked")) {
+    reset_wt()
+    turns <- 0L
+    tricky_turn <- local({
+        reply_text <- blk
+        function(prompt, session) {
+            turns <<- turns + 1L
+            writeLines(as.character(turns),
+                       file.path(wt, sprintf("k%d.txt", turns)))
+            list(reply = reply_text, session = session,
+                 usage = list(cost = 0.01, total_tokens = 100L))
+        }
+    })
+    ctx <- auto_ctx(tricky_turn)
+    res <- with_stubs(stub_monitor(character()),
+                      capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                             max_loops = 10L)))
+    expect_equal(turns, 1L)
+    expect_true(any(grepl("blocked", res)))
+}
+
 unlink(c(wt, tmp_data), recursive = TRUE)
 if (is.na(old_home)) {
     Sys.unsetenv("R_USER_DATA_DIR")

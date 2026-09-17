@@ -1011,7 +1011,7 @@ auto_delta_evidence <- function(baseline, final, delta, cap = 1000L) {
 #' and the monitor and the mechanical caps both still apply.
 #'
 #' @param reply Assistant text.
-#' @return "done" or "continue".
+#' @return "done", "blocked", or "continue".
 #' @noRd
 auto_parse_status <- function(reply) {
     if (is.null(reply) || !is.character(reply) || length(reply) != 1L ||
@@ -1024,11 +1024,30 @@ auto_parse_status <- function(reply) {
     if (!any(hits)) {
         return("continue")
     }
-    tails <- tolower(sub("^[[:space:]>*_`-]*AUTO_STATUS[[:space:]]*:", "",
-                         lines[hits], ignore.case = TRUE))
+    strip <- function(x) {
+        sub("^[[:space:]>*_`-]*AUTO_STATUS[[:space:]]*:", "", x,
+            ignore.case = TRUE)
+    }
+    # Blocked is read from the status TOKEN -- the first word after the
+    # colon -- not the explanation, and it wins outright. Parsing the
+    # whole line would let prose flip a fail-closed stop either way:
+    # "blocked - cannot continue" would read as continue, and
+    # "continue, not blocked on anything" would read as blocked. The
+    # token is the status; the rest is commentary. A blocked report must
+    # stop the run even when another line said continue, so it precedes
+    # the done/continue check.
+    tokens <- tolower(sub("^([[:alpha:]]+).*", "\\1",
+                          sub("^[^[:alnum:]]+", "", trimws(strip(lines[hits])))))
+    if (any(tokens == "blocked")) {
+        return("blocked")
+    }
+    # done vs continue stays permissive on a genuine split: a spurious
+    # extra iteration costs one turn, and the monitor and caps still
+    # apply. "done" anywhere in the line still reads as a completion the
+    # monitor will check against disk.
+    tails <- tolower(strip(lines[hits]))
     found <- unique(c(
             if (any(grepl("\\bdone\\b", tails))) "done",
-            if (any(grepl("\\bblocked\\b", tails))) "blocked",
             if (any(grepl("\\bcontinue\\b", tails))) "continue"
         ))
     if (length(found) != 1L) {

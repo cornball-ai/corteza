@@ -75,6 +75,23 @@ local({
         outcome = "start"
     )))
     expect_false(any(grepl("Tracing", out3, fixed = TRUE)))
+
+    # A denied first call fires no "start", but its commentary must still
+    # show; a later approved call in the same response does not repeat it.
+    out4 <- capture.output(obs(list(
+        call = list(tool = "write_file", args = list(path = "x"),
+                    model_context = mc("Editing the config to fix the path.")),
+        outcome = "declined", result = "[declined]", success = FALSE
+    )))
+    expect_true(any(grepl("Editing the config to fix the path.", out4,
+                          fixed = TRUE)))
+    out5 <- capture.output(obs(list(
+        call = list(tool = "bash", args = list(command = "ls"),
+                    model_context = mc("Editing the config to fix the path.", 2L)),
+        outcome = "start"
+    )))
+    expect_false(any(grepl("Editing the config to fix the path.", out5,
+                           fixed = TRUE)))
 })
 
 # Observer receives event for allow+success.

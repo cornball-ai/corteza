@@ -256,6 +256,19 @@ expect_equal(corteza:::auto_parse_status("work done\nAUTO_STATUS: done"), "done"
 expect_equal(corteza:::auto_parse_status("AUTO_STATUS: blocked"), "blocked")
 expect_equal(corteza:::auto_parse_status(
     "need a decision\nAUTO_STATUS: blocked"), "blocked")
+# Blocked is read from the status TOKEN, so its explanation may mention
+# "continue" without flipping it, a blocked line wins over a continue
+# line, and markdown around the token is fine.
+expect_equal(corteza:::auto_parse_status(
+    "AUTO_STATUS: blocked - cannot continue without your decision"),
+    "blocked")
+expect_equal(corteza:::auto_parse_status(
+    "AUTO_STATUS: continue\nAUTO_STATUS: blocked"), "blocked")
+expect_equal(corteza:::auto_parse_status("**AUTO_STATUS: blocked**"), "blocked")
+# But "blocked" only in the explanation of a continue token stays
+# continue -- the token, not the prose, is the status.
+expect_equal(corteza:::auto_parse_status(
+    "AUTO_STATUS: continue - not blocked on anything"), "continue")
 
 # Absent, ambiguous, or mid-sentence reads as continue. Unlike the
 # monitor's verdict this defaults permissive, because the cost of a

@@ -882,11 +882,13 @@ observer_progress <- function() {
         }
 
         # The model's running commentary, printed once per model response
-        # (the first call of a batch) and independent of any approval
-        # prompt, so an auto-approved run still shows what it's doing. Task
-        # calls fire "task" rather than "start", so cover both.
-        if (identical(event$outcome, "start") ||
-            identical(event$outcome, "task")) {
+        # and independent of any approval prompt, so an auto-approved run
+        # still shows what it's doing. cli_commentary_lines() keys the
+        # once-per-response on the batch's first call, so cover every event
+        # that can be a first call: "start" (approved), "task", and a
+        # denied/refused first call ("deny"/"declined"), which fires no
+        # "start". "ran" is excluded so an approved call narrates once.
+        if (event$outcome %in% c("start", "task", "deny", "declined")) {
             for (line in cli_commentary_lines(event)) {
                 cat(sprintf("%s\n", line))
             }
