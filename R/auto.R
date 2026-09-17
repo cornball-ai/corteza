@@ -237,7 +237,10 @@ auto_check_limits <- function(state, auto) {
     # kind, so "which cap fired" never requires parsing prose.
     halt <- function(why, kind) list(stop = TRUE, reason = why, kind = kind)
 
-    if (state$loop > auto$max_loops) {
+    # A continuous run carries max_loops = Inf: the loop count never
+    # halts it. The finite caps below (tool calls, tokens, time, cost,
+    # stall) still do, and the monitor brokers every call regardless.
+    if (is.finite(auto$max_loops) && state$loop > auto$max_loops) {
         return(halt(sprintf("reached max_loops (%d)", auto$max_loops), "loops"))
     }
     elapsed <- as.numeric(difftime(Sys.time(), state$started, units = "mins"))
@@ -328,7 +331,13 @@ auto_state <- function(session, dir = getwd()) {
 #' @return Character scalar.
 #' @noRd
 auto_continuation_prompt <- function(goal, loop, max_loops) {
-    paste0(sprintf("Auto iteration %d of %d.\n\n", loop, max_loops),
+    header <- if (is.finite(max_loops)) {
+        sprintf("Auto iteration %d of %d.\n\n", loop, max_loops)
+    } else {
+        sprintf("Auto iteration %d (continuous run, no iteration cap).\n\n",
+                loop)
+    }
+    paste0(header,
            "Original goal: ", goal, "\n\n",
            "Continue from the current session and workspace state. Take the\n",
            "next concrete step toward the goal.\n\n",
@@ -389,6 +398,16 @@ auto_validate_bounds <- function(auto) {
     bad <- character()
     for (nm in names(checks)) {
         v <- suppressWarnings(as.numeric(checks[[nm]]))
+        # max_loops == Inf is the one sanctioned non-finite bound: a
+        # `/auto` run with no --loops is deliberately continuous, governed
+        # by the monitor envelope and the finite caps below. Every other
+        # bound stays finite, so the mode's premise -- being bounded by
+        # something -- holds. max_tool_calls and stall_loops are always
+        # finite here, so a continuous run is never truly unbounded.
+        if (identical(nm, "max_loops") && length(v) == 1L && !is.na(v) &&
+            v == Inf) {
+            next
+        }
         # Finite as well as positive. Inf passes a `<= 0` test and then
         # disables the bound entirely in auto_check_limits() -- an
         # infinite cap on a mode whose entire premise is being bounded.
@@ -427,9 +446,14 @@ auto_validate_bounds <- function(auto) {
 #' @param max_loops Integer or NULL. Overrides the configured cap.
 #' @param allow_exec Logical or NULL. Call-site exec grant; project
 #'   config can still veto it (see `auto_envelope_config()`).
+#' @param continuous Logical. When TRUE and no `max_loops` is given, the
+#'   iteration cap is lifted: the run governs on the monitor envelope and
+#'   the resource caps (tool calls, tokens, time, cost, stall) instead of
+#'   a loop count -- the Codex "Auto" model. `max_loops` still wins if set.
 #' @return Invisibly, the final loop state.
 #' @noRd
-run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
+run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
+                          continuous = FALSE) {
     cwd <- ctx$cwd %||% getwd()
     palette <- ctx$palette %||% list()
     say <- function(fmt, ...) {
@@ -541,9 +565,21 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     auto <- get_auto_config(config)
     if (!is.null(max_loops)) {
         auto$max_loops <- as.integer(max_loops)
+    } else if (isTRUE(continuous)) {
+        # No --loops: run continuously. Inf disables only the loop halt
+        # in auto_check_limits(); max_tool_calls and stall_loops stay
+        # finite (auto_validate_bounds() enforces that), so the run is
+        # still bounded by something and the monitor still brokers every
+        # call. This is the sanctioned way to lift the loop count -- not a
+        # config that silently reads as unbounded.
+        auto$max_loops <- Inf
     }
     record("config",
-           caps = list(max_loops = auto$max_loops,
+           caps = list(max_loops = if (is.finite(auto$max_loops)) {
+                auto$max_loops
+            } else {
+                "continuous"
+            },
                        max_minutes = auto$max_minutes,
                        max_cost = auto$max_cost,
                        max_tokens = auto$max_tokens,
@@ -570,8 +606,13 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
 
     say("goal: %s", goal)
     say("run %s", run_id)
-    say("caps: %d loops, %g min, $%g, %s tool calls",
-        auto$max_loops, auto$max_minutes, auto$max_cost,
+    loops_label <- if (is.finite(auto$max_loops)) {
+        sprintf("%d loops", auto$max_loops)
+    } else {
+        "continuous (no loop cap)"
+    }
+    say("caps: %s, %g min, $%g, %s tool calls",
+        loops_label, auto$max_minutes, auto$max_cost,
         format(auto$max_tool_calls))
 
     # Stamped before the monitor spawns, not after: the spawn writes the
@@ -838,9 +879,14 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
 
         loop_now <- state$loop
         state$loop <<- state$loop + 1L
-        say("iteration %d/%d  $%.4f  %d tool calls",
-            loop_now, auto$max_loops, state$spend$cost %||% 0,
-            state$tool_calls)
+        if (is.finite(auto$max_loops)) {
+            say("iteration %d/%d  $%.4f  %d tool calls",
+                loop_now, auto$max_loops, state$spend$cost %||% 0,
+                state$tool_calls)
+        } else {
+            say("iteration %d (continuous)  $%.4f  %d tool calls",
+                loop_now, state$spend$cost %||% 0, state$tool_calls)
+        }
         auto_continuation_prompt(goal, loop_now, auto$max_loops)
     }
 

@@ -253,18 +253,30 @@ bad <- corteza:::auto_validate_bounds(
 expect_equal(length(bad), 1L)
 expect_true(grepl("max_loops", bad))
 
-# Inf is rejected too. It passes a `<= 0` test and then disables the
-# bound outright in auto_check_limits() -- an infinite cap on a mode
-# whose whole premise is being bounded.
+# Inf is rejected for every resource bound: it passes a `<= 0` test and
+# then disables the bound outright in auto_check_limits() -- an infinite
+# cap on a mode whose whole premise is being bounded. max_loops is the
+# one sanctioned exception: a `/auto` run with no --loops is deliberately
+# continuous (max_loops = Inf), still bounded by the finite caps and the
+# monitor. Every other bad value (0, negative, NA, -Inf) is still rejected
+# for max_loops too.
 for (field in c("max_loops", "max_minutes", "max_cost", "max_tokens",
                 "max_tool_calls", "stall_loops")) {
-    for (value in list(0, -1, NA, NA_integer_, Inf, -Inf)) {
+    rejected <- list(0, -1, NA, NA_integer_, -Inf)
+    if (!identical(field, "max_loops")) {
+        rejected <- c(rejected, list(Inf))
+    }
+    for (value in rejected) {
         bad <- corteza:::auto_validate_bounds(
             utils::modifyList(auto, stats::setNames(list(value), field)))
         expect_true(length(bad) >= 1L)
         expect_true(any(grepl(field, bad)))
     }
 }
+# max_loops = Inf is accepted (the sanctioned continuous case), and it is
+# the only bound that may be Inf.
+expect_equal(length(corteza:::auto_validate_bounds(
+    utils::modifyList(auto, list(max_loops = Inf)))), 0L)
 
 # ---- cost_missing is measured by differencing, not by reading a flag ----
 #

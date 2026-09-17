@@ -599,6 +599,65 @@ expect_true(any(grepl("max_loops \\(2\\)", out)))
 expect_null(ctx$session$auto_gate)
 expect_true(is.function(ctx$read_input))
 
+# ---- continuous mode: no loop cap, other backstops still hold ----
+#
+# `/auto` with no --loops runs continuously (continuous = TRUE, which
+# sets max_loops = Inf). The loop count never halts it, but the monitor
+# and the finite caps still do. Here the worker keeps changing disk so it
+# never stalls, and the monitor lets it run past the old 10-loop default
+# before stopping it -- proof the iteration cap is gone.
+
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+res <- with_stubs(stub_monitor(c(rep("continue", 11L), "stop")),
+                  capture.output(corteza:::run_auto_loop(ctx, "keep going",
+                                                         continuous = TRUE)))
+expect_equal(turns, 12L)                            # ran well past 10
+expect_true(any(grepl("continuous", res)))          # caps line says so
+expect_true(any(grepl("monitor said stop", res)))   # the monitor ended it
+expect_null(ctx$session$auto_gate)
+
+# A continuous run is still bounded: an idle worker that changes nothing
+# stalls out after stall_loops iterations rather than running forever.
+
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(idle_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "spin",
+                                                         continuous = TRUE)))
+expect_true(any(grepl("nothing changed", res)))
+expect_true(turns < 10L)
+
+# An explicit --loops still wins over continuous: the flag is a deliberate
+# override, so the loop cap comes back.
+
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "bounded",
+                                                         max_loops = 2L,
+                                                         continuous = TRUE)))
+expect_equal(turns, 2L)
+expect_true(any(grepl("max_loops", res)))
+
+# ---- a bare /auto goal runs continuously through the REPL ----
+
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+ctx$read_input <- scripted(c("/auto make some files"))
+out <- with_stubs(stub_monitor(c("stop")),
+                  capture.output(corteza:::run_repl_loop(ctx)))
+expect_true(any(grepl("goal: make some files", out)))
+expect_true(any(grepl("caps: continuous", out)))
+expect_equal(turns, 1L)
+
+# auto_validate_bounds' Inf-loops rule is covered canonically in
+# test_auto.R; here we only exercise the loop's continuous behaviour.
+
 unlink(c(wt, tmp_data), recursive = TRUE)
 if (is.na(old_home)) {
     Sys.unsetenv("R_USER_DATA_DIR")

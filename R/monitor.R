@@ -606,8 +606,14 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
                                  max_loops = 10L, request_id = NULL,
                                  timeout = 120L) {
     req <- request_id %||% sprintf("p%d", loop)
+    loop_line <- if (is.finite(max_loops)) {
+        sprintf("Loop %d of %d just finished.\n\n", loop, max_loops)
+    } else {
+        sprintf("Loop %d just finished (continuous run, no loop cap).\n\n",
+                loop)
+    }
     prompt <- paste0(
-                     sprintf("Loop %d of %d just finished.\n\n", loop, max_loops),
+                     loop_line,
                      "REQUEST-ID: ", req, "\n\n",
                      "WHAT THE WORKER SAID:\n",
                      .monitor_truncate(reply, 4000L), "\n\n",
