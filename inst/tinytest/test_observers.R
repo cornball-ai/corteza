@@ -41,6 +41,42 @@ local({
     expect_true(any(grepl("denied", out3, fixed = TRUE)))
 })
 
+# observer_progress prints the model's running commentary once per model
+# response (call_index == 1), independent of any approval prompt, so an
+# auto-approved run is not silent.
+local({
+    op <- options(corteza.verbose = TRUE)
+    on.exit(options(op), add = TRUE)
+    obs <- corteza::observer_progress()
+    mc <- function(text, idx = 1L) {
+        list(assistant_text = text, call_index = idx, call_count = 2L)
+    }
+
+    out <- capture.output(obs(list(
+        call = list(tool = "bash", args = list(command = "ls"),
+                    model_context = mc("Tracing the request body path.")),
+        outcome = "start"
+    )))
+    expect_true(any(grepl("Tracing the request body path.", out, fixed = TRUE)))
+
+    # The second call of the same batch does not repeat the commentary.
+    out2 <- capture.output(obs(list(
+        call = list(tool = "bash", args = list(command = "cat x"),
+                    model_context = mc("Tracing the request body path.", 2L)),
+        outcome = "start"
+    )))
+    expect_false(any(grepl("Tracing the request body path.", out2,
+                           fixed = TRUE)))
+
+    # Empty narration prints nothing extra.
+    out3 <- capture.output(obs(list(
+        call = list(tool = "bash", args = list(command = "ls"),
+                    model_context = mc("")),
+        outcome = "start"
+    )))
+    expect_false(any(grepl("Tracing", out3, fixed = TRUE)))
+})
+
 # Observer receives event for allow+success.
 local({
     seen <- list()

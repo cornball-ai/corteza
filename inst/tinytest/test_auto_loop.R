@@ -658,6 +658,30 @@ expect_equal(turns, 1L)
 # auto_validate_bounds' Inf-loops rule is covered canonically in
 # test_auto.R; here we only exercise the loop's continuous behaviour.
 
+# ---- a worker that reports blocked stops the run for a human ----
+#
+# AUTO_STATUS: blocked is the fail-closed exception: it stops the run
+# without consulting the monitor, so a request for a human decision can't
+# be read as ordinary progress and answered "continue". The worker keeps
+# changing disk (so it never stalls) and the monitor would say continue,
+# so only the blocked signal can end this after one turn.
+reset_wt()
+turns <- 0L
+blocked_turn <- function(prompt, session) {
+    turns <<- turns + 1L
+    writeLines(as.character(turns), file.path(wt, sprintf("b%d.txt", turns)))
+    list(reply = "I need a call on the public API.\nAUTO_STATUS: blocked",
+         session = session,
+         usage = list(cost = 0.01, total_tokens = 100L))
+}
+ctx <- auto_ctx(blocked_turn)
+res <- with_stubs(stub_monitor(character()),
+                  capture.output(corteza:::run_auto_loop(ctx, "x",
+                                                         max_loops = 10L)))
+expect_equal(turns, 1L)
+expect_true(any(grepl("blocked", res)))
+expect_null(ctx$session$auto_gate)
+
 unlink(c(wt, tmp_data), recursive = TRUE)
 if (is.na(old_home)) {
     Sys.unsetenv("R_USER_DATA_DIR")

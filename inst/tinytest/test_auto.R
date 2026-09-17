@@ -251,6 +251,11 @@ expect_equal(corteza:::auto_parse_status("AUTO_STATUS: done"), "done")
 expect_equal(corteza:::auto_parse_status("AUTO_STATUS: continue"), "continue")
 expect_equal(corteza:::auto_parse_status("**AUTO_STATUS: done**"), "done")
 expect_equal(corteza:::auto_parse_status("work done\nAUTO_STATUS: done"), "done")
+# A worker requesting a human decision reports blocked, which the loop
+# treats as an escalation rather than a continuation.
+expect_equal(corteza:::auto_parse_status("AUTO_STATUS: blocked"), "blocked")
+expect_equal(corteza:::auto_parse_status(
+    "need a decision\nAUTO_STATUS: blocked"), "blocked")
 
 # Absent, ambiguous, or mid-sentence reads as continue. Unlike the
 # monitor's verdict this defaults permissive, because the cost of a

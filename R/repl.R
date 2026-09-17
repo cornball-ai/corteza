@@ -1105,7 +1105,8 @@ run_repl_loop <- function(ctx) {
         compact_system <- task_compose_system(
             .plan_mode_compose_system(ctx$session$system,
                                       isTRUE(ctx$session$plan_mode)),
-            ctx$session$tasks %||% list(), channel = ctx$session$channel)
+            ctx$session$tasks %||% list(), channel = ctx$session$channel,
+            auto = !is.null(ctx$session$auto_run_id))
         comp <- .repl_interruptible(
                                     tryCatch(maybe_compact_turn_session(
                     ctx$session,

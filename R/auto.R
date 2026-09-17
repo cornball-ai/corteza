@@ -327,12 +327,17 @@ auto_autonomy_policy <- function() {
            "Work toward this goal autonomously.\n\n",
            "Make reasonable decisions and act rather than stopping to ask or\n",
            "to report progress; keep going until the goal is met. Prefer a\n",
-           "sensible assumption over pausing for confirmation.\n\n",
+           "sensible assumption over pausing for confirmation. This overrides\n",
+           "the usual posture of checking in whenever a task could go more than\n",
+           "one way: here, pick the reasonable option and proceed. You do not\n",
+           "need approval to run tools or to record a plan; a plan you propose\n",
+           "in this run is accepted automatically.\n\n",
            "Stop only for a genuine blocker: if you hit an ambiguity that\n",
            "would materially change the intended outcome -- a public interface\n",
-           "or a behaviour choice -- do not guess. Report AUTO_STATUS: continue\n",
-           "and state plainly that a human decision is needed and why, so it\n",
-           "can be escalated.\n\n",
+           "or a behaviour choice -- do not guess, and do not report continue\n",
+           "and hope someone reads the prose. Report AUTO_STATUS: blocked and\n",
+           "state plainly what decision you need and why. That stops the run\n",
+           "for a human.\n\n",
            "Judge completion by evidence. Report AUTO_STATUS: done only when\n",
            "the goal's acceptance criteria are actually satisfied, preferring\n",
            "objective evidence such as passing tests or checks. Otherwise\n",
@@ -381,8 +386,10 @@ auto_continuation_prompt <- function(goal, loop, max_loops) {
            "next concrete step toward the goal. Act on reasonable assumptions\n",
            "rather than pausing to ask or report progress.\n\n",
            "If the acceptance criteria are fully satisfied, report\n",
-           "AUTO_STATUS: done with concise evidence. Otherwise report\n",
-           "AUTO_STATUS: continue and the next unresolved step.")
+           "AUTO_STATUS: done with concise evidence. If you are blocked on a\n",
+           "decision only a human can make, report AUTO_STATUS: blocked with\n",
+           "what you need. Otherwise report AUTO_STATUS: continue and the next\n",
+           "unresolved step.")
 }
 
 #' Parse `/auto [--loops N] [--exec|--no-exec] <goal>`.
@@ -871,6 +878,18 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
         # The worker's own claim is evidence for the monitor, never the
         # stop authority: "done" gets checked against what moved on disk.
         claimed <- auto_parse_status(reply)
+        # "blocked" is the exception that IS authority, in the fail-closed
+        # direction: a worker asking for a human decision it cannot make
+        # stops the run now. Routing it through the monitor would let the
+        # monitor read the prose and answer "continue", running another
+        # worker turn on a question nobody answered. Erring toward stopping
+        # a run that wanted a human is always safe.
+        if (identical(claimed, "blocked")) {
+            stop_it("escalate", paste("worker reported AUTO_STATUS: blocked;",
+                                      "it needs a human decision to proceed"),
+                    "blocked")
+            return(character(0))
+        }
         run_delta <- worktree_delta(state$baseline, current)
         # Explicit request id, so the progress record and the monitor's
         # transcript name the same exchange.
@@ -1009,6 +1028,7 @@ auto_parse_status <- function(reply) {
                          lines[hits], ignore.case = TRUE))
     found <- unique(c(
             if (any(grepl("\\bdone\\b", tails))) "done",
+            if (any(grepl("\\bblocked\\b", tails))) "blocked",
             if (any(grepl("\\bcontinue\\b", tails))) "continue"
         ))
     if (length(found) != 1L) {

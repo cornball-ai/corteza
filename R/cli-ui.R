@@ -611,6 +611,49 @@ cli_tool_explanation <- function(call) {
     }
 }
 
+#' The model's running commentary for the live progress stream.
+#'
+#' The narration a model emits alongside a tool call -- what it has
+#' learned and what it is doing next -- rendered once per model response
+#' so an auto-approved run is not silent. This is distinct from
+#' `cli_tool_explanation()`, which only appears inside an approval prompt
+#' and never fires when a call is auto-approved. Returns `character(0)`
+#' when there is nothing to show or this is not the first call of a batch
+#' (so a multi-call model turn narrates once, not per call).
+#'
+#' The text is model-controlled, so each line is stripped of ANSI/control
+#' sequences and bounded before it reaches the terminal.
+#' @param event A tool observer event (see `add_observer()`).
+#' @param width Max characters per rendered line.
+#' @param max_lines Cap on rendered lines; the rest collapse to an ellipsis.
+#' @return Character vector of sanitized lines, possibly empty.
+#' @noRd
+cli_commentary_lines <- function(event, width = 100L, max_lines = 6L) {
+    mc <- event$call$model_context
+    if (is.null(mc) || !identical(mc$call_index %||% 1L, 1L)) {
+        return(character(0))
+    }
+    text <- mc$assistant_text %||% ""
+    if (!is.character(text) || length(text) != 1L || is.na(text) ||
+        !nzchar(trimws(text))) {
+        return(character(0))
+    }
+    lines <- character(0)
+    for (ln in unlist(strsplit(text, "\r?\n", perl = TRUE))) {
+        s <- .sanitize_inline(ln, max_chars = width)
+        if (length(s) == 1L && nzchar(s)) {
+            lines <- c(lines, s)
+        }
+    }
+    if (length(lines) == 0L) {
+        return(character(0))
+    }
+    if (length(lines) > max_lines) {
+        lines <- c(lines[seq_len(max_lines)], "...")
+    }
+    lines
+}
+
 cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
                                cwd = NULL, persistent_label = "Allow always",
                                deny_label = "Deny", width = 88L) {

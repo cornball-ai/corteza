@@ -881,6 +881,17 @@ observer_progress <- function() {
             return(invisible())
         }
 
+        # The model's running commentary, printed once per model response
+        # (the first call of a batch) and independent of any approval
+        # prompt, so an auto-approved run still shows what it's doing. Task
+        # calls fire "task" rather than "start", so cover both.
+        if (identical(event$outcome, "start") ||
+            identical(event$outcome, "task")) {
+            for (line in cli_commentary_lines(event)) {
+                cat(sprintf("%s\n", line))
+            }
+        }
+
         if (identical(event$outcome, "start")) {
             summary <- cli_event_summary(event, width = 84L)
             cat(sprintf("\u25cf %s\n", summary$title))
@@ -1034,7 +1045,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
     system <- task_compose_system(system, session$tasks %||% list(),
-                                  channel = session$channel)
+                                  channel = session$channel,
+                                  auto = !is.null(session$auto_run_id))
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     # Compaction belongs to the shared agent lifecycle, not to a particular

@@ -27,6 +27,23 @@
   narration. The silent-streak backstop (a nudge after
   `corteza.narration_streak` tool-call turns, default 3) is reworded to
   match.
+- **Running commentary is rendered, not just nudged.** The model's narration
+  now prints in the live progress stream on both the CLI and `chat()`, once
+  per model response and independent of the approval prompt -- previously it
+  surfaced only inside an approval prompt, so an auto-approved call (every
+  call in an unattended run) showed nothing. See `cli_commentary_lines()`.
+- **Auto runs no longer block on plan approval.** Inside an auto run,
+  `task_create` is accepted automatically instead of prompting a human (which
+  would hang an interactive run or default-deny a non-interactive one), and
+  the task guidance drops its "ask clarifying questions first / wait for plan
+  approval" steps in favour of the unattended flow. Attended sessions still
+  prompt for plan approval exactly as before.
+- **A worker can stop an auto run for a human decision.** `AUTO_STATUS:
+  blocked` is a recognised status: the loop treats it as an escalation and
+  stops immediately, rather than routing the request through the monitor as
+  ordinary progress where a `continue` verdict would run another turn on an
+  unanswered question. The autonomy prompt tells a blocked worker to report
+  it rather than emit `continue` with prose.
 
 # corteza 0.7.1.54
 

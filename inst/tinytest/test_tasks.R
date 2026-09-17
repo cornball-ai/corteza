@@ -106,6 +106,47 @@ local({
     expect_equal(length(s$tasks), 0L)
 })
 
+# task_create inside an auto run auto-approves: the run is authorized as a
+# whole, so blocking on a human reader (or defaulting to deny) would hang
+# or stall it. The human cb is never consulted -- an errored one still
+# commits the plan.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    s <- new_test_session()
+    s$auto_run_id <- "auto-xyz"
+    s$task_approval_cb <- function() stop("must not run in auto mode")
+    res <- intercept(s, "task_create", list(tasks = c("a", "b")))
+    expect_true(grepl("Plan approved", res))
+    expect_equal(length(s$tasks), 2L)
+})
+
+# The auto bypass is gated on auto_run_id, so an attended session with the
+# same errored cb still denies: attended approval is preserved.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    s <- new_test_session()   # no auto_run_id
+    s$task_approval_cb <- function() stop("nope")
+    res <- intercept(s, "task_create", list(tasks = c("a")))
+    expect_true(grepl("User rejected the proposed plan", res, fixed = TRUE))
+    expect_equal(length(s$tasks), 0L)
+})
+
+# The addendum has an unattended variant with no ask-first or
+# wait-for-approval steps, which would hang an auto run.
+att_add <- corteza:::.task_tool_addendum(auto = FALSE)
+aut_add <- corteza:::.task_tool_addendum(auto = TRUE)
+expect_true(grepl("Ask clarifying questions first", att_add, fixed = TRUE))
+expect_false(grepl("Ask clarifying questions first", aut_add, fixed = TRUE))
+expect_true(grepl("unattended run", aut_add, fixed = TRUE))
+expect_true(grepl("accepted automatically", aut_add, fixed = TRUE))
+# task_compose_system threads the flag through to the right variant.
+expect_true(grepl("unattended run",
+                  compose("BASE", list(), channel = "console", auto = TRUE),
+                  fixed = TRUE))
+expect_true(grepl("Ask clarifying questions first",
+                  compose("BASE", list(), channel = "console", auto = FALSE),
+                  fixed = TRUE))
+
 # task_create prompts the user via readline. Tests stub that prompt
 # through options(corteza.task_approve = "y" | "n") so the intercept
 # never blocks. Capture stdout to keep the test output clean (we
