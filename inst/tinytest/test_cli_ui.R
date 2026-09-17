@@ -476,3 +476,23 @@ local({
 expect_identical(corteza:::.sanitize_inline(NA_character_), "")
 expect_identical(corteza:::.sanitize_inline("a\033]8;;http://evil\033\\b"), "ab")
 expect_identical(corteza:::.sanitize_inline(c("x\ny", "p\tq")), c("x y", "p q"))
+
+# cli_commentary_lines: the model's running commentary, once per model
+# response, sanitized. Empty when not the first call of a batch.
+cl <- function(text, idx = 1L, ...) {
+    corteza:::cli_commentary_lines(
+        list(call = list(model_context = list(assistant_text = text,
+                                              call_index = idx))), ...)
+}
+expect_identical(cl("Found the bug in parse()."), "Found the bug in parse().")
+expect_identical(cl("line one\nline two"), c("line one", "line two"))
+expect_identical(cl("hi", idx = 2L), character(0))     # not first call
+expect_identical(cl(""), character(0))                 # empty narration
+expect_identical(cl("\033[31mred\033[0m"), "red")      # ANSI stripped
+# No model_context at all -> empty (older llm.api / no snapshot).
+expect_identical(corteza:::cli_commentary_lines(list(call = list())),
+                 character(0))
+# Line cap: more than max_lines collapses to an ellipsis tail.
+capped <- cl(paste(sprintf("l%d", 1:20), collapse = "\n"), max_lines = 3L)
+expect_equal(length(capped), 4L)
+expect_identical(capped[[4L]], "...")

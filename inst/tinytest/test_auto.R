@@ -225,6 +225,25 @@ expect_true(grepl("AUTO_STATUS", p))
 # session already holds both, so repeating them costs context every
 # iteration and buys nothing.
 expect_true(nchar(p) < 800L)
+# A one-line autonomy reminder rides along, but not the whole policy:
+# that is stated once, in the initial prompt.
+expect_true(grepl("reasonable assumptions", p))
+
+# Continuous runs render the header without a finite budget.
+pc <- corteza:::auto_continuation_prompt("keep going", 7L, Inf)
+expect_true(grepl("iteration 7", pc))
+expect_true(grepl("no iteration cap", pc))
+
+# ---- initial prompt: the goal plus the full autonomy policy ----
+
+ip <- corteza:::auto_initial_prompt("make the tests pass")
+expect_true(grepl("make the tests pass", ip))
+expect_true(grepl("autonomously", ip))
+# The escalation criterion and the evidence-based stopping condition.
+expect_true(grepl("materially change the intended outcome", ip))
+expect_true(grepl("AUTO_STATUS: done", ip))
+# Fuller than a continuation: the policy lives here, once.
+expect_true(nchar(ip) > nchar(p))
 
 # ---- auto_parse_status ----
 
@@ -232,6 +251,24 @@ expect_equal(corteza:::auto_parse_status("AUTO_STATUS: done"), "done")
 expect_equal(corteza:::auto_parse_status("AUTO_STATUS: continue"), "continue")
 expect_equal(corteza:::auto_parse_status("**AUTO_STATUS: done**"), "done")
 expect_equal(corteza:::auto_parse_status("work done\nAUTO_STATUS: done"), "done")
+# A worker requesting a human decision reports blocked, which the loop
+# treats as an escalation rather than a continuation.
+expect_equal(corteza:::auto_parse_status("AUTO_STATUS: blocked"), "blocked")
+expect_equal(corteza:::auto_parse_status(
+    "need a decision\nAUTO_STATUS: blocked"), "blocked")
+# Blocked is read from the status TOKEN, so its explanation may mention
+# "continue" without flipping it, a blocked line wins over a continue
+# line, and markdown around the token is fine.
+expect_equal(corteza:::auto_parse_status(
+    "AUTO_STATUS: blocked - cannot continue without your decision"),
+    "blocked")
+expect_equal(corteza:::auto_parse_status(
+    "AUTO_STATUS: continue\nAUTO_STATUS: blocked"), "blocked")
+expect_equal(corteza:::auto_parse_status("**AUTO_STATUS: blocked**"), "blocked")
+# But "blocked" only in the explanation of a continue token stays
+# continue -- the token, not the prose, is the status.
+expect_equal(corteza:::auto_parse_status(
+    "AUTO_STATUS: continue - not blocked on anything"), "continue")
 
 # Absent, ambiguous, or mid-sentence reads as continue. Unlike the
 # monitor's verdict this defaults permissive, because the cost of a
@@ -253,18 +290,30 @@ bad <- corteza:::auto_validate_bounds(
 expect_equal(length(bad), 1L)
 expect_true(grepl("max_loops", bad))
 
-# Inf is rejected too. It passes a `<= 0` test and then disables the
-# bound outright in auto_check_limits() -- an infinite cap on a mode
-# whose whole premise is being bounded.
+# Inf is rejected for every resource bound: it passes a `<= 0` test and
+# then disables the bound outright in auto_check_limits() -- an infinite
+# cap on a mode whose whole premise is being bounded. max_loops is the
+# one sanctioned exception: a `/auto` run with no --loops is deliberately
+# continuous (max_loops = Inf), still bounded by the finite caps and the
+# monitor. Every other bad value (0, negative, NA, -Inf) is still rejected
+# for max_loops too.
 for (field in c("max_loops", "max_minutes", "max_cost", "max_tokens",
                 "max_tool_calls", "stall_loops")) {
-    for (value in list(0, -1, NA, NA_integer_, Inf, -Inf)) {
+    rejected <- list(0, -1, NA, NA_integer_, -Inf)
+    if (!identical(field, "max_loops")) {
+        rejected <- c(rejected, list(Inf))
+    }
+    for (value in rejected) {
         bad <- corteza:::auto_validate_bounds(
             utils::modifyList(auto, stats::setNames(list(value), field)))
         expect_true(length(bad) >= 1L)
         expect_true(any(grepl(field, bad)))
     }
 }
+# max_loops = Inf is accepted (the sanctioned continuous case), and it is
+# the only bound that may be Inf.
+expect_equal(length(corteza:::auto_validate_bounds(
+    utils::modifyList(auto, list(max_loops = Inf)))), 0L)
 
 # ---- cost_missing is measured by differencing, not by reading a flag ----
 #

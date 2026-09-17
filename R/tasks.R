@@ -99,8 +99,34 @@ task_update_apply <- function(session, index, status) {
 #' Static "how to use task tools" addendum for the system prompt.
 #' Shown on every turn (even when the list is empty) so the LLM
 #' knows when to bring up the tools in the first place.
+#'
+#' `auto = TRUE` swaps the attended ask-first / wait-for-approval flow
+#' for the unattended one: an auto run has no human to answer clarifying
+#' questions or approve a plan, so those steps would hang it. The plan is
+#' accepted automatically (see `.task_read_approval()`), and the model is
+#' told to assume rather than ask.
 #' @noRd
-.task_tool_addendum <- function() {
+.task_tool_addendum <- function(auto = FALSE) {
+    if (isTRUE(auto)) {
+        return(paste(
+                     "",
+                     "# Multi-step requests",
+                     "",
+                     paste("For a request that takes more than a couple of",
+                           "steps, track it with a plan: call task_create with",
+                           "a numbered list of concrete steps, then mark each",
+                           "task in_progress when you start it and completed",
+                           "when done via task_update. Keep at most one task",
+                           "in_progress at a time."),
+                     "",
+                     paste("This is an unattended run. Do not stop to ask",
+                           "clarifying questions or to wait for plan approval:",
+                           "make reasonable assumptions and proceed. The plan you",
+                           "propose is accepted automatically. Skip the task list",
+                           "for one-shot or single-step work."),
+                     sep = "\n"
+            ))
+    }
     paste(
           "",
           "# Multi-step requests",
@@ -176,12 +202,13 @@ format_task_list_prompt <- function(tasks) {
 #' channels that actually expose the task tools, so Matrix sessions
 #' aren't told to call tools that aren't there.
 #' @noRd
-task_compose_system <- function(base_system, tasks, channel = NULL) {
+task_compose_system <- function(base_system, tasks, channel = NULL,
+                                auto = FALSE) {
     if (!.task_channel_supports_tasks(channel)) {
         return(base_system)
     }
     parts <- c(if (!is.null(base_system) && nzchar(base_system)) base_system,
-               .task_tool_addendum(),
+               .task_tool_addendum(auto = auto),
         if (length(tasks) > 0L) format_task_list_prompt(tasks))
     paste(parts, collapse = "\n")
 }
@@ -281,6 +308,14 @@ tool_task_update <- function(index, status) {
     test_answer <- getOption("corteza.task_approve", NA_character_)
     if (!is.na(test_answer)) {
         return(tolower(trimws(test_answer)) %in% c("", "y", "yes"))
+    }
+    # An unattended run is authorized as a whole and its real tool calls are
+    # brokered by the monitor gate; a plan is bookkeeping, not a filesystem
+    # change. Blocking here on a human reader would hang the run (interactive
+    # readline) or default-deny and stall it (non-interactive), so a plan
+    # proposed inside an auto run is accepted. Attended sessions still prompt.
+    if (!is.null(session$auto_run_id)) {
+        return(TRUE)
     }
     cb <- session$task_approval_cb
     if (!is.function(cb)) {

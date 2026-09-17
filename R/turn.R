@@ -773,9 +773,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     }
     streak <- session$silent_streak
     session$silent_streak <- 0L
-    paste0(text, "\n\n[corteza] You've made tool calls across ", streak,
-           " turns without telling the user what you're doing. Before your",
-           " next tool call, say in one line what you're doing and why.")
+    paste0(text, "\n\n[corteza] You've run tool calls across ", streak,
+           " turns without a word to the user. Before your next tool call, tell",
+           " them in one line what you've learned and what you're doing next.")
 }
 
 # Resolve the LLM model for the turn. Policy's per-call model routing
@@ -879,6 +879,19 @@ observer_progress <- function() {
         # silent by default.
         if (!.corteza_verbose()) {
             return(invisible())
+        }
+
+        # The model's running commentary, printed once per model response
+        # and independent of any approval prompt, so an auto-approved run
+        # still shows what it's doing. cli_commentary_lines() keys the
+        # once-per-response on the batch's first call, so cover every event
+        # that can be a first call: "start" (approved), "task", and a
+        # denied/refused first call ("deny"/"declined"), which fires no
+        # "start". "ran" is excluded so an approved call narrates once.
+        if (event$outcome %in% c("start", "task", "deny", "declined")) {
+            for (line in cli_commentary_lines(event)) {
+                cat(sprintf("%s\n", line))
+            }
         }
 
         if (identical(event$outcome, "start")) {
@@ -1034,7 +1047,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
     system <- task_compose_system(system, session$tasks %||% list(),
-                                  channel = session$channel)
+                                  channel = session$channel,
+                                  auto = !is.null(session$auto_run_id))
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     # Compaction belongs to the shared agent lifecycle, not to a particular

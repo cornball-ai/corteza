@@ -607,6 +607,18 @@ run_agent <- function(opts) {
     name <- event$call$tool %||% ""
     args <- event$call$args %||% list()
 
+    # The model's running commentary, once per model response and
+    # independent of the approval prompt, so an auto-approved run isn't
+    # silent. cli_commentary_lines() keys once-per-response on the batch's
+    # first call, so cover every event that can be a first call: "start",
+    # "task", and a denied/refused first call ("deny"/"declined", which
+    # fires no "start"). "ran" is excluded so an approved call narrates once.
+    if (outcome %in% c("start", "task", "deny", "declined")) {
+      for (line in corteza:::cli_commentary_lines(event)) {
+        cat(sprintf("%s%s%s\n", color$dim, line, color$reset))
+      }
+    }
+
     if (identical(outcome, "start")) {
       preview <- corteza:::cli_tool_preview(name, args)
       cat(sprintf("\n%s●%s %s", color$cyan, color$reset,

@@ -1,3 +1,50 @@
+# corteza 0.7.1.55
+
+- **`/auto` runs continuously when no `--loops` is given.** Previously a
+  bare `/auto <goal>` stopped after the configured iteration cap (default
+  10). It now runs continuously, governed by the monitor subagent and the
+  resource caps -- tool calls, tokens, time, cost, and the stall guard --
+  rather than an iteration count, matching the "work until done, stop at
+  the boundary" model of an Auto approval mode. `--loops N` still sets an
+  explicit iteration cap. The run is never truly unbounded: `max_tool_calls`
+  and `stall_loops` stay finite by validation, so a continuous run always
+  stops on some cap or a monitor verdict.
+- **Auto runs are framed by an autonomy policy.** The first prompt now states
+  the run's operating policy explicitly -- act on reasonable assumptions
+  rather than pausing to ask or report progress, stop only for an ambiguity
+  that would materially change the intended outcome (and say so for a human
+  rather than guessing), and judge completion by evidence such as passing
+  tests. The per-iteration continuation prompt carries only a one-line
+  reminder, so the stance survives compaction without repeating the whole
+  policy every turn.
+- **Narration guidance targets belief state, not keystrokes.** The system
+  prompt's "communicating while you work" policy now asks for a brief update
+  keyed to meaningful events -- a chunk of work finished, evidence that
+  changes the working hypothesis, a substantially different approach, or
+  several tool calls with nothing said -- rather than a line before every
+  call, and to keep working after an update rather than stop for
+  acknowledgement. Routine calls that only confirm an expectation need no
+  narration. The silent-streak backstop (a nudge after
+  `corteza.narration_streak` tool-call turns, default 3) is reworded to
+  match.
+- **Running commentary is rendered, not just nudged.** The model's narration
+  now prints in the live progress stream on both the CLI and `chat()`, once
+  per model response and independent of the approval prompt -- previously it
+  surfaced only inside an approval prompt, so an auto-approved call (every
+  call in an unattended run) showed nothing. See `cli_commentary_lines()`.
+- **Auto runs no longer block on plan approval.** Inside an auto run,
+  `task_create` is accepted automatically instead of prompting a human (which
+  would hang an interactive run or default-deny a non-interactive one), and
+  the task guidance drops its "ask clarifying questions first / wait for plan
+  approval" steps in favour of the unattended flow. Attended sessions still
+  prompt for plan approval exactly as before.
+- **A worker can stop an auto run for a human decision.** `AUTO_STATUS:
+  blocked` is a recognised status: the loop treats it as an escalation and
+  stops immediately, rather than routing the request through the monitor as
+  ordinary progress where a `continue` verdict would run another turn on an
+  unanswered question. The autonomy prompt tells a blocked worker to report
+  it rather than emit `continue` with prose.
+
 # corteza 0.7.1.54
 
 - **Worker `run_r` starts with R's default packages.** A supervised worker

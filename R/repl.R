@@ -489,12 +489,16 @@ run_repl_loop <- function(ctx) {
                 if (!nzchar(spec$goal)) {
                     cat(paste0(
                                "Usage: /auto [--loops N] [--exec|--no-exec] <goal>\n",
-                               "  Runs bounded unattended iterations toward <goal>,\n",
-                               "  supervised by a read-only monitor subagent.\n"))
+                               "  Runs unattended iterations toward <goal>, supervised\n",
+                               "  by a read-only monitor subagent. With --loops N the\n",
+                               "  run stops after N iterations; without it the run is\n",
+                               "  continuous, governed by the monitor and the resource\n",
+                               "  caps (tool calls, tokens, time, cost, stall).\n"))
                     next
                 }
                 run_auto_loop(ctx, spec$goal, max_loops = spec$loops,
-                              allow_exec = spec$allow_exec)
+                              allow_exec = spec$allow_exec,
+                              continuous = is.null(spec$loops))
                 next
             }
             if (cmd == "/dryrun") {
@@ -1101,7 +1105,8 @@ run_repl_loop <- function(ctx) {
         compact_system <- task_compose_system(
             .plan_mode_compose_system(ctx$session$system,
                                       isTRUE(ctx$session$plan_mode)),
-            ctx$session$tasks %||% list(), channel = ctx$session$channel)
+            ctx$session$tasks %||% list(), channel = ctx$session$channel,
+            auto = !is.null(ctx$session$auto_run_id))
         comp <- .repl_interruptible(
                                     tryCatch(maybe_compact_turn_session(
                     ctx$session,

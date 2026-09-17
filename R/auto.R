@@ -237,7 +237,10 @@ auto_check_limits <- function(state, auto) {
     # kind, so "which cap fired" never requires parsing prose.
     halt <- function(why, kind) list(stop = TRUE, reason = why, kind = kind)
 
-    if (state$loop > auto$max_loops) {
+    # A continuous run carries max_loops = Inf: the loop count never
+    # halts it. The finite caps below (tool calls, tokens, time, cost,
+    # stall) still do, and the monitor brokers every call regardless.
+    if (is.finite(auto$max_loops) && state$loop > auto$max_loops) {
         return(halt(sprintf("reached max_loops (%d)", auto$max_loops), "loops"))
     }
     elapsed <- as.numeric(difftime(Sys.time(), state$started, units = "mins"))
@@ -305,7 +308,50 @@ auto_state <- function(session, dir = getwd()) {
          noted_budget = FALSE)
 }
 
-# ---- The worker's continuation prompt ----
+# ---- The worker's prompts ----
+
+#' The autonomy policy that frames an unattended run.
+#'
+#' Stated in full once, in the first prompt, the way a well-phrased Codex
+#' task states its own: act on reasonable assumptions rather than pausing,
+#' escalate only for an ambiguity that would change the outcome, and judge
+#' completion by evidence. Auto mode governs how freely the worker may act;
+#' it does not define the goal or decide completion -- the model does, and
+#' this is the policy it decides under. The continuation prompt keeps only
+#' a one-line reminder so the stance survives compaction without paying for
+#' the whole policy on every iteration.
+#' @return Character scalar.
+#' @noRd
+auto_autonomy_policy <- function() {
+    paste0(
+           "Work toward this goal autonomously.\n\n",
+           "Make reasonable decisions and act rather than stopping to ask or\n",
+           "to report progress; keep going until the goal is met. Prefer a\n",
+           "sensible assumption over pausing for confirmation. This overrides\n",
+           "the usual posture of checking in whenever a task could go more than\n",
+           "one way: here, pick the reasonable option and proceed. You do not\n",
+           "need approval to run tools or to record a plan; a plan you propose\n",
+           "in this run is accepted automatically.\n\n",
+           "Stop only for a genuine blocker: if you hit an ambiguity that\n",
+           "would materially change the intended outcome -- a public interface\n",
+           "or a behaviour choice -- do not guess, and do not report continue\n",
+           "and hope someone reads the prose. Report AUTO_STATUS: blocked and\n",
+           "state plainly what decision you need and why. That stops the run\n",
+           "for a human.\n\n",
+           "Judge completion by evidence. Report AUTO_STATUS: done only when\n",
+           "the goal's acceptance criteria are actually satisfied, preferring\n",
+           "objective evidence such as passing tests or checks. Otherwise\n",
+           "report AUTO_STATUS: continue with the next unresolved step."
+    )
+}
+
+#' The first prompt of a run: the goal plus the full autonomy policy.
+#' @param goal The run's goal.
+#' @return Character scalar.
+#' @noRd
+auto_initial_prompt <- function(goal) {
+    paste0("Goal: ", goal, "\n\n", auto_autonomy_policy())
+}
 
 #' Prompt handed to the worker on each iteration.
 #'
@@ -328,13 +374,22 @@ auto_state <- function(session, dir = getwd()) {
 #' @return Character scalar.
 #' @noRd
 auto_continuation_prompt <- function(goal, loop, max_loops) {
-    paste0(sprintf("Auto iteration %d of %d.\n\n", loop, max_loops),
+    header <- if (is.finite(max_loops)) {
+        sprintf("Auto iteration %d of %d.\n\n", loop, max_loops)
+    } else {
+        sprintf("Auto iteration %d (continuous run, no iteration cap).\n\n",
+                loop)
+    }
+    paste0(header,
            "Original goal: ", goal, "\n\n",
            "Continue from the current session and workspace state. Take the\n",
-           "next concrete step toward the goal.\n\n",
+           "next concrete step toward the goal. Act on reasonable assumptions\n",
+           "rather than pausing to ask or report progress.\n\n",
            "If the acceptance criteria are fully satisfied, report\n",
-           "AUTO_STATUS: done with concise evidence. Otherwise report\n",
-           "AUTO_STATUS: continue and the next unresolved step.")
+           "AUTO_STATUS: done with concise evidence. If you are blocked on a\n",
+           "decision only a human can make, report AUTO_STATUS: blocked with\n",
+           "what you need. Otherwise report AUTO_STATUS: continue and the next\n",
+           "unresolved step.")
 }
 
 #' Parse `/auto [--loops N] [--exec|--no-exec] <goal>`.
@@ -389,6 +444,16 @@ auto_validate_bounds <- function(auto) {
     bad <- character()
     for (nm in names(checks)) {
         v <- suppressWarnings(as.numeric(checks[[nm]]))
+        # max_loops == Inf is the one sanctioned non-finite bound: a
+        # `/auto` run with no --loops is deliberately continuous, governed
+        # by the monitor envelope and the finite caps below. Every other
+        # bound stays finite, so the mode's premise -- being bounded by
+        # something -- holds. max_tool_calls and stall_loops are always
+        # finite here, so a continuous run is never truly unbounded.
+        if (identical(nm, "max_loops") && length(v) == 1L && !is.na(v) &&
+            v == Inf) {
+            next
+        }
         # Finite as well as positive. Inf passes a `<= 0` test and then
         # disables the bound entirely in auto_check_limits() -- an
         # infinite cap on a mode whose entire premise is being bounded.
@@ -427,9 +492,14 @@ auto_validate_bounds <- function(auto) {
 #' @param max_loops Integer or NULL. Overrides the configured cap.
 #' @param allow_exec Logical or NULL. Call-site exec grant; project
 #'   config can still veto it (see `auto_envelope_config()`).
+#' @param continuous Logical. When TRUE and no `max_loops` is given, the
+#'   iteration cap is lifted: the run governs on the monitor envelope and
+#'   the resource caps (tool calls, tokens, time, cost, stall) instead of
+#'   a loop count -- the Codex "Auto" model. `max_loops` still wins if set.
 #' @return Invisibly, the final loop state.
 #' @noRd
-run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
+run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
+                          continuous = FALSE) {
     cwd <- ctx$cwd %||% getwd()
     palette <- ctx$palette %||% list()
     say <- function(fmt, ...) {
@@ -541,9 +611,21 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     auto <- get_auto_config(config)
     if (!is.null(max_loops)) {
         auto$max_loops <- as.integer(max_loops)
+    } else if (isTRUE(continuous)) {
+        # No --loops: run continuously. Inf disables only the loop halt
+        # in auto_check_limits(); max_tool_calls and stall_loops stay
+        # finite (auto_validate_bounds() enforces that), so the run is
+        # still bounded by something and the monitor still brokers every
+        # call. This is the sanctioned way to lift the loop count -- not a
+        # config that silently reads as unbounded.
+        auto$max_loops <- Inf
     }
     record("config",
-           caps = list(max_loops = auto$max_loops,
+           caps = list(max_loops = if (is.finite(auto$max_loops)) {
+                auto$max_loops
+            } else {
+                "continuous"
+            },
                        max_minutes = auto$max_minutes,
                        max_cost = auto$max_cost,
                        max_tokens = auto$max_tokens,
@@ -570,8 +652,13 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
 
     say("goal: %s", goal)
     say("run %s", run_id)
-    say("caps: %d loops, %g min, $%g, %s tool calls",
-        auto$max_loops, auto$max_minutes, auto$max_cost,
+    loops_label <- if (is.finite(auto$max_loops)) {
+        sprintf("%d loops", auto$max_loops)
+    } else {
+        "continuous (no loop cap)"
+    }
+    say("caps: %s, %g min, $%g, %s tool calls",
+        loops_label, auto$max_minutes, auto$max_cost,
         format(auto$max_tool_calls))
 
     # Stamped before the monitor spawns, not after: the spawn writes the
@@ -726,10 +813,13 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
     })
 
     ctx$read_input <- function(prompt_str) {
-        # First call: hand over the goal and let the loop run turn 1.
+        # First call: hand over the goal, framed by the full autonomy
+        # policy, and let the loop run turn 1. Continuations restate the
+        # goal and a one-line reminder; the policy is stated in full only
+        # here.
         if (state$loop == 1L) {
             state$loop <<- 2L
-            return(goal)
+            return(auto_initial_prompt(goal))
         }
 
         # Ahead of the terminal-status check below, not after it: a run
@@ -788,6 +878,18 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
         # The worker's own claim is evidence for the monitor, never the
         # stop authority: "done" gets checked against what moved on disk.
         claimed <- auto_parse_status(reply)
+        # "blocked" is the exception that IS authority, in the fail-closed
+        # direction: a worker asking for a human decision it cannot make
+        # stops the run now. Routing it through the monitor would let the
+        # monitor read the prose and answer "continue", running another
+        # worker turn on a question nobody answered. Erring toward stopping
+        # a run that wanted a human is always safe.
+        if (identical(claimed, "blocked")) {
+            stop_it("escalate", paste("worker reported AUTO_STATUS: blocked;",
+                                      "it needs a human decision to proceed"),
+                    "blocked")
+            return(character(0))
+        }
         run_delta <- worktree_delta(state$baseline, current)
         # Explicit request id, so the progress record and the monitor's
         # transcript name the same exchange.
@@ -838,9 +940,14 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL) {
 
         loop_now <- state$loop
         state$loop <<- state$loop + 1L
-        say("iteration %d/%d  $%.4f  %d tool calls",
-            loop_now, auto$max_loops, state$spend$cost %||% 0,
-            state$tool_calls)
+        if (is.finite(auto$max_loops)) {
+            say("iteration %d/%d  $%.4f  %d tool calls",
+                loop_now, auto$max_loops, state$spend$cost %||% 0,
+                state$tool_calls)
+        } else {
+            say("iteration %d (continuous)  $%.4f  %d tool calls",
+                loop_now, state$spend$cost %||% 0, state$tool_calls)
+        }
         auto_continuation_prompt(goal, loop_now, auto$max_loops)
     }
 
@@ -904,7 +1011,7 @@ auto_delta_evidence <- function(baseline, final, delta, cap = 1000L) {
 #' and the monitor and the mechanical caps both still apply.
 #'
 #' @param reply Assistant text.
-#' @return "done" or "continue".
+#' @return "done", "blocked", or "continue".
 #' @noRd
 auto_parse_status <- function(reply) {
     if (is.null(reply) || !is.character(reply) || length(reply) != 1L ||
@@ -917,8 +1024,28 @@ auto_parse_status <- function(reply) {
     if (!any(hits)) {
         return("continue")
     }
-    tails <- tolower(sub("^[[:space:]>*_`-]*AUTO_STATUS[[:space:]]*:", "",
-                         lines[hits], ignore.case = TRUE))
+    strip <- function(x) {
+        sub("^[[:space:]>*_`-]*AUTO_STATUS[[:space:]]*:", "", x,
+            ignore.case = TRUE)
+    }
+    # Blocked is read from the status TOKEN -- the first word after the
+    # colon -- not the explanation, and it wins outright. Parsing the
+    # whole line would let prose flip a fail-closed stop either way:
+    # "blocked - cannot continue" would read as continue, and
+    # "continue, not blocked on anything" would read as blocked. The
+    # token is the status; the rest is commentary. A blocked report must
+    # stop the run even when another line said continue, so it precedes
+    # the done/continue check.
+    tokens <- tolower(sub("^([[:alpha:]]+).*", "\\1",
+                          sub("^[^[:alnum:]]+", "", trimws(strip(lines[hits])))))
+    if (any(tokens == "blocked")) {
+        return("blocked")
+    }
+    # done vs continue stays permissive on a genuine split: a spurious
+    # extra iteration costs one turn, and the monitor and caps still
+    # apply. "done" anywhere in the line still reads as a completion the
+    # monitor will check against disk.
+    tails <- tolower(strip(lines[hits]))
     found <- unique(c(
             if (any(grepl("\\bdone\\b", tails))) "done",
             if (any(grepl("\\bcontinue\\b", tails))) "continue"
