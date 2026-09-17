@@ -464,13 +464,27 @@ tool_run_r <- function(code, envir = globalenv()) {
     stream_con <- file(stream_file, open = "wt")
     sink(stream_con)
     sink_open <- TRUE
+    con_open <- TRUE
     close_stream <- function() {
         if (sink_open) {
             sink()
             sink_open <<- FALSE
         }
-        close(stream_con)
+        if (con_open) {
+            close(stream_con)
+            con_open <<- FALSE
+        }
     }
+    # Release the sink, connection, and temp file however this call exits.
+    # The supervised worker aborts an over-deadline call with an interrupt,
+    # which unwinds past the explicit close_stream() below without running
+    # it -- leaking a sink and connection into the persistent worker on every
+    # timeout. on.exit fires on interrupts as well as errors and normal
+    # returns; the flags keep it idempotent with the normal-path close.
+    on.exit({
+        close_stream()
+        unlink(stream_file)
+    }, add = TRUE)
     eval_error <- NULL
     r <- tryCatch(
                   withCallingHandlers(
@@ -494,7 +508,6 @@ tool_run_r <- function(code, envir = globalenv()) {
     )
     close_stream()
     streams <- suppressWarnings(readLines(stream_file))
-    unlink(stream_file)
 
     if (!is.null(eval_error)) {
         text <- paste(c(streams, paste("Error:", conditionMessage(eval_error))),

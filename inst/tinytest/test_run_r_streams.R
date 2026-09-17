@@ -61,6 +61,25 @@ expect_true(grepl("^Error: ", text_of(corteza::tool_run_r("1 +", envir = e))))
 # sinks are balanced afterwards
 expect_equal(sink.number(), 0L)
 
+# A worker aborts an over-deadline run_r with an interrupt, which unwinds past
+# tool_run_r's error-only handler. Cleanup must still run on that path:
+# repeated interrupts must not leak a sink or connection into the persistent
+# session, and a later call's printed output must still be captured -- a leaked
+# sink silently swallows it.
+interrupt_code <- paste0(
+    "stop(structure(list(message = 'deadline', call = NULL), ",
+    "class = c('interrupt', 'condition')))")
+base_sinks <- sink.number()
+base_cons <- nrow(showConnections(all = FALSE))
+for (i in 1:3) {
+    tryCatch(corteza::tool_run_r(interrupt_code, envir = e),
+             interrupt = function(cnd) NULL)
+}
+expect_equal(sink.number(), base_sinks)
+expect_equal(nrow(showConnections(all = FALSE)), base_cons)
+expect_equal(text_of(corteza::tool_run_r("print(1:3)", envir = e)),
+             "[1] 1 2 3")
+
 # streamed output goes through the same cap as any other result
 local({
     on.exit(corteza:::clear_handles(), add = TRUE)
