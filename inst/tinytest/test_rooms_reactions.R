@@ -20,8 +20,10 @@ rx <- function(key, target = "$target", room = "!r:ex", self = FALSE,
 }
 approve <- corteza:::bot_approve_keys(list())
 deny <- corteza:::bot_deny_keys(list())
-verdict <- function(reactions, room = "!r:ex", target = "$target") {
-    corteza:::bot_reaction_verdict(reactions, room, target, approve, deny)
+verdict <- function(reactions, room = "!r:ex", target = "$target",
+                    approvers = "@alice:ex") {
+    corteza:::bot_reaction_verdict(reactions, room, target, approve, deny,
+                                   approvers)
 }
 
 # --- The key vocabulary lives here ---
@@ -78,6 +80,50 @@ expect_true(verdict(list(rx("yes", room = "!other:ex"), rx("yes")),
 expect_true(verdict(list(rx(intToUtf8(0x1F44D)), rx(intToUtf8(0x1F44E)))))
 expect_false(verdict(list(rx(intToUtf8(0x1F44E)), rx(intToUtf8(0x1F44D)))))
 
+# --- Only approvers count ---
+# Any non-self reaction used to count, so a second bot in the room could
+# approve this bot's tool calls.
+expect_null(verdict(list(rx("yes", sender = "@codex:ex"))))
+# A non-approver's thumbs-down is skipped too, not read as a veto: a
+# stray tap must not block the operator's answer that follows it.
+expect_true(verdict(list(rx("no", sender = "@codex:ex"), rx("yes"))))
+# No approvers at all means nothing can answer.
+expect_null(verdict(list(rx("yes")), approvers = character()))
+# A record without a sender cannot be attributed, so it does not count.
+local({
+    r <- rx("yes")
+    r$sender <- NULL
+    expect_null(verdict(list(r)))
+})
+
+# --- Who the approvers are ---
+approvers <- corteza:::bot_approvers
+bots <- c("@bot:ex", "@cornelius:ex")
+# Configured operators win, whatever the room looks like.
+expect_identical(approvers(list(operators = "@troy:ex"),
+                           c("@bot:ex", "@troy:ex", "@guest:ex"), bots),
+                 "@troy:ex")
+# No operators: the room's one human.
+expect_identical(approvers(list(), c("@bot:ex", "@troy:ex"), bots),
+                 "@troy:ex")
+# Listed bots are not humans, so a bot sharing the room does not close it.
+expect_identical(approvers(list(),
+                           c("@bot:ex", "@cornelius:ex", "@troy:ex"), bots),
+                 "@troy:ex")
+# An unlisted bot reads as a second human and closes the room.
+expect_identical(approvers(list(),
+                           c("@bot:ex", "@codex:ex", "@troy:ex"), bots),
+                 character())
+# Two humans, no operators: nobody.
+expect_identical(approvers(list(), c("@bot:ex", "@a:ex", "@b:ex"), bots),
+                 character())
+# Membership that could not be read: nobody, rather than a guess.
+expect_identical(approvers(list(), NULL, bots), character())
+# Blank operator entries are ignored, not treated as configured.
+expect_identical(approvers(list(operators = c("", NA)),
+                           c("@bot:ex", "@troy:ex"), bots),
+                 "@troy:ex")
+
 # --- The mx.client passthrough is gone ---
 # It delegated the approve/deny vocabulary to the transport package,
 # which is exactly where it should not live.
@@ -121,8 +167,13 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
         list(rooms = list(join = join))
     }
 
+    # Members default to the bot plus one human, so the room's approver
+    # is @alice:ex without any operators configured.
     approval_client <- function(sync_fn, record = NULL, sent = NULL,
-                                reacted = NULL) {
+                                reacted = NULL,
+                                members = function(sess, room) {
+                                    c("@bot:ex", "@alice:ex")
+                                }) {
         orig <- corteza:::bot_chat_client
         stub <- function(cfg, save_cursor = TRUE, ...) {
             if (!is.null(record)) {
@@ -130,6 +181,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
             }
             orig(cfg, save_cursor = save_cursor,
                  .sync = sync_fn,
+                 .members = members,
                  .send = function(client, text, room = NULL, ...) {
                      if (!is.null(sent)) {
                          sent$args[[length(sent$args) + 1L]] <- list(
@@ -225,6 +277,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
                                                          save_cursor = TRUE,
                                                          ...) {
             o(cfg, save_cursor = save_cursor, .sync = stub_sync,
+              .members = function(sess, room) c("@bot:ex", "@alice:ex"),
               .send = function(client, text, room = NULL, ...) {
                   order <<- c(order, "send")
                   "$prompt"
@@ -333,6 +386,7 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
                                                          ...) {
             o(cfg, save_cursor = save_cursor,
               .sync = scripted(list(cursor = "s0")),
+              .members = function(sess, room) c("@bot:ex", "@alice:ex"),
               .send = function(...) NULL, .media = function(...) NULL,
               .react = function(...) "$s", ...)
         }, ns = "corteza")
@@ -347,6 +401,78 @@ if (requireNamespace("mx.client", quietly = TRUE)) {
         approval_client(scripted(list(cursor = "s0"), list(cursor = "s1")))
         expect_false(corteza:::bot_reaction_approval(
             cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 1L))
+    })
+
+    # Another bot's thumbs-up does not approve; the human's after it does.
+    local({
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
+        approval_client(scripted(
+            list(cursor = "s0"),
+            list(cursor = "s1", sync = rx_event("yes", sender = "@codex:ex",
+                                                id = "$r0")),
+            list(cursor = "s2", sync = rx_event(intToUtf8(0x1F44E)))),
+            members = function(sess, room) {
+                c("@bot:ex", "@alice:ex")
+            })
+        # The deny from alice is the verdict; codex's approve was skipped.
+        expect_false(corteza:::bot_reaction_approval(
+            cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 10L))
+    })
+
+    # Configured operators are the only approvers, even in a one-human
+    # room whose human is someone else.
+    local({
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
+        approval_client(scripted(
+            list(cursor = "s0"),
+            list(cursor = "s1", sync = rx_event("yes"))))
+        expect_false(corteza:::bot_reaction_approval(
+            c(cfg, list(operators = "@troy:ex")), a_call, a_dec,
+            room_id = "!session:ex", timeout_sec = 1L))
+    })
+
+    # A room nobody can approve in gets a notice instead of a prompt,
+    # declines, and never polls for a verdict.
+    local({
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
+        rec <- new.env(); rec$polls <- list()
+        sent <- new.env(); sent$args <- list()
+        reacted <- new.env(); reacted$args <- list()
+        approval_client(scripted(list(cursor = "s0"),
+                                 list(cursor = "s1", sync = rx_event("yes")),
+                                 record = rec),
+                        sent = sent, reacted = reacted,
+                        members = function(sess, room) {
+                            c("@bot:ex", "@alice:ex", "@carol:ex")
+                        })
+        expect_false(corteza:::bot_reaction_approval(
+            cfg, list(tool = "bash", args = list(cmd = "ls")), a_dec,
+            room_id = "!session:ex", timeout_sec = 5L))
+        expect_identical(length(rec$polls), 0L)
+        expect_identical(length(reacted$args), 0L)
+        expect_identical(length(sent$args), 1L)
+        expect_identical(sent$args[[1L]]$room, "!session:ex")
+        expect_true(grepl("nobody here can approve", sent$args[[1L]]$text,
+                          fixed = TRUE))
+        expect_true(grepl("bash", sent$args[[1L]]$text, fixed = TRUE))
+    })
+
+    # A member list that cannot be read declines the same way.
+    local({
+        orig <- corteza:::bot_chat_client
+        on.exit(assignInNamespace("bot_chat_client", orig, ns = "corteza"))
+        sent <- new.env(); sent$args <- list()
+        approval_client(scripted(list(cursor = "s0"),
+                                 list(cursor = "s1", sync = rx_event("yes"))),
+                        sent = sent,
+                        members = function(sess, room) stop("403"))
+        expect_false(corteza:::bot_reaction_approval(
+            cfg, a_call, a_dec, room_id = "!session:ex", timeout_sec = 5L))
+        expect_true(grepl("nobody here can approve", sent$args[[1L]]$text,
+                          fixed = TRUE))
     })
 
     # corteza no longer runs its own sync loop or calls mx_react.

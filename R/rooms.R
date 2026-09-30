@@ -1429,6 +1429,33 @@ bot_deny_keys <- function(cfg) {
     c(intToUtf8(0x1F44E), intToUtf8(0x274C), "n", "no", "nope")
 }
 
+# Who may answer an approval prompt in this room. Configured operators
+# when there are any. Otherwise the room's one human, if it has exactly
+# one: a private conversation, where whoever is talking to the bot is
+# the person it acts for. Anything else -- several humans, or a member
+# list that could not be read -- is nobody, and the request is declined.
+#
+# Any non-self reaction used to count. Once a second bot shares a room,
+# that let it approve this bot's tool calls. Humans are counted the way
+# the reply gate counts them (bot_room_humans()), so an unlisted bot
+# reads as a second human and closes the room to approvals rather than
+# opening it.
+bot_approvers <- function(cfg, members, bots = character()) {
+    ops <- bot_operators(cfg)
+    if (length(ops)) {
+        return(ops)
+    }
+    if (is.null(members)) {
+        return(character())
+    }
+    humans <- bot_room_humans(members, NULL, bots)
+    if (length(humans) == 1L) {
+        humans
+    } else {
+        character()
+    }
+}
+
 # First verdict wins, in the order the homeserver reported them.
 #
 # Self reactions are skipped, and that is load-bearing rather than
@@ -1438,12 +1465,16 @@ bot_deny_keys <- function(cfg) {
 #
 # The room is checked too. The prompt goes to the session's room, which
 # is not the config's default room in any room but one.
+#
+# Only a sender in `approvers` counts. Anyone else's reaction is skipped,
+# not treated as a denial, so a stray tap cannot veto the operator.
 bot_reaction_verdict <- function(reactions, room_id, target, approve_keys,
-                                 deny_keys) {
+                                 deny_keys, approvers) {
     for (r in reactions) {
         if (isTRUE(r$self) ||
             !identical(r$channel, room_id) ||
-            !identical(r$target, target)) {
+            !identical(r$target, target) ||
+            !isTRUE(r$sender %in% approvers)) {
             next
         }
         if (r$key %in% approve_keys) {
@@ -1476,6 +1507,23 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
     chat <- tryCatch(bot_chat_client(cfg, save_cursor = FALSE),
                      error = function(e) NULL)
     if (is.null(chat)) {
+        return(FALSE)
+    }
+
+    # Membership is read fresh rather than from the session's 10-minute
+    # cache: this decides who may authorize a tool call, and someone who
+    # joined since would otherwise leave a stale "one human" answer.
+    self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
+                        error = function(e) cfg$user_id)
+    members <- tryCatch(chat.api::chat_members(chat, room_id),
+                        error = function(e) NULL)
+    approvers <- bot_approvers(cfg, members, bot_known_bots(cfg, self_id))
+    if (!length(approvers)) {
+        # Say so in the room. A silent decline reads to the user as the
+        # model changing its mind.
+        tryCatch(chat.api::chat_send(chat, room_id,
+                                     bot_no_approver_notice(call)),
+                 error = function(e) NULL)
         return(FALSE)
     }
 
@@ -1534,7 +1582,7 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
             next
         }
         verdict <- bot_reaction_verdict(res$reactions, room_id, eid,
-                                        approve_keys, deny_keys)
+                                        approve_keys, deny_keys, approvers)
         if (!is.null(verdict)) {
             return(verdict)
         }
@@ -1572,6 +1620,17 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
                                         max_chars = 120L),
             timeout_sec
     )
+}
+
+# Posted instead of an approval prompt when nobody in the room may
+# answer one. Names the two ways to open it up.
+bot_no_approver_notice <- function(call) {
+    sprintf(paste0("Approval needed for %s, but nobody here can approve ",
+                   "it: the bot has no operators configured and this ",
+                   "room does not have exactly one human. Declined. Set ",
+                   "`operators` in the bot config, or list the other bots ",
+                   "under `bots`."),
+            .sanitize_inline(call$tool %||% "", max_chars = 60L))
 }
 
 # Build a fresh corteza session from a Matrix config. Does not fetch any
