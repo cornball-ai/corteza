@@ -172,3 +172,64 @@ with_state({
     expect_identical(nrow(v), 0L)
     expect_identical(names(v), c("id", "verdict", "task"))
 })
+
+# --- Approval bridge: request, answer, wait ---
+with_state({
+    id <- job_create("t")
+    corteza:::job_mark_dispatched(id)
+    call <- list(tool = "bash", args = list(cmd = strrep("x", 5000)))
+    req <- corteza:::job_approval_request(id, call, list(reason = "ask"))
+    expect_true(grepl("^r[0-9]{6}-[0-9a-f]{6}$", req))
+    pending <- corteza:::job_approval_pending(id)
+    expect_identical(length(pending), 1L)
+    expect_identical(pending[[1L]]$tool, "bash")
+    # Model-written args are bounded in the record.
+    expect_true(nchar(pending[[1L]]$args$cmd) < 2100L)
+
+    expect_true(corteza:::job_approval_answer(id, req, TRUE, by = "@troy:ex"))
+    # Answered requests are no longer pending, and a second answer does
+    # not count.
+    expect_identical(length(corteza:::job_approval_pending(id)), 0L)
+    expect_false(corteza:::job_approval_answer(id, req, FALSE))
+    expect_true(corteza:::job_approval_wait(id, req, timeout = 1))
+    closed <- jsonlite::fromJSON(corteza:::job_approval_path(id, req, "closed"))
+    expect_identical(closed$verdict, "approved")
+})
+
+# A denial is FALSE; a timeout is FALSE and closes the request, after
+# which an answer is refused.
+with_state({
+    id <- job_create("t")
+    corteza:::job_mark_dispatched(id)
+    r1 <- corteza:::job_approval_request(id, list(tool = "x"), list())
+    corteza:::job_approval_answer(id, r1, FALSE)
+    expect_false(corteza:::job_approval_wait(id, r1, timeout = 1))
+
+    r2 <- corteza:::job_approval_request(id, list(tool = "x"), list())
+    expect_false(corteza:::job_approval_wait(id, r2, timeout = 0.2,
+                                             interval = 0.05))
+    expect_identical(jsonlite::fromJSON(
+        corteza:::job_approval_path(id, r2, "closed"))$verdict, "timeout")
+    expect_false(corteza:::job_approval_answer(id, r2, TRUE))
+})
+
+# Cancellation ends the wait; once the job has ended, answers are refused.
+with_state({
+    id <- job_create("t")
+    corteza:::job_mark_dispatched(id)
+    req <- corteza:::job_approval_request(id, list(tool = "x"), list())
+    corteza:::job_request_cancel(id)
+    expect_false(corteza:::job_approval_wait(id, req, timeout = 5))
+    expect_identical(jsonlite::fromJSON(
+        corteza:::job_approval_path(id, req, "closed"))$verdict, "cancelled")
+
+    id2 <- job_create("t")
+    corteza:::job_mark_dispatched(id2)
+    req2 <- corteza:::job_approval_request(id2, list(tool = "x"), list())
+    corteza:::job_settle(id2, "indeterminate")
+    expect_false(corteza:::job_approval_answer(id2, req2, TRUE))
+    expect_error(corteza:::job_approval_answer(id2, "r000000-000000", TRUE),
+                 "no approval request")
+    expect_error(corteza:::job_approval_answer(id2, "../x", TRUE),
+                 "invalid approval request id")
+})

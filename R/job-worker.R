@@ -62,6 +62,10 @@ job_worker_spec <- function(session, role = "doer") {
                                         JOB_WORKER_DEFAULTS$max_turns),
                  system = job_worker_system(role),
                  plan_mode = isTRUE(session$plan_mode),
+                 # The originating session's channel, so policy judges the
+                 # worker's calls as it would the session's own.
+                 channel = session$channel %||% "console",
+                 approval_timeout = as.numeric(cfg$approval_timeout_sec %||% 600),
                  init_fn = NULL,
                  run_fn = NULL
     )
@@ -78,6 +82,10 @@ job_worker_system <- function(role) {
 
 # ---- child side --------------------------------------------------------
 
+# Child-process state: the job being run and the approval timeout. Each
+# callr worker loads its own namespace, so this never reaches the host.
+.job_worker_state <- new.env(parent = emptyenv())
+
 # Start the child's turn session and restore the last checkpoint, if
 # any. Returns what was restored so the parent can report it.
 .job_worker_child_init <- function(cwd, spec, state_dir) {
@@ -86,10 +94,27 @@ job_worker_system <- function(role) {
         subagent_turn_init(provider = spec$provider, model = spec$model,
                            tools_filter = spec$tools, system = spec$system,
                            max_turns = spec$max_turns,
-                           plan_mode = spec$plan_mode)
+                           plan_mode = spec$plan_mode, channel = spec$channel)
     }
     init(spec)
+    .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600
+    # Replace the subagent default (deny everything) with the bridge.
+    if (!is.null(.subagent_state$session)) {
+        .subagent_state$session$approval_cb <- .job_worker_child_ask
+    }
     .job_worker_child_restore(state_dir)
+}
+
+# The worker's approval callback: ask through the job's approval files
+# and wait. Outside a job there is nobody to ask, so it declines.
+.job_worker_child_ask <- function(call, decision) {
+    job_id <- .job_worker_state$job_id
+    if (is.null(job_id)) {
+        return(FALSE)
+    }
+    req <- job_approval_request(job_id, call, decision)
+    job_approval_wait(job_id, req,
+                      timeout = .job_worker_state$approval_timeout %||% 600)
 }
 
 .job_worker_child_restore <- function(state_dir) {
@@ -144,6 +169,8 @@ job_worker_system <- function(role) {
 # not the worker's: they come back as data, and the checkpoint is still
 # taken, so the next job starts from what this one left.
 .job_worker_child_run <- function(job_id, task, spec, state_dir, key) {
+    .job_worker_state$job_id <- job_id
+    on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
     run <- spec$run_fn %||% function(task) subagent_turn_prompt(task)
     res <- tryCatch(run(task), error = function(e) {
         list(error = conditionMessage(e))
@@ -253,7 +280,36 @@ job_pump <- function(session) {
     if (is.null(session$.job_current)) {
         events <- c(events, job_dispatch_next(session))
     }
+    current <- session$.job_current
+    if (!is.null(current)) {
+        events <- c(events, job_pump_approvals(session, current))
+    }
     events
+}
+
+# New approval requests from the running job, each reported once as an
+# "approval" event carrying the request. The surface asks, then answers
+# with job_answer(); until then the worker waits and the loop does not.
+job_pump_approvals <- function(session, id) {
+    asked <- session$.job_asked %||% character()
+    fresh <- Filter(function(r) !r$id %in% asked, job_approval_pending(id))
+    if (!length(fresh)) {
+        return(list())
+    }
+    session$.job_asked <- c(asked, vapply(fresh, function(r) r$id, ""))
+    j <- job_read(id)
+    lapply(fresh, function(r) list(type = "approval", job = j, request = r))
+}
+
+# Answer one of this session's approval requests. FALSE when the answer
+# no longer counts (see job_approval_answer()).
+job_answer <- function(session, id, req, approved, by = "local") {
+    j <- job_read(id)
+    if (is.null(j) ||
+        !identical(j$origin$session_key, job_worker_key(session))) {
+        stop("no job ", id, " in this session", call. = FALSE)
+    }
+    job_approval_answer(id, req, approved, by = by)
 }
 
 job_pump_current <- function(session, id) {

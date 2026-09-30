@@ -283,3 +283,138 @@ job_recover <- function(live = character()) {
                task = vapply(open, function(j) j$task, character(1)),
                stringsAsFactors = FALSE)
 }
+
+# ---- Approval bridge ---------------------------------------------------
+#
+# A worker has no channel to the user. When policy says "ask", the
+# worker writes a request into its job's approvals/ directory and waits
+# for an answer file; the owning loop sees the request, asks through its
+# surface, and writes the answer. The loop never blocks on the user and
+# the worker never talks to the surface.
+#
+# Per request, up to three files:
+#   <req>.request.json  what the worker wants to do (tool, args, reason)
+#   <req>.answer.json   the surface's verdict and who gave it
+#   <req>.closed.json   written by the worker when it stops waiting:
+#                       approved, denied, timeout, or cancelled
+#
+# An answer authorizes exactly that request of that job. It is refused
+# once the request is closed or the job has ended, so an approval that
+# arrives after a cancellation, an expiry, or a restart cannot resume
+# anything: the worker that asked is gone or has moved on.
+
+job_new_request_id <- function() {
+    paste0("r", format(Sys.time(), "%H%M%S"), "-",
+           paste(sample(c(0:9, letters[1:6]), 6L, replace = TRUE), collapse = ""))
+}
+
+job_check_request_id <- function(req) {
+    if (!is.character(req) || length(req) != 1L || is.na(req) ||
+        !grepl("^r[0-9]{6}-[0-9a-f]{6}$", req)) {
+        stop("invalid approval request id: ",
+             paste(format(req), collapse = " "), call. = FALSE)
+    }
+    req
+}
+
+job_approval_path <- function(id, req, kind) {
+    file.path(job_dir(id), "approvals", paste0(req, ".", kind, ".json"))
+}
+
+# Bound what goes into the record: args are model-written and can be a
+# whole file's contents. The surface renders from this, and a prompt
+# does not need more than the start of each value.
+job_approval_args <- function(args, max_chars = 2000L) {
+    lapply(args %||% list(), function(v) {
+        v <- paste(format(v), collapse = " ")
+        if (nchar(v) > max_chars) {
+            paste0(substr(v, 1L, max_chars), "...")
+        } else {
+            v
+        }
+    })
+}
+
+# Worker side: record a request. Returns the request id.
+job_approval_request <- function(id, call, decision) {
+    job_check_id(id)
+    req <- job_new_request_id()
+    dir.create(file.path(job_dir(id), "approvals"), recursive = TRUE,
+               showWarnings = FALSE)
+    job_write_file(job_approval_path(id, req, "request"), list(
+            id = req,
+            job = id,
+            requested_at = job_now(),
+            tool = call$tool %||% call$name %||% "",
+            args = job_approval_args(call$args),
+            reason = decision$reason %||% "ask"
+        ))
+    req
+}
+
+# Worker side: wait for the answer. TRUE only for an explicit approval
+# of this request. Stops waiting, and closes the request, on a denial,
+# on timeout, or when the job is cancelled or has ended. `interval` and
+# `timeout` are seconds.
+job_approval_wait <- function(id, req, timeout = 600, interval = 0.5) {
+    job_check_id(id)
+    job_check_request_id(req)
+    close_as <- function(verdict) {
+        job_write_file(job_approval_path(id, req, "closed"),
+                       list(closed_at = job_now(), verdict = verdict))
+        identical(verdict, "approved")
+    }
+    dir <- job_dir(id)
+    deadline <- Sys.time() + timeout
+    repeat {
+        answer <- job_read_file(job_approval_path(id, req, "answer"))
+        if (!is.null(answer)) {
+            return(close_as(if (isTRUE(answer$approved)) "approved" else
+                            "denied"))
+        }
+        if (file.exists(file.path(dir, "cancel.json")) ||
+            file.exists(file.path(dir, "outcome.json"))) {
+            return(close_as("cancelled"))
+        }
+        if (Sys.time() >= deadline) {
+            return(close_as("timeout"))
+        }
+        Sys.sleep(interval)
+    }
+}
+
+# Owner side: open requests for a job, oldest first. A request is open
+# while it has neither an answer nor a closed record.
+job_approval_pending <- function(id) {
+    job_check_id(id)
+    dir <- file.path(job_dir(id), "approvals")
+    if (!dir.exists(dir)) {
+        return(list())
+    }
+    files <- sort(list.files(dir, pattern = "\\.request\\.json$"))
+    reqs <- lapply(file.path(dir, files), job_read_file)
+    Filter(function(r) {
+        !file.exists(job_approval_path(id, r$id, "answer")) &&
+        !file.exists(job_approval_path(id, r$id, "closed"))
+    }, reqs)
+}
+
+# Owner side: answer a request. Returns TRUE when the answer was
+# recorded, FALSE when it can no longer count -- the request was already
+# answered or closed, or the job has ended. Who is allowed to answer is
+# the surface's decision; `by` records who did.
+job_approval_answer <- function(id, req, approved, by = "local") {
+    job_check_id(id)
+    job_check_request_id(req)
+    if (!file.exists(job_approval_path(id, req, "request"))) {
+        stop("no approval request ", req, " for job ", id, call. = FALSE)
+    }
+    if (file.exists(file.path(job_dir(id), "outcome.json")) ||
+        file.exists(job_approval_path(id, req, "answer")) ||
+        file.exists(job_approval_path(id, req, "closed"))) {
+        return(FALSE)
+    }
+    job_write_file(job_approval_path(id, req, "answer"),
+                   list(approved = isTRUE(approved), by = by, answered_at = job_now()))
+    TRUE
+}

@@ -165,7 +165,81 @@ expect_true(grepl("no provider key", bj$outcome$error))
 # It never reached a worker, so there is no dispatch record.
 expect_null(bj$dispatch)
 
-for (sess in list(s, slow, failing, dying, broken)) {
+# --- The approval bridge, end to end through a worker ---
+# The job asks the way a tool call under an "ask" verdict would: through
+# the worker's approval callback, which writes a request and waits.
+asking <- function(task) {
+    ask <- get(".job_worker_child_ask", envir = asNamespace("corteza"))
+    ok <- ask(list(tool = "bash", args = list(cmd = task)),
+              list(reason = "code/exec/matrix"))
+    list(reply = if (isTRUE(ok)) "approved" else "declined")
+}
+asker <- make_session("room-ask", asking)
+
+wait_for <- function(s, type, timeout = 15) {
+    deadline <- Sys.time() + timeout
+    repeat {
+        ev <- Filter(function(e) identical(e$type, type),
+                     corteza:::job_pump(s))
+        if (length(ev) || Sys.time() > deadline) {
+            return(ev)
+        }
+        Sys.sleep(0.1)
+    }
+}
+
+# Approved: the event carries the request, the answer releases the job.
+ap <- corteza:::job_submit(asker, "ls")
+ev <- wait_for(asker, "approval")
+expect_identical(length(ev), 1L)
+req <- ev[[1L]]$request
+expect_identical(req$tool, "bash")
+expect_identical(req$args$cmd, "ls")
+expect_identical(ev[[1L]]$job$id, ap)
+# While the worker waits, the loop does not: pumping returns at once
+# and reports the same request only once.
+t_pump <- Sys.time()
+expect_identical(length(Filter(function(e) identical(e$type, "approval"),
+                               corteza:::job_pump(asker))), 0L)
+expect_true(as.numeric(difftime(Sys.time(), t_pump, units = "secs")) < 1)
+expect_true(corteza:::job_answer(asker, ap, req$id, TRUE, by = "@troy:ex"))
+pump_until(asker, ap)
+expect_identical(corteza:::job_read(ap)$outcome$result, "approved")
+
+# Denied.
+dn <- corteza:::job_submit(asker, "rm -rf /")
+req <- wait_for(asker, "approval")[[1L]]$request
+expect_true(corteza:::job_answer(asker, dn, req$id, FALSE, by = "@troy:ex"))
+pump_until(asker, dn)
+expect_identical(corteza:::job_read(dn)$outcome$result, "declined")
+
+# Cancelled while waiting: the job ends, and the approval that arrives
+# afterwards is refused rather than resuming anything.
+cx <- corteza:::job_submit(asker, "sleep")
+req <- wait_for(asker, "approval")[[1L]]$request
+corteza:::job_cancel(asker, cx)
+corteza:::job_pump(asker)
+expect_identical(corteza:::job_read(cx)$status, "cancelled")
+expect_false(corteza:::job_answer(asker, cx, req$id, TRUE))
+# Another session cannot answer this session's request.
+expect_error(corteza:::job_answer(s, cx, req$id, TRUE), "no job")
+
+# --- The real init installs the bridge and the originating channel ---
+# No provider is called: init builds a session object, and the run
+# function only inspects it.
+probe <- make_session("room-probe", function(task) {
+    st <- get(".subagent_state", envir = asNamespace("corteza"))
+    ask <- get(".job_worker_child_ask", envir = asNamespace("corteza"))
+    list(reply = paste(identical(st$session$approval_cb, ask),
+                       st$session$channel))
+})
+probe$job_worker_spec$init_fn <- NULL
+probe$channel <- "matrix"
+pr <- corteza:::job_submit(probe, "check")
+pump_until(probe, pr)
+expect_identical(corteza:::job_read(pr)$outcome$result, "TRUE matrix")
+
+for (sess in list(s, slow, failing, dying, broken, asker, probe)) {
     corteza:::job_worker_close(sess)
 }
 if (is.na(old_state)) {

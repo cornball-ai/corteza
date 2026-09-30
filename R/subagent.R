@@ -178,6 +178,11 @@ resolve_subagent_id <- function(input) {
 #'   a filesystem sandbox on its own -- `read_file` reaches anything the
 #'   process can -- so a child that should only see its project needs
 #'   this as well.
+#' @param channel Policy channel for the child's tool calls: "console"
+#'   (default, the historical behavior), "cli", or "matrix". A job worker
+#'   passes its originating session's channel so work delegated from a
+#'   Matrix room is judged by the Matrix column of the policy tensor, not
+#'   the looser console one.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
@@ -185,7 +190,7 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
                                max_turns = 10L, depth = 0L,
                                plan_mode = FALSE, web_search = NULL,
-                               allowed_paths = NULL) {
+                               allowed_paths = NULL, channel = "console") {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
@@ -201,7 +206,7 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
     if (nzchar(instruction_header)) {
         system <- paste(c(system, instruction_header), collapse = "\n\n")
     }
-    session <- new_session(channel = "console", provider = provider,
+    session <- new_session(channel = channel, provider = provider,
                            tools_filter = tools_filter, system = system,
                            max_turns = as.integer(max_turns),
                            plan_mode = isTRUE(plan_mode),

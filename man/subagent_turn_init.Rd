@@ -12,7 +12,8 @@ subagent_turn_init(
   depth = 0L,
   plan_mode = FALSE,
   web_search = NULL,
-  allowed_paths = NULL
+  allowed_paths = NULL,
+  channel = "console"
 )
 }
 \arguments{
@@ -47,6 +48,12 @@ leaves it unrestricted, as before. A read-only `tools_filter` is not
 a filesystem sandbox on its own -- `read_file` reaches anything the
 process can -- so a child that should only see its project needs
 this as well.}
+
+\item{channel}{Policy channel for the child's tool calls: "console"
+(default, the historical behavior), "cli", or "matrix". A job worker
+passes its originating session's channel so work delegated from a
+Matrix room is judged by the Matrix column of the policy tensor, not
+the looser console one.}
 }
 \value{
 Invisible TRUE.
