@@ -1,3 +1,14 @@
+# corteza 0.7.1.57
+
+- **Matrix approvals only accept an operator or the room's one human.**
+  Any reaction other than the bot's own used to answer an approval prompt,
+  so a second bot in the room could approve this bot's tool calls.
+  Approvers are now the configured `operators`, or, with none configured,
+  the room's one human when it has exactly one. Other reactions are
+  ignored. A room with no possible approver gets a notice and the request
+  is declined. Bots not listed under `bots` count as humans. Configs with
+  `auto_approve_asks: true` are unaffected, since they never prompt.
+
 # corteza 0.7.1.56
 
 - **`run_r` releases its output sink when a worker call is interrupted.**
