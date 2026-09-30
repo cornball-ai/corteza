@@ -1,0 +1,347 @@
+# The job worker: one persistent R process per conversation session,
+# running that session's delegated jobs one at a time.
+#
+# Persistent rather than per job because warm R state -- loaded
+# packages, objects built up across jobs, the worker's own conversation
+# history -- is the reason to use a callr worker at all. A per-job
+# worker would throw that away without buying recoverability, since a
+# crash loses in-memory state either way.
+#
+# What survives a crash is a checkpoint taken at each job boundary: the
+# worker's global environment (in the run_r worker's
+# corteza_workspace_v1 format) and its conversation history. A new
+# worker for the same session restores the last checkpoint and says so.
+# It is never mid-job state: work done by a job that did not finish is
+# lost from memory, and whatever it did to files stays done. That job is
+# settled indeterminate by the ledger (R/jobs.R), not re-run.
+#
+# Restoring has limits the user is told about rather than hidden from:
+# objects holding external pointers (connections, torch tensors, DB
+# handles, processes) come back as dead shells, and attached packages
+# are re-attached by name only.
+#
+# The parent side never blocks on the worker. job_pump() polls with a
+# zero timeout and returns events for the caller's surface to present.
+
+JOB_WORKER_DEFAULTS <- list(max_turns = 50L)
+
+# The session's key for its jobs and its worker checkpoint. Surfaces set
+# session$job_key (a Matrix room or thread key, a REPL session key); the
+# fallbacks keep a bare session usable.
+job_worker_key <- function(session) {
+    session$job_key %||% session$sessionKey %||% "local"
+}
+
+# Per-session, per-role checkpoint directory. Keys carry characters that
+# do not belong in a path (Matrix room ids start with "!"), so the
+# directory is named by a digest and the key is recorded inside. The
+# role is part of it: a reviewer's worker must not wake up holding the
+# doer's workspace.
+job_worker_state_dir <- function(key, role = "doer") {
+    file.path(bot_signal_dir(), "workers",
+              substr(digest::digest(paste(key, role, sep = "\n"), algo = "sha256",
+                                    serialize = FALSE),
+                     1L, 16L))
+}
+
+# What a worker for this session and role is started with. Tools come
+# from the role; provider and model from the session unless the config
+# names a worker model. `session$job_worker_spec` overrides fields, and
+# is also how tests replace the child's init and run functions with ones
+# that need no provider.
+job_worker_spec <- function(session, role = "doer") {
+    cfg <- session$config$jobs %||% list()
+    tools <- switch(role, doer = SUBAGENT_PRESETS$work,
+                    stop("unknown job role: ", role, call. = FALSE))
+    spec <- list(
+                 role = role,
+                 provider = cfg$provider %||% session$provider %||% "anthropic",
+                 model = cfg$model %||% session$model_map$cloud %||% session$model,
+                 tools = tools,
+                 max_turns = as.integer(cfg$max_turns %||%
+                                        JOB_WORKER_DEFAULTS$max_turns),
+                 system = job_worker_system(role),
+                 plan_mode = isTRUE(session$plan_mode),
+                 init_fn = NULL,
+                 run_fn = NULL
+    )
+    utils::modifyList(spec, session$job_worker_spec %||% list())
+}
+
+job_worker_system <- function(role) {
+    paste0("You are the ", role, " for jobs a talker agent delegates ",
+           "to you. Each message is one job. Work it in the current ",
+           "directory. When you finish, say what you changed, how you ",
+           "checked it, and anything left undone. Your R global ",
+           "environment and this conversation persist between jobs.")
+}
+
+# ---- child side --------------------------------------------------------
+
+# Start the child's turn session and restore the last checkpoint, if
+# any. Returns what was restored so the parent can report it.
+.job_worker_child_init <- function(cwd, spec, state_dir) {
+    worker_init(cwd)
+    init <- spec$init_fn %||% function(spec) {
+        subagent_turn_init(provider = spec$provider, model = spec$model,
+                           tools_filter = spec$tools, system = spec$system,
+                           max_turns = spec$max_turns,
+                           plan_mode = spec$plan_mode)
+    }
+    init(spec)
+    .job_worker_child_restore(state_dir)
+}
+
+.job_worker_child_restore <- function(state_dir) {
+    marker <- file.path(state_dir, "checkpoint.json")
+    if (!file.exists(marker)) {
+        return(list(restored = FALSE))
+    }
+    info <- jsonlite::fromJSON(marker, simplifyVector = TRUE)
+    env <- new.env(parent = emptyenv())
+    load(file.path(state_dir, "workspace.RData"), envir = env)
+    values <- .workspace_checkpoint_values(
+        get(.run_r_worker_checkpoint_key, envir = env), globalenv())
+    for (name in names(values)) {
+        assign(name, values[[name]], envir = globalenv())
+    }
+    for (pkg in info$packages %||% character()) {
+        suppressPackageStartupMessages(
+                                       try(library(pkg, character.only = TRUE), silent = TRUE))
+    }
+    history_path <- file.path(state_dir, "history.rds")
+    if (!is.null(.subagent_state$session) && file.exists(history_path)) {
+        .subagent_state$session$history <- readRDS(history_path)
+    }
+    list(restored = TRUE, job = info$job, at = info$at, objects = names(values))
+}
+
+# Checkpoint at a job boundary. The marker is written last: a restore
+# reads it first, so a crash partway through leaves the previous marker
+# (and the previous workspace it names) or none, never a marker pointing
+# at a half-written save.
+.job_worker_child_checkpoint <- function(state_dir, key, job_id) {
+    dir.create(state_dir, recursive = TRUE, showWarnings = FALSE)
+    objects <- .workspace_checkpoint_write(globalenv(),
+        file.path(state_dir, "workspace.RData"))
+    history <- .subagent_state$session$history
+    if (!is.null(history)) {
+        tmp <- tempfile("history.", tmpdir = state_dir)
+        saveRDS(history, tmp)
+        if (!isTRUE(file.rename(tmp, file.path(state_dir, "history.rds")))) {
+            unlink(tmp)
+            stop("could not write worker history checkpoint", call. = FALSE)
+        }
+    }
+    attached <- sub("^package:", "", grep("^package:", search(), value = TRUE))
+    job_write_file(file.path(state_dir, "checkpoint.json"),
+                   list(key = key, job = job_id, at = job_now(),
+                        objects = objects, packages = attached))
+    objects
+}
+
+# Run one job in the child. Errors from the turn are the job's outcome,
+# not the worker's: they come back as data, and the checkpoint is still
+# taken, so the next job starts from what this one left.
+.job_worker_child_run <- function(job_id, task, spec, state_dir, key) {
+    run <- spec$run_fn %||% function(task) subagent_turn_prompt(task)
+    res <- tryCatch(run(task), error = function(e) {
+        list(error = conditionMessage(e))
+    })
+    checkpoint <- tryCatch(
+                           list(ok = TRUE,
+                                objects = .job_worker_child_checkpoint(state_dir, key, job_id)),
+                           error = function(e) list(ok = FALSE, error = conditionMessage(e)))
+    list(reply = res$reply, usage = res$usage, error = res$error,
+         checkpoint = checkpoint)
+}
+
+# ---- parent side -------------------------------------------------------
+
+job_worker_alive <- function(session) {
+    w <- session$.job_worker
+    !is.null(w) && isTRUE(tryCatch(w$is_alive(), error = function(e) FALSE))
+}
+
+# Start the session's worker, restoring its last checkpoint. Blocks for
+# the child's startup (a second or two) -- the one synchronous step, and
+# it happens only when a job is dispatched to a session with no live
+# worker. Returns the restore info.
+job_worker_start <- function(session, role = "doer") {
+    job_worker_close(session)
+    key <- job_worker_key(session)
+    spec <- job_worker_spec(session, role)
+    worker <- callr::r_session$new(
+                                   options = .run_r_worker_session_options(session$config %||% list(),
+            "job_worker_options"),
+                                   wait = TRUE)
+    restore <- tryCatch(
+                        worker$run(function(cwd, spec, state_dir) {
+        library(corteza)
+        get(".job_worker_child_init", envir = asNamespace("corteza"),
+            inherits = FALSE)(cwd, spec, state_dir)
+    }, list(cwd = session$cwd %||% getwd(), spec = spec,
+                state_dir = job_worker_state_dir(key, role))),
+                        error = function(e) {
+        tryCatch(worker$close(), error = function(e2) NULL)
+        stop("Failed to start job worker: ", conditionMessage(e), call. = FALSE)
+    })
+    session$.job_worker <- worker
+    session$.job_worker_role <- role
+    restore
+}
+
+job_worker_close <- function(session) {
+    w <- session$.job_worker
+    if (!is.null(w)) {
+        tryCatch(w$close(), error = function(e) NULL)
+    }
+    session$.job_worker <- NULL
+    session$.job_current <- NULL
+    invisible(TRUE)
+}
+
+# Queue a job for this session and try to start it. Returns the id.
+job_submit <- function(session, task, role = "doer", requester = "local",
+                       origin = list(), parent = NULL, limits = list()) {
+    origin$session_key <- job_worker_key(session)
+    id <- job_create(task, role = role,
+                     workspace = session$cwd %||% getwd(),
+                     requester = requester, origin = origin,
+                     parent = parent, limits = limits,
+                     permissions = list(tools = job_worker_spec(session, role)$tools))
+    # job_pump() drains any events already held, so what it returns is
+    # the whole backlog; the next pump from the surface delivers it.
+    session$.job_events <- job_pump(session)
+    id
+}
+
+# Cancel a job. A queued job ends at once. A running one has its worker
+# stopped by the next pump; the request is recorded either way, so a
+# restart between the two still sees it.
+job_cancel <- function(session, id, by = "local") {
+    j <- job_read(id)
+    if (is.null(j) ||
+        !identical(j$origin$session_key, job_worker_key(session))) {
+        stop("no job ", id, " in this session", call. = FALSE)
+    }
+    if (!job_request_cancel(id, by = by)) {
+        return(FALSE)
+    }
+    if (identical(j$status, "queued")) {
+        job_settle(id, "cancelled",
+                   reason = paste("cancelled by", by, "before it started"))
+    }
+    TRUE
+}
+
+# Advance this session's jobs without blocking. Returns a list of
+# events, each list(type = ..., job = <record>) with type one of
+# "settled", "started", or "restored" (the last carrying `restore`).
+# Call it from the surface's loop; also drains events that job_submit()
+# collected.
+job_pump <- function(session) {
+    events <- session$.job_events %||% list()
+    session$.job_events <- NULL
+    current <- session$.job_current
+    if (!is.null(current)) {
+        ev <- job_pump_current(session, current)
+        if (!is.null(ev)) {
+            events[[length(events) + 1L]] <- ev
+        }
+    }
+    if (is.null(session$.job_current)) {
+        events <- c(events, job_dispatch_next(session))
+    }
+    events
+}
+
+job_pump_current <- function(session, id) {
+    worker <- session$.job_worker
+    finish <- function(status, ...) {
+        job_settle(id, status, ...)
+        session$.job_current <- NULL
+        list(type = "settled", job = job_read(id))
+    }
+    j <- job_read(id)
+    if (isTRUE(j$cancel_requested)) {
+        # Stopping the worker is the only way to stop a turn in flight.
+        # Its memory goes with it; the next job restores the checkpoint
+        # from before this one.
+        job_worker_close(session)
+        return(finish("cancelled",
+                      reason = paste("stopped mid-job; changes it made",
+                                     "before stopping are kept")))
+    }
+    wall <- j$limits$wall_seconds
+    if (!is.null(wall) && !is.null(j$dispatch)) {
+        started <- as.POSIXct(j$dispatch$dispatched_at,
+                              format = "%Y-%m-%dT%H:%M:%OS%z")
+        if (as.numeric(difftime(Sys.time(), started, units = "secs")) > wall) {
+            job_worker_close(session)
+            return(finish("failed", reason = sprintf(
+                        "exceeded its %s s wall-clock limit", format(wall))))
+        }
+    }
+    if (!job_worker_alive(session)) {
+        session$.job_current <- NULL
+        session$.job_worker <- NULL
+        job_settle(id, "indeterminate",
+                   reason = paste("the worker process exited mid-job;",
+                                  "it may have acted before it stopped"))
+        return(list(type = "settled", job = job_read(id)))
+    }
+    if (!identical(worker$poll_process(0L), "ready")) {
+        return(NULL)
+    }
+    msg <- worker$read()
+    if (!is.null(msg$error)) {
+        return(finish("failed", error = conditionMessage(msg$error)))
+    }
+    res <- msg$result
+    if (!is.null(res$error)) {
+        return(finish("failed", error = res$error, usage = res$usage))
+    }
+    finish("done", result = res$reply %||% "", usage = res$usage,
+           reason = if (!isTRUE(res$checkpoint$ok)) {
+            paste("workspace checkpoint failed:", res$checkpoint$error)
+        })
+}
+
+# Start the oldest queued job for this session, if any.
+job_dispatch_next <- function(session) {
+    key <- job_worker_key(session)
+    queued <- job_list(status = "queued", origin_key = key)
+    if (!length(queued)) {
+        return(list())
+    }
+    j <- queued[[1L]]
+    events <- list()
+    if (!job_worker_alive(session) ||
+        !identical(session$.job_worker_role, j$role)) {
+        restore <- tryCatch(job_worker_start(session, j$role),
+                            error = function(e) e)
+        if (inherits(restore, "error")) {
+            # Nothing reached a worker, so the job had no effect: it
+            # fails cleanly rather than going indeterminate.
+            job_settle(j$id, "failed", error = conditionMessage(restore))
+            return(list(list(type = "settled", job = job_read(j$id))))
+        }
+        if (isTRUE(restore$restored)) {
+            events[[length(events) + 1L]] <- list(type = "restored",
+                job = j, restore = restore)
+        }
+    }
+    spec <- job_worker_spec(session, j$role)
+    job_mark_dispatched(j$id, worker = list(
+            pid = session$.job_worker$get_pid()))
+    session$.job_worker$call(function(job_id, task, spec, state_dir, key) {
+        get(".job_worker_child_run", envir = asNamespace("corteza"),
+            inherits = FALSE)(job_id, task, spec, state_dir, key)
+    }, list(job_id = j$id, task = j$task, spec = spec,
+            state_dir = job_worker_state_dir(key, j$role), key = key))
+    session$.job_current <- j$id
+    events[[length(events) + 1L]] <- list(type = "started",
+        job = job_read(j$id))
+    events
+}

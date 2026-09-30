@@ -97,16 +97,7 @@
     env <- .run_r_worker_state$workspace
     checkpoint <- bindings[[.run_r_worker_checkpoint_key]]
     if (!is.null(checkpoint)) {
-        if (!identical(checkpoint$format, "corteza_workspace_v1") ||
-            !is.raw(checkpoint$data)) {
-            stop("Invalid run_r workspace checkpoint", call. = FALSE)
-        }
-        restored <- unserialize(checkpoint$data, refhook = function(ref) {
-            if (!identical(ref, "workspace")) {
-                stop("Unknown run_r checkpoint reference", call. = FALSE)
-            }
-            env
-        })
+        restored <- .workspace_checkpoint_values(checkpoint, env)
         bindings[[.run_r_worker_checkpoint_key]] <- NULL
         restored[names(bindings)] <- bindings
         bindings <- restored
@@ -191,7 +182,31 @@
 #' Child-side atomic checkpoint for a supervised workspace.
 #' @noRd
 .run_r_worker_child_save <- function(path, exclude = character()) {
-    env <- .run_r_worker_state$workspace
+    .workspace_checkpoint_write(.run_r_worker_state$workspace, path, exclude)
+}
+
+#' Decode a workspace checkpoint payload into a named list of values.
+#'
+#' References to the saved workspace are pointed at `env`, the workspace
+#' the values are being restored into. Shared by the supervised run_r
+#' worker and the job worker, which checkpoints its global environment.
+#' @noRd
+.workspace_checkpoint_values <- function(checkpoint, env) {
+    if (!identical(checkpoint$format, "corteza_workspace_v1") ||
+        !is.raw(checkpoint$data)) {
+        stop("Invalid run_r workspace checkpoint", call. = FALSE)
+    }
+    unserialize(checkpoint$data, refhook = function(ref) {
+        if (!identical(ref, "workspace")) {
+            stop("Unknown run_r checkpoint reference", call. = FALSE)
+        }
+        env
+    })
+}
+
+#' Atomically checkpoint the objects in `env` to `path`.
+#' @noRd
+.workspace_checkpoint_write <- function(env, path, exclude = character()) {
     objects <- setdiff(ls(env, all.names = TRUE), exclude)
     objects <- objects[!grepl("^\\.h_[0-9]+$", objects)]
     # Preserve the entire object graph, including helpers nested in lists and
@@ -296,14 +311,19 @@
 #' layout (`arch`, which callr resolves to `R.home("bin")/<arch>/R`).
 #' That last one lets a strict host run only the model's R under a
 #' sandbox wrapper while the host process itself stays unconfined.
+#'
+#' `field` names the config entry to read, so the job worker can take
+#' its own options (`job_worker_options`) with the same validation and
+#' default packages.
 #' @noRd
-.run_r_worker_session_options <- function(config) {
-    extra <- config$run_r_worker_options
+.run_r_worker_session_options <- function(config,
+    field = "run_r_worker_options") {
+    extra <- config[[field]]
     if (is.null(extra)) {
         extra <- list()
     } else if (!is.list(extra) || is.null(names(extra)) ||
                any(!nzchar(names(extra)))) {
-        stop("config$run_r_worker_options must be a named list of ",
+        stop("config$", field, " must be a named list of ",
              "callr::r_session_options() arguments", call. = FALSE)
     }
     opts <- do.call(callr::r_session_options, extra)
