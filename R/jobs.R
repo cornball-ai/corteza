@@ -97,10 +97,17 @@ job_now <- function() {
 #
 # `permissions` is recorded as given. Nothing reads it to widen a
 # worker's access; it is the grant the worker is started with.
+#
+# `owner` is the process identity that runs the job: a bot's Matrix id,
+# or "local". Every bot on a machine shares this ledger, and two bots in
+# one room share a session key, so listing, dispatch, and recovery are
+# all scoped to an owner. Without it, one bot restarting would settle
+# another bot's running jobs, and two bots could both start the same
+# queued job.
 job_create <- function(task, role = "doer", workspace = getwd(),
                        requester = "local", origin = list(), parent = NULL,
                        backend = "subagent", permissions = list(),
-                       limits = list()) {
+                       limits = list(), owner = "local") {
     if (!is.character(task) || length(task) != 1L || is.na(task) ||
         !nzchar(trimws(task))) {
         stop("job task must be one non-empty string", call. = FALSE)
@@ -136,6 +143,7 @@ job_create <- function(task, role = "doer", workspace = getwd(),
             role = role,
             workspace = normalizePath(workspace, mustWork = FALSE),
             requester = requester,
+            owner = owner,
             origin = origin,
             parent = parent,
             hop = hop,
@@ -234,9 +242,9 @@ job_read <- function(id) {
     intent
 }
 
-# All jobs, oldest first, optionally narrowed by status and by the
-# originating session key.
-job_list <- function(status = NULL, origin_key = NULL) {
+# All jobs, oldest first, optionally narrowed by status, by the
+# originating session key, and by owner.
+job_list <- function(status = NULL, origin_key = NULL, owner = NULL) {
     root <- job_root()
     if (!dir.exists(root)) {
         return(list())
@@ -252,6 +260,9 @@ job_list <- function(status = NULL, origin_key = NULL) {
         jobs <- Filter(function(j) identical(j$origin$session_key, origin_key),
                        jobs)
     }
+    if (!is.null(owner)) {
+        jobs <- Filter(function(j) identical(j$owner %||% "local", owner), jobs)
+    }
     jobs
 }
 
@@ -266,8 +277,11 @@ job_list <- function(status = NULL, origin_key = NULL) {
 # Returns a data frame of id, verdict, and task, so the caller can tell
 # the user what was found. The verdicts are written before this returns;
 # a second call finds nothing new to classify.
-job_recover <- function(live = character()) {
-    open <- job_list(status = JOB_STATUSES_OPEN)
+#
+# Only `owner`'s jobs are classified. Another process's running job is
+# not this process's to declare lost.
+job_recover <- function(live = character(), owner = "local") {
+    open <- job_list(status = JOB_STATUSES_OPEN, owner = owner)
     open <- Filter(function(j) !j$id %in% live, open)
     verdicts <- vapply(open, function(j) {
         if (identical(j$status, "queued")) {

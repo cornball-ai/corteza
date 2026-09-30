@@ -32,6 +32,20 @@ job_worker_key <- function(session) {
     session$job_key %||% session$sessionKey %||% "local"
 }
 
+# The process identity that owns this session's jobs (see job_create()).
+# Bots set it to their Matrix id; everything else is "local".
+job_worker_owner <- function(session) {
+    session$job_owner %||% "local"
+}
+
+# Is job `j` this session's? Same session key and same owner: two bots
+# in one room share the key but not the owner.
+job_in_session <- function(j, session) {
+    !is.null(j) &&
+    identical(j$origin$session_key, job_worker_key(session)) &&
+    identical(j$owner %||% "local", job_worker_owner(session))
+}
+
 # Per-session, per-role checkpoint directory. Keys carry characters that
 # do not belong in a path (Matrix room ids start with "!"), so the
 # directory is named by a digest and the key is recorded inside. The
@@ -55,8 +69,12 @@ job_worker_spec <- function(session, role = "doer") {
                     stop("unknown job role: ", role, call. = FALSE))
     spec <- list(
                  role = role,
-                 provider = cfg$provider %||% session$provider %||% "anthropic",
-                 model = cfg$model %||% session$model_map$cloud %||% session$model,
+                 # A talker session keeps its configured model for the doer
+                 # (talker_enable() records it as doer_model).
+                 provider = cfg$provider %||% session$doer_provider %||%
+                 session$provider %||% "anthropic",
+                 model = cfg$model %||% session$doer_model %||%
+                 session$model_map$cloud,
                  tools = tools,
                  max_turns = as.integer(cfg$max_turns %||%
                                         JOB_WORKER_DEFAULTS$max_turns),
@@ -236,7 +254,8 @@ job_submit <- function(session, task, role = "doer", requester = "local",
                      workspace = session$cwd %||% getwd(),
                      requester = requester, origin = origin,
                      parent = parent, limits = limits,
-                     permissions = list(tools = job_worker_spec(session, role)$tools))
+                     permissions = list(tools = job_worker_spec(session, role)$tools),
+                     owner = job_worker_owner(session))
     # job_pump() drains any events already held, so what it returns is
     # the whole backlog; the next pump from the surface delivers it.
     session$.job_events <- job_pump(session)
@@ -248,8 +267,7 @@ job_submit <- function(session, task, role = "doer", requester = "local",
 # restart between the two still sees it.
 job_cancel <- function(session, id, by = "local") {
     j <- job_read(id)
-    if (is.null(j) ||
-        !identical(j$origin$session_key, job_worker_key(session))) {
+    if (!job_in_session(j, session)) {
         stop("no job ", id, " in this session", call. = FALSE)
     }
     if (!job_request_cancel(id, by = by)) {
@@ -305,8 +323,7 @@ job_pump_approvals <- function(session, id) {
 # no longer counts (see job_approval_answer()).
 job_answer <- function(session, id, req, approved, by = "local") {
     j <- job_read(id)
-    if (is.null(j) ||
-        !identical(j$origin$session_key, job_worker_key(session))) {
+    if (!job_in_session(j, session)) {
         stop("no job ", id, " in this session", call. = FALSE)
     }
     job_approval_answer(id, req, approved, by = by)
@@ -367,7 +384,8 @@ job_pump_current <- function(session, id) {
 # Start the oldest queued job for this session, if any.
 job_dispatch_next <- function(session) {
     key <- job_worker_key(session)
-    queued <- job_list(status = "queued", origin_key = key)
+    queued <- job_list(status = "queued", origin_key = key,
+                       owner = job_worker_owner(session))
     if (!length(queued)) {
         return(list())
     }

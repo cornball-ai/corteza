@@ -1031,6 +1031,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     tools <- .task_filter_tools(tools, session$channel)
+    tools <- .talker_filter_tools(tools, isTRUE(session$talker))
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api

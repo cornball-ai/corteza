@@ -223,6 +223,12 @@ expect_identical(corteza:::job_read(cx)$status, "cancelled")
 expect_false(corteza:::job_answer(asker, cx, req$id, TRUE))
 # Another session cannot answer this session's request.
 expect_error(corteza:::job_answer(s, cx, req$id, TRUE), "no job")
+# Nor can another owner's session with the same key: two bots in one
+# room share the key.
+twin <- make_session("room-ask", asking)
+twin$job_owner <- "@codex:ex"
+expect_error(corteza:::job_answer(twin, cx, req$id, TRUE), "no job")
+expect_error(corteza:::job_cancel(twin, ap), "no job")
 
 # --- The real init installs the bridge and the originating channel ---
 # No provider is called: init builds a session object, and the run

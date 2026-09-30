@@ -1762,6 +1762,16 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     s <- bot_new_session(cfg, system = system, model = model,
                          provider = provider, tools_filter = tools_filter,
                          room_id = room_id)
+    # The session key is the job key: a thread's jobs belong to the
+    # thread's session, and their results come back to it.
+    s$job_key <- key
+    # This bot owns the jobs its rooms delegate; other bots sharing the
+    # ledger, or the same room, do not touch them.
+    s$job_owner <- bot_job_owner(cfg)
+    talker <- talker_config(cfg)
+    if (!is.null(talker)) {
+        talker_enable(s, talker)
+    }
     assign(key, s, envir = registry)
     s
 }
@@ -1883,6 +1893,12 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         message("bot_poll: baseline established, no history processed")
         return(invisible(0L))
     }
+
+    # Reactions answering a job's approval prompt. Read from this sync
+    # rather than a private poll, so a job waiting on approval never
+    # holds the loop. Before the message check: a sync carrying only a
+    # thumbs-up is still an answer.
+    bot_handle_job_reactions(res$reactions, sessions, chat, cfg)
 
     # The adapter's message list, cleartext and decrypted alike. corteza
     # used to re-extract from the raw sync and then run its own decrypt
@@ -2139,6 +2155,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # a session outlives the turn and a leftover one would keep
         # writing into an accumulator whose message has already been
         # finalized.
+        # Who asked and where, for any job this turn delegates: the job
+        # records its requester, and its result goes back to this room
+        # or thread.
+        session$job_requester <- sender
+        session$job_origin <- list(room = m$channel, thread = m$thread)
         reply <- rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg)
@@ -2410,6 +2431,11 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
                 provider = provider, chat = chat)
         }
     }
+    # Jobs a previous process left unfinished. After backfill, so the
+    # room sessions that will run any still-queued jobs exist.
+    if (!is.null(cfg)) {
+        bot_recover_jobs(chat, owner = bot_job_owner(cfg))
+    }
 
     flush_signal <- file.path(bot_signal_dir(), "archive.signal")
 
@@ -2440,9 +2466,24 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 bot_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
+    # With work in flight, poll briefly so a finished job or an approval
+    # prompt is not held behind a 30-second long-poll.
+    if (bot_jobs_active(state$sessions)) {
+        timeout <- min(timeout, BOT_JOB_POLL_MS)
+    }
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions)
+    # Advance every room's jobs: start queued ones, post results, raise
+    # approval prompts. Never blocks on a worker. Client derived now, as
+    # for the flush below.
+    if (length(bot_job_sessions(state$sessions))) {
+        job_cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
+        job_chat <- tryCatch(bot_chat_client(job_cfg), error = function(e) NULL)
+        if (!is.null(job_chat)) {
+            bot_pump_jobs(state$sessions, job_chat, job_cfg)
+        }
+    }
     # Out-of-band archive trigger: another process (e.g. a cornelius
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns

@@ -166,6 +166,23 @@ with_state({
     expect_identical(job_read(lost)$status, "indeterminate")
 })
 
+# --- Ownership scopes listing and recovery ---
+with_state({
+    mine <- job_create("mine", owner = "@claude:ex")
+    corteza:::job_mark_dispatched(mine)
+    theirs <- job_create("theirs", owner = "@codex:ex")
+    corteza:::job_mark_dispatched(theirs)
+    legacy <- job_create("no owner given")
+    expect_identical(job_read(legacy)$owner, "local")
+    ids <- function(js) vapply(js, function(j) j$id, "")
+    expect_identical(ids(corteza:::job_list(owner = "@claude:ex")), mine)
+    expect_identical(ids(corteza:::job_list(owner = "local")), legacy)
+    v <- corteza:::job_recover(owner = "@claude:ex")
+    expect_identical(v$id, mine)
+    # The other bot's running job is left alone.
+    expect_identical(job_read(theirs)$status, "running")
+})
+
 # An empty ledger recovers to an empty frame with the right columns.
 with_state({
     v <- corteza:::job_recover()
