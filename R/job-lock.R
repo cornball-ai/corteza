@@ -32,16 +32,25 @@
 # process to interleave with.
 #
 # Releasing writes the release marker next to the releaser's own
-# generation. Generation numbers are never reused, so a release that
-# arrives late -- after its lock went stale and someone else took the
-# next generation -- marks only its own old generation and cannot free
-# the new holder's.
+# generation. A release that arrives late -- after its lock went stale
+# and someone else took the next generation -- marks only its own old
+# generation and cannot free the new holder's.
 #
-# Old generations are pruned once a newer one exists. The highest is
-# never removed. A pruned number can still be recreated by an acquirer
-# that chose it before the prune, so creating a generation is not the
-# end of acquiring: job_lock_commit() also checks that no higher
-# generation exists, and withdraws a recreated one.
+# Nothing in a lock root is ever deleted or renamed away. That one rule
+# is what the protocol's safety rests on: a generation name, once taken,
+# stays taken, so the rename that creates it can succeed exactly once,
+# no matter how long an acquirer pauses between choosing a number and
+# creating it. Earlier versions pruned old generations and tried to
+# detect a recreated number afterwards by listing the directory; a
+# listing taken while another process prunes can miss both the stray
+# generation's successors and their removal, so no check of that kind
+# is sound. A missed or stale listing now costs only a failed rename
+# and a retry.
+#
+# The price is one small directory per writing job per checkout, kept
+# indefinitely. Removing them is only safe when no acquirer can be
+# between choosing and creating, which nothing inside this protocol can
+# establish; it is left to offline maintenance, with ledger retention.
 #
 # Only jobs take this lock. A tmux session, an editor, or a corteza
 # session editing directly does not, and nothing here can stop it.
@@ -81,7 +90,6 @@ job_lock_gens <- function(root) {
         return(integer())
     }
     names <- list.files(root, pattern = "^gen-[0-9]+$")
-    names <- names[dir.exists(file.path(root, names))]
     sort(as.integer(sub("^gen-", "", names)))
 }
 
@@ -134,32 +142,11 @@ job_lock_stale <- function(holder) {
     job_lock_process_gone(holder)
 }
 
-# Create generation `n` and confirm it is the lock. TRUE only when this
-# call created n and n is the highest generation.
-#
-# Creation alone is not enough. An acquirer that chose n, then paused,
-# can find n missing because others went on to n+1 and pruned n; its
-# rename then succeeds and recreates a number that is no longer the
-# lock. A recreated number is always below the highest -- the
-# generation whose creation pruned it is never pruned itself -- so
-# checking for a higher one after creating catches it, and the stray
-# generation is removed. Nobody else reads it in the meantime: readers
-# only look at the highest.
-job_lock_commit <- function(checkout, n, holder) {
-    if (!job_lock_try(checkout, n, holder)) {
-        return(FALSE)
-    }
-    root <- job_lock_root(checkout)
-    if (max(job_lock_gens(root)) > n) {
-        unlink(job_lock_gen_dir(root, n), recursive = TRUE)
-        return(FALSE)
-    }
-    TRUE
-}
-
 # Try to create generation `n` with `holder`. TRUE when this call
 # created it; FALSE when it already existed. The atomic step the
-# protocol rests on; job_lock_commit() adds the check that n is current.
+# protocol rests on: the target is a non-empty directory once created
+# and is never removed, so this rename succeeds at most once per n.
+# Only this function's own private temp directory is ever unlinked.
 job_lock_try <- function(checkout, n, holder) {
     root <- job_lock_root(checkout)
     dir.create(root, recursive = TRUE, showWarnings = FALSE)
@@ -168,23 +155,6 @@ job_lock_try <- function(checkout, n, holder) {
     on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
     job_write_file(file.path(tmp, "holder.json"), holder)
     isTRUE(suppressWarnings(file.rename(tmp, job_lock_gen_dir(root, n))))
-}
-
-# Remove generations below `n`. The highest is kept so numbers are never
-# reused.
-job_lock_prune <- function(checkout, n) {
-    root <- job_lock_root(checkout)
-    for (k in job_lock_gens(root)) {
-        if (k < n) {
-            unlink(job_lock_gen_dir(root, k), recursive = TRUE)
-        }
-    }
-    # Markers too, including any a late release left for a generation
-    # already pruned.
-    markers <- list.files(root, pattern = "^gen-[0-9]+\\.released$")
-    old <- as.integer(sub("^gen-([0-9]+)\\.released$", "\\1", markers)) < n
-    unlink(file.path(root, markers[old]))
-    invisible(TRUE)
 }
 
 # Take the checkout's lock for `job_id`. Returns list(ok = TRUE) when
@@ -203,31 +173,30 @@ job_lock_acquire <- function(checkout, job_id, owner = "local") {
         holder <- list(checkout = checkout, job = job_id, owner = owner,
                        pid = Sys.getpid(), host = Sys.info()[["nodename"]],
                        gen = n, acquired_at = job_now())
-        if (job_lock_commit(checkout, n, holder)) {
-            job_lock_prune(checkout, n)
+        if (job_lock_try(checkout, n, holder)) {
             return(list(ok = TRUE))
         }
-        # Someone else created generation n first, or n was a number
-        # already pruned. Look again: it is either held now, or (rarely)
-        # already free again.
+        # Generation n already exists: someone created it first, or the
+        # listing above was behind. Look again.
     }
     list(ok = FALSE, holder = job_lock_holder(checkout))
 }
 
-# Give the lock back: mark every generation `job_id` holds as released.
-# Only ever touches the releaser's own generations.
+# Give the lock back: mark `job_id`'s generation as released. Only ever
+# touches the releaser's own generation. A job takes at most one, and it
+# is at or near the top, so the search runs newest first and stops at
+# the first match.
 job_lock_release <- function(checkout, job_id) {
     root <- job_lock_root(checkout)
-    released <- FALSE
-    for (k in job_lock_gens(root)) {
+    for (k in rev(job_lock_gens(root))) {
         dir <- job_lock_gen_dir(root, k)
         h <- job_read_file(file.path(dir, "holder.json"))
         if (identical(h$job, job_id)) {
             file.create(paste0(dir, ".released"))
-            released <- TRUE
+            return(invisible(TRUE))
         }
     }
-    invisible(released)
+    invisible(FALSE)
 }
 
 # What a surface says about a "blocked" event.

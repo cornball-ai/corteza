@@ -121,30 +121,61 @@ local({
     expect_true(acquire(plain, c3)$ok)
     release(plain, c3)
     for (id in c(b, c3)) corteza:::job_settle(id, "done")
-    # Old generations are pruned; only the newest remains.
-    expect_identical(length(corteza:::job_lock_gens(
-        corteza:::job_lock_root(plain))), 1L)
 })
 
-# A delayed acquirer cannot recreate a pruned generation. A chooses
+# A delayed acquirer can never take a number that was used. A chooses
 # generation n and pauses; B acquires and releases n; C takes n+1 and
-# prunes n; A resumes and creates n. A must not hold the lock.
+# releases; D takes n+2. A resumes and tries n, however late: the name
+# is still there, so the create fails. The two earlier designs pruned
+# old generations, which made n creatable again and let A believe it
+# held the lock beside C or D.
 local({
     a <- running_job("a")
     b <- running_job("b")
     c3 <- running_job("c")
+    d <- running_job("d")
+    root <- corteza:::job_lock_root(plain)
     n <- (corteza:::job_lock_current(plain)$gen %||% 0L) + 1L  # A chooses
+    before <- corteza:::job_lock_gens(root)
     expect_true(acquire(plain, b)$ok)                           # B: gen n
     release(plain, b)
     expect_true(acquire(plain, c3)$ok)                          # C: gen n+1
-    root <- corteza:::job_lock_root(plain)
-    expect_false(n %in% corteza:::job_lock_gens(root))          # n pruned
-    expect_false(corteza:::job_lock_commit(plain, n, holder_for(a, n)))
+    expect_false(corteza:::job_lock_try(plain, n, holder_for(a, n)))
     expect_identical(holder(plain)$job, c3)
-    # The recreated generation was withdrawn.
-    expect_false(n %in% corteza:::job_lock_gens(root))
     release(plain, c3)
-    for (id in c(a, b, c3)) corteza:::job_settle(id, "done")
+    expect_true(acquire(plain, d)$ok)                           # D: gen n+2
+    for (k in c(n, n + 1L, n + 2L)) {
+        expect_false(corteza:::job_lock_try(plain, k, holder_for(a, k)))
+    }
+    expect_identical(holder(plain)$job, d)
+    # No generation was ever removed: every earlier one is still there,
+    # plus exactly the three taken here.
+    expect_identical(corteza:::job_lock_gens(root),
+                     c(before, n, n + 1L, n + 2L))
+    # A failed attempt leaves nothing behind but the generations.
+    expect_identical(length(list.files(root, pattern = "^acquire-")), 0L)
+    release(plain, d)
+    for (id in c(a, b, c3, d)) corteza:::job_settle(id, "done")
+})
+
+# The lock has no removal path at all. Asserted on the source, because
+# the safety argument is exactly that a generation name never becomes
+# free again; only the acquirer's private temp directory is unlinked.
+local({
+    fns <- c("job_lock_acquire", "job_lock_release", "job_lock_current",
+             "job_lock_gens", "job_lock_holder", "job_lock_free")
+    for (f in fns) {
+        src <- paste(deparse(body(get(f, envir = asNamespace("corteza")))),
+                     collapse = " ")
+        expect_false(grepl("unlink|file.remove|file.rename", src), info = f)
+    }
+    try_src <- paste(deparse(body(corteza:::job_lock_try)), collapse = " ")
+    expect_identical(lengths(regmatches(try_src,
+                                        gregexpr("unlink\\(", try_src)))[[1]],
+                     1L)
+    expect_true(grepl("unlink(tmp", try_src, fixed = TRUE))
+    expect_false(exists("job_lock_prune", envir = asNamespace("corteza"),
+                        inherits = FALSE))
 })
 
 # Real processes racing for one free lock: exactly one wins.
@@ -182,12 +213,12 @@ local({
 })
 
 # Smoke test: processes cycling acquire / work / release, so acquisitions
-# cross releases and prunes. Holding the lock, each enters a critical
-# section marked by an atomic dir.create(); finding it already there
-# means two holders at once. Timing alone rarely opens the known race
-# windows -- with the pruned-generation check disabled this still sees
-# no overlap -- so those are covered by the replayed interleavings
-# above, not by this.
+# cross releases. Holding the lock, each enters a critical section
+# marked by an atomic dir.create(); finding it already there means two
+# holders at once. Timing alone rarely opens a race window -- this saw
+# no overlap even against a design known to be unsafe -- so it is not
+# the evidence for the protocol. That is the replayed interleavings and
+# the no-removal check above.
 local({
     go <- tempfile("go")
     crit <- tempfile("critical")
