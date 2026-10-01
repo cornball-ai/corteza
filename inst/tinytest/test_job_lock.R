@@ -126,6 +126,27 @@ local({
         corteza:::job_lock_root(plain))), 1L)
 })
 
+# A delayed acquirer cannot recreate a pruned generation. A chooses
+# generation n and pauses; B acquires and releases n; C takes n+1 and
+# prunes n; A resumes and creates n. A must not hold the lock.
+local({
+    a <- running_job("a")
+    b <- running_job("b")
+    c3 <- running_job("c")
+    n <- (corteza:::job_lock_current(plain)$gen %||% 0L) + 1L  # A chooses
+    expect_true(acquire(plain, b)$ok)                           # B: gen n
+    release(plain, b)
+    expect_true(acquire(plain, c3)$ok)                          # C: gen n+1
+    root <- corteza:::job_lock_root(plain)
+    expect_false(n %in% corteza:::job_lock_gens(root))          # n pruned
+    expect_false(corteza:::job_lock_commit(plain, n, holder_for(a, n)))
+    expect_identical(holder(plain)$job, c3)
+    # The recreated generation was withdrawn.
+    expect_false(n %in% corteza:::job_lock_gens(root))
+    release(plain, c3)
+    for (id in c(a, b, c3)) corteza:::job_settle(id, "done")
+})
+
 # Real processes racing for one free lock: exactly one wins.
 local({
     # Every racer stays alive until all have tried: a holder whose
@@ -158,6 +179,50 @@ local({
     for (p in procs) p$wait(30000)
     for (id in ids) corteza:::job_settle(id, "done")
     unlink(c(go, done, out), recursive = TRUE)
+})
+
+# Smoke test: processes cycling acquire / work / release, so acquisitions
+# cross releases and prunes. Holding the lock, each enters a critical
+# section marked by an atomic dir.create(); finding it already there
+# means two holders at once. Timing alone rarely opens the known race
+# windows -- with the pruned-generation check disabled this still sees
+# no overlap -- so those are covered by the replayed interleavings
+# above, not by this.
+local({
+    go <- tempfile("go")
+    crit <- tempfile("critical")
+    procs <- lapply(1:6, function(i) {
+        callr::r_bg(function(checkout, go, crit, i) {
+            while (!file.exists(go)) Sys.sleep(0.01)
+            overlaps <- 0L
+            held <- 0L
+            for (k in 1:25) {
+                id <- corteza:::job_create(sprintf("cycle %d-%d", i, k),
+                                           workspace = checkout)
+                if (corteza:::job_lock_acquire(checkout, id, owner = "c")$ok) {
+                    held <- held + 1L
+                    if (!dir.create(crit, showWarnings = FALSE)) {
+                        overlaps <- overlaps + 1L
+                    } else {
+                        Sys.sleep(stats::runif(1, 0, 0.01))
+                        unlink(crit, recursive = TRUE)
+                    }
+                    corteza:::job_lock_release(checkout, id)
+                }
+                corteza:::job_settle(id, "done")
+                Sys.sleep(stats::runif(1, 0, 0.005))
+            }
+            c(overlaps = overlaps, held = held)
+        }, list(checkout = plain, go = go, crit = crit, i = i))
+    })
+    Sys.sleep(1)
+    file.create(go)
+    for (p in procs) p$wait(120000)
+    res <- do.call(rbind, lapply(procs, function(p) p$get_result()))
+    expect_identical(sum(res[, "overlaps"]), 0L)
+    # The test only means something if the lock changed hands a lot.
+    expect_true(sum(res[, "held"]) > 20L)
+    unlink(c(go, crit), recursive = TRUE)
 })
 
 # --- Dispatch: a second writer waits, then runs ---

@@ -38,7 +38,10 @@
 # the new holder's.
 #
 # Old generations are pruned once a newer one exists. The highest is
-# never removed, which is what keeps numbers from being reused.
+# never removed. A pruned number can still be recreated by an acquirer
+# that chose it before the prune, so creating a generation is not the
+# end of acquiring: job_lock_commit() also checks that no higher
+# generation exists, and withdraws a recreated one.
 #
 # Only jobs take this lock. A tmux session, an editor, or a corteza
 # session editing directly does not, and nothing here can stop it.
@@ -131,9 +134,32 @@ job_lock_stale <- function(holder) {
     job_lock_process_gone(holder)
 }
 
+# Create generation `n` and confirm it is the lock. TRUE only when this
+# call created n and n is the highest generation.
+#
+# Creation alone is not enough. An acquirer that chose n, then paused,
+# can find n missing because others went on to n+1 and pruned n; its
+# rename then succeeds and recreates a number that is no longer the
+# lock. A recreated number is always below the highest -- the
+# generation whose creation pruned it is never pruned itself -- so
+# checking for a higher one after creating catches it, and the stray
+# generation is removed. Nobody else reads it in the meantime: readers
+# only look at the highest.
+job_lock_commit <- function(checkout, n, holder) {
+    if (!job_lock_try(checkout, n, holder)) {
+        return(FALSE)
+    }
+    root <- job_lock_root(checkout)
+    if (max(job_lock_gens(root)) > n) {
+        unlink(job_lock_gen_dir(root, n), recursive = TRUE)
+        return(FALSE)
+    }
+    TRUE
+}
+
 # Try to create generation `n` with `holder`. TRUE when this call
-# created it; FALSE when it already existed. The single atomic step the
-# protocol rests on.
+# created it; FALSE when it already existed. The atomic step the
+# protocol rests on; job_lock_commit() adds the check that n is current.
 job_lock_try <- function(checkout, n, holder) {
     root <- job_lock_root(checkout)
     dir.create(root, recursive = TRUE, showWarnings = FALSE)
@@ -177,12 +203,13 @@ job_lock_acquire <- function(checkout, job_id, owner = "local") {
         holder <- list(checkout = checkout, job = job_id, owner = owner,
                        pid = Sys.getpid(), host = Sys.info()[["nodename"]],
                        gen = n, acquired_at = job_now())
-        if (job_lock_try(checkout, n, holder)) {
+        if (job_lock_commit(checkout, n, holder)) {
             job_lock_prune(checkout, n)
             return(list(ok = TRUE))
         }
-        # Someone else created generation n first. Look again: it is
-        # either held now, or (rarely) already free again.
+        # Someone else created generation n first, or n was a number
+        # already pruned. Look again: it is either held now, or (rarely)
+        # already free again.
     }
     list(ok = FALSE, holder = job_lock_holder(checkout))
 }
