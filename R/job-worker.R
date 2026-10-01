@@ -88,16 +88,39 @@ job_identity_text <- function(identity) {
 job_worker_spec <- function(session, role = "doer") {
     cfg <- session$config$jobs %||% list()
     tools <- switch(role, doer = SUBAGENT_PRESETS$work,
+                    reviewer = JOB_REVIEWER_TOOLS,
                     stop("unknown job role: ", role, call. = FALSE))
+    # A talker session keeps its configured model for the doer
+    # (talker_enable() records it as doer_model).
+    provider <- cfg$provider %||% session$doer_provider %||%
+    session$provider %||% "anthropic"
+    model <- cfg$model %||% session$doer_model %||% session$model_map$cloud
+    reviewer <- identical(role, "reviewer")
+    if (reviewer) {
+        # The reviewer may run on another provider or model than the
+        # doer (`jobs$reviewer`); a second opinion from the same model
+        # shares the first one's blind spots. A model named without a
+        # provider keeps the doer's provider.
+        rc <- cfg$reviewer %||% list()
+        if (!is.null(rc$provider) && is.null(rc$model) &&
+            !identical(rc$provider, provider)) {
+            model <- NULL
+        }
+        provider <- rc$provider %||% provider
+        model <- rc$model %||% model
+    }
     spec <- list(
                  role = role,
-                 # A talker session keeps its configured model for the doer
-                 # (talker_enable() records it as doer_model).
-                 provider = cfg$provider %||% session$doer_provider %||%
-                 session$provider %||% "anthropic",
-                 model = cfg$model %||% session$doer_model %||%
-                 session$model_map$cloud,
+                 provider = provider,
+                 model = model,
                  tools = tools,
+                 # Read-only has to mean no network and no files outside
+                 # the checkout: a tool list alone grants neither limit
+                 # (see PRESET_WEB_SEARCH and PRESET_CONFINED).
+                 web_search = if (reviewer) FALSE,
+                 allowed_paths = if (reviewer) {
+            job_checkout(session$cwd %||% getwd())
+        },
                  max_turns = as.integer(cfg$max_turns %||%
                                         JOB_WORKER_DEFAULTS$max_turns),
                  system = job_worker_system(role),
@@ -114,6 +137,9 @@ job_worker_spec <- function(session, role = "doer") {
 }
 
 job_worker_system <- function(role) {
+    if (identical(role, "reviewer")) {
+        return(JOB_REVIEWER_SYSTEM)
+    }
     paste0("You are the ", role, " for jobs a talker agent delegates ",
            "to you. Each message is one job. Work it in the current ",
            "directory. When you finish, say what you changed, how you ",
@@ -135,7 +161,9 @@ job_worker_system <- function(role) {
         subagent_turn_init(provider = spec$provider, model = spec$model,
                            tools_filter = spec$tools, system = spec$system,
                            max_turns = spec$max_turns,
-                           plan_mode = spec$plan_mode, channel = spec$channel)
+                           plan_mode = spec$plan_mode, channel = spec$channel,
+                           web_search = spec$web_search,
+                           allowed_paths = spec$allowed_paths)
     }
     init(spec)
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600
@@ -244,6 +272,7 @@ job_worker_alive <- function(session) {
 # worker. Returns the restore info.
 job_worker_start <- function(session, role = "doer") {
     job_worker_close(session)
+    job_worker_drop_parked(session, role)
     spec <- job_worker_spec(session, role)
     worker <- callr::r_session$new(
                                    options = .run_r_worker_session_options(session$config %||% list(),
@@ -265,26 +294,87 @@ job_worker_start <- function(session, role = "doer") {
     restore
 }
 
+# Close the active worker: the one running, or last to run, a job. This
+# is how a job in flight is stopped. Workers parked for other roles are
+# left alone.
 job_worker_close <- function(session) {
     w <- session$.job_worker
     if (!is.null(w)) {
         tryCatch(w$close(), error = function(e) NULL)
     }
     session$.job_worker <- NULL
+    session$.job_worker_role <- NULL
     session$.job_current <- NULL
     invisible(TRUE)
 }
 
+# A session runs one job at a time but keeps a worker per role, so a
+# review does not cost the doer its loaded packages and objects. The
+# active worker is session$.job_worker; the others wait in
+# session$.job_workers_parked, by role.
+
+# Make the worker for `role` the active one, starting it if there is
+# none alive. Returns the restore info when a worker was started, NULL
+# when a live one was reused.
+job_worker_activate <- function(session, role) {
+    if (job_worker_alive(session) &&
+        identical(session$.job_worker_role, role)) {
+        return(NULL)
+    }
+    parked <- session$.job_workers_parked %||% list()
+    if (job_worker_alive(session)) {
+        parked[[session$.job_worker_role]] <- session$.job_worker
+    }
+    session$.job_worker <- NULL
+    session$.job_worker_role <- NULL
+    w <- parked[[role]]
+    parked[[role]] <- NULL
+    session$.job_workers_parked <- parked
+    if (!is.null(w) &&
+        isTRUE(tryCatch(w$is_alive(), error = function(e) FALSE))) {
+        session$.job_worker <- w
+        session$.job_worker_role <- role
+        return(NULL)
+    }
+    job_worker_start(session, role)
+}
+
+job_worker_drop_parked <- function(session, role) {
+    parked <- session$.job_workers_parked %||% list()
+    w <- parked[[role]]
+    if (!is.null(w)) {
+        tryCatch(w$close(), error = function(e) NULL)
+        parked[[role]] <- NULL
+        session$.job_workers_parked <- parked
+    }
+    invisible(TRUE)
+}
+
+# Close every worker the session has, active and parked. For shutdown.
+job_worker_close_all <- function(session) {
+    job_worker_close(session)
+    for (w in session$.job_workers_parked %||% list()) {
+        tryCatch(w$close(), error = function(e) NULL)
+    }
+    session$.job_workers_parked <- NULL
+    invisible(TRUE)
+}
+
 # Queue a job for this session and try to start it. Returns the id.
+#
+# `review = TRUE` has a reviewer check the work when the job ends `done`
+# (R/job-review.R). Only a job that writes can be reviewed.
 job_submit <- function(session, task, role = "doer", requester = "local",
-                       origin = list(), parent = NULL, limits = list()) {
+                       origin = list(), parent = NULL, limits = list(),
+                       review = FALSE) {
     origin$session_key <- job_worker_key(session)
     id <- job_create(task, role = role,
                      workspace = session$cwd %||% getwd(),
                      requester = requester, origin = origin,
                      parent = parent, limits = limits,
                      permissions = list(tools = job_worker_spec(session, role)$tools),
-                     owner = job_worker_owner(session))
+                     owner = job_worker_owner(session),
+                     review = isTRUE(review) && job_role_writes(role))
     # job_pump() drains any events already held, so what it returns is
     # the whole backlog; the next pump from the surface delivers it.
     session$.job_events <- job_pump(session)
@@ -366,10 +456,33 @@ job_pump_current <- function(session, id) {
     finish <- function(status, ...) {
         job_settle(id, status, ...)
         session$.job_current <- NULL
-        if (job_role_writes(j$role)) {
+        if (job_role_locks(j$role)) {
             job_lock_release(job_checkout(j$workspace), id)
         }
         list(type = "settled", job = job_read(id))
+    }
+    # A job that ends `done`. A doer's job submitted for review gets its
+    # review queued, and the checkout lock handed to it, before the job
+    # is settled: settling first would free the lock for any queued
+    # writer. A review's verdict is read off its reply.
+    done <- function(result, usage, reason) {
+        extra <- list()
+        if (isTRUE(j$review) && job_role_writes(j$role)) {
+            review <- tryCatch(job_queue_review(session, j, result),
+                               error = function(e) e)
+            if (inherits(review, "error")) {
+                extra$review_error <- conditionMessage(review)
+            } else {
+                extra$review_job <- review$id
+                extra$review_locked <- review$locked
+            }
+        }
+        if (identical(j$role, "reviewer")) {
+            verdict <- job_review_verdict(result)
+            extra["verdict"] <- list(if (is.na(verdict)) NULL else verdict)
+        }
+        finish("done", result = result, usage = usage, reason = reason,
+               extra = extra)
     }
     if (isTRUE(j$cancel_requested)) {
         # Stopping the worker is the only way to stop a turn in flight.
@@ -407,8 +520,7 @@ job_pump_current <- function(session, id) {
     if (!is.null(res$error)) {
         return(finish("failed", error = res$error, usage = res$usage))
     }
-    finish("done", result = res$reply %||% "", usage = res$usage,
-           reason = if (!isTRUE(res$checkpoint$ok)) {
+    done(res$reply %||% "", res$usage, if (!isTRUE(res$checkpoint$ok)) {
             paste("workspace checkpoint failed:", res$checkpoint$error)
         })
 }
@@ -426,27 +538,46 @@ job_blocked_event <- function(session, j, holder) {
     list(list(type = "blocked", job = j, holder = holder))
 }
 
-# Start the oldest queued job for this session, if any.
+# Start the oldest queued job for this session that can run now.
+#
+# Oldest first, but a job waiting on its checkout lock is passed over
+# rather than holding up the queue. That matters for reviews: a review
+# is queued when its doer job ends and already holds the lock, so an
+# older queued writer is blocked by it. Stopping at the first blocked
+# job would leave the review waiting behind the job it blocks.
 job_dispatch_next <- function(session) {
     key <- job_worker_key(session)
     queued <- job_list(status = "queued", origin_key = key,
                        owner = job_worker_owner(session))
-    if (!length(queued)) {
-        return(list())
-    }
-    j <- queued[[1L]]
     events <- list()
-    checkout <- NULL
-    if (job_role_writes(j$role)) {
-        checkout <- job_checkout(j$workspace)
-        lock <- job_lock_acquire(checkout, j$id, job_worker_owner(session))
-        if (!isTRUE(lock$ok)) {
-            return(job_blocked_event(session, j, lock$holder))
+    checkouts <- list()
+    for (j in queued) {
+        checkout <- NULL
+        if (job_role_locks(j$role)) {
+            # One git lookup per workspace per pass, not per job.
+            if (is.null(checkouts[[j$workspace]])) {
+                checkouts[[j$workspace]] <- job_checkout(j$workspace)
+            }
+            checkout <- checkouts[[j$workspace]]
+            lock <- job_lock_acquire(checkout, j$id, job_worker_owner(session))
+            if (!isTRUE(lock$ok)) {
+                events <- c(events, job_blocked_event(session, j, lock$holder))
+                next
+            }
         }
+        return(c(events, job_dispatch(session, j, checkout)))
     }
+    events
+}
+
+# Hand job `j` to its role's worker. `checkout` is the lock it holds, or
+# NULL. Every way out either leaves the job running as the session's
+# current job, or ends it and gives the lock back.
+job_dispatch <- function(session, j, checkout) {
+    events <- list()
     if (!job_worker_alive(session) ||
         !identical(session$.job_worker_role, j$role)) {
-        restore <- tryCatch(job_worker_start(session, j$role),
+        restore <- tryCatch(job_worker_activate(session, j$role),
                             error = function(e) e)
         if (inherits(restore, "error")) {
             # Nothing reached a worker, so the job had no effect: it
@@ -475,7 +606,13 @@ job_dispatch_next <- function(session) {
     }
     marked <- tryCatch({
         job_mark_dispatched(j$id, worker = list(
-                pid = session$.job_worker$get_pid()))
+                pid = session$.job_worker$get_pid()),
+                            # What the checkout looked like as the job began, so its
+                            # review can show exactly what it changed. Only taken for a
+                            # job that will be reviewed: nothing else reads it.
+                            base = if (isTRUE(j$review) && !is.null(checkout)) {
+                job_git_base(checkout)
+            })
         TRUE
     }, error = function(e) e)
     if (inherits(marked, "error")) {

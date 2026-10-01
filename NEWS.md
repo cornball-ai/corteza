@@ -32,6 +32,16 @@
   lock (the git toplevel) and later writers queue until it ends, across
   every bot on the machine. Edits made outside jobs are not covered.
 
+- **Optional review of delegated work.** `delegate(task, review = TRUE)`,
+  or `"jobs": {"review": true}` as the default, follows a finished job
+  with a review by a second worker that has read-only tools, no network,
+  no access outside the checkout, and no way to run code. It reads the
+  job's diff and report and answers with a verdict and findings. The
+  checkout stays locked from the start of the job to the end of the
+  review. `"jobs": {"reviewer": {"provider": ..., "model": ...}}` runs the
+  reviewer on a different model. The reviewer cannot run tests, and a
+  review does not start a revision by itself.
+
 - **Matrix `/model` now changes the model replies use.** It set a field
   `turn()` never read, so it only renamed the badge. The badge also
   showed the provider's default model for sessions created from

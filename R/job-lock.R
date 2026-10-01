@@ -61,6 +61,16 @@ job_role_writes <- function(role) {
     role %in% JOB_WRITER_ROLES
 }
 
+# Roles that hold the checkout while they run. The reviewer writes
+# nothing, but what it reviews has to stay still: a review of a tree
+# that another job is editing describes neither version. So it takes
+# the same lock, and writers queue behind it.
+JOB_LOCK_ROLES <- c("doer", "reviewer")
+
+job_role_locks <- function(role) {
+    role %in% JOB_LOCK_ROLES
+}
+
 # The checkout a workspace belongs to.
 job_checkout <- function(workspace) {
     workspace <- normalizePath(workspace, mustWork = FALSE)
@@ -182,6 +192,26 @@ job_lock_acquire <- function(checkout, job_id, owner = "local") {
     list(ok = FALSE, holder = job_lock_holder(checkout))
 }
 
+# Hand the lock from its holder to another job with no moment in which
+# the checkout is free. The holder creates the next generation for
+# `to_job` while its own is still held, so nobody else is entitled to
+# that number: others create n+1 only after seeing n free, and n is
+# neither released nor stale. FALSE when `from_job` is not the current
+# holder, or the number was somehow taken; `to_job` then has to acquire
+# the ordinary way, and the caller should not claim a clean hand-off.
+job_lock_transfer <- function(checkout, from_job, to_job, owner = "local") {
+    cur <- job_lock_current(checkout)
+    if (is.null(cur) || isTRUE(cur$released) ||
+        !identical(cur$holder$job, from_job)) {
+        return(FALSE)
+    }
+    n <- cur$gen + 1L
+    job_lock_try(checkout, n,
+                 list(checkout = checkout, job = to_job, owner = owner,
+                      pid = Sys.getpid(), host = Sys.info()[["nodename"]], gen = n,
+                      acquired_at = job_now(), transferred_from = from_job))
+}
+
 # Give the lock back: mark `job_id`'s generation as released. Only ever
 # touches the releaser's own generation. A job takes at most one, and it
 # is at or near the top, so the search runs newest first and stops at
@@ -202,7 +232,7 @@ job_lock_release <- function(checkout, job_id) {
 # What a surface says about a "blocked" event.
 job_blocked_text <- function(ev) {
     h <- ev$holder
-    sprintf(paste("Job %s is queued: job %s (%s) is editing %s.",
+    sprintf(paste("Job %s is queued: job %s (%s) has %s locked.",
                   "It starts when that job ends."),
             ev$job$id, h$job %||% "?", h$owner %||% "unknown owner",
             h$checkout %||% ev$job$workspace)

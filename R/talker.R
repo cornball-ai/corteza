@@ -30,6 +30,10 @@ TALKER_GUIDANCE <- paste(
                          "tests, or a long investigation, call `delegate` with a self-contained",
                          "task. The doer does not see this conversation, so the task must say",
                          "everything it needs: files, goal, constraints, how to check the work.",
+                         "Pass `review = true` when the change should be checked before anyone",
+                         "relies on it: a read-only reviewer then inspects the result, and its",
+                         "findings arrive as a second message. Whether to act on a review is",
+                         "the user's call; do not start a revision on your own.",
                          "Tell the user the job has started. Never guess or pre-empt a",
                          "delegated job's result; it arrives as its own message when the job",
                          "ends. Use `job_status` when asked how work is going and `job_cancel`",
@@ -76,22 +80,39 @@ talker_enable <- function(session, talker = list()) {
 #'
 #' @param task (character) Complete description of the work: files,
 #'   goal, constraints, and how to check the result.
+#' @param review (logical) Have a read-only reviewer check the work when
+#'   the doer finishes. The checkout stays locked until the review ends,
+#'   and the review arrives as a second message. Omit to use the
+#'   configured default.
 #' @param ctx Server-side context; supplies the session.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_delegate <- function(task, ctx = list()) {
+tool_delegate <- function(task, review = NULL, ctx = list()) {
     session <- ctx$session
     if (!is.environment(session)) {
         return(err("delegate needs a live session"))
     }
+    # The config default (`jobs$review`) applies when the model does not
+    # say; an explicit FALSE from the model is honored.
+    review <- if (is.null(review)) {
+        isTRUE(session$config$jobs$review)
+    } else {
+        isTRUE(review)
+    }
     tryCatch({
         id <- job_submit(session, task,
                          requester = session$job_requester %||% "local",
-                         origin = session$job_origin %||% list())
-        ok(sprintf(paste("Delegated as job %s. The result will arrive as",
-                         "its own message; do not answer the delegated",
-                         "question yourself."), id))
+                         origin = session$job_origin %||% list(),
+                         review = review)
+        ok(sprintf(paste0("Delegated as job %s. The result will arrive as ",
+                          "its own message; do not answer the delegated ",
+                          "question yourself.%s"), id,
+                if (review) {
+                    " A review of the work will follow it."
+                } else {
+                    ""
+                }))
     }, error = function(e) err(paste("Delegate failed:", conditionMessage(e))))
 }
 
@@ -159,17 +180,15 @@ tool_job_cancel <- function(id, ctx = list()) {
 
 # One line per job, or the full outcome with detail = TRUE.
 format_job <- function(j, detail = FALSE) {
-    task <- gsub("\\s+", " ", j$task)
-    if (nchar(task) > 70L) {
-        task <- paste0(substr(task, 1L, 67L), "...")
-    }
-    line <- sprintf("%s  %-13s %s", j$id, j$status, task)
+    line <- sprintf("%s  %-13s %s", j$id, j$status,
+                    job_title(j, max_chars = 70L))
     if (!detail) {
         return(line)
     }
     o <- j$outcome
     paste(c(line, if (!is.null(o$reason)) paste("reason:", o$reason),
             if (!is.null(o$error)) paste("error:", o$error),
+            job_outcome_notes(j),
             if (!is.null(o$result) && nzchar(o$result)) c("", o$result)),
           collapse = "\n")
 }

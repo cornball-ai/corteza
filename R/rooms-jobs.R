@@ -108,7 +108,7 @@ bot_job_settled <- function(chat, s, job) {
 
 bot_job_result_text <- function(job) {
     head <- sprintf("**Job %s %s**: %s", job$id, job$status,
-                    .sanitize_inline(job$task, max_chars = 120L))
+                    job_title(job, max_chars = 120L))
     o <- job$outcome
     body <- switch(job$status,
                    done = o$result %||% "",
@@ -119,7 +119,9 @@ bot_job_result_text <- function(job) {
     } else {
         ""
     }
-    paste0(head, if (nzchar(body)) paste0("\n\n", body) else "", note)
+    notes <- job_outcome_notes(job)
+    paste0(head, if (nzchar(body)) paste0("\n\n", body) else "", note,
+        if (length(notes)) paste0("\n\n", paste(notes, collapse = "\n")))
 }
 
 bot_job_restored_text <- function(restore) {

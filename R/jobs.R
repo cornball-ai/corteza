@@ -81,8 +81,8 @@ job_write_file <- function(path, x) {
 # bytes are read first: handed a path that no longer exists, fromJSON()
 # parses the path string itself as JSON and errors.
 job_read_file <- function(path) {
-    txt <- tryCatch(readLines(path, warn = FALSE),
-                    error = function(e) NULL, warning = function(w) NULL)
+    txt <- tryCatch(readLines(path, warn = FALSE), error = function(e) NULL,
+                    warning = function(w) NULL)
     if (is.null(txt)) {
         return(NULL)
     }
@@ -114,7 +114,8 @@ job_now <- function() {
 job_create <- function(task, role = "doer", workspace = getwd(),
                        requester = "local", origin = list(), parent = NULL,
                        backend = "subagent", permissions = list(),
-                       limits = list(), owner = "local") {
+                       limits = list(), owner = "local", review = FALSE,
+                       review_of = NULL) {
     if (!is.character(task) || length(task) != 1L || is.na(task) ||
         !nzchar(trimws(task))) {
         stop("job task must be one non-empty string", call. = FALSE)
@@ -156,7 +157,11 @@ job_create <- function(task, role = "doer", workspace = getwd(),
             hop = hop,
             backend = backend,
             permissions = permissions,
-            limits = limits
+            limits = limits,
+            # `review`: have a reviewer check this job's work when it is
+            # done. `review_of`: this job is the review of that one.
+            review = isTRUE(review),
+            review_of = review_of
         ))
     id
 }
@@ -164,7 +169,7 @@ job_create <- function(task, role = "doer", workspace = getwd(),
 # Record that the job is about to reach a worker. Written before the
 # hand-off, not after: if the process dies between the two, recovery
 # must assume the worker may have started, which is the safe mistake.
-job_mark_dispatched <- function(id, worker = list()) {
+job_mark_dispatched <- function(id, worker = list(), base = NULL) {
     job_check_id(id)
     dir <- job_dir(id)
     if (!file.exists(file.path(dir, "intent.json"))) {
@@ -176,8 +181,10 @@ job_mark_dispatched <- function(id, worker = list()) {
     if (file.exists(file.path(dir, "dispatch.json"))) {
         stop("job ", id, " was already dispatched", call. = FALSE)
     }
+    # `base` is the checkout's git state as the job starts (see
+    # job_git_base()), so a reviewer can see exactly what the job changed.
     job_write_file(file.path(dir, "dispatch.json"),
-                   list(dispatched_at = job_now(), worker = worker))
+                   list(dispatched_at = job_now(), worker = worker, base = base))
     invisible(id)
 }
 
@@ -186,7 +193,7 @@ job_mark_dispatched <- function(id, worker = list()) {
 # after a cancellation or a recovery verdict therefore cannot overwrite
 # what was decided first.
 job_settle <- function(id, status, result = NULL, error = NULL, usage = NULL,
-                       reason = NULL) {
+                       reason = NULL, extra = list()) {
     job_check_id(id)
     if (!is.character(status) || length(status) != 1L ||
         !status %in% JOB_STATUSES_FINAL) {
@@ -201,9 +208,11 @@ job_settle <- function(id, status, result = NULL, error = NULL, usage = NULL,
     if (file.exists(path)) {
         return(FALSE)
     }
-    job_write_file(path, list(status = status, finished_at = job_now(),
-                              result = result, error = error,
-                              usage = usage, reason = reason))
+    # `extra` carries role-specific outcome fields: a doer's `review_job`,
+    # a reviewer's `verdict`.
+    job_write_file(path, c(list(status = status, finished_at = job_now(),
+                                result = result, error = error,
+                                usage = usage, reason = reason), extra))
     TRUE
 }
 

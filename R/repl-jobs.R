@@ -103,13 +103,9 @@
     o <- job$outcome
     body <- switch(job$status, done = o$result %||% "",
                    failed = o$error %||% o$reason %||% "", o$reason %||% "")
-    head <- sprintf("Job %s %s: %s", job$id, job$status,
-                    .sanitize_inline(job$task, max_chars = 100L))
-    if (nzchar(body)) {
-        paste0(head, "\n", body)
-    } else {
-        head
-    }
+    head <- sprintf("Job %s %s: %s", job$id, job$status, job_title(job))
+    paste(c(head, if (nzchar(body)) body, job_outcome_notes(job)),
+          collapse = "\n")
 }
 
 # Ask about one approval request at the prompt. Only an explicit y/yes
@@ -148,7 +144,7 @@
     # The worker is closed on every exit, idle or not, and even if
     # cancelling fails. Idempotent: run_repl_loop() also registers this
     # with on.exit() for exits by error or interrupt.
-    on.exit(job_worker_close(session), add = TRUE)
+    on.exit(job_worker_close_all(session), add = TRUE)
     open <- tryCatch(job_list(status = JOB_STATUSES_OPEN,
                               origin_key = job_worker_key(session),
                               owner = job_worker_owner(session)),
