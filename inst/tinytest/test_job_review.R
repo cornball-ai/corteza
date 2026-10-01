@@ -128,7 +128,7 @@ if (nzchar(Sys.which("git"))) {
     writeLines("draft v2", file.path(repo, "notes.txt"))
     writeLines("brand new", file.path(repo, "added.txt"))
     writeLines("secret 2", file.path(repo, "ignored.txt"))
-    end <- snap(repo)
+    end <- snap(repo, base = base)
     d <- git("diff", paste0(base$snapshot, "..", end$snapshot))
     # Only the job's changes: not the edit that predated it.
     expect_true(any(d == "-two"))
@@ -149,7 +149,8 @@ if (nzchar(Sys.which("git"))) {
     expect_true(grepl("+draft v2", via_tool$content[[1L]]$text, fixed = TRUE))
     # Two snapshots of an unchanged tree differ in nothing.
     expect_identical(length(git("diff", paste0(end$snapshot, "..",
-                                               snap(repo)$snapshot))), 0L)
+                                               snap(repo, base = end)$snapshot))),
+                     0L)
 
     job <- list(id = "20261001T000000-aaaaaaaa", task = "fix a.txt",
                 dispatch = list(base = base))
@@ -162,29 +163,138 @@ if (nzchar(Sys.which("git"))) {
     expect_true(grepl(".gitignore are not covered", task, fixed = TRUE))
     expect_true(grepl("VERDICT: approve", task, fixed = TRUE))
 
-    # Over the size limit, untracked files are left out, and the
-    # reviewer is told what the diff does not cover and which files.
+    # --- The two ends cover the same files ---
+    # A file in one snapshot and not the other reads as added or deleted
+    # when nothing touched it, so the end follows the start file by file.
+    diff_of <- function(b, e) {
+        git("diff", paste0(b$snapshot, "..", e$snapshot))
+    }
+    # The base record as the review reads it back from the ledger.
+    stored <- function(b) {
+        f <- tempfile(fileext = ".json")
+        on.exit(unlink(f))
+        corteza:::job_write_file(f, list(base = b))
+        corteza:::job_read_file(f)$base
+    }
+
+    # Too much untracked at the start: those files are left out of both
+    # ends, and the reviewer is told which and why.
     small_base <- snap(repo, max_untracked_bytes = 0)
     expect_false(small_base$untracked$included)
     expect_identical(small_base$untracked$n, 2L)
+    expect_true(corteza:::job_is_sha(small_base$untracked$names))
+    small_base <- stored(small_base)
     writeLines("draft v3", file.path(repo, "notes.txt"))
     writeLines("four", file.path(repo, "a.txt"))
-    small_end <- snap(repo, max_untracked_bytes = 0)
-    d2 <- git("diff", paste0(small_base$snapshot, "..", small_end$snapshot))
+    writeLines("made by the job", file.path(repo, "created.txt"))
+    # The job stages a file that was untracked, and so not snapshotted,
+    # at the start. Its content is no more comparable for being staged.
+    git("add", "notes.txt")
+    small_end <- snap(repo, base = small_base)
+    d2 <- diff_of(small_base, small_end)
     expect_true(any(d2 == "+four"))
     expect_false(any(grepl("draft", d2)))
+    expect_false(any(grepl("brand new", d2)))
+    # What the job created is new at both ends' reckoning: shown.
+    expect_true(any(d2 == "+made by the job"))
+    expect_true(small_end$untracked$included)
+    git("reset", "-q", "--", "notes.txt")
     job$dispatch$base <- small_base
     limited <- corteza:::job_review_task(job, "x", small_end)
-    expect_true(grepl("Untracked files are NOT in that diff", limited,
-                      fixed = TRUE))
-    expect_true(grepl("tracked files only", limited, fixed = TRUE))
+    expect_true(grepl("2 file(s)", limited, fixed = TRUE))
+    expect_true(grepl("NOT in that diff at either end", limited, fixed = TRUE))
     expect_true(grepl("notes.txt", limited, fixed = TRUE))
     expect_true(grepl("do not attribute", limited, fixed = TRUE))
+    expect_true(grepl("Files this job created are in the diff", limited,
+                      fixed = TRUE))
     expect_false(grepl("untracked files included", limited))
-    # Covered at the start but not at the end is still not covered.
+    # Still too much at the end: the job's new file is left out too, and
+    # that is said separately.
+    none_end <- snap(repo, max_untracked_bytes = 0, base = small_base)
+    expect_false(none_end$untracked$included)
+    expect_identical(unlist(none_end$untracked$files), "created.txt")
+    expect_false(any(grepl("made by the job", diff_of(small_base, none_end))))
+    neither <- corteza:::job_review_task(job, "x", none_end)
+    expect_true(grepl("left 1 new untracked file(s)", neither, fixed = TRUE))
+    expect_true(grepl("created.txt", neither, fixed = TRUE))
+    expect_false(grepl("Files this job created are in the diff", neither,
+                       fixed = TRUE))
+
+    # Within the limit at the start, over it at the end. The files the
+    # start covered stay covered: unchanged ones do not show as deleted,
+    # and an edit to one shows as an edit. Only the new file is left out.
+    full_base <- stored(snap(repo))
+    expect_true(full_base$untracked$included)
+    expect_null(full_base$untracked$names)
+    writeLines(strrep("z", 5000), file.path(repo, "big-new.txt"))
+    writeLines("draft v4", file.path(repo, "notes.txt"))
+    over_end <- snap(repo, max_untracked_bytes = 1000, base = full_base)
+    expect_false(over_end$untracked$included)
+    expect_identical(unlist(over_end$untracked$files), "big-new.txt")
+    d3 <- diff_of(full_base, over_end)
+    expect_false(any(grepl("^deleted file", d3)))
+    expect_true(any(d3 == "-draft v3"))
+    expect_true(any(d3 == "+draft v4"))
+    expect_false(any(grepl("big-new.txt", d3, fixed = TRUE)))
+    job$dispatch$base <- full_base
+    over <- corteza:::job_review_task(job, "x", over_end)
+    expect_true(grepl("left 1 new untracked file(s)", over, fixed = TRUE))
+    expect_true(grepl("big-new.txt", over, fixed = TRUE))
+    expect_true(grepl("already untracked when the job", over, fixed = TRUE))
+    expect_false(grepl("at either end", over, fixed = TRUE))
+    unlink(file.path(repo, "big-new.txt"))
+
+    # A file the start covered stays in the end when the job makes git
+    # ignore it, instead of showing as deleted.
+    writeLines(c("ignored.txt", "added.txt"), file.path(repo, ".gitignore"))
+    d4 <- diff_of(full_base, snap(repo, base = full_base))
+    expect_false(any(grepl("^deleted file", d4)))
+    expect_true(any(d4 == "+added.txt"))
+    writeLines("ignored.txt", file.path(repo, ".gitignore"))
+    # One it removed does show as deleted.
+    unlink(file.path(repo, "created.txt"))
+    d5 <- diff_of(full_base, snap(repo, base = full_base))
+    expect_identical(sum(grepl("^deleted file", d5)), 1L)
+    expect_true(any(d5 == "-made by the job"))
+    # So does a tracked file it removed.
+    unlink(file.path(repo, "a.txt"))
+    d5b <- diff_of(full_base, snap(repo, base = full_base))
+    expect_identical(sum(grepl("^deleted file", d5b)), 2L)
+    expect_true(any(d5b == "--- a/a.txt"))
+    writeLines("four", file.path(repo, "a.txt"))
+
+    if (.Platform$OS.type != "windows") {
+        # Names git would quote in its default listing: counted at their
+        # real size, snapshotted, and matched between the two ends.
+        odd <- c("tab\there.txt", "new\nline.txt", "quo\"te.txt",
+                 "café.txt", ":(top)a.txt", "-u")
+        for (f in odd) {
+            writeLines(strrep("x", 100), file.path(repo, f))
+        }
+        capped <- snap(repo, max_untracked_bytes = 300)
+        expect_false(capped$untracked$included)
+        expect_true(capped$untracked$bytes >= 600)
+        odd_base <- stored(snap(repo))
+        expect_true(odd_base$untracked$included)
+        writeLines("edited", file.path(repo, odd[1L]))
+        d6 <- diff_of(odd_base, snap(repo, base = odd_base))
+        expect_identical(sum(grepl("^diff --git", d6)), 1L)
+        expect_true(any(d6 == "+edited"))
+        # Left out at the start, they stay out at the end by name, also
+        # once staged.
+        capped <- stored(capped)
+        writeLines("edited again", file.path(repo, odd[2L]))
+        git("add", "--", shQuote(odd[1L]), shQuote(odd[5L]))
+        d7 <- diff_of(capped, snap(repo, base = capped))
+        expect_identical(length(d7), 0L)
+        git("reset", "-q")
+        unlink(file.path(repo, odd))
+    }
+
+    # Covered at the start but not at the end is said.
     job$dispatch$base <- base
     expect_true(grepl("NOT in that diff",
-                      corteza:::job_review_task(job, "x", small_end),
+                      corteza:::job_review_task(job, "x", none_end),
                       fixed = TRUE))
     # The limit comes from the config, in megabytes.
     expect_identical(corteza:::job_snapshot_max_bytes(

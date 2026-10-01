@@ -40,13 +40,32 @@
   diff is taken between snapshots of the checkout as the job started and
   ended, so it leaves out changes that were already there, and it covers
   untracked files up to `"jobs": {"review_snapshot_max_mb": 20}` in total
-  (ignored files are never covered). The checkout stays locked from the
+  (ignored files are never covered). Past that limit the two snapshots
+  still cover the same files: files that were untracked at the start are
+  left out of both, or the job's new files are left out of the end, and
+  the reviewer is told which. The checkout stays locked from the
   start of the job to the end of the review. If the bot restarts in
   between and another job takes the checkout first, the review is
   cancelled instead of run on a changed tree.
   `"jobs": {"reviewer": {"provider": ..., "model": ...}}` runs the
   reviewer on a different model. The reviewer cannot run tests, and a
   review does not start a revision by itself.
+
+- **`git_status`, `git_diff`, and `git_log` no longer run commands or
+  read outside `allowed_paths`.** A ref or path could carry shell
+  commands, a ref could be an option, and `path` could name any
+  repository on the machine. Git now runs without a shell, and a
+  session confined with `allowed_paths` is held to it, including inside
+  a subdirectory of a repository. Three things behave differently in
+  every session:
+  - The file filter of `git_diff` is a literal path. Globs and pathspec
+    magic such as `:(top)` are not interpreted.
+  - A ref cannot be `<rev>:<path>` or start with `-`.
+  - Git runs none of the programs a repository's configuration names:
+    no fsmonitor hook, clean/smudge filter, `post-index-change` hook,
+    external diff, textconv, or gpg, and no fetch of objects a partial
+    clone lacks. A file under a clean filter (git-lfs) is compared as
+    its raw content, and a submodule by its commit only.
 
 - **Matrix `/model` now changes the model replies use.** It set a field
   `turn()` never read, so it only renamed the badge. The badge also

@@ -73,44 +73,74 @@ job_snapshot_max_bytes <- function(session) {
 # index, HEAD, and every ref are untouched; the only trace is
 # unreferenced objects in the object store, which git's own gc removes.
 #
-# Untracked files are skipped when together they exceed
-# `max_untracked_bytes`, since snapshotting copies them into the object
-# store. `untracked$included` records which happened, and the reviewer
-# is told. Ignored files are never covered.
+# Untracked files are copied only while together they stay within
+# `max_untracked_bytes`, since snapshotting writes them into the object
+# store. `untracked` says what happened to them, and the reviewer is
+# told. Ignored files are never covered.
+#
+# The two ends must cover the same files, or the diff invents changes:
+# a file in one snapshot and absent from the other reads as added or
+# deleted when nothing touched it. So the end snapshot is given the
+# start's (`base`) and follows it file by file:
+# - a file the start covered is carried into the end whatever its size
+#   and whatever the ignore rules have become;
+# - a file that was untracked at the start and left out is left out of
+#   the end too, also if the job has since added or committed it. The
+#   start records those names (`untracked$names`, a blob);
+# - a new untracked file is copied if the total still fits. Left out, it
+#   is simply absent from the diff, which is honest: it did not exist at
+#   the start.
+#
+# No program the repository configures is run (see git_run()), so a file
+# under a clean filter is snapshotted as its raw content.
 #
 # NULL outside a git repository or before the first commit. `snapshot`
 # is NULL when the commit could not be built.
 job_git_snapshot <- function(checkout,
-                             max_untracked_bytes = JOB_SNAPSHOT_MAX_BYTES) {
-    run <- function(args, env = NULL) {
-        res <- git_run(args, path = checkout, env = env)
+                             max_untracked_bytes = JOB_SNAPSHOT_MAX_BYTES,
+                             base = NULL) {
+    index <- tempfile("corteza-index-")
+    feed <- tempfile("corteza-paths-")
+    on.exit(unlink(c(index, paste0(index, ".lock"), feed)), add = TRUE)
+    env <- c(GIT_INDEX_FILE = index, GIT_AUTHOR_NAME = "corteza",
+             GIT_AUTHOR_EMAIL = "corteza@localhost",
+             GIT_COMMITTER_NAME = "corteza",
+             GIT_COMMITTER_EMAIL = "corteza@localhost")
+    # `paths` are fed to git on stdin, NUL-separated.
+    run <- function(args, paths = NULL) {
+        if (!is.null(paths)) {
+            writeBin(paths, feed)
+        }
+        res <- git_run(args, path = checkout, env = env,
+                       stdin = if (!is.null(paths)) feed)
         if (res$status != 0L) {
             return(NULL)
         }
         res$text
     }
+    # Names come NUL-separated: git's default listing quotes and escapes
+    # a name holding a tab or a newline, and the quoted form names no
+    # file on disk.
+    list_paths <- function(args) {
+        res <- git_run(args, path = checkout, env = env, bytes = TRUE)
+        if (res$status != 0L) {
+            return(NULL)
+        }
+        git_split_nul(res$bytes)
+    }
+    size <- function(files) {
+        sum(file.size(file.path(checkout, files)), na.rm = TRUE)
+    }
+
     head <- run(c("rev-parse", "HEAD"))
-    if (is.null(head) || !grepl("^[0-9a-f]{40,64}$", head)) {
+    if (!job_is_sha(head)) {
         return(NULL)
     }
-    listed <- run(c("-c", "core.quotePath=false", "ls-files", "--others",
-                    "--exclude-standard"))
-    files <- if (is.null(listed) || !nzchar(listed)) {
-        character()
-    } else {
-        strsplit(listed, "\n", fixed = TRUE)[[1L]]
+    failed <- list(head = head, snapshot = NULL)
+    if (!is.null(base) && !job_is_sha(base$snapshot)) {
+        return(failed)
     }
-    bytes <- sum(file.size(file.path(checkout, files)), na.rm = TRUE)
-    include <- bytes <= max_untracked_bytes
-    untracked <- list(included = include, n = length(files), bytes = bytes,
-                      files = as.list(utils::head(files, 20L)))
 
-    index <- tempfile("corteza-index-")
-    on.exit(unlink(c(index, paste0(index, ".lock"))), add = TRUE)
-    env <- c(GIT_INDEX_FILE = index, GIT_AUTHOR_NAME = "corteza",
-             GIT_AUTHOR_EMAIL = "corteza@localhost",
-             GIT_COMMITTER_NAME = "corteza",
-             GIT_COMMITTER_EMAIL = "corteza@localhost")
     # Start from a copy of the real index: its cached file stats let
     # `git add` hash only what changed instead of every tracked file.
     real <- run(c("rev-parse", "--git-path", "index"))
@@ -118,21 +148,93 @@ job_git_snapshot <- function(checkout,
         real <- file.path(checkout, real)
     }
     seeded <- !is.null(real) && file.exists(real) && file.copy(real, index)
-    if (!seeded && is.null(run(c("read-tree", "HEAD"), env))) {
-        return(list(head = head, snapshot = NULL, untracked = untracked))
+    if (!seeded && is.null(run(c("read-tree", "HEAD")))) {
+        return(failed)
     }
-    commit <- NULL
-    if (!is.null(run(c("add", if (include) "-A" else "-u", "--", "."), env))) {
-        tree <- run("write-tree", env)
-        if (!is.null(tree) && grepl("^[0-9a-f]{40,64}$", tree)) {
-            commit <- run(c("commit-tree", tree, "-p", head, "-m",
-                            "corteza job snapshot"), env)
+    # Bring every tracked file up to its state on disk. `git add -u` does
+    # that in one step, but it looks inside each submodule by running git
+    # there, under the submodule's own configuration. This compares a
+    # submodule by its commit only.
+    changed <- list_paths(c("diff-files", "-z", "--name-only",
+                            "--ignore-submodules=dirty"))
+    if (is.null(changed)) {
+        return(failed)
+    }
+    if (length(changed) && is.null(run(c("update-index", "-z", "--add",
+                    "--remove", "--stdin"),
+                                       paths = unique(changed)))) {
+        return(failed)
+    }
+
+    # What the start covered, and what it left out.
+    covered <- character()
+    skip <- character()
+    if (!is.null(base)) {
+        covered <- list_paths(c("ls-tree", "-r", "-z", "--name-only",
+                                base$snapshot))
+        if (job_is_sha(base$untracked$names)) {
+            skip <- list_paths(c("cat-file", "blob", base$untracked$names))
+        }
+        if (is.null(covered) || is.null(skip)) {
+            return(failed)
         }
     }
-    if (is.null(commit) || !grepl("^[0-9a-f]{40,64}$", commit)) {
-        commit <- NULL
+    tracked <- list_paths(c("ls-files", "-z"))
+    other <- list_paths(c("ls-files", "-z", "--others", "--exclude-standard"))
+    if (is.null(tracked) || is.null(other)) {
+        return(failed)
     }
-    list(head = head, snapshot = commit, untracked = untracked)
+    # Covered at the start, no longer in the index, still on disk.
+    pre <- setdiff(covered, tracked)
+    pre <- pre[job_is_file(file.path(checkout, pre))]
+    # An embedded repository is listed as a directory ("sub/"). It cannot
+    # be added as a file and is in neither snapshot.
+    new <- setdiff(other[!endsWith(other, "/")], c(skip, pre))
+    bytes <- size(new)
+    include <- bytes + size(pre) <= max_untracked_bytes
+
+    add <- c(pre, if (include) new)
+    if (length(add) && is.null(run(c("update-index", "-z", "--add", "--stdin"),
+                                   paths = add))) {
+        return(failed)
+    }
+    drop <- intersect(tracked, skip)
+    if (length(drop) && is.null(run(c("update-index", "-z", "--force-remove",
+                                      "--stdin"), paths = drop))) {
+        return(failed)
+    }
+    untracked <- list(included = include, n = length(new), bytes = bytes,
+                      files = as.list(job_display_names(utils::head(new, 20L))))
+    if (is.null(base) && !include) {
+        writeBin(new, feed)
+        untracked$names <- run(c("hash-object", "-w", "--no-filters", feed))
+        if (!job_is_sha(untracked$names)) {
+            return(failed)
+        }
+    }
+
+    tree <- run("write-tree")
+    commit <- if (job_is_sha(tree)) {
+        run(c("commit-tree", tree, "-p", head, "-m", "corteza job snapshot"))
+    }
+    list(head = head, snapshot = if (job_is_sha(commit)) commit,
+         untracked = untracked)
+}
+
+job_is_sha <- function(x) {
+    is.character(x) && length(x) == 1L && grepl("^[0-9a-f]{40,64}$", x)
+}
+
+# Regular files and symlinks among `paths`; not directories, not gone.
+job_is_file <- function(paths) {
+    link <- Sys.readlink(paths)
+    (!is.na(link) & nzchar(link)) | (file.exists(paths) & !dir.exists(paths))
+}
+
+# File names for a message or the job's JSON record. Git names are
+# bytes; whatever is not valid UTF-8 is replaced.
+job_display_names <- function(files) {
+    iconv(files, "UTF-8", "UTF-8", sub = "?")
 }
 
 # How the reviewer sees the change, given the snapshots taken as the job
@@ -156,39 +258,55 @@ job_review_how <- function(base, end) {
                        "- `git_status` lists untracked files; read the ones that matter.",
                        log), collapse = "\n"))
     }
-    covered <- isTRUE(base$untracked$included) &&
-    isTRUE(end$untracked$included)
+    old <- isTRUE(base$untracked$included)
+    new <- isTRUE(end$untracked$included)
+    named <- function(label, u) {
+        files <- unlist(u$files)
+        if (length(files)) {
+            paste0("  ", label, ": ", paste(files, collapse = ", "),
+                if (u$n > length(files)) ", ...")
+        }
+    }
     paste(c(
             sprintf("- `git_diff` with ref = \"%s..%s\" shows what this job changed.",
                     base$snapshot, end$snapshot),
-            if (covered) {
+            if (old && new) {
                 paste("- Both ends are snapshots of the whole checkout, untracked",
                       "files included: new files appear as added, and edits to",
                       "files that were never committed appear as edits.")
-            } else {
-                skipped <- if (isTRUE(base$untracked$included)) {
-                    end$untracked
-                } else {
-                    base$untracked
-                }
-                paste(c(
-                        sprintf(paste("- Untracked files are NOT in that diff: there",
-                                      "were %d of them (%.1f MB), too much to",
-                                      "snapshot. The diff covers tracked files only."),
-                                as.integer(skipped$n), skipped$bytes / 1024 ^ 2),
-                        paste("  `git_status` lists them. What this job did to a file",
-                              "that was already untracked cannot be told apart from",
-                              "what was there before; do not attribute such a",
-                              "file's contents to this job."),
-                        if (length(base$untracked$files)) {
-                            paste0("  Untracked when the job started: ",
-                                   paste(unlist(base$untracked$files), collapse = ", "),
-                                if (base$untracked$n > length(base$untracked$files)) {
-                                    ", ..."
-                                })
-                        }), collapse = "\n")
             },
-            "- Files matched by .gitignore are not covered either way.",
+            if (!old) {
+                c(sprintf(paste("- %d file(s) (%.1f MB) were untracked when the job",
+                                "started, too much to snapshot. They are NOT in",
+                                "that diff at either end, also where the job has",
+                                "since added or committed them."),
+                          as.integer(base$untracked$n),
+                          base$untracked$bytes / 1024 ^ 2),
+                    paste("  What this job did to them cannot be told apart from",
+                          "what was there before; do not attribute their contents",
+                          "to this job."),
+                    named("Untracked when the job started", base$untracked),
+                    if (new) {
+                        "  Files this job created are in the diff, as added."
+                    })
+            },
+            if (!new) {
+                c(sprintf(paste("- The job left %d new untracked file(s) (%.1f MB),",
+                                "too much to snapshot. They are NOT in that diff."),
+                          as.integer(end$untracked$n),
+                          end$untracked$bytes / 1024 ^ 2),
+                    paste("  They were not there when the job started, or were",
+                          "ignored then. `git_status` lists them; read the ones",
+                          "that matter."),
+                    named("New", end$untracked),
+                    if (old) {
+                        paste("  Files that were already untracked when the job",
+                              "started are in the diff; edits to them appear as",
+                              "edits.")
+                    })
+            },
+            paste("- Files matched by .gitignore are not covered. One that",
+                  "stopped being ignored during the job appears as added."),
             log), collapse = "\n")
 }
 
@@ -255,7 +373,8 @@ job_queue_review <- function(session, job, result) {
     checkout <- job_checkout(job$workspace)
     # The end state, taken while the doer's lock is still held.
     end <- if (!is.null(job$dispatch$base)) {
-        job_git_snapshot(checkout, job_snapshot_max_bytes(session))
+        job_git_snapshot(checkout, job_snapshot_max_bytes(session),
+                         base = job$dispatch$base)
     }
     id <- job_create(job_review_task(job, result, end), role = "reviewer",
                      workspace = job$workspace, requester = job$requester,

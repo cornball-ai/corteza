@@ -87,21 +87,138 @@ format_numbered_lines <- function(lines, start = 1L) {
 # go through system2(), which builds a shell command line, so a ref of
 # "HEAD; touch x" ran `touch` -- command execution through tools that
 # policy classes as reads.
-git_run <- function(args, path = ".", env = NULL) {
+#
+# Nor does git run a program of the repository's choosing. A repository's
+# own config (.git/config, which anything with write access can edit)
+# can name programs that git starts during an ordinary status, diff, or
+# add: an fsmonitor hook, clean/smudge filters, the post-index-change
+# hook, gpg for signatures, a transport for a lazy fetch. Tools that
+# policy classes as reads, and the job snapshot, must not be a way to
+# run them, so every call here turns them off (GIT_SAFE_CONFIG,
+# GIT_SAFE_ENV, git_programs_off()). The cost: a file under a clean
+# filter (git-lfs) is compared and snapshotted as its raw content, a
+# partial clone does not fetch missing objects, and a submodule is
+# compared by its commit, not by the state of its working tree.
+#
+# Pathspecs are literal: ":(top)x" and "*.R" name files, they are not
+# pathspec magic or globs. `stdin` is a file to feed git; `bytes = TRUE`
+# returns stdout as a raw vector in `bytes` (for NUL-separated output)
+# instead of `text`.
+#
+# The filters are turned off for every command, not only the ones that
+# look like they read file content. Git re-hashes a recently modified
+# file whenever it writes an index, so `write-tree` runs a clean filter
+# as readily as `add` does.
+git_run <- function(args, path = ".", env = NULL, stdin = NULL, bytes = FALSE) {
     repo_path <- tool_resolve_path(path)
+    off <- git_programs_off(repo_path)
+    if (is.null(off)) {
+        return(list(status = 1L, bytes = raw(), text = GIT_CONFIG_ERROR))
+    }
+    git_exec(c(rbind("-c", c(GIT_SAFE_CONFIG, off)), "--no-pager",
+               "--literal-pathspecs", "-C", repo_path, args), env = env,
+             stdin = stdin, bytes = bytes)
+}
+
+# No fsmonitor hook, no hooks directory, no gpg, no transport.
+GIT_SAFE_CONFIG <- c("core.fsmonitor=", "core.hooksPath=/dev/null",
+                     "log.showSignature=false", "protocol.allow=never")
+
+GIT_CONFIG_ERROR <- paste("Error: git was not run, because the programs",
+                          "this repository's configuration names could not",
+                          "be turned off (unreadable git configuration, or",
+                          "a filter driver or protocol with \"=\" in its",
+                          "name)")
+
+# No index refresh written back (which would fire post-index-change), no
+# fetch of objects a partial clone lacks, no credential prompt.
+GIT_SAFE_ENV <- c(GIT_OPTIONAL_LOCKS = "0", GIT_NO_LAZY_FETCH = "1",
+                  GIT_TERMINAL_PROMPT = "0")
+
+# Start git with exactly `args`. With `bytes`, stdout goes through a
+# file, since an R string cannot hold the NUL bytes in `-z` output.
+git_exec <- function(args, env = NULL, stdin = NULL, bytes = FALSE) {
+    out <- "|"
+    if (bytes) {
+        out <- tempfile("corteza-git-")
+        on.exit(unlink(out), add = TRUE)
+    }
     res <- tryCatch(
-                    processx::run("git", c("-C", repo_path, args),
-                                  error_on_status = FALSE, stderr_to_stdout = TRUE,
-                                  env = c("current", env)),
+                    processx::run("git", args, error_on_status = FALSE, stdout = out,
+                                  stderr = if (bytes) NULL else "|",
+                                  stderr_to_stdout = !bytes, stdin = stdin,
+                                  env = c("current", GIT_SAFE_ENV, env)),
                     error = function(e) {
         list(status = 1L, stdout = paste("Error:", conditionMessage(e)))
     })
-    list(status = as.integer(res$status %||% 1L),
-         text = sub("\r?\n$", "", res$stdout %||% ""))
+    status <- as.integer(res$status %||% 1L)
+    if (bytes) {
+        got <- if (file.exists(out)) {
+            readBin(out, "raw", file.size(out))
+        } else {
+            raw()
+        }
+        return(list(status = status, bytes = got, text = ""))
+    }
+    list(status = status, text = sub("\r?\n$", "", res$stdout %||% ""))
+}
+
+# NUL-separated git output as a character vector. Names are kept as the
+# bytes git printed: a tab, a newline, or a quote in a filename arrives
+# as itself, where git's default output would quote and escape it.
+git_split_nul <- function(bytes) {
+    n <- sum(bytes == as.raw(0L))
+    if (n == 0L) {
+        return(character())
+    }
+    readBin(bytes, "character", n = n)
+}
+
+# `-c` settings for what GIT_SAFE_CONFIG cannot name in advance, because
+# the names are the configuration's own:
+# - every filter driver is emptied, so no clean, smudge, or process
+#   command runs. Git has no switch for this;
+# - every protocol allowed by name is refused. `protocol.allow=never`
+#   only sets the default, and `protocol.ext.allow=always` with a remote
+#   of "ext::<command>" is a program a lazy fetch would start.
+# NULL when that cannot be done: the configuration is unreadable, or a
+# name holds "=", which `-c name=value` cannot express.
+git_programs_off <- function(repo_path) {
+    if (!dir.exists(repo_path)) {
+        # Git will not start there either; let it say so itself.
+        return(character())
+    }
+    res <- git_exec(c("-C", repo_path, "config", "-z", "--name-only",
+                      "--get-regexp",
+                      paste0("^(filter\\..*\\.(clean|smudge|process|required)",
+                             "|protocol\\..*\\.allow)$")),
+                    bytes = TRUE)
+    # Exit 1 is git's "nothing matched".
+    if (res$status == 1L) {
+        return(character())
+    }
+    if (res$status != 0L) {
+        return(NULL)
+    }
+    keys <- unique(git_split_nul(res$bytes))
+    if (any(grepl("=", keys, fixed = TRUE, useBytes = TRUE))) {
+        return(NULL)
+    }
+    is_filter <- startsWith(keys, "filter.")
+    drivers <- unique(sub("^filter\\.(.*)\\.[^.]*$", "\\1", keys[is_filter],
+                          useBytes = TRUE))
+    c(unlist(lapply(drivers, function(d) {
+        c(paste0("filter.", d, c(".clean=", ".smudge=", ".process=")),
+            paste0("filter.", d, ".required=false"))
+    })), paste0(keys[!is_filter], rep("=never", sum(!is_filter))))
 }
 
 git_repo_available <- function(path = ".") {
     result <- git_run(c("rev-parse", "--is-inside-work-tree"), path = path)
+    if (identical(result$text, GIT_CONFIG_ERROR)) {
+        # Not the same as "no repository here": say why git did not run.
+        return(structure(FALSE, reason = GIT_CONFIG_ERROR))
+    }
     identical(trimws(result$text), "true") && result$status == 0L
 }
 
@@ -116,8 +233,10 @@ git_tool_repo <- function(path = ".") {
     if (!checked$ok) {
         return(list(ok = FALSE, message = checked$message))
     }
-    if (!git_repo_available(checked$path)) {
-        return(list(ok = FALSE, message = "Not inside a git repository"))
+    available <- git_repo_available(checked$path)
+    if (!available) {
+        return(list(ok = FALSE, message = attr(available, "reason") %||%
+                    "Not inside a git repository"))
     }
     top <- git_run(c("rev-parse", "--show-toplevel"), path = checked$path)
     scope <- NULL
@@ -133,9 +252,17 @@ git_tool_repo <- function(path = ".") {
 # argument can no longer run a command, but one starting with "-" would
 # still be read by git as a flag: --output=<file> makes `git diff` write
 # a file, --no-index makes it read paths outside the repository.
+#
+# Nor may it name a path. "HEAD:b/secret.R" is a file's content at a
+# commit, and `git diff HEAD:b/secret.R -- a/x.R` prints it, from
+# anywhere in the repository, whatever directory the session is
+# confined to. No commit, branch, tag, or range needs a colon.
 git_ref_ok <- function(ref) {
-    !startsWith(ref, "-")
+    !startsWith(ref, "-") && !grepl(":", ref, fixed = TRUE)
 }
+
+GIT_REF_MESSAGE <- paste("ref must be a commit, branch, tag, or range,",
+                         "not an option or a <rev>:<path>")
 
 # File tools ----
 
@@ -1085,7 +1212,10 @@ tool_git_status <- function(path = ".") {
     }
     repo_path <- repo$path
 
-    result <- git_run(c("status", "--short", "--branch", repo$scope),
+    # A submodule's commit is compared, its working tree is not: that
+    # takes a second git inside the submodule, under its configuration.
+    result <- git_run(c("status", "--short", "--branch",
+                        "--ignore-submodules=dirty", repo$scope),
                       path = repo_path)
     if (result$status != 0L) {
         return(err(result$text))
@@ -1114,7 +1244,7 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
 
     ref <- trimws(ref %||% "HEAD")
     if (!git_ref_ok(ref)) {
-        return(err("ref must be a commit, branch, tag, or range, not an option"))
+        return(err(GIT_REF_MESSAGE))
     }
     file_path <- trimws(file_path %||% "")
     staged <- isTRUE(staged)
@@ -1126,6 +1256,7 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
     # --no-textconv with --no-ext-diff: neither a configured external
     # diff nor a textconv filter runs a program on behalf of a read.
     cmd <- c("diff", "--no-ext-diff", "--no-textconv", "--find-renames",
+             "--ignore-submodules=dirty",
              sprintf("--unified=%d", context_lines))
     if (staged) {
         cmd <- c(cmd, "--cached")
@@ -1133,9 +1264,12 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
     if (nchar(ref) > 0) {
         cmd <- c(cmd, ref)
     }
+    # "--" always: what precedes it is a revision, never a path.
     if (nchar(file_path) > 0) {
         # The filter is a path like any other: it has to resolve inside
-        # what the session may read.
+        # what the session may read. git_run() passes it to git as a
+        # literal name, so git reads it the way this check does and
+        # ":(top)b/x.R" cannot reach out of the directory.
         target <- if (grepl("^(/|~|[A-Za-z]:)", file_path)) {
             file_path
         } else {
@@ -1147,7 +1281,7 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
         }
         cmd <- c(cmd, "--", file_path)
     } else {
-        cmd <- c(cmd, repo$scope)
+        cmd <- c(cmd, repo$scope %||% "--")
     }
 
     result <- git_run(cmd, path = repo_path)
@@ -1182,14 +1316,14 @@ tool_git_log <- function(n = 10L, ref = "HEAD", path = ".") {
     }
     ref <- trimws(ref %||% "HEAD")
     if (!git_ref_ok(ref)) {
-        return(err("ref must be a commit, branch, tag, or range, not an option"))
+        return(err(GIT_REF_MESSAGE))
     }
 
     cmd <- c("log", "--oneline", "--decorate", sprintf("-n%d", n))
     if (nchar(ref) > 0) {
         cmd <- c(cmd, ref)
     }
-    cmd <- c(cmd, repo$scope)
+    cmd <- c(cmd, repo$scope %||% "--")
 
     result <- git_run(cmd, path = repo_path)
     if (result$status != 0L) {

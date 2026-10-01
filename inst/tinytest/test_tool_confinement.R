@@ -169,8 +169,181 @@ confined(sub, {
     # The repository root itself is not readable from here.
     expect_true(call("git_diff", path = inside)$error)
     expect_true(call("git_diff", path = sub, file_path = "../b/y.R")$error)
+    # Pathspec magic is not a way out either. The file filter is checked
+    # as a file name, so git has to read it as one: ":(top)b/y.R" is a
+    # file of that name in this directory, not b/y.R at the root.
+    for (fp in c(":(top)b/y.R", ":/b/y.R", ":(top,glob)b/*.R", ":/",
+                 ":(exclude)x.R", ":!x.R")) {
+        r <- call("git_diff", path = sub, file_path = fp)
+        expect_false(grepl("beta", r$text), info = fp)
+        expect_false(grepl("y.R", r$text, fixed = TRUE), info = fp)
+    }
+    # Nor is a ref that names a file: <rev>:<path> is that file's
+    # content, from anywhere in the repository.
+    for (ref in c("HEAD:b/y.R", "HEAD:b", ":b/y.R", "HEAD~1:b/y.R..HEAD:b/y.R")) {
+        r <- call("git_diff", ref = ref, path = sub, file_path = "x.R")
+        expect_true(r$error, info = ref)
+        expect_false(grepl("beta", r$text), info = ref)
+        expect_true(call("git_log", ref = ref, path = sub)$error, info = ref)
+    }
 })
 # Unconfined, the same directory shows the whole repository, as before.
 expect_true(grepl("beta", call("git_diff", path = sub)$text))
+# A literal file filter still filters.
+only <- call("git_diff", path = inside, file_path = "b/y.R")
+expect_true(grepl("beta", only$text))
+expect_false(grepl("alpha", only$text))
+
+# --- Git does not run programs the repository configures ---
+# .git/config can be edited by anything with write access to the
+# checkout, and git starts what it names during an ordinary status,
+# diff, or add. Each program below leaves a marker when it runs.
+if (.Platform$OS.type != "windows") {
+    ran_dir <- file.path(root, "ran")
+    dir.create(ran_dir)
+    program <- function(name, body = "cat") {
+        p <- file.path(root, paste0(name, ".sh"))
+        writeLines(c("#!/bin/sh",
+                     sprintf("touch '%s'", file.path(ran_dir, name)), body), p)
+        Sys.chmod(p, "755")
+        p
+    }
+    ran <- function() {
+        out <- sort(list.files(ran_dir))
+        unlink(list.files(ran_dir, full.names = TRUE))
+        out
+    }
+    touch_x <- function(value) {
+        writeLines(sprintf("alpha <- %s", value), file.path(inside, "a", "x.R"))
+    }
+    git(inside, "config", "core.fsmonitor", program("fsmonitor", "exit 1"))
+    git(inside, "config", "filter.mark.clean", program("clean"))
+    git(inside, "config", "filter.mark.smudge", program("smudge"))
+    git(inside, "config", "filter.mark.required", "true")
+    git(inside, "config", "diff.mark.textconv", program("textconv", "cat \"$1\""))
+    git(inside, "config", "diff.external", program("extdiff", "exit 0"))
+    dir.create(file.path(inside, ".git", "hooks"), showWarnings = FALSE)
+    hook <- file.path(inside, ".git", "hooks", "post-index-change")
+    file.copy(program("hook", "exit 0"), hook)
+    Sys.chmod(hook, "755")
+    writeLines("*.R filter=mark diff=mark",
+               file.path(inside, ".gitattributes"))
+
+    # The setup is live: git itself runs every one of them. (Git only
+    # runs a clean filter from `status` for a file whose size did not
+    # change, so the edits here keep the length.)
+    touch_x(4)
+    git(inside, "status")
+    git(inside, "diff")
+    expect_true(all(c("clean", "extdiff", "fsmonitor", "hook") %in% ran()))
+    git(inside, "config", "--unset", "diff.external")
+    git(inside, "diff")
+    expect_true("textconv" %in% ran())
+    git(inside, "config", "diff.external", program("extdiff", "exit 0"))
+
+    # The tools run none of them, and still answer.
+    touch_x(5)
+    for (tool in c("git_status", "git_diff", "git_log")) {
+        r <- call(tool, path = inside)
+        expect_false(r$error, info = tool)
+        expect_identical(ran(), character(), info = tool)
+    }
+    d <- call("git_diff", ref = "HEAD", path = inside, file_path = "a/x.R")
+    expect_true(grepl("+alpha <- 5", d$text, fixed = TRUE))
+    expect_true(grepl("x.R", call("git_status", path = inside)$text))
+    expect_identical(ran(), character())
+    # Confined to the checkout, as the reviewer is: the same.
+    confined(inside, {
+        for (tool in c("git_status", "git_diff", "git_log")) {
+            call(tool, path = inside)
+        }
+    })
+    expect_identical(ran(), character())
+
+    # The job snapshot adds files and writes trees; it runs none either.
+    touch_x(6)
+    writeLines("gamma <- 1", file.path(inside, "a", "new.R"))
+    first <- corteza:::job_git_snapshot(inside)
+    expect_true(corteza:::job_is_sha(first$snapshot))
+    touch_x(7)
+    second <- corteza:::job_git_snapshot(inside, base = first)
+    expect_true(corteza:::job_is_sha(second$snapshot))
+    expect_identical(ran(), character())
+    # With the filter off the file is snapshotted as it is on disk.
+    shown <- call("git_diff",
+                  ref = paste0(first$snapshot, "..", second$snapshot),
+                  path = inside)
+    expect_true(grepl("+alpha <- 7", shown$text, fixed = TRUE))
+    expect_identical(ran(), character())
+
+    # A submodule has its own configuration, which a status of the
+    # parent would run inside it. The tools do not look inside.
+    git(inside, "-c", "protocol.file.allow=always", "submodule", "add", "-q",
+        outside, "mod")
+    git(inside, "commit", "-q", "-m", "add submodule")
+    mod <- file.path(inside, "mod")
+    git(mod, "config", "filter.modmark.clean", program("modclean"))
+    writeLines("*.R filter=modmark", file.path(mod, ".gitattributes"))
+    writeLines("SECRET <- 'changed'", file.path(mod, "secret.R"))
+    ran()
+    git(inside, "status")
+    expect_true("modclean" %in% ran())
+    writeLines("SECRET <- 'CHANGED'", file.path(mod, "secret.R"))
+    for (tool in c("git_status", "git_diff")) {
+        expect_false(call(tool, path = inside)$error, info = tool)
+    }
+    expect_true(corteza:::job_is_sha(
+        corteza:::job_git_snapshot(inside, base = first)$snapshot))
+    expect_identical(ran(), character())
+
+    # A driver whose name cannot be overridden: git is not run at all,
+    # and the tool says why instead of reporting "no repository".
+    git(inside, "config", "filter.a=b.clean", program("eq"))
+    writeLines("*.R filter=a=b", file.path(inside, ".gitattributes"))
+    touch_x(8)
+    for (tool in c("git_status", "git_diff", "git_log")) {
+        r <- call(tool, path = inside)
+        expect_true(r$error, info = tool)
+        expect_true(grepl("could not be turned off", r$text), info = tool)
+    }
+    expect_null(corteza:::job_git_snapshot(inside))
+    expect_identical(ran(), character())
+    git(inside, "status")
+    expect_true("eq" %in% ran())
+    git(inside, "config", "--unset", "filter.a=b.clean")
+    writeLines("*.R filter=mark diff=mark",
+               file.path(inside, ".gitattributes"))
+
+    # A partial clone fetches the objects it lacks, and a remote can be
+    # a command ("ext::"). A read does not start that either: it fails
+    # on the missing object.
+    git(inside, "config", "remote.origin.url",
+        paste0("ext::", program("fetch", "exit 1")))
+    git(inside, "config", "remote.origin.promisor", "true")
+    git(inside, "config", "remote.origin.partialclonefilter", "blob:none")
+    git(inside, "config", "extensions.partialClone", "origin")
+    git(inside, "config", "protocol.ext.allow", "always")
+    blob <- trimws(git(inside, "rev-parse", "HEAD:b/y.R"))
+    unlink(file.path(inside, ".git", "objects", substr(blob, 1L, 2L),
+                     substring(blob, 3L)))
+    ran()
+    git(inside, "diff", "HEAD", "--", "b/y.R")
+    expect_true("fetch" %in% ran())
+    r <- call("git_diff", ref = "HEAD", path = inside, file_path = "b/y.R")
+    expect_true(r$error)
+    expect_false(grepl("could not be turned off", r$text))
+    call("git_status", path = inside)
+    call("git_log", path = inside)
+    expect_identical(ran(), character())
+    # Both controls are in place: the environment switch newer git reads,
+    # and the protocol refused by name for git that does not.
+    off <- corteza:::git_programs_off(inside)
+    expect_true("protocol.ext.allow=never" %in% off)
+    expect_true(all(c("filter.mark.clean=", "filter.mark.smudge=",
+                      "filter.mark.process=", "filter.mark.required=false")
+                    %in% off))
+    expect_true("protocol.allow=never" %in% corteza:::GIT_SAFE_CONFIG)
+    expect_identical(corteza:::git_programs_off(outside), character())
+}
 
 unlink(root, recursive = TRUE)
