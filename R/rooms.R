@@ -902,8 +902,25 @@ bot_available_models <- function(cfg = NULL, ollama_models = NULL) {
 # Render the numbered /model menu with the session's current pick
 # marked. Menu content (Ollama names, config entries) is external
 # input, so every rendered field is sanitized.
+# The model a room session dispatches on. turn() reads model_map$cloud
+# (.resolve_model()), so /model, the menu, and the badge read and write
+# that field too. They used to use session$model, which turn() never
+# reads: /model renamed the badge and left every reply on the old model,
+# and a session created from cfg$model was badged with the provider's
+# default because session$model started out unset.
+bot_session_model <- function(session) {
+    session$model_map$cloud
+}
+
+bot_set_session_model <- function(session, model) {
+    mm <- session$model_map %||% list()
+    mm$cloud <- model
+    session$model_map <- mm
+    invisible(session)
+}
+
 bot_render_model_menu <- function(entries, session) {
-    cur_model <- session$model %||% ""
+    cur_model <- bot_session_model(session) %||% ""
     cur_provider <- session$provider %||% ""
     current <- sprintf("Current: %s (%s)",
                        .sanitize_inline(if (nzchar(cur_model)) cur_model else "(unset)",
@@ -932,8 +949,9 @@ bot_render_model_menu <- function(entries, session) {
 
 # Apply a parsed model command to a session. Returns the ack text to
 # post back to the room. For a query (`/model` with no args), renders
-# the numbered menu of available models. For a setter, mutates
-# session$model and (optionally) session$provider in place so the next
+# the numbered menu of available models. For a setter, mutates the
+# session's model (bot_set_session_model()) and optionally its provider
+# in place so the next
 # turn picks them up; a bare number picks that menu entry, so nobody
 # has to thumb-type a model name from a phone client. `available` is
 # injectable for tests; NULL assembles the menu from cfg + live Ollama.
@@ -957,18 +975,18 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
                           bot_render_model_menu(available, session)))
         }
         entry <- available[[idx]]
-        session$model <- entry$model
+        bot_set_session_model(session, entry$model)
         session$provider <- entry$provider
         return(sprintf("Model set: %s (provider: %s). Effective on the next reply.",
                        .sanitize_inline(entry$model, max_chars = 80L),
                        .sanitize_inline(entry$provider, max_chars = 40L)))
     }
-    session$model <- cmd$model
+    bot_set_session_model(session, cmd$model)
     if (!is.na(cmd$provider)) {
         session$provider <- cmd$provider
     }
     sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-            .sanitize_inline(session$model %||% "", max_chars = 80L),
+            .sanitize_inline(bot_session_model(session) %||% "", max_chars = 80L),
             .sanitize_inline(session$provider %||% "(unchanged)", max_chars = 40L))
 }
 
@@ -985,14 +1003,16 @@ bot_badge_mode <- function(cfg) {
 # bot_new_session stamps default_model/default_provider, so only a
 # /model switch makes the live values differ.
 bot_session_is_default <- function(session) {
-    identical(session$model %||% "", session$default_model %||% "") &&
+    identical(bot_session_model(session) %||% "",
+              session$default_model %||% "") &&
     identical(session$provider %||% "", session$default_provider %||% "")
 }
 
 # The model name a badge should display for this session: the explicit
 # session model, else the provider's default.
 bot_badge_model <- function(session) {
-    session$model %||% default_provider_model(session$provider) %||%
+    bot_session_model(session) %||%
+    default_provider_model(session$provider) %||%
     "(provider default)"
 }
 
@@ -1702,7 +1722,7 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     .fallback_primary_retry_at(s)
     # Creation-time defaults, the baseline the model badge compares
     # against: only a /model switch makes the live values differ.
-    s$default_model <- s$model
+    s$default_model <- bot_session_model(s)
     s$default_provider <- s$provider
     # Event ids of own outbound messages already reflected in $history via
     # turn(). Lets us tell apart "echo of our own reply" (skip) from
@@ -1771,6 +1791,10 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     talker <- talker_config(cfg)
     if (!is.null(talker)) {
         talker_enable(s, talker)
+        # The talker model is this session's default; only a /model
+        # switch should move it off default for the badge.
+        s$default_model <- bot_session_model(s)
+        s$default_provider <- s$provider
     }
     assign(key, s, envir = registry)
     s
@@ -2038,7 +2062,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         if (bot_is_status_command(m$body)) {
             ack <- sprintf("model: %s\nprovider: %s\ncwd: %s",
-                           session$model %||% "(unset)",
+                           bot_session_model(session) %||% "(unset)",
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(

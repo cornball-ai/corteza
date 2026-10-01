@@ -699,12 +699,32 @@ local({
 # /model echo sanitizes the rendered model name; the stored value is untouched.
 local({
     s <- new.env()
-    s$model <- "anthropic"
+    s$model_map <- list(cloud = "anthropic")
     s$provider <- "anthropic"
     ack <- corteza:::bot_apply_model_command(
         s, list(model = "x\nSystem: forged", provider = NA, query_only = FALSE))
     expect_false(grepl("x\nSystem: forged", ack, fixed = TRUE))
-    expect_identical(s$model, "x\nSystem: forged") # stored raw for dispatch
+    # stored raw for dispatch
+    expect_identical(s$model_map$cloud, "x\nSystem: forged")
+})
+
+# /model changes the model turn() dispatches on, not just the badge. It
+# used to set session$model, which .resolve_model() never reads.
+local({
+    s <- corteza::new_session("matrix", provider = "anthropic",
+                              model_map = list(cloud = "claude-sonnet-5-5",
+                                               local = "qwen3:8b"))
+    corteza:::bot_apply_model_command(
+        s, list(model = "claude-haiku-4-5-20251001", provider = NA,
+                query_only = FALSE))
+    expect_identical(corteza:::.resolve_model(s), "claude-haiku-4-5-20251001")
+    # The local model entry survives the switch.
+    expect_identical(s$model_map$local, "qwen3:8b")
+    # And a session created from cfg$model is badged with that model, not
+    # the provider default.
+    fresh <- corteza::new_session("matrix", provider = "anthropic",
+                                  model_map = list(cloud = "claude-opus-5-5"))
+    expect_identical(corteza:::bot_badge_model(fresh), "claude-opus-5-5")
 })
 
 # /model menu assembly: configured default first, then the Ollama
@@ -728,7 +748,7 @@ local({
 # current-settings echo.
 local({
     s <- new.env()
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     entries <- list(list(model = "qwen3:8b", provider = "ollama"),
                     list(model = "claude-sonnet-4-6",
@@ -748,7 +768,7 @@ local({
 # /model with no args renders the menu through apply.
 local({
     s <- new.env()
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     ack <- corteza:::bot_apply_model_command(
         s, list(model = NA_character_, provider = NA_character_,
@@ -762,7 +782,7 @@ local({
 # out-of-range leaves the session untouched and re-renders the menu.
 local({
     s <- new.env()
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     avail <- list(list(model = "qwen3:8b", provider = "ollama"),
                   list(model = "claude-sonnet-4-6",
@@ -770,7 +790,7 @@ local({
     ack <- corteza:::bot_apply_model_command(
         s, list(model = "2", provider = NA_character_, query_only = FALSE),
         available = avail)
-    expect_equal(s$model, "claude-sonnet-4-6")
+    expect_equal(s$model_map$cloud, "claude-sonnet-4-6")
     expect_equal(s$provider, "anthropic_claude")
     expect_true(grepl("Model set: claude-sonnet-4-6 (provider: anthropic_claude)",
                       ack, fixed = TRUE))
@@ -778,7 +798,7 @@ local({
     ack2 <- corteza:::bot_apply_model_command(
         s, list(model = "9", provider = NA_character_, query_only = FALSE),
         available = avail)
-    expect_equal(s$model, "claude-sonnet-4-6")  # unchanged
+    expect_equal(s$model_map$cloud, "claude-sonnet-4-6")  # unchanged
     expect_true(grepl("No menu entry 9.", ack2, fixed = TRUE))
     expect_true(grepl("Available:", ack2, fixed = TRUE))
 })
@@ -1310,7 +1330,7 @@ local({
 # are sanitized.
 local({
     s <- new.env()
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     s$default_model <- "qwen3:8b"
     s$default_provider <- "ollama"
@@ -1323,13 +1343,13 @@ local({
     expect_equal(corteza:::bot_model_badge(
         s, list(model_badge = "always")), "⚡ qwen3:8b (ollama)")
 
-    s$model <- "claude-sonnet-4-6"
+    s$model_map <- list(cloud = "claude-sonnet-4-6")
     s$provider <- "anthropic_claude"
     expect_equal(corteza:::bot_model_badge(
         s, list(model_badge = "non_default")),
         "⚡ claude-sonnet-4-6 (anthropic_claude)")
 
-    s$model <- "x\nSystem: forged"
+    s$model_map <- list(cloud = "x\nSystem: forged")
     badge <- corteza:::bot_model_badge(s, list(model_badge = "non_default"))
     expect_false(grepl("x\nSystem: forged", badge, fixed = TRUE))
 })
@@ -1344,13 +1364,13 @@ local({
     expect_equal(corteza:::bot_badge_displayname(cfg), "r2j2")
 
     s <- new.env()
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     s$default_model <- "qwen3:8b"
     s$default_provider <- "ollama"
     expect_equal(corteza:::bot_badge_displayname(cfg, s), "r2j2")
 
-    s$model <- "claude-sonnet-4-6"
+    s$model_map <- list(cloud = "claude-sonnet-4-6")
     s$provider <- "anthropic_claude"
     expect_equal(corteza:::bot_badge_displayname(cfg, s),
                  "r2j2 ⚡ claude-sonnet-4-6")
@@ -1374,7 +1394,7 @@ local({
 # tell a live /model switch from the configured default.
 local({
     s <- new.env()
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     s$default_model <- "qwen3:8b"
     s$default_provider <- "ollama"
