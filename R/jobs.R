@@ -76,11 +76,18 @@ job_write_file <- function(path, x) {
     invisible(path)
 }
 
+# NULL when the file is absent, including when it disappears between a
+# check and the read (another process pruning a lock generation). The
+# bytes are read first: handed a path that no longer exists, fromJSON()
+# parses the path string itself as JSON and errors.
 job_read_file <- function(path) {
-    if (!file.exists(path)) {
+    txt <- tryCatch(readLines(path, warn = FALSE),
+                    error = function(e) NULL, warning = function(w) NULL)
+    if (is.null(txt)) {
         return(NULL)
     }
-    jsonlite::fromJSON(path, simplifyVector = TRUE, simplifyDataFrame = FALSE)
+    jsonlite::fromJSON(paste(txt, collapse = "\n"), simplifyVector = TRUE,
+                       simplifyDataFrame = FALSE)
 }
 
 job_now <- function() {

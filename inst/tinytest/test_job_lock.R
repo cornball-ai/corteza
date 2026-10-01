@@ -58,7 +58,9 @@ release(plain, c2)
 d1 <- corteza:::job_create("d1", workspace = plain)
 d2 <- corteza:::job_create("d2", workspace = plain)
 acquire(plain, d1)
-hp <- file.path(corteza:::job_lock_dir(plain), "holder.json")
+cur <- corteza:::job_lock_current(plain)
+hp <- file.path(corteza:::job_lock_gen_dir(corteza:::job_lock_root(plain),
+                                           cur$gen), "holder.json")
 h <- jsonlite::fromJSON(hp)
 if (.Platform$OS.type != "windows") {
     # A pid from a process that has exited.
@@ -73,6 +75,90 @@ if (.Platform$OS.type != "windows") {
 # A holder on another host is presumed alive.
 expect_false(corteza:::job_lock_process_gone(
     list(pid = 1L, host = "some-other-host")))
+
+# --- Interleavings that used to admit two writers ---
+running_job <- function(task) {
+    id <- corteza:::job_create(task, workspace = plain)
+    corteza:::job_mark_dispatched(id)
+    id
+}
+holder_for <- function(id, n) {
+    list(checkout = plain, job = id, owner = "x", pid = Sys.getpid(),
+         host = Sys.info()[["nodename"]], gen = n,
+         acquired_at = corteza:::job_now())
+}
+
+# Two acquirers both see the lock free and both go for the next
+# generation. Only one creation can succeed; the other sees it held.
+local({
+    a <- running_job("a")
+    b <- running_job("b")
+    n <- (corteza:::job_lock_current(plain)$gen %||% 0L) + 1L
+    expect_true(corteza:::job_lock_try(plain, n, holder_for(a, n)))
+    expect_false(corteza:::job_lock_try(plain, n, holder_for(b, n)))
+    expect_identical(holder(plain)$job, a)
+    # The generation never exists without its holder.
+    expect_true(file.exists(file.path(corteza:::job_lock_gen_dir(
+        corteza:::job_lock_root(plain), n), "holder.json")))
+    expect_false(acquire(plain, b)$ok)
+    corteza:::job_settle(a, "done")
+    corteza:::job_settle(b, "done")
+})
+
+# A late release cannot free a newer holder. A's job ends without
+# releasing, B takes the next generation, then A's release arrives.
+local({
+    a <- running_job("a")
+    b <- running_job("b")
+    c3 <- running_job("c")
+    expect_true(acquire(plain, a)$ok)
+    corteza:::job_settle(a, "done")          # stale, not yet released
+    expect_true(acquire(plain, b)$ok)        # takes over
+    release(plain, a)                        # the late release
+    expect_identical(holder(plain)$job, b)
+    expect_false(acquire(plain, c3)$ok)      # no third writer
+    release(plain, b)
+    expect_true(acquire(plain, c3)$ok)
+    release(plain, c3)
+    for (id in c(b, c3)) corteza:::job_settle(id, "done")
+    # Old generations are pruned; only the newest remains.
+    expect_identical(length(corteza:::job_lock_gens(
+        corteza:::job_lock_root(plain))), 1L)
+})
+
+# Real processes racing for one free lock: exactly one wins.
+local({
+    # Every racer stays alive until all have tried: a holder whose
+    # process exits is stale, and taking over from it is correct.
+    ids <- vapply(1:6, function(i) running_job(paste("race", i)), "")
+    go <- tempfile("go")
+    done <- tempfile("done")
+    out <- tempfile("race-out")
+    dir.create(out)
+    procs <- lapply(ids, function(id) {
+        callr::r_bg(function(checkout, id, go, done, out) {
+            while (!file.exists(go)) Sys.sleep(0.01)
+            ok <- corteza:::job_lock_acquire(checkout, id, owner = "racer")$ok
+            writeLines(as.character(ok), file.path(out, id))
+            while (!file.exists(done)) Sys.sleep(0.01)
+            ok
+        }, list(checkout = plain, id = id, go = go, done = done, out = out))
+    })
+    Sys.sleep(1)
+    file.create(go)
+    deadline <- Sys.time() + 30
+    while (length(list.files(out)) < length(ids) && Sys.time() < deadline) {
+        Sys.sleep(0.05)
+    }
+    wins <- vapply(ids, function(id) {
+        identical(readLines(file.path(out, id)), "TRUE")
+    }, logical(1))
+    expect_identical(sum(wins), 1L)
+    file.create(done)
+    for (p in procs) p$wait(30000)
+    for (id in ids) corteza:::job_settle(id, "done")
+    unlink(c(go, done, out), recursive = TRUE)
+})
 
 # --- Dispatch: a second writer waits, then runs ---
 make_session <- function(key, owner = "local", run_fn) {
