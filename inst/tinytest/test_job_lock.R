@@ -227,18 +227,25 @@ local({
             while (!file.exists(go)) Sys.sleep(0.01)
             overlaps <- 0L
             held <- 0L
-            for (k in 1:25) {
+            # Each job waits for the lock rather than giving up, so the
+            # number of hand-offs is fixed, not left to scheduling.
+            for (k in 1:5) {
                 id <- corteza:::job_create(sprintf("cycle %d-%d", i, k),
                                            workspace = checkout)
-                if (corteza:::job_lock_acquire(checkout, id, owner = "c")$ok) {
-                    held <- held + 1L
-                    if (!dir.create(crit, showWarnings = FALSE)) {
-                        overlaps <- overlaps + 1L
-                    } else {
-                        Sys.sleep(stats::runif(1, 0, 0.01))
-                        unlink(crit, recursive = TRUE)
+                for (try in 1:5000) {
+                    if (corteza:::job_lock_acquire(checkout, id,
+                                                   owner = "c")$ok) {
+                        held <- held + 1L
+                        if (!dir.create(crit, showWarnings = FALSE)) {
+                            overlaps <- overlaps + 1L
+                        } else {
+                            Sys.sleep(stats::runif(1, 0, 0.01))
+                            unlink(crit, recursive = TRUE)
+                        }
+                        corteza:::job_lock_release(checkout, id)
+                        break
                     }
-                    corteza:::job_lock_release(checkout, id)
+                    Sys.sleep(stats::runif(1, 0, 0.005))
                 }
                 corteza:::job_settle(id, "done")
                 Sys.sleep(stats::runif(1, 0, 0.005))
@@ -251,8 +258,8 @@ local({
     for (p in procs) p$wait(120000)
     res <- do.call(rbind, lapply(procs, function(p) p$get_result()))
     expect_identical(sum(res[, "overlaps"]), 0L)
-    # The test only means something if the lock changed hands a lot.
-    expect_true(sum(res[, "held"]) > 20L)
+    # Every job got the lock: it changed hands 30 times under contention.
+    expect_identical(unname(res[, "held"]), rep(5L, 6L))
     unlink(c(go, crit), recursive = TRUE)
 })
 
