@@ -205,6 +205,33 @@ expect_true(grepl("no provider key", bj$outcome$error))
 # It never reached a worker, so there is no dispatch record.
 expect_null(bj$dispatch)
 
+# --- A hand-off that fails does not strand the job or its lock ---
+# The worker's call() throws after the job is marked dispatched. The job
+# must end (indeterminate: the worker may have received it), give back
+# the checkout, and leave no current job for later pumps to wait on.
+local({
+    stuck <- make_session("room-handoff", counting)
+    fake <- new.env()
+    fake$is_alive <- function() TRUE
+    fake$get_pid <- function() 1L
+    fake$call <- function(...) stop("pipe closed")
+    fake$close <- function() invisible(NULL)
+    stuck$.job_worker <- fake
+    stuck$.job_worker_role <- "doer"
+    h <- corteza:::job_submit(stuck, "never runs")
+    hj <- corteza:::job_read(h)
+    expect_identical(hj$status, "indeterminate")
+    expect_true(grepl("pipe closed", hj$outcome$error))
+    expect_null(stuck$.job_current)
+    expect_null(stuck$.job_worker)
+    expect_null(corteza:::job_lock_holder(corteza:::job_checkout(tempdir())))
+    # The session is usable again: the next job gets a real worker.
+    nxt <- corteza:::job_submit(stuck, "after")
+    pump_until(stuck, nxt)
+    expect_identical(corteza:::job_read(nxt)$status, "done")
+    corteza:::job_worker_close(stuck)
+})
+
 # --- The approval bridge, end to end through a worker ---
 # The job asks the way a tool call under an "ask" verdict would: through
 # the worker's approval callback, which writes a request and waits.

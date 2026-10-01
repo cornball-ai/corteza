@@ -463,13 +463,42 @@ job_dispatch_next <- function(session) {
         }
     }
     spec <- job_worker_spec(session, j$role)
-    job_mark_dispatched(j$id, worker = list(
-            pid = session$.job_worker$get_pid()))
-    session$.job_worker$call(function(job_id, task, spec, state_dir) {
-        get(".job_worker_child_run", envir = asNamespace("corteza"),
-            inherits = FALSE)(job_id, task, spec, state_dir)
-    }, list(job_id = j$id, task = j$task, spec = spec,
-            state_dir = job_worker_state_dir(spec$identity)))
+    # Every way out of the hand-off ends the job and gives back the lock.
+    # Without this, a failure here left the job marked running and
+    # holding its checkout, with no current job for later pumps to find.
+    abandon <- function(status, ...) {
+        job_settle(j$id, status, ...)
+        if (!is.null(checkout)) {
+            job_lock_release(checkout, j$id)
+        }
+        c(events, list(list(type = "settled", job = job_read(j$id))))
+    }
+    marked <- tryCatch({
+        job_mark_dispatched(j$id, worker = list(
+                pid = session$.job_worker$get_pid()))
+        TRUE
+    }, error = function(e) e)
+    if (inherits(marked, "error")) {
+        # No dispatch record, so no worker was given the job.
+        return(abandon("failed", error = conditionMessage(marked)))
+    }
+    sent <- tryCatch({
+        session$.job_worker$call(function(job_id, task, spec, state_dir) {
+            get(".job_worker_child_run", envir = asNamespace("corteza"),
+                inherits = FALSE)(job_id, task, spec, state_dir)
+        }, list(job_id = j$id, task = j$task, spec = spec,
+                state_dir = job_worker_state_dir(spec$identity)))
+        TRUE
+    }, error = function(e) e)
+    if (inherits(sent, "error")) {
+        # The call failed partway; whether the worker received the job
+        # cannot be known from here. Stop the worker so it cannot run it
+        # later, and record the job as possibly started.
+        job_worker_close(session)
+        return(abandon("indeterminate", error = conditionMessage(sent),
+                       reason = paste("the hand-off to the worker failed;",
+                                      "it may have started before stopping")))
+    }
     session$.job_current <- j$id
     events[[length(events) + 1L]] <- list(type = "started",
         job = job_read(j$id))
