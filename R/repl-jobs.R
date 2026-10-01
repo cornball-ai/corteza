@@ -145,9 +145,14 @@
     if (!isTRUE(session$.repl_jobs_ready)) {
         return(invisible(0L))
     }
-    open <- job_list(status = JOB_STATUSES_OPEN,
-                     origin_key = job_worker_key(session),
-                     owner = job_worker_owner(session))
+    # The worker is closed on every exit, idle or not, and even if
+    # cancelling fails. Idempotent: run_repl_loop() also registers this
+    # with on.exit() for exits by error or interrupt.
+    on.exit(job_worker_close(session), add = TRUE)
+    open <- tryCatch(job_list(status = JOB_STATUSES_OPEN,
+                              origin_key = job_worker_key(session),
+                              owner = job_worker_owner(session)),
+                     error = function(e) list())
     if (!length(open)) {
         return(invisible(0L))
     }
@@ -156,7 +161,6 @@
                  error = function(e) NULL)
     }
     tryCatch(job_pump(session), error = function(e) NULL)
-    job_worker_close(session)
     cat(sprintf("%sStopped %d job%s on exit.%s\n", ctx$palette$dim,
                 length(open), if (length(open) == 1L) "" else "s",
                 ctx$palette$reset))

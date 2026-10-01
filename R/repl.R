@@ -123,6 +123,9 @@
 run_repl_loop <- function(ctx) {
     .repl_install_compaction_hook(ctx)
     .repl_jobs_setup(ctx)
+    # Covers exits by error or interrupt; /quit and EOF call it directly
+    # so its message comes before "Bye.". A second call is a no-op.
+    on.exit(.repl_jobs_shutdown(ctx), add = TRUE)
     while (TRUE) {
         # Delegated jobs surface here, between commands: the input read
         # below blocks, and nothing can print while it waits.

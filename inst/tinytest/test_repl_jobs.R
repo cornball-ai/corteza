@@ -202,6 +202,38 @@ local({
     expect_false(corteza:::job_worker_alive(ctx$session))
 })
 
+# --- An idle worker is closed on a normal exit ---
+local({
+    ctx <- make_ctx(character(), function(task) list(reply = "ok"))
+    setup(ctx)
+    id <- corteza:::job_submit(ctx$session, "quick")
+    deadline <- Sys.time() + 15
+    while (!corteza:::job_read(id)$status %in% corteza:::JOB_STATUSES_FINAL &&
+           Sys.time() < deadline) {
+        capture.output(corteza:::.repl_pump_jobs(ctx))
+        Sys.sleep(0.1)
+    }
+    expect_true(corteza:::job_worker_alive(ctx$session))
+    out <- capture.output(corteza:::run_repl_loop(ctx))  # EOF, no open jobs
+    expect_false(any(grepl("Stopped", out)))
+    expect_false(corteza:::job_worker_alive(ctx$session))
+})
+
+# --- An exit by error still stops jobs and closes the worker ---
+local({
+    ctx <- make_ctx(character(), function(task) {
+        Sys.sleep(30)
+        list(reply = "late")
+    })
+    setup(ctx)
+    id <- corteza:::job_submit(ctx$session, "long")
+    ctx$read_input <- function(p) stop("terminal went away")
+    expect_error(capture.output(corteza:::run_repl_loop(ctx)),
+                 "terminal went away")
+    expect_identical(corteza:::job_read(id)$status, "cancelled")
+    expect_false(corteza:::job_worker_alive(ctx$session))
+})
+
 # --- Jobs left by an exited corteza process are recovered ---
 local({
     p <- processx::process$new("true")
