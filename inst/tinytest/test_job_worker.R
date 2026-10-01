@@ -71,14 +71,53 @@ pump_until(s, b)
 expect_identical(corteza:::job_read(b)$outcome$result, "second #2")
 
 # --- A checkpoint was taken at the job boundary ---
-cp_dir <- corteza:::job_worker_state_dir("room-a", "doer")
+ident <- corteza:::job_worker_identity(s, "doer")
+cp_dir <- corteza:::job_worker_state_dir(ident)
 cp <- jsonlite::fromJSON(file.path(cp_dir, "checkpoint.json"))
-expect_identical(cp$key, "room-a")
+expect_identical(cp$identity$key, "room-a")
+expect_identical(cp$identity$owner, "local")
+expect_identical(cp$identity$workspace, normalizePath(tempdir()))
 expect_identical(cp$job, b)
 expect_true("jobs_seen" %in% cp$objects)
-# Keyed per role: a reviewer for the same room gets its own directory.
-expect_false(identical(cp_dir,
-                       corteza:::job_worker_state_dir("room-a", "reviewer")))
+
+# --- Checkpoints are isolated by owner, workspace, key, and role ---
+# Each part alone gives a different directory: two bots in one room, two
+# projects with the same key, a reviewer beside a doer.
+differs <- function(changed) {
+    !identical(cp_dir, corteza:::job_worker_state_dir(
+        utils::modifyList(ident, changed)))
+}
+expect_true(differs(list(owner = "@codex:ex")))
+expect_true(differs(list(workspace = "/some/other/project")))
+expect_true(differs(list(key = "room-b")))
+expect_true(differs(list(role = "reviewer")))
+# The surface can separate the checkpoint identity from the job owner
+# and key (the REPL does: its job owner is its pid).
+s2 <- new.env()
+s2$job_owner <- "local:host:123"
+s2$job_key <- "repl"
+s2$job_checkpoint_owner <- "local:host"
+s2$job_checkpoint_key <- "repl:conversation-1"
+s2$cwd <- tempdir()
+id2 <- corteza:::job_worker_identity(s2)
+expect_identical(id2$owner, "local:host")
+expect_identical(id2$key, "repl:conversation-1")
+
+# A checkpoint is restored only into the identity it recorded, even if
+# it is found in that identity's directory.
+local({
+    other <- utils::modifyList(ident, list(owner = "@codex:ex"))
+    other_dir <- corteza:::job_worker_state_dir(other)
+    dir.create(other_dir, recursive = TRUE)
+    file.copy(list.files(cp_dir, full.names = TRUE), other_dir)
+    r <- callr::r(function(dir, identity) {
+        get(".job_worker_child_restore", envir = asNamespace("corteza"))(
+            dir, identity)
+    }, list(dir = other_dir, identity = other))
+    expect_false(r$restored)
+    expect_true(isTRUE(r$mismatch))
+    unlink(other_dir, recursive = TRUE)
+})
 
 # --- A dead worker is replaced, and the replacement restores ---
 s$.job_worker$kill()
@@ -133,7 +172,8 @@ fj <- corteza:::job_read(f)
 expect_identical(fj$status, "failed")
 expect_true(grepl("provider said no", fj$outcome$error))
 fcp <- jsonlite::fromJSON(file.path(
-    corteza:::job_worker_state_dir("room-fail", "doer"), "checkpoint.json"))
+    corteza:::job_worker_state_dir(corteza:::job_worker_identity(failing)),
+    "checkpoint.json"))
 expect_true("before_error" %in% fcp$objects)
 
 # --- A worker that dies mid-job leaves the job indeterminate ---

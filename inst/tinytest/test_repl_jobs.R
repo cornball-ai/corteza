@@ -90,6 +90,29 @@ local({
     expect_identical(s$doer_model, "claude-opus-5-5")
 })
 
+# --- A REPL's saved workspace belongs to its conversation ---
+# Resuming the same conversation in a new process finds the same
+# checkpoint; another conversation open at the same time, in the same
+# directory, does not.
+local({
+    ident <- function(conversation, cwd) {
+        ctx <- make_ctx(character(), function(task) list(reply = "x"))
+        ctx$session$cwd <- cwd
+        ctx$disk_session <- list(sessionId = conversation)
+        capture.output(corteza:::.repl_jobs_setup(ctx))
+        corteza:::job_worker_identity(ctx$session)
+    }
+    dir <- tempfile("shared-proj")
+    dir.create(dir)
+    a1 <- ident("conv-a", dir)
+    a2 <- ident("conv-a", dir)
+    b <- ident("conv-b", dir)
+    expect_identical(a1, a2)
+    expect_false(identical(corteza:::job_worker_state_dir(a1),
+                           corteza:::job_worker_state_dir(b)))
+    expect_false(grepl(as.character(Sys.getpid()), a1$owner, fixed = TRUE))
+})
+
 # --- A finished job is shown before the next prompt, into history ---
 local({
     ctx <- make_ctx(character(), function(task) list(reply = "report ready"))

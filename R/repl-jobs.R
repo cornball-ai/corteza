@@ -28,6 +28,15 @@
     # not a new set of jobs, and results still come back to it.
     session$job_key <- "repl"
     session$job_owner <- job_local_owner()
+    # The worker's saved workspace belongs to this conversation, not this
+    # process: resuming the conversation in a new process restores it,
+    # and two CLIs open at once (different conversations) never share
+    # one. A session with no conversation id falls back to the process.
+    session$job_checkpoint_owner <- sprintf("local:%s",
+        Sys.info()[["nodename"]])
+    session$job_checkpoint_key <- paste0("repl:",
+        ctx$disk_session$sessionId %||% session$sessionId %||%
+        job_local_owner())
     if (!isTRUE(session$talker)) {
         talker_enable(session, talker)
     }

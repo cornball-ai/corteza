@@ -46,16 +46,38 @@ job_in_session <- function(j, session) {
     identical(j$owner %||% "local", job_worker_owner(session))
 }
 
-# Per-session, per-role checkpoint directory. Keys carry characters that
-# do not belong in a path (Matrix room ids start with "!"), so the
-# directory is named by a digest and the key is recorded inside. The
-# role is part of it: a reviewer's worker must not wake up holding the
-# doer's workspace.
-job_worker_state_dir <- function(key, role = "doer") {
+# Whose saved workspace a worker may restore. All four parts count:
+#   owner      a bot's Matrix id, or for a REPL its host and conversation
+#              (job_checkpoint_owner), so two bots in one room, or two
+#              CLIs at once, never share a workspace
+#   key        the room, thread, or REPL session
+#   workspace  the directory the jobs run in
+#   role       a reviewer's worker must not wake up holding the doer's
+#              workspace
+# Surfaces set job_checkpoint_owner / job_checkpoint_key where these
+# differ from the job owner and key (a REPL's job owner is its pid,
+# which a restart changes; its checkpoint should survive a restart of
+# the same conversation).
+job_worker_identity <- function(session, role = "doer") {
+    list(owner = session$job_checkpoint_owner %||% job_worker_owner(session),
+         key = session$job_checkpoint_key %||% job_worker_key(session),
+         workspace = normalizePath(session$cwd %||% getwd(), mustWork = FALSE),
+         role = role)
+}
+
+# Checkpoint directory for an identity. Named by a digest, since keys
+# carry characters that do not belong in a path; the identity itself is
+# recorded in checkpoint.json and checked again on restore.
+job_worker_state_dir <- function(identity) {
     file.path(bot_signal_dir(), "workers",
-              substr(digest::digest(paste(key, role, sep = "\n"), algo = "sha256",
+              substr(digest::digest(job_identity_text(identity), algo = "sha256",
                                     serialize = FALSE),
-                     1L, 16L))
+                     1L, 24L))
+}
+
+job_identity_text <- function(identity) {
+    paste(c(identity$owner, identity$key, identity$workspace, identity$role),
+          collapse = "\n")
 }
 
 # What a worker for this session and role is started with. Tools come
@@ -84,6 +106,7 @@ job_worker_spec <- function(session, role = "doer") {
                  # worker's calls as it would the session's own.
                  channel = session$channel %||% "console",
                  approval_timeout = as.numeric(cfg$approval_timeout_sec %||% 600),
+                 identity = job_worker_identity(session, role),
                  init_fn = NULL,
                  run_fn = NULL
     )
@@ -120,7 +143,7 @@ job_worker_system <- function(role) {
     if (!is.null(.subagent_state$session)) {
         .subagent_state$session$approval_cb <- .job_worker_child_ask
     }
-    .job_worker_child_restore(state_dir)
+    .job_worker_child_restore(state_dir, spec$identity)
 }
 
 # The worker's approval callback: ask through the job's approval files
@@ -135,12 +158,18 @@ job_worker_system <- function(role) {
                       timeout = .job_worker_state$approval_timeout %||% 600)
 }
 
-.job_worker_child_restore <- function(state_dir) {
+.job_worker_child_restore <- function(state_dir, identity) {
     marker <- file.path(state_dir, "checkpoint.json")
     if (!file.exists(marker)) {
         return(list(restored = FALSE))
     }
     info <- jsonlite::fromJSON(marker, simplifyVector = TRUE)
+    # The directory name is only a digest. A checkpoint is restored only
+    # when the identity it recorded is this worker's, field for field.
+    if (!identical(job_identity_text(info$identity),
+                   job_identity_text(identity))) {
+        return(list(restored = FALSE, mismatch = TRUE))
+    }
     env <- new.env(parent = emptyenv())
     load(file.path(state_dir, "workspace.RData"), envir = env)
     values <- .workspace_checkpoint_values(
@@ -163,7 +192,7 @@ job_worker_system <- function(role) {
 # reads it first, so a crash partway through leaves the previous marker
 # (and the previous workspace it names) or none, never a marker pointing
 # at a half-written save.
-.job_worker_child_checkpoint <- function(state_dir, key, job_id) {
+.job_worker_child_checkpoint <- function(state_dir, identity, job_id) {
     dir.create(state_dir, recursive = TRUE, showWarnings = FALSE)
     objects <- .workspace_checkpoint_write(globalenv(),
         file.path(state_dir, "workspace.RData"))
@@ -178,7 +207,7 @@ job_worker_system <- function(role) {
     }
     attached <- sub("^package:", "", grep("^package:", search(), value = TRUE))
     job_write_file(file.path(state_dir, "checkpoint.json"),
-                   list(key = key, job = job_id, at = job_now(),
+                   list(identity = identity, job = job_id, at = job_now(),
                         objects = objects, packages = attached))
     objects
 }
@@ -186,7 +215,7 @@ job_worker_system <- function(role) {
 # Run one job in the child. Errors from the turn are the job's outcome,
 # not the worker's: they come back as data, and the checkpoint is still
 # taken, so the next job starts from what this one left.
-.job_worker_child_run <- function(job_id, task, spec, state_dir, key) {
+.job_worker_child_run <- function(job_id, task, spec, state_dir) {
     .job_worker_state$job_id <- job_id
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
     run <- spec$run_fn %||% function(task) subagent_turn_prompt(task)
@@ -195,7 +224,8 @@ job_worker_system <- function(role) {
     })
     checkpoint <- tryCatch(
                            list(ok = TRUE,
-                                objects = .job_worker_child_checkpoint(state_dir, key, job_id)),
+                                objects = .job_worker_child_checkpoint(state_dir, spec$identity,
+                job_id)),
                            error = function(e) list(ok = FALSE, error = conditionMessage(e)))
     list(reply = res$reply, usage = res$usage, error = res$error,
          checkpoint = checkpoint)
@@ -214,7 +244,6 @@ job_worker_alive <- function(session) {
 # worker. Returns the restore info.
 job_worker_start <- function(session, role = "doer") {
     job_worker_close(session)
-    key <- job_worker_key(session)
     spec <- job_worker_spec(session, role)
     worker <- callr::r_session$new(
                                    options = .run_r_worker_session_options(session$config %||% list(),
@@ -226,7 +255,7 @@ job_worker_start <- function(session, role = "doer") {
         get(".job_worker_child_init", envir = asNamespace("corteza"),
             inherits = FALSE)(cwd, spec, state_dir)
     }, list(cwd = session$cwd %||% getwd(), spec = spec,
-                state_dir = job_worker_state_dir(key, role))),
+                state_dir = job_worker_state_dir(spec$identity))),
                         error = function(e) {
         tryCatch(worker$close(), error = function(e2) NULL)
         stop("Failed to start job worker: ", conditionMessage(e), call. = FALSE)
@@ -436,11 +465,11 @@ job_dispatch_next <- function(session) {
     spec <- job_worker_spec(session, j$role)
     job_mark_dispatched(j$id, worker = list(
             pid = session$.job_worker$get_pid()))
-    session$.job_worker$call(function(job_id, task, spec, state_dir, key) {
+    session$.job_worker$call(function(job_id, task, spec, state_dir) {
         get(".job_worker_child_run", envir = asNamespace("corteza"),
-            inherits = FALSE)(job_id, task, spec, state_dir, key)
+            inherits = FALSE)(job_id, task, spec, state_dir)
     }, list(job_id = j$id, task = j$task, spec = spec,
-            state_dir = job_worker_state_dir(key, j$role), key = key))
+            state_dir = job_worker_state_dir(spec$identity)))
     session$.job_current <- j$id
     events[[length(events) + 1L]] <- list(type = "started",
         job = job_read(j$id))
