@@ -60,7 +60,9 @@
   every session:
   - The file filter of `git_diff` is a literal path. Globs and pathspec
     magic such as `:(top)` are not interpreted.
-  - A ref cannot be `<rev>:<path>` or start with `-`.
+  - A ref has to resolve to commits. `<rev>:<path>`, the object id of a
+    file or a tree, a tag on one, and anything starting with `-` are
+    refused.
   - Git runs none of the programs a repository's configuration names:
     no fsmonitor hook, clean/smudge filter, `post-index-change` hook,
     external diff, textconv, or gpg, and no fetch of objects a partial

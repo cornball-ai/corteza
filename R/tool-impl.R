@@ -264,6 +264,43 @@ git_ref_ok <- function(ref) {
 GIT_REF_MESSAGE <- paste("ref must be a commit, branch, tag, or range,",
                          "not an option or a <rev>:<path>")
 
+# Why `ref` may not be used, or NULL when it may.
+#
+# The spelling rules of git_ref_ok() are not enough. A file's content
+# has an object id of its own, and a tag can point at one, so
+# `git diff <blob> -- a/x.R` prints a file from anywhere in the
+# repository with no colon in sight. What counts is what the ref
+# resolves to: git expands it (a name, a range, "^A", "A^!") into object
+# ids, and every one of them has to be a commit, or a tag of one. A
+# diff or log between commits is limited by its pathspec; a blob or a
+# tree is not.
+git_ref_problem <- function(ref, repo_path) {
+    if (!nzchar(ref)) {
+        return(NULL)
+    }
+    if (!git_ref_ok(ref)) {
+        return(GIT_REF_MESSAGE)
+    }
+    parsed <- git_run(c("rev-parse", "--revs-only", ref), path = repo_path)
+    ids <- sub("^\\^", "", strsplit(parsed$text, "\n", fixed = TRUE)[[1L]])
+    if (parsed$status != 0L || !length(ids) ||
+        !all(grepl("^[0-9a-f]{40,64}$", ids))) {
+        return(sprintf("'%s' is not a revision in this repository", ref))
+    }
+    feed <- tempfile("corteza-refs-")
+    on.exit(unlink(feed), add = TRUE)
+    writeLines(paste0(ids, "^{commit}"), feed)
+    types <- git_run(c("cat-file", "--batch-check=%(objecttype)"),
+                     path = repo_path, stdin = feed)
+    found <- strsplit(types$text, "\n", fixed = TRUE)[[1L]]
+    if (types$status != 0L || length(found) != length(ids) ||
+        !all(found == "commit")) {
+        return(paste("ref must name commits (a commit, branch, tag of a",
+                     "commit, or range of them), not a file or a tree"))
+    }
+    NULL
+}
+
 # File tools ----
 
 #' List files in a directory.
@@ -1243,8 +1280,9 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
     repo_path <- repo$path
 
     ref <- trimws(ref %||% "HEAD")
-    if (!git_ref_ok(ref)) {
-        return(err(GIT_REF_MESSAGE))
+    problem <- git_ref_problem(ref, repo_path)
+    if (!is.null(problem)) {
+        return(err(problem))
     }
     file_path <- trimws(file_path %||% "")
     staged <- isTRUE(staged)
@@ -1315,8 +1353,9 @@ tool_git_log <- function(n = 10L, ref = "HEAD", path = ".") {
         n <- 10L
     }
     ref <- trimws(ref %||% "HEAD")
-    if (!git_ref_ok(ref)) {
-        return(err(GIT_REF_MESSAGE))
+    problem <- git_ref_problem(ref, repo_path)
+    if (!is.null(problem)) {
+        return(err(problem))
     }
 
     cmd <- c("log", "--oneline", "--decorate", sprintf("-n%d", n))

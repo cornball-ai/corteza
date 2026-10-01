@@ -154,6 +154,20 @@ git(inside, "add", ".")
 git(inside, "commit", "-q", "-m", "b only commit")
 writeLines("alpha <- 3", file.path(inside, "a", "x.R"))
 writeLines("beta <- 3", file.path(inside, "b", "y.R"))
+blob_y <- trimws(git(inside, "rev-parse", "HEAD:b/y.R"))
+tree_b <- trimws(git(inside, "rev-parse", "HEAD:b"))
+git(inside, "tag", "on-blob", blob_y)
+git(inside, "tag", "on-tree", tree_b)
+git(inside, "tag", "-a", "-m", "annotated", "note-on-blob", blob_y)
+git(inside, "tag", "on-commit", "HEAD")
+git(inside, "tag", "-a", "-m", "annotated", "note-on-commit", "HEAD~1")
+not_commits <- c("on-blob", blob_y, substr(blob_y, 1L, 12L), "note-on-blob",
+                 "on-tree", tree_b, "HEAD^{tree}",
+                 paste0(blob_y, "..", blob_y), paste0("HEAD..", blob_y),
+                 paste0("^", blob_y))
+commits <- c("HEAD", "on-commit", "note-on-commit", "HEAD~1..HEAD",
+             "HEAD~2...HEAD", "HEAD^!", "HEAD@{0}",
+             trimws(git(inside, "rev-parse", "HEAD")))
 sub <- file.path(inside, "a")
 confined(sub, {
     d <- call("git_diff", path = sub)
@@ -186,7 +200,33 @@ confined(sub, {
         expect_false(grepl("beta", r$text), info = ref)
         expect_true(call("git_log", ref = ref, path = sub)$error, info = ref)
     }
+    # The same file reached without a colon: by its object id, or by a
+    # tag put on it. What a ref resolves to has to be a commit; how it
+    # is spelled says nothing.
+    for (ref in not_commits) {
+        r <- call("git_diff", ref = ref, path = sub, file_path = "x.R")
+        expect_true(r$error, info = ref)
+        expect_true(grepl("must name commits", r$text), info = ref)
+        expect_false(grepl("beta", r$text), info = ref)
+        expect_true(call("git_log", ref = ref, path = sub)$error, info = ref)
+    }
+    # Refs that do resolve to commits still work, scoped to the directory.
+    for (ref in commits) {
+        r <- call("git_diff", ref = ref, path = sub)
+        expect_false(r$error, info = ref)
+        expect_false(grepl("beta", r$text), info = ref)
+        expect_false(call("git_log", ref = ref, path = sub)$error, info = ref)
+    }
+    expect_true(grepl("alpha", call("git_diff", ref = "HEAD~2..HEAD",
+                                    path = sub)$text))
 })
+# Refused whether confined or not: one rule, not two.
+for (ref in not_commits) {
+    expect_true(call("git_diff", ref = ref, path = inside)$error, info = ref)
+}
+unknown <- call("git_diff", ref = "no-such-branch", path = inside)
+expect_true(unknown$error)
+expect_true(grepl("not a revision", unknown$text))
 # Unconfined, the same directory shows the whole repository, as before.
 expect_true(grepl("beta", call("git_diff", path = sub)$text))
 # A literal file filter still filters.
