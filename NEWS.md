@@ -9,6 +9,34 @@
   is declined. Bots not listed under `bots` count as humans. Configs with
   `auto_approve_asks: true` are unaffected, since they never prompt.
 
+- **Talker mode: delegate work and keep talking.** With
+  `"talker": {"enabled": true}` in a bot config or the corteza config, a
+  session runs on a fast model (Haiku 4.5 for anthropic, gpt-6-luna for
+  openai, or `talker$model`) with read-only tools plus `delegate`,
+  `job_status`, and `job_cancel`. Delegated work runs on a persistent
+  per-session worker using the session's configured model. In Matrix the
+  bot keeps answering while jobs run, posts each result to the room or
+  thread it came from, and takes approvals as reactions on later polls.
+  In the CLI and `chat()`, results and approvals appear before the next
+  prompt; `/jobs` and `/cancel` manage them. Off by default.
+
+- **Jobs are durable and never re-run blindly.** Each job's intent is
+  written before a worker sees it and its outcome beside it. After a
+  restart, a job that never started is still queued; one that started
+  with no outcome is reported `indeterminate` and not re-run. The worker
+  checkpoints its R workspace and history at each job boundary and a
+  replacement restores them. Jobs carry an owner, so bots sharing a
+  machine or a room never settle or start each other's jobs.
+
+- **One writing job per checkout.** A job that edits takes its checkout's
+  lock (the git toplevel) and later writers queue until it ends, across
+  every bot on the machine. Edits made outside jobs are not covered.
+
+- **Matrix `/model` now changes the model replies use.** It set a field
+  `turn()` never read, so it only renamed the badge. The badge also
+  showed the provider's default model for sessions created from
+  `cfg$model`; it now shows the model in use.
+
 # corteza 0.7.1.56
 
 - **`run_r` releases its output sink when a worker call is interrupted.**
