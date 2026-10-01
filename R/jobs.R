@@ -298,6 +298,61 @@ job_recover <- function(live = character(), owner = "local") {
                stringsAsFactors = FALSE)
 }
 
+# ---- Local owners ------------------------------------------------------
+#
+# A bot has one stable identity, its Matrix id. Interactive sessions do
+# not: several corteza CLIs and chat()s can run at once on one machine,
+# and a "local" owner shared between them would let one starting up
+# declare another's running jobs lost. A local owner is therefore the
+# process -- local:<host>:<pid> -- and recovery takes a local owner's
+# jobs only once that process is gone.
+
+job_local_owner <- function() {
+    sprintf("local:%s:%d", Sys.info()[["nodename"]], Sys.getpid())
+}
+
+# Is this local owner's process gone? Only decidable for a process on
+# this host; anything else is presumed alive.
+job_local_owner_gone <- function(owner) {
+    m <- regmatches(owner, regexec("^local:(.+):([0-9]+)$", owner))[[1L]]
+    if (length(m) != 3L || !identical(m[[2L]], Sys.info()[["nodename"]]) ||
+        .Platform$OS.type == "windows") {
+        return(FALSE)
+    }
+    !isTRUE(tools::pskill(as.integer(m[[3L]]), signal = 0L))
+}
+
+# Settle the open jobs of local processes that have exited. A dispatched
+# job is indeterminate, as in job_recover(). A queued one never reached
+# a worker, but its owner is gone and no other process runs another's
+# jobs, so it is cancelled with the reason rather than left queued
+# forever. Returns a data frame of id, verdict, task, and workspace.
+job_recover_local_orphans <- function() {
+    open <- job_list(status = JOB_STATUSES_OPEN)
+    open <- Filter(function(j) {
+        owner <- j$owner %||% ""
+        startsWith(owner, "local:") && job_local_owner_gone(owner)
+    }, open)
+    verdicts <- vapply(open, function(j) {
+        if (identical(j$status, "queued")) {
+            job_settle(j$id, "cancelled",
+                       reason = paste("the corteza process that queued it",
+                                      "exited before it started"))
+            return("cancelled")
+        }
+        job_settle(j$id, "indeterminate",
+                   reason = paste("its corteza process exited mid-job;",
+                                  "the worker may have acted before it",
+                                  "stopped"))
+        "indeterminate"
+    }, character(1))
+    data.frame(id = vapply(open, function(j) j$id, character(1)),
+               verdict = unname(verdicts),
+               task = vapply(open, function(j) j$task, character(1)),
+               workspace = vapply(open, function(j) j$workspace %||% "", character(1)),
+               stringsAsFactors = FALSE)
+}
+
 # ---- Approval bridge ---------------------------------------------------
 #
 # A worker has no channel to the user. When policy says "ask", the
