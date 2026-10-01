@@ -331,12 +331,17 @@ job_answer <- function(session, id, req, approved, by = "local") {
 
 job_pump_current <- function(session, id) {
     worker <- session$.job_worker
+    j <- job_read(id)
+    # Every ending settles the job, frees the session, and gives back the
+    # checkout lock (a no-op for a role that never took one).
     finish <- function(status, ...) {
         job_settle(id, status, ...)
         session$.job_current <- NULL
+        if (job_role_writes(j$role)) {
+            job_lock_release(job_checkout(j$workspace), id)
+        }
         list(type = "settled", job = job_read(id))
     }
-    j <- job_read(id)
     if (isTRUE(j$cancel_requested)) {
         # Stopping the worker is the only way to stop a turn in flight.
         # Its memory goes with it; the next job restores the checkpoint
@@ -357,12 +362,10 @@ job_pump_current <- function(session, id) {
         }
     }
     if (!job_worker_alive(session)) {
-        session$.job_current <- NULL
         session$.job_worker <- NULL
-        job_settle(id, "indeterminate",
-                   reason = paste("the worker process exited mid-job;",
-                                  "it may have acted before it stopped"))
-        return(list(type = "settled", job = job_read(id)))
+        return(finish("indeterminate",
+                      reason = paste("the worker process exited mid-job;",
+                                     "it may have acted before it stopped")))
     }
     if (!identical(worker$poll_process(0L), "ready")) {
         return(NULL)
@@ -381,6 +384,19 @@ job_pump_current <- function(session, id) {
         })
 }
 
+# A job waiting on another writer's checkout lock. Reported once per
+# holder, so the surface can say who it is waiting for without
+# repeating itself on every pump.
+job_blocked_event <- function(session, j, holder) {
+    blocked <- session$.job_blocked %||% list()
+    if (identical(blocked[[j$id]], holder$job)) {
+        return(list())
+    }
+    blocked[[j$id]] <- holder$job %||% "unknown"
+    session$.job_blocked <- blocked
+    list(list(type = "blocked", job = j, holder = holder))
+}
+
 # Start the oldest queued job for this session, if any.
 job_dispatch_next <- function(session) {
     key <- job_worker_key(session)
@@ -391,6 +407,14 @@ job_dispatch_next <- function(session) {
     }
     j <- queued[[1L]]
     events <- list()
+    checkout <- NULL
+    if (job_role_writes(j$role)) {
+        checkout <- job_checkout(j$workspace)
+        lock <- job_lock_acquire(checkout, j$id, job_worker_owner(session))
+        if (!isTRUE(lock$ok)) {
+            return(job_blocked_event(session, j, lock$holder))
+        }
+    }
     if (!job_worker_alive(session) ||
         !identical(session$.job_worker_role, j$role)) {
         restore <- tryCatch(job_worker_start(session, j$role),
@@ -399,6 +423,9 @@ job_dispatch_next <- function(session) {
             # Nothing reached a worker, so the job had no effect: it
             # fails cleanly rather than going indeterminate.
             job_settle(j$id, "failed", error = conditionMessage(restore))
+            if (!is.null(checkout)) {
+                job_lock_release(checkout, j$id)
+            }
             return(list(list(type = "settled", job = job_read(j$id))))
         }
         if (isTRUE(restore$restored)) {

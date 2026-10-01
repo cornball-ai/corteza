@@ -90,6 +90,7 @@ bot_present_job_event <- function(chat, cfg, s, ev) {
            restored = bot_job_send(chat, s, ev$job,
                                    bot_job_restored_text(ev$restore)),
            approval = bot_job_approval(chat, cfg, s, ev),
+           blocked = bot_job_send(chat, s, ev$job, job_blocked_text(ev)),
            # "started" needs no post: the talker already said so.
            NULL)
 }
