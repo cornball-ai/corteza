@@ -17,6 +17,7 @@ plain <- normalizePath({
 })
 holder <- corteza:::job_lock_holder
 ts <- function(x) as.POSIXct(x, format = "%Y-%m-%dT%H:%M:%OS%z")
+corteza::ensure_skills()
 
 # --- Verdict parsing ---
 verdict <- corteza:::job_review_verdict
@@ -78,59 +79,132 @@ if (nzchar(Sys.which("git"))) {
                          "user.email=t@example.com", ...),
                 stdout = TRUE, stderr = TRUE)
     }
+    snap <- corteza:::job_git_snapshot
     git("init", "-q")
-    # stash create needs an identity; set it on the repo, not globally.
-    git("config", "user.name", "t")
-    git("config", "user.email", "t@example.com")
     # Before the first commit there is nothing to diff against.
-    expect_null(corteza:::job_git_base(repo))
+    expect_null(snap(repo))
     writeLines("one", file.path(repo, "a.txt"))
-    git("add", "a.txt")
+    writeLines("ignored.txt", file.path(repo, ".gitignore"))
+    git("add", "a.txt", ".gitignore")
     git("commit", "-q", "-m", "first")
     head <- git("rev-parse", "HEAD")
 
-    clean <- corteza:::job_git_base(repo)
-    expect_identical(clean$head, head)
-    expect_identical(clean$snapshot, head)
-    expect_false(clean$dirty)
-    expect_true(clean$exact)
-    # An untracked file is not a tracked change.
-    writeLines("new", file.path(repo, "untracked.txt"))
-    expect_false(corteza:::job_git_base(repo)$dirty)
-
+    # The starting state a job inherits: an uncommitted edit to a
+    # tracked file, a file that was never committed, an ignored file.
     writeLines("two", file.path(repo, "a.txt"))
-    dirty <- corteza:::job_git_base(repo)
-    expect_true(dirty$dirty)
-    expect_true(dirty$exact)
-    expect_false(identical(dirty$snapshot, head))
-    # Taking the snapshot touched nothing: the edit is still in the
-    # working tree, HEAD has not moved, and no stash entry was made.
+    writeLines("draft v1", file.path(repo, "notes.txt"))
+    writeLines("secret", file.path(repo, "ignored.txt"))
+    index_path <- file.path(repo, ".git", "index")
+    # `git status` refreshes the index's cached stats itself, so the
+    # checksum is taken after it, not before.
+    before <- list(status = git("status", "--porcelain"),
+                   refs = git("for-each-ref"),
+                   stash = git("stash", "list"))
+    before$index <- unname(tools::md5sum(index_path))
+
+    base <- snap(repo)
+    expect_identical(base$head, head)
+    expect_true(grepl("^[0-9a-f]{40,64}$", base$snapshot))
+    expect_false(identical(base$snapshot, head))
+    expect_true(base$untracked$included)
+    expect_identical(base$untracked$n, 1L)
+    expect_identical(unlist(base$untracked$files), "notes.txt")
+
+    # Taking it touched nothing: working tree, real index, HEAD, refs,
+    # and stash are as they were.
     expect_identical(readLines(file.path(repo, "a.txt")), "two")
+    expect_identical(unname(tools::md5sum(index_path)), before$index)
+    expect_identical(readLines(file.path(repo, "notes.txt")), "draft v1")
+    expect_identical(git("status", "--porcelain"), before$status)
+    expect_identical(git("for-each-ref"), before$refs)
+    expect_identical(git("stash", "list"), before$stash)
     expect_identical(git("rev-parse", "HEAD"), head)
-    expect_identical(length(git("stash", "list")), 0L)
-    # The snapshot holds the earlier edit, so a later diff against it
-    # shows only what came after.
+    expect_identical(length(list.files(tempdir(),
+                                       pattern = "^corteza-index-")), 0L)
+
+    # The job: edits the tracked file, edits the never-committed file,
+    # adds a new file, touches the ignored one.
     writeLines("three", file.path(repo, "a.txt"))
-    d <- git("diff", dirty$snapshot, "--", "a.txt")
+    writeLines("draft v2", file.path(repo, "notes.txt"))
+    writeLines("brand new", file.path(repo, "added.txt"))
+    writeLines("secret 2", file.path(repo, "ignored.txt"))
+    end <- snap(repo)
+    d <- git("diff", paste0(base$snapshot, "..", end$snapshot))
+    # Only the job's changes: not the edit that predated it.
     expect_true(any(d == "-two"))
     expect_true(any(d == "+three"))
     expect_false(any(d == "-one"))
+    # The never-committed file shows as an edit, not as a whole new
+    # file and not as nothing.
+    expect_true(any(d == "-draft v1"))
+    expect_true(any(d == "+draft v2"))
+    # The new file shows as added; the ignored one not at all.
+    expect_true(any(d == "+brand new"))
+    expect_false(any(grepl("secret", d)))
+    # The reviewer's own tool reads that range.
+    via_tool <- corteza:::call_skill(
+        "git_diff", list(ref = paste0(base$snapshot, "..", end$snapshot),
+                         path = repo), ctx = list())
+    expect_false(isTRUE(via_tool$isError))
+    expect_true(grepl("+draft v2", via_tool$content[[1L]]$text, fixed = TRUE))
+    # Two snapshots of an unchanged tree differ in nothing.
+    expect_identical(length(git("diff", paste0(end$snapshot, "..",
+                                               snap(repo)$snapshot))), 0L)
 
     job <- list(id = "20261001T000000-aaaaaaaa", task = "fix a.txt",
-                dispatch = list(base = dirty))
-    task <- corteza:::job_review_task(job, "Changed a.txt; tests pass.")
+                dispatch = list(base = base))
+    task <- corteza:::job_review_task(job, "Changed a.txt; tests pass.", end)
     expect_true(grepl("fix a.txt", task, fixed = TRUE))
     expect_true(grepl("Changed a.txt; tests pass.", task, fixed = TRUE))
-    expect_true(grepl(dirty$snapshot, task, fixed = TRUE))
-    expect_true(grepl("this job's work only", task, fixed = TRUE))
+    expect_true(grepl(paste0(base$snapshot, "..", end$snapshot), task,
+                      fixed = TRUE))
+    expect_true(grepl("untracked files included", task))
+    expect_true(grepl(".gitignore are not covered", task, fixed = TRUE))
     expect_true(grepl("VERDICT: approve", task, fixed = TRUE))
+
+    # Over the size limit, untracked files are left out, and the
+    # reviewer is told what the diff does not cover and which files.
+    small_base <- snap(repo, max_untracked_bytes = 0)
+    expect_false(small_base$untracked$included)
+    expect_identical(small_base$untracked$n, 2L)
+    writeLines("draft v3", file.path(repo, "notes.txt"))
+    writeLines("four", file.path(repo, "a.txt"))
+    small_end <- snap(repo, max_untracked_bytes = 0)
+    d2 <- git("diff", paste0(small_base$snapshot, "..", small_end$snapshot))
+    expect_true(any(d2 == "+four"))
+    expect_false(any(grepl("draft", d2)))
+    job$dispatch$base <- small_base
+    limited <- corteza:::job_review_task(job, "x", small_end)
+    expect_true(grepl("Untracked files are NOT in that diff", limited,
+                      fixed = TRUE))
+    expect_true(grepl("tracked files only", limited, fixed = TRUE))
+    expect_true(grepl("notes.txt", limited, fixed = TRUE))
+    expect_true(grepl("do not attribute", limited, fixed = TRUE))
+    expect_false(grepl("untracked files included", limited))
+    # Covered at the start but not at the end is still not covered.
+    job$dispatch$base <- base
+    expect_true(grepl("NOT in that diff",
+                      corteza:::job_review_task(job, "x", small_end),
+                      fixed = TRUE))
+    # The limit comes from the config, in megabytes.
+    expect_identical(corteza:::job_snapshot_max_bytes(
+        list(config = list(jobs = list(review_snapshot_max_mb = 1)))),
+        1024^2)
+    expect_identical(corteza:::job_snapshot_max_bytes(list(config = list())),
+                     corteza:::JOB_SNAPSHOT_MAX_BYTES)
+
     # A snapshot that could not be taken is said, not hidden.
-    job$dispatch$base$exact <- FALSE
-    expect_true(grepl("could not be separated",
-                      corteza:::job_review_task(job, "x"), fixed = TRUE))
+    job$dispatch$base$snapshot <- NULL
+    failed <- corteza:::job_review_task(job, "x", end)
+    expect_true(grepl("could not be snapshotted", failed, fixed = TRUE))
+    expect_true(grepl("Do not attribute", failed, fixed = TRUE))
+    job$dispatch$base <- base
+    expect_true(grepl("could not be snapshotted",
+                      corteza:::job_review_task(job, "x", NULL),
+                      fixed = TRUE))
     unlink(repo, recursive = TRUE)
 }
-expect_null(corteza:::job_git_base(plain))
+expect_null(corteza:::job_git_snapshot(plain))
 no_git <- corteza:::job_review_task(
     list(id = "20261001T000000-aaaaaaaa", task = "t", dispatch = list()), "")
 expect_true(grepl("not a git repository", no_git, fixed = TRUE))
@@ -168,6 +242,144 @@ local({
     corteza:::job_lock_release(plain, w)
     for (id in c(r, w)) corteza:::job_settle(id, "done")
 })
+
+# --- A review does not run on a checkout someone else held since ---
+# The lock handed to a queued review goes stale if its owning process
+# dies. Another bot's job can then take the checkout and change it, and
+# the review is still queued when its owner comes back.
+review_fn <- function(task) list(reply = "VERDICT: approve")
+restart_case <- function(intruder) {
+    dir <- normalizePath({
+        d <- tempfile("restart-checkout")
+        dir.create(d)
+        d
+    })
+    key <- paste0("!restart-", basename(dir), ":ex")
+    d_id <- corteza:::job_create("doer work", workspace = dir,
+                                 owner = "@claude:ex",
+                                 origin = list(session_key = key))
+    corteza:::job_mark_dispatched(d_id)
+    corteza:::job_lock_acquire(dir, d_id, owner = "@claude:ex")
+    r_id <- corteza:::job_create("Review the work", role = "reviewer",
+                                 workspace = dir, owner = "@claude:ex",
+                                 origin = list(session_key = key),
+                                 review_of = d_id)
+    stopifnot(corteza:::job_lock_transfer(dir, d_id, r_id, "@claude:ex"))
+    corteza:::job_settle(d_id, "done", result = "did it")
+    # The owning process dies: the review's reservation now names a
+    # process that is gone.
+    cur <- corteza:::job_lock_current(dir)
+    hp <- file.path(corteza:::job_lock_gen_dir(corteza:::job_lock_root(dir),
+                                               cur$gen), "holder.json")
+    h <- jsonlite::fromJSON(hp)
+    p <- processx::process$new("true")
+    p$wait()
+    h$pid <- p$get_pid()
+    corteza:::job_write_file(hp, h)
+    w_id <- NULL
+    if (intruder) {
+        # Another bot's job takes the stale lock, edits, and finishes.
+        w_id <- corteza:::job_create("other bot's edit", workspace = dir,
+                                     owner = "@codex:ex",
+                                     origin = list(session_key = "!x:ex"))
+        corteza:::job_mark_dispatched(w_id)
+        stopifnot(corteza:::job_lock_acquire(dir, w_id, "@codex:ex")$ok)
+        corteza:::job_lock_release(dir, w_id)
+        corteza:::job_settle(w_id, "done")
+    }
+    # The owner restarts and pumps its room.
+    s <- corteza::new_session("cli")
+    s$cwd <- dir
+    s$config <- list()
+    s$job_key <- key
+    s$job_owner <- "@claude:ex"
+    s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
+                              run_fn = review_fn)
+    events <- list()
+    deadline <- Sys.time() + 30
+    repeat {
+        events <- c(events, corteza:::job_pump(s))
+        if (corteza:::job_read(r_id)$status %in%
+            corteza:::JOB_STATUSES_FINAL || Sys.time() > deadline) {
+            break
+        }
+        Sys.sleep(0.1)
+    }
+    corteza:::job_worker_close_all(s)
+    list(review = corteza:::job_read(r_id), intruder = w_id, dir = dir,
+         doer = d_id, events = events)
+}
+if (.Platform$OS.type != "windows") {
+    broken <- restart_case(intruder = TRUE)
+    expect_identical(broken$review$status, "cancelled")
+    expect_true(grepl("not held continuously", broken$review$outcome$reason))
+    expect_true(grepl(broken$intruder, broken$review$outcome$reason,
+                      fixed = TRUE))
+    # It never reached a worker, and it does not keep the checkout.
+    expect_null(broken$review$dispatch)
+    expect_null(holder(broken$dir))
+    # The room is told, as for any ended job.
+    told <- Filter(function(e) identical(e$type, "settled"), broken$events)
+    expect_identical(length(told), 1L)
+    expect_true(grepl("Ask for the review again",
+                      corteza:::bot_job_result_text(told[[1L]]$job)))
+    # A restart with nobody in between is not a break: the review takes
+    # the checkout again and runs.
+    intact <- restart_case(intruder = FALSE)
+    expect_identical(intact$review$status, "done")
+    expect_identical(intact$review$outcome$verdict, "approve")
+}
+# The rule itself, on the lock history.
+local({
+    dir <- normalizePath({
+        d <- tempfile("unbroken")
+        dir.create(d)
+        d
+    })
+    mk <- function(task) {
+        id <- corteza:::job_create(task, workspace = dir)
+        corteza:::job_mark_dispatched(id)
+        id
+    }
+    unbroken <- corteza:::job_review_unbroken
+    a <- mk("doer")
+    r <- mk("review")
+    w <- mk("writer")
+    # The doer never held the checkout: nothing shows the tree is its.
+    expect_false(unbroken(dir, a, r)$ok)
+    corteza:::job_lock_acquire(dir, a)
+    # The review holds nothing yet.
+    expect_false(unbroken(dir, a, r)$ok)
+    corteza:::job_lock_transfer(dir, a, r)
+    expect_true(unbroken(dir, a, r)$ok)
+    # A hand-off that failed is fine too, as long as the review was next.
+    b <- mk("doer 2")
+    r2 <- mk("review 2")
+    corteza:::job_lock_release(dir, r)
+    corteza:::job_lock_acquire(dir, b)
+    corteza:::job_settle(b, "done")
+    corteza:::job_lock_acquire(dir, r2)
+    expect_true(unbroken(dir, b, r2)$ok)
+    # Someone in between breaks it, and is named.
+    corteza:::job_lock_release(dir, r2)
+    c2 <- mk("doer 3")
+    r3 <- mk("review 3")
+    corteza:::job_lock_acquire(dir, c2)
+    corteza:::job_settle(c2, "done")
+    corteza:::job_lock_acquire(dir, w)
+    corteza:::job_lock_release(dir, w)
+    corteza:::job_lock_acquire(dir, r3)
+    res <- unbroken(dir, c2, r3)
+    expect_false(res$ok)
+    expect_identical(res$by, w)
+})
+# A hand-off that failed is not described as a locked checkout.
+unlocked <- list(status = "done",
+                 outcome = list(review_job = "20261001T000000-bbbbbbbb",
+                                review_locked = FALSE))
+note <- corteza:::job_outcome_notes(unlocked)
+expect_true(grepl("could not be handed", note))
+expect_false(grepl("stays locked", note))
 
 # --- End to end: doer, review, and the writers waiting behind them ---
 run_fn <- function(task) {

@@ -564,6 +564,30 @@ job_dispatch_next <- function(session) {
                 events <- c(events, job_blocked_event(session, j, lock$holder))
                 next
             }
+            # A review whose checkout another job held since the doer
+            # would inspect that job's changes too. It is cancelled, not
+            # run; nothing has reached a worker yet.
+            if (!is.null(j$review_of)) {
+                held <- job_review_unbroken(checkout, j$review_of, j$id)
+                if (!isTRUE(held$ok)) {
+                    job_settle(j$id, "cancelled", reason = sprintf(
+                            paste0("the checkout was not held continuously ",
+                                   "since job %s ended%s, so it may hold ",
+                                   "other changes. Ask for the review again ",
+                                   "if it is still wanted."),
+                            j$review_of,
+                            if (length(held$by)) {
+                                sprintf(" (job %s held it in between)",
+                                        paste(held$by, collapse = ", "))
+                            } else {
+                                ""
+                            }))
+                    job_lock_release(checkout, j$id)
+                    events <- c(events, list(list(type = "settled",
+                                job = job_read(j$id))))
+                    next
+                }
+            }
         }
         return(c(events, job_dispatch(session, j, checkout)))
     }
@@ -611,7 +635,7 @@ job_dispatch <- function(session, j, checkout) {
                             # review can show exactly what it changed. Only taken for a
                             # job that will be reviewed: nothing else reads it.
                             base = if (isTRUE(j$review) && !is.null(checkout)) {
-                job_git_base(checkout)
+                job_git_snapshot(checkout, job_snapshot_max_bytes(session))
             })
         TRUE
     }, error = function(e) e)

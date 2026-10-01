@@ -182,7 +182,8 @@ job_mark_dispatched <- function(id, worker = list(), base = NULL) {
         stop("job ", id, " was already dispatched", call. = FALSE)
     }
     # `base` is the checkout's git state as the job starts (see
-    # job_git_base()), so a reviewer can see exactly what the job changed.
+    # job_git_snapshot()), so a reviewer can see exactly what the job
+    # changed.
     job_write_file(file.path(dir, "dispatch.json"),
                    list(dispatched_at = job_now(), worker = worker, base = base))
     invisible(id)

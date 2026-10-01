@@ -37,8 +37,14 @@
   with a review by a second worker that has read-only tools, no network,
   no access outside the checkout, and no way to run code. It reads the
   job's diff and report and answers with a verdict and findings. The
-  checkout stays locked from the start of the job to the end of the
-  review. `"jobs": {"reviewer": {"provider": ..., "model": ...}}` runs the
+  diff is taken between snapshots of the checkout as the job started and
+  ended, so it leaves out changes that were already there, and it covers
+  untracked files up to `"jobs": {"review_snapshot_max_mb": 20}` in total
+  (ignored files are never covered). The checkout stays locked from the
+  start of the job to the end of the review. If the bot restarts in
+  between and another job takes the checkout first, the review is
+  cancelled instead of run on a changed tree.
+  `"jobs": {"reviewer": {"provider": ..., "model": ...}}` runs the
   reviewer on a different model. The reviewer cannot run tests, and a
   review does not start a revision by itself.
 
