@@ -46,6 +46,19 @@ expect_identical(o$doer_model, "gpt-6")
 x <- corteza::new_session("matrix", provider = "anthropic")
 corteza:::talker_enable(x, list(enabled = TRUE, model = "claude-sonnet-5-5"))
 expect_identical(x$model_map$cloud, "claude-sonnet-5-5")
+# The subscription providers the bots run on have defaults too, and the
+# doer keeps the provider the session was configured with.
+for (p in list(c("anthropic_claude", "claude-haiku-4-5-20251001"),
+               c("openai_codex", "gpt-6-luna"))) {
+    b <- corteza::new_session("matrix", provider = "anthropic",
+                              model_map = list(cloud = "claude-opus-5"))
+    b$provider <- p[1L]
+    corteza:::talker_enable(b, list(enabled = TRUE))
+    expect_identical(b$model_map$cloud, p[2L], info = p[1L])
+    expect_identical(b$provider, p[1L], info = p[1L])
+    expect_identical(b$doer_provider, p[1L], info = p[1L])
+    expect_identical(b$doer_model, "claude-opus-5", info = p[1L])
+}
 # A provider with no default and no configured model is an error, not a
 # silent fall-through to some other model.
 m <- corteza::new_session("matrix", provider = "anthropic")

@@ -13,9 +13,14 @@
 # rule it depends on is that the talker never guesses at a delegated
 # answer; the result arrives later as its own message.
 
-# Fast model per provider. Config can name any other.
+# Fast model per provider. Config can name any other. The subscription
+# providers take the same model ids as their API counterparts, and they
+# are the ones the Matrix bots run on: without an entry here, turning
+# talker mode on for such a bot fails every session it opens.
 TALKER_DEFAULT_MODELS <- list(anthropic = "claude-haiku-4-5-20251001",
-                              openai = "gpt-6-luna")
+                              anthropic_claude = "claude-haiku-4-5-20251001",
+                              openai = "gpt-6-luna",
+                              openai_codex = "gpt-6-luna")
 
 # What the talker can do itself: look, not touch.
 TALKER_TOOLS <- c("read_file", "skill_instructions", "grep_files",
