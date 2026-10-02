@@ -46,10 +46,13 @@ expect_null(corteza:::run_repl_loop(base_ctx(c("/quit"))))
 ctx3 <- base_ctx(c("/model kimi-test"))
 ctx3$session <- new.env(parent = emptyenv())
 ctx3$session$model_map <- list(cloud = "old-model")
+ctx3$session$thinking <- "between_tools"
 ctx3$model <- "old-model"
 corteza:::run_repl_loop(ctx3)
 expect_equal(ctx3$model, "kimi-test")
 expect_equal(ctx3$session$model_map$cloud, "kimi-test")
+# The thinking type was the old model's; the new one does not get it.
+expect_null(ctx3$session$thinking)
 
 # 4. /r: local-eval path stages output into pending_r_context.
 ctx4 <- base_ctx(c("/r 40 + 2"))

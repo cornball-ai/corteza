@@ -187,6 +187,9 @@ resolve_subagent_id <- function(input) {
 #'   the child's session, as in [new_session()]. NULL (default) leaves
 #'   them to the child's config and the provider's defaults, as before.
 #'   A job worker passes the ones configured for its model.
+#' @param thinking Character or NULL. The Anthropic `thinking.type` the
+#'   child's requests carry, such as `"adaptive"` or `"between_tools"`.
+#'   NULL (default) sends no `thinking` field.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
@@ -196,7 +199,7 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                plan_mode = FALSE, web_search = NULL,
                                allowed_paths = NULL, channel = "console",
                                reasoning_effort = NULL,
-                               thinking_budget_tokens = NULL) {
+                               thinking_budget_tokens = NULL, thinking = NULL) {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
@@ -219,6 +222,8 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                            web_search = web_search,
                            reasoning_effort = reasoning_effort,
                            thinking_budget_tokens = thinking_budget_tokens)
+    session$thinking <- .check_thinking(thinking,
+                                        "subagent_turn_init(thinking=)")
     session$is_subagent <- TRUE
     session$config <- load_config(getwd())
     session$instruction_catalog <- instruction_catalog

@@ -84,11 +84,15 @@ talker_enable <- function(session, talker = list()) {
     # talker config names its own.
     session$doer_reasoning_effort <- .session_reasoning_effort(session)
     session$doer_thinking_budget <- .session_thinking_budget(session)
+    session$doer_thinking <- .session_thinking(session)
     session$reasoning_effort <- .check_reasoning_effort(
         talker$reasoning_effort, "talker$reasoning_effort")
     session$thinking_budget_tokens <- .check_max_tokens(
         talker$thinking_budget_tokens, "talker$thinking_budget_tokens",
         what = "thinking_budget_tokens")
+    # `talker$thinking` is the talker model's own thinking type: on
+    # Claude Sonnet 5.5, "between_tools" answers without thinking first.
+    session$thinking <- .check_thinking(talker[["thinking"]], "talker$thinking")
     # model_map$cloud is what turn() dispatches on (.resolve_model()).
     session$model_map$cloud <- model
     session$provider <- provider

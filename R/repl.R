@@ -290,6 +290,9 @@ run_repl_loop <- function(ctx) {
                     next
                 }
                 ctx$session$model_map$cloud <- parts[2]
+                # A thinking type set on the session (a talker's) names
+                # the model it was set for and is an error on another.
+                ctx$session$thinking <- NULL
                 ctx$model <- parts[2]
                 if (!is.null(ctx$disk_session)) {
                     ctx$disk_session$session$model <- parts[2]

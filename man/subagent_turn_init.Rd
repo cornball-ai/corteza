@@ -15,7 +15,8 @@ subagent_turn_init(
   allowed_paths = NULL,
   channel = "console",
   reasoning_effort = NULL,
-  thinking_budget_tokens = NULL
+  thinking_budget_tokens = NULL,
+  thinking = NULL
 )
 }
 \arguments{
@@ -56,6 +57,10 @@ this as well.}
 passes its originating session's channel so work delegated from a
 Matrix room is judged by the Matrix column of the policy tensor, not
 the looser console one.}
+
+\item{thinking}{Character or NULL. The Anthropic `thinking.type` the
+child's requests carry, such as `"adaptive"` or `"between_tools"`.
+NULL (default) sends no `thinking` field.}
 
 \item{reasoning_effort,thinking_budget_tokens}{Reasoning settings for
 the child's session, as in [new_session()]. NULL (default) leaves

@@ -20,6 +20,16 @@
   In the CLI and `chat()`, results and approvals appear before the next
   prompt; `/jobs` and `/cancel` manage them. Off by default.
 
+- **A `thinking` setting names the Anthropic thinking type.** `thinking`
+  in the corteza config, in a `talker` block, or under `jobs` and
+  `jobs$reviewer`, is sent as the request's `thinking.type`. Claude
+  Sonnet 5.5 thinks unless told otherwise and refuses `"disabled"`;
+  `"between_tools"` is its setting for answering without thinking first,
+  as in `"talker": {"enabled": true, "model": "claude-sonnet-5-5",
+  "thinking": "between_tools"}`. The value belongs to one model, so a
+  fallback to another model does not carry it and `/model` clears a
+  talker's. It cannot be combined with `thinking_budget_tokens`.
+
 - **Jobs are durable and never re-run blindly.** Each job's intent is
   written before a worker sees it and its outcome beside it. After a
   restart, a job that never started is still queued; one that started

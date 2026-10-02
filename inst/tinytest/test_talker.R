@@ -128,6 +128,115 @@ expect_identical(corteza:::.session_reasoning_effort(n), "max")
 n$reasoning_effort <- "low"
 expect_identical(corteza:::.session_reasoning_effort(n), "low")
 
+# --- A thinking type for the talker's own model ---
+# Claude Sonnet 5.5 thinks by default, rejects "disabled", and answers
+# without thinking first only under thinking = {type: "between_tools"}.
+# The talker config names the type; it is the model's own word.
+k <- corteza::new_session("matrix", provider = "anthropic_claude",
+                          model_map = list(cloud = "claude-opus-5-5"),
+                          reasoning_effort = "xhigh")
+k$thinking <- "adaptive"
+corteza:::talker_enable(k, list(enabled = TRUE, model = "claude-sonnet-5-5",
+                                thinking = "between_tools"))
+expect_identical(corteza:::.resolve_model(k), "claude-sonnet-5-5")
+expect_identical(corteza:::.session_thinking(k), "between_tools")
+# The talker sends no effort, so the API default applies; "between_tools"
+# is refused at xhigh, which is the doer's setting.
+expect_null(corteza:::.session_reasoning_effort(k))
+# The session's own thinking type went to the doer with its model.
+kspec <- corteza:::job_worker_spec(k)
+expect_identical(kspec$model, "claude-opus-5-5")
+expect_identical(kspec$reasoning_effort, "xhigh")
+expect_identical(kspec$thinking, "adaptive")
+# A reviewer on another model takes neither.
+k$config <- list(jobs = list(reviewer = list(model = "claude-haiku-4-5")))
+expect_null(corteza:::job_worker_spec(k, "reviewer")$thinking)
+# No talker thinking configured: none is sent, and not the config's.
+k2 <- corteza::new_session("matrix", provider = "anthropic")
+k2$config <- list(thinking = "adaptive")
+corteza:::talker_enable(k2, list(enabled = TRUE))
+expect_null(corteza:::.session_thinking(k2))
+expect_identical(k2$doer_thinking, "adaptive")
+# It is the Anthropic body field: kept on that wire, dropped on others.
+gated <- corteza:::.gate_reasoning_args(
+    list(thinking = list(type = "between_tools")), "anthropic_claude")
+expect_identical(gated$thinking, list(type = "between_tools"))
+expect_null(corteza:::.gate_reasoning_args(
+    list(thinking = list(type = "between_tools")), "openai_codex")$thinking)
+# A budget in a config is not a thinking type. `$thinking` on a list
+# matches `thinking_budget_tokens` by prefix, so each of these would
+# read the budget as the type if looked up that way.
+pm <- corteza::new_session("matrix", provider = "anthropic")
+pm$config <- list(thinking_budget_tokens = 2048L,
+                  jobs = list(thinking_budget_tokens = 4096L,
+                              reviewer = list(thinking_budget_tokens = 1024L)))
+expect_null(corteza:::.session_thinking(pm))
+expect_null(corteza:::job_worker_spec(pm)$thinking)
+expect_null(corteza:::job_worker_spec(pm, "reviewer")$thinking)
+corteza:::talker_enable(pm, list(enabled = TRUE,
+                                 thinking_budget_tokens = 2048L))
+expect_null(corteza:::.session_thinking(pm))
+expect_null(pm$doer_thinking)
+expect_identical(names(corteza:::.gate_reasoning_args(
+    list(thinking_budget_tokens = 2048L), "openai")), character())
+expect_identical(corteza:::.gate_reasoning_args(
+    list(thinking_budget_tokens = 2048L), "anthropic")$thinking_budget_tokens,
+    2048L)
+# The same prefix rule applies to the call into llm.api::agent(), whose
+# `thinking_budget_tokens` formal sits ahead of `...`: `thinking` alone
+# is taken as the budget. Naming the budget keeps them apart. Checked
+# against agent()'s real formals, with the body swapped for a probe.
+probe <- function() NULL
+formals(probe) <- formals(llm.api::agent)
+body(probe) <- quote(list(budget = thinking_budget_tokens,
+                          dots = names(list(...))))
+th_args <- list(prompt = "p", thinking = list(type = "between_tools"))
+# Negative control: unprepared, the type lands in the budget.
+expect_identical(do.call(probe, th_args)$budget,
+                 list(type = "between_tools"))
+sent <- do.call(probe, corteza:::.agent_call_args(th_args))
+expect_null(sent$budget)
+expect_true("thinking" %in% sent$dots)
+# Nothing to do without a thinking type, and a set budget is left alone.
+expect_identical(corteza:::.agent_call_args(list(prompt = "p")),
+                 list(prompt = "p"))
+expect_identical(corteza:::.agent_call_args(
+    list(prompt = "p", thinking_budget_tokens = 2048L)),
+    list(prompt = "p", thinking_budget_tokens = 2048L))
+# A malformed value is an error where it is read.
+expect_error(corteza:::talker_enable(
+    corteza::new_session("matrix", provider = "anthropic"),
+    list(enabled = TRUE, thinking = c("a", "b"))), "thinking must be")
+expect_error(corteza:::talker_enable(
+    corteza::new_session("matrix", provider = "anthropic"),
+    list(enabled = TRUE, thinking = TRUE)), "thinking must be")
+
+# A thinking type belongs to one model. A fallback to another model on
+# the same wire must not carry it: "between_tools" is a 400 on Haiku,
+# and a 400 is not a limit error, so the fallback would fail outright.
+local({
+    corteza:::.fallback_reset()
+    on.exit(corteza:::.fallback_reset(), add = TRUE)
+    seen <- list()
+    fake <- function(args) {
+        seen[[length(seen) + 1L]] <<- args
+        if (identical(args$model, "claude-sonnet-5-5")) {
+            stop("API error (429): rate limit")
+        }
+        list(content = "ok", history = list(), usage = list())
+    }
+    fs <- new.env()
+    fs$config <- list(fallback = "claude-haiku-4-5 anthropic")
+    res <- corteza:::.agent_with_fallback(
+        list(model = "claude-sonnet-5-5", provider = "anthropic_claude",
+             thinking = list(type = "between_tools")), fs, .call = fake)
+    expect_identical(res$content, "ok")
+    expect_identical(length(seen), 2L)
+    expect_identical(seen[[1L]]$thinking, list(type = "between_tools"))
+    expect_identical(seen[[2L]]$model, "claude-haiku-4-5")
+    expect_null(seen[[2L]]$thinking)
+})
+
 # A provider with no default and no configured model is an error, not a
 # silent fall-through to some other model.
 m <- corteza::new_session("matrix", provider = "anthropic")

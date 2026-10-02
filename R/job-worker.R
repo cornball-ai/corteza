@@ -112,11 +112,18 @@ job_worker_spec <- function(session, role = "doer") {
     } else {
         .session_thinking_budget(session)
     }
+    thinking <- if (isTRUE(session$talker)) {
+        session$doer_thinking
+    } else {
+        .session_thinking(session)
+    }
     if (!identical(model, configured)) {
-        effort <- budget <- NULL
+        effort <- budget <- thinking <- NULL
     }
     effort <- cfg$reasoning_effort %||% effort
     budget <- cfg$thinking_budget_tokens %||% budget
+    # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
+    thinking <- cfg[["thinking"]] %||% thinking
     reviewer <- identical(role, "reviewer")
     if (reviewer) {
         # The reviewer may run on another provider or model than the
@@ -132,10 +139,11 @@ job_worker_spec <- function(session, role = "doer") {
         provider <- rc$provider %||% provider
         model <- rc$model %||% model
         if (!identical(list(provider = provider, model = model), doer)) {
-            effort <- budget <- NULL
+            effort <- budget <- thinking <- NULL
         }
         effort <- rc$reasoning_effort %||% effort
         budget <- rc$thinking_budget_tokens %||% budget
+        thinking <- rc[["thinking"]] %||% thinking
     }
     spec <- list(
                  role = role,
@@ -143,6 +151,7 @@ job_worker_spec <- function(session, role = "doer") {
                  model = model,
                  reasoning_effort = effort,
                  thinking_budget_tokens = budget,
+                 thinking = thinking,
                  tools = tools,
                  # Read-only has to mean no network and no files outside
                  # the checkout: a tool list alone grants neither limit
@@ -195,7 +204,8 @@ job_worker_system <- function(role) {
                            web_search = spec$web_search,
                            allowed_paths = spec$allowed_paths,
                            reasoning_effort = spec$reasoning_effort,
-                           thinking_budget_tokens = spec$thinking_budget_tokens)
+                           thinking_budget_tokens = spec$thinking_budget_tokens,
+                           thinking = spec[["thinking"]])
     }
     init(spec)
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600

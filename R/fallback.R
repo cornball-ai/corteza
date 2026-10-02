@@ -327,11 +327,30 @@
     args
 }
 
+# Arguments as llm.api::agent() must receive them.
+#
+# A `thinking` body field rides agent()'s `...`, and agent() has a
+# formal named `thinking_budget_tokens` ahead of the dots. R matches a
+# supplied name to a formal by prefix when no formal matches exactly, so
+# `thinking = ` alone is taken as the budget and refused ("must be a
+# single integer"). A formal already matched exactly is out of that
+# round, so naming the budget, NULL included, sends `thinking` on to the
+# dots. `[<-` with list(NULL) keeps the NULL element; `$<-` would drop it.
+.agent_call_args <- function(args) {
+    if (!is.null(args[["thinking"]]) &&
+        !"thinking_budget_tokens" %in% names(args)) {
+        args["thinking_budget_tokens"] <- list(NULL)
+    }
+    args
+}
+
 # Run llm.api::agent with agent_args, walking the session's fallback
 # chain on limit errors. `.call` is the seam tests replace; production
 # leaves it at the real agent.
 .agent_with_fallback <- function(agent_args, session,
-                                 .call = function(args) do.call(llm.api::agent, args)) {
+                                 .call = function(args) {
+    do.call(llm.api::agent, .agent_call_args(args))
+}) {
     primary <- list(model = agent_args$model, provider = agent_args$provider)
     chain <- c(list(primary), .session_fallback(session))
     resume <- FALSE
@@ -371,6 +390,13 @@
         # error -- so leaving it in would make the fallback fail harder
         # than no fallback at all.
         args <- .gate_reasoning_args(args, cand$provider)
+        # A thinking type belongs to one model, not to a wire: the
+        # "between_tools" that turns thinking off on Claude Sonnet 5.5 is
+        # a 400 on Claude Haiku 4.5. Another model answers on its own
+        # default.
+        if (!identical(cand$model, primary$model)) {
+            args[["thinking"]] <- NULL
+        }
 
         before <- length(session$history %||% list())
         result <- tryCatch(.call(args), error = function(e) e)
