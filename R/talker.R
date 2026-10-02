@@ -52,6 +52,12 @@ TALKER_GUIDANCE <- paste(
                          "delegated job's result; it arrives as its own message when the job",
                          "ends. Use `job_status` when asked how work is going and `job_cancel`",
                          "to stop a job.",
+                         "When work belongs to another room's project, pass `room` to",
+                         "`delegate`: that room's doer runs it there, that room is told, and",
+                         "the result is posted in both rooms. Tell the user which room took",
+                         "it. A message here saying a job was accepted from another room means",
+                         "this room's doer is doing that room's work; say so when asked what",
+                         "it is busy with.",
                          sep = "\n")
 
 # Resolve talker settings from a config's `talker` entry, or NULL when
@@ -115,14 +121,35 @@ talker_enable <- function(session, talker = list()) {
 #'   the doer finishes. The checkout stays locked until the review ends,
 #'   and the review arrives as a second message. Omit to use the
 #'   configured default.
+#' @param room (character) Hand the task to another room's doer instead
+#'   of this one's: the room's name, its id, or its project directory.
+#'   The work then runs in that room's project, that room is told, and
+#'   the result is posted in both rooms. Omit for this room. Only where
+#'   the bot serves several rooms.
 #' @param ctx Server-side context; supplies the session.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_delegate <- function(task, review = NULL, ctx = list()) {
+tool_delegate <- function(task, review = NULL, room = NULL, ctx = list()) {
     session <- ctx$session
     if (!is.environment(session)) {
         return(err("delegate needs a live session"))
+    }
+    if (!is.null(room) && nzchar(trimws(as.character(room)[[1L]]))) {
+        # Another room's session, its directory, and its doer belong to
+        # the surface that holds the rooms. The surface supplies the
+        # hand-off for the turn in progress (bot_poll()); a session with
+        # none has no other rooms to hand to.
+        handoff <- session$job_handoff
+        if (!is.function(handoff)) {
+            return(err(paste("This session has no other rooms to hand work",
+                             "to. Call delegate without `room`.")))
+        }
+        return(tryCatch(handoff(room = as.character(room)[[1L]], task = task,
+                                review = review),
+                        error = function(e) {
+            err(paste("Delegate failed:", conditionMessage(e)))
+        }))
     }
     # The config default (`jobs$review`) applies when the model does not
     # say; an explicit FALSE from the model is honored.
@@ -161,13 +188,16 @@ tool_job_status <- function(id = NULL, ctx = list()) {
     }
     if (!is.null(id)) {
         j <- tryCatch(job_read(id), error = function(e) NULL)
-        if (!job_in_session(j, session)) {
+        if (!job_visible_to(j, session)) {
             return(err(sprintf("No job %s in this session.", id)))
         }
         return(ok(format_job(j, detail = TRUE)))
     }
-    jobs <- utils::tail(job_list(origin_key = job_worker_key(session),
-                                 owner = job_worker_owner(session)), 10L)
+    # This session's own jobs, and the ones it handed to another room:
+    # the user who asked for those asks about them here.
+    jobs <- Filter(function(j) job_visible_to(j, session),
+                   job_list(owner = job_worker_owner(session)))
+    jobs <- utils::tail(jobs, 10L)
     if (!length(jobs)) {
         return(ok("No jobs in this session."))
     }

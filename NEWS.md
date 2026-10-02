@@ -28,6 +28,14 @@
   the doer only when the talker restated them. A reviewer keeps its own
   short prompt.
 
+- **A Matrix bot's rooms can hand work to each other.** `delegate`
+  takes `room` (a room's name, id, or project directory). The job is
+  then that room's: it runs on that room's doer, in its directory, under
+  its checkout lock, with approvals asked there. That room is told when
+  the job is accepted, in the room and in its talker's history, and the
+  result is posted in both rooms. Either room can ask about the job or
+  cancel it. Only a configured operator's request is handed over.
+
 - **A `thinking` setting names the Anthropic thinking type.** `thinking`
   in the corteza config, in a `talker` block, or under `jobs` and
   `jobs$reviewer`, is sent as the request's `thinking.type`. Claude

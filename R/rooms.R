@@ -2184,9 +2184,22 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # or thread.
         session$job_requester <- sender
         session$job_origin <- list(room = m$channel, thread = m$thread)
+        # And how to hand a job to another room's doer, should this turn
+        # ask to (`delegate` with `room`). Per turn, like the two fields
+        # above, and removed after it: it holds this poll's client and
+        # this message's sender. A room with no session yet gets one
+        # with the run's own options, as a message there would.
+        session$job_handoff <- bot_job_handoff_fn(
+            sessions, session, cfg, chat_now(), sender, session$job_origin,
+            new_session = function(room_id) {
+            bot_get_or_create_session(sessions, room_id, cfg,
+                                      system = system, model = model, provider = provider,
+                                      tools_filter = tools_filter, room_id = room_id)
+        })
         reply <- rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg)
+        session$job_handoff <- NULL
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"

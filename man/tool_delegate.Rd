@@ -3,7 +3,7 @@
 \alias{tool_delegate}
 \title{Hand a task to this session's doer.}
 \usage{
-tool_delegate(task, review = NULL, ctx = list())
+tool_delegate(task, review = NULL, room = NULL, ctx = list())
 }
 \arguments{
 \item{task}{(character) Complete description of the work: files,
@@ -13,6 +13,12 @@ goal, constraints, and how to check the result.}
 the doer finishes. The checkout stays locked until the review ends,
 and the review arrives as a second message. Omit to use the
 configured default.}
+
+\item{room}{(character) Hand the task to another room's doer instead
+of this one's: the room's name, its id, or its project directory.
+The work then runs in that room's project, that room is told, and
+the result is posted in both rooms. Omit for this room. Only where
+the bot serves several rooms.}
 
 \item{ctx}{Server-side context; supplies the session.}
 }

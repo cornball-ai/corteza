@@ -46,6 +46,22 @@ job_in_session <- function(j, session) {
     identical(j$owner %||% "local", job_worker_owner(session))
 }
 
+# Did this session hand job `j` to another session's worker? A job
+# handed across rooms (bot_job_handoff()) belongs to the room that runs
+# it, and records the session that asked under origin$from. Same owner
+# required: only a bot's own sessions hand work to each other.
+job_requested_by <- function(j, session) {
+    !is.null(j) && !is.null(j$origin$from$session_key) &&
+    identical(j$origin$from$session_key, job_worker_key(session)) &&
+    identical(j$owner %||% "local", job_worker_owner(session))
+}
+
+# May this session ask about job `j` or cancel it? The session that runs
+# it and the session that asked for it both may.
+job_visible_to <- function(j, session) {
+    job_in_session(j, session) || job_requested_by(j, session)
+}
+
 # Whose saved workspace a worker may restore. All four parts count:
 #   owner      a bot's Matrix id, or for a REPL its host and conversation
 #              (job_checkpoint_owner), so two bots in one room, or two
@@ -463,7 +479,10 @@ job_submit <- function(session, task, role = "doer", requester = "local",
 # restart between the two still sees it.
 job_cancel <- function(session, id, by = "local") {
     j <- job_read(id)
-    if (!job_in_session(j, session)) {
+    # The room that asked for a handed-off job may cancel it too. The
+    # request is a file the running room's pump reads, so nothing here
+    # needs that room's worker.
+    if (!job_visible_to(j, session)) {
         stop("no job ", id, " in this session", call. = FALSE)
     }
     if (!job_request_cancel(id, by = by)) {
