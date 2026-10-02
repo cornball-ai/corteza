@@ -138,22 +138,10 @@
 
 #' Child-side handle reader for a supervised workspace.
 #' @noRd
-.run_r_worker_child_read_handle <- function(handle, op) {
+.run_r_worker_child_read_handle <- function(handle, op, pattern = NULL,
+    start = NULL, end = NULL) {
     env <- .run_r_worker_state$workspace
-    store <- handle_store_for(env)
-    value <- get_handle(handle, store = store)
-    if (is.null(value) && !exists(handle, envir = store, inherits = FALSE)) {
-        return(err(sprintf("Unknown handle: %s", handle)))
-    }
-    text <- tryCatch(
-                     switch(op, str = utils::capture.output(utils::str(value)),
-                            head = utils::capture.output(utils::head(value)),
-                            summary = utils::capture.output(summary(value)),
-                            print = utils::capture.output(print(value)),
-                            return(err(sprintf("Unknown op: %s", op)))),
-                     error = function(e) paste("Error:", conditionMessage(e))
-    )
-    ok(paste(text, collapse = "\n"))
+    handle_read_from(handle_store_for(env), handle, op, pattern, start, end)
 }
 
 #' Resolve a requested subagent artifact in its supervised workspace.
@@ -494,12 +482,23 @@
 }
 
 #' Model-facing handle reader that follows worker-owned handles.
+#'
+#' A handle in the session's own store (a tool result that was cut,
+#' see session_handle_store()) is read from there first. Its name
+#' differs from a workspace handle's, so this never shadows one.
 #' @noRd
-.tool_read_handle_session <- function(handle, op = "str", ctx = list()) {
-    if (!identical(.run_r_mode(ctx), "worker")) {
-        return(tool_read_handle(handle, op))
-    }
+.tool_read_handle_session <- function(handle, op = "str", ctx = list(),
+                                      pattern = NULL, start = NULL,
+                                      end = NULL) {
     session <- ctx$session
+    own <- session_handle_store(session)
+    if (!is.null(own) && is.character(handle) && length(handle) == 1L &&
+        exists(handle, envir = own, inherits = FALSE)) {
+        return(handle_read_from(own, handle, op, pattern, start, end))
+    }
+    if (!identical(.run_r_mode(ctx), "worker")) {
+        return(tool_read_handle(handle, op, pattern, start, end))
+    }
     worker <- session$.run_r_worker
     if (is.null(worker) || !isTRUE(tryCatch(worker$is_alive(),
                 error = function(e) FALSE))) {
@@ -507,12 +506,13 @@
     }
     result <- tryCatch(
                        worker$run(
-                                  function(id, action) {
+                                  function(id, action, pattern, start, end) {
         read_handle <- get(".run_r_worker_child_read_handle",
                            envir = asNamespace("corteza"), inherits = FALSE)
-        read_handle(id, action)
+        read_handle(id, action, pattern, start, end)
     },
-                                  list(id = handle, action = op)
+                                  list(id = handle, action = op, pattern = pattern,
+                                       start = start, end = end)
         ),
                        error = function(e) err(paste("read_handle worker failed:",
                 conditionMessage(e)))

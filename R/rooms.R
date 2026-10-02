@@ -1775,6 +1775,10 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # Tool results cut for length are kept for this room alone. A bot's
+    # rooms share one process, and the process's handle store would let
+    # one room's `read_handle` open what another room's tools returned.
+    s$handle_store <- new.env(parent = emptyenv())
     bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {
         s$context_manifest <- context_manifest

@@ -171,3 +171,85 @@ expect_true(grepl("Unknown handle", res$content[[1]]$text))
 res <- corteza:::call_tool("read_handle",
                            list(handle = h$handle, op = "bogus"))
 expect_true(isTRUE(res$isError))
+
+# --- read_handle: searching and paging a stored tool result ------------
+
+corteza:::clear_handles()
+rooms <- sprintf("- room %02d (!r%d:ex), working in /home/u/project%02d",
+                 1:60, 1:60, 1:60)
+rooms[47] <- "- Hacer (!r47:ex), working in /home/u/hacer"
+lst <- corteza:::with_handle(rooms)
+read <- function(...) {
+    res <- corteza:::call_tool("read_handle", list(handle = lst$handle, ...))
+    list(error = isTRUE(res$isError), text = res$content[[1]]$text,
+         lines = strsplit(res$content[[1]]$text, "\n", fixed = TRUE)[[1]])
+}
+
+# grep finds a line past where a cut result's preview ends, with its
+# line number, and says how many matched of how many.
+g <- read(op = "grep", pattern = "hacer")
+expect_false(g$error)
+expect_identical(g$lines[[1]], "1 of 60 lines match 'hacer':")
+expect_identical(g$lines[[2]], paste0("47: ", rooms[47]))
+# No match is an answer about every line, not a gap.
+none <- read(op = "grep", pattern = "nowhere")
+expect_false(none$error)
+expect_identical(none$text, "No line matches 'nowhere'. All 60 lines were searched.")
+# A regular expression, and text that is not one.
+expect_identical(read(op = "grep", pattern = "project0[12]$")$lines[[1]],
+                 "2 of 60 lines match 'project0[12]$':")
+expect_identical(read(op = "grep", pattern = "(!r47")$lines[[1]],
+                 "1 of 60 lines match '(!r47':")
+# More matches than fit: the first 40, a count, and what to do next.
+many <- read(op = "grep", pattern = "working in")
+expect_identical(length(many$lines), 41L)
+expect_true(grepl("^60 of 60 lines match 'working in'; the first 40 are shown",
+                  many$lines[[1]]))
+# A pattern is required.
+expect_true(read(op = "grep")$error)
+expect_true(read(op = "grep", pattern = "")$error)
+
+# lines pages through it, and says where to continue.
+p <- read(op = "lines", start = 41)
+expect_identical(p$lines[[1]], "lines 41 to 60 of 60")
+expect_identical(p$lines[[2]], rooms[41])
+expect_identical(length(p$lines), 21L)
+first <- read(op = "lines")
+expect_identical(first$lines[[1]], "lines 1 to 40 of 60 (more with start = 41)")
+expect_identical(length(first$lines), 41L)
+expect_identical(read(op = "lines", start = 45, end = 47)$lines,
+                 c("lines 45 to 47 of 60 (more with start = 48)", rooms[45:47]))
+# An end past the last line is the last line.
+expect_identical(read(op = "lines", start = 58, end = 500)$lines[[1]],
+                 "lines 58 to 60 of 60")
+expect_identical(read(op = "lines", start = 61)$text,
+                 "There is no line 61: the value has 60 lines.")
+expect_true(read(op = "lines", start = 0)$error)
+expect_true(read(op = "lines", start = 5, end = 2)$error)
+expect_true(read(op = "lines", start = "x")$error)
+
+# Neither read comes back long enough to be cut again.
+wide <- corteza:::with_handle(rep(strrep("x", 900L), 100L))
+for (res in list(
+    corteza:::call_tool("read_handle", list(handle = wide$handle, op = "lines")),
+    corteza:::call_tool("read_handle", list(handle = wide$handle, op = "grep",
+                                            pattern = "x")),
+    corteza:::call_tool("read_handle", list(handle = lst$handle, op = "grep",
+                                            pattern = "working in")))) {
+    txt <- res$content[[1]]$text
+    expect_identical(corteza:::admit_tool_result(txt, tool = "read_handle"), txt)
+}
+# One line longer than a whole read is still shown, cut.
+long <- corteza:::with_handle(strrep("y", 20000L))
+txt <- corteza:::call_tool("read_handle",
+                           list(handle = long$handle, op = "lines"))$content[[1]]$text
+expect_true(nchar(txt) < 4200L)
+expect_true(grepl("^lines 1 to 1 of 1\ny", txt))
+
+# A value that is not text is searched as it prints.
+df <- corteza:::with_handle(data.frame(n = 1:30, name = sprintf("row%02d", 1:30)))
+res <- corteza:::call_tool("read_handle", list(handle = df$handle, op = "grep",
+                                               pattern = "row17"))
+expect_true(grepl("row17", res$content[[1]]$text))
+expect_true(grepl("^1 of 31 lines match", res$content[[1]]$text))
+corteza:::clear_handles()

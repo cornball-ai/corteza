@@ -1582,18 +1582,36 @@ register_builtin_skills <- function() {
         ))
     register_skill(skill_spec(
                               "read_handle",
-                              paste("Inspect a large value previously returned as a handle.",
-                                    "The handle remains in the same persistent R workspace."),
+                              paste("Inspect a large value previously returned as a handle,",
+                                    "or a tool result that was cut for length.",
+                                    "Search it with op = \"grep\", page through it with",
+                                    "op = \"lines\"."),
                               params = list(
-                handle = list(type = "string", description = "Handle id, e.g. .h_001.",
+                handle = list(type = "string",
+                              description = "Handle id, e.g. .h_001 or .o_001.",
                               required = TRUE),
                 op = list(type = "string",
-                          description = "Inspection: str, head, summary, or print.",
-                          enum = c("str", "head", "summary", "print"),
-                          required = FALSE)
+                          description = paste("Inspection: str, head, summary, print,",
+                        "grep (lines matching `pattern`), or lines (`start` to `end`)."),
+                          enum = c("str", "head", "summary", "print", "grep",
+                                   "lines"),
+                          required = FALSE),
+                pattern = list(type = "string",
+                               description = paste("For op = \"grep\": a regular expression,",
+                        "matched without regard to case."),
+                               required = FALSE),
+                start = list(type = "number",
+                             description = "For op = \"lines\": first line wanted. Default 1.",
+                             required = FALSE),
+                end = list(type = "number",
+                           description = paste("For op = \"lines\": last line wanted.",
+                        "At most 40 lines come back."),
+                           required = FALSE)
             ),
                               handler = function(args, ctx) {
-        .tool_read_handle_session(args$handle, args$op %||% "str", ctx)
+        .tool_read_handle_session(args$handle, args$op %||% "str", ctx,
+                                  pattern = args$pattern, start = args$start,
+                                  end = args$end)
     }
         ))
     register_skill_from_fn("run_r_script", tool_run_r_script)

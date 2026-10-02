@@ -100,6 +100,26 @@ if (at_home()) local({
   s2 <- corteza:::bot_new_session(cfg)
   expect_true(is.function(s2$auto_gate))
   expect_identical(s2$job_supervise$mode, "monitor")
+
+  # Each room keeps its own cut tool results: the rooms share a process,
+  # and one room must not open what another room's tools returned.
+  expect_true(is.environment(s$handle_store))
+  expect_true(is.environment(s2$handle_store))
+  expect_false(identical(s$handle_store, s2$handle_store))
+  long <- paste(sprintf("line %d", 1:80), collapse = "\n")
+  cut <- corteza:::.admit_tool_result_for(s, long, "grep_files")
+  expect_true(grepl("full output stored as: .o_001", cut, fixed = TRUE))
+  expect_identical(length(ls(s$handle_store, all.names = TRUE)), 1L)
+  expect_identical(length(ls(s2$handle_store, all.names = TRUE)), 0L)
+  mine <- corteza:::.tool_read_handle_session(".o_001", "grep",
+                                              ctx = list(session = s),
+                                              pattern = "line 77")
+  expect_true(grepl("77: line 77", mine$content[[1]]$text, fixed = TRUE))
+  theirs <- corteza:::.tool_read_handle_session(".o_001", "grep",
+                                                ctx = list(session = s2),
+                                                pattern = "line 77")
+  expect_true(isTRUE(theirs$isError))
+  expect_true(grepl("Unknown handle", theirs$content[[1]]$text))
 })
 
 # Supervising a room session's own calls. The monitor's model is a

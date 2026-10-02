@@ -28,9 +28,15 @@ TALKER_DEFAULT_MODELS <- list(anthropic = "claude-haiku-4-5-20251001",
 # which does not come from the skill registry. The guidance says so,
 # because a model that is not told answers "I don't have access" and
 # then searches.
+#
+# `read_handle` is here because any of these can return more than the
+# model is shown: the result is cut and the rest stored under a handle.
+# Without a tool to search that, a talker told "40 of 60 lines shown"
+# cannot tell what is absent from what it was not shown.
 TALKER_TOOLS <- c("read_file", "skill_instructions", "grep_files",
                   "list_files", "git_status", "git_diff", "git_log",
-                  "r_help", "delegate", "job_status", "job_cancel")
+                  "r_help", "read_handle", "delegate", "job_status",
+                  "job_cancel")
 
 TALKER_GUIDANCE <- paste(
                          "## Talker mode",

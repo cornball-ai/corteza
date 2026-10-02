@@ -165,6 +165,15 @@ Implications:
 - Large outputs from either tool are captured as handles (e.g.
   `.h_001`) for the agent to reference later; those are read-only
   snapshots, not workspace state.
+- Any tool result over the cap (`R/tool-output-cap.R`) is cut to a
+  preview and stashed the same way; `read_handle` searches it
+  (`op = "grep"`) or pages it (`op = "lines"`). A session with
+  `handle_store` set keeps its cut results there, named `.o_NNN`, out of
+  reach of `run_r` and of other sessions in the process. Matrix room
+  sessions set it (`bot_new_session()`), since a bot's rooms share one
+  process. The cut notice names only a tool in the session's
+  `tools_filter`, so a role that gets neither `read_handle` nor `run_r`
+  is told it cannot open the handle.
 - Same isolation rationale as `run_r_script` applies to subagents:
   each `subagent_spawn()` opens a private `callr::r_session` so child
   work can't leak into the parent's R session.

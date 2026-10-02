@@ -29,6 +29,40 @@ expect_identical(s$tools_filter, corteza:::TALKER_TOOLS)
 # No write or exec tool is the talker's own.
 expect_false(any(c("write_file", "replace_in_file", "bash", "run_r",
                    "run_r_script") %in% s$tools_filter))
+# It can search a result that was cut for length: the marker it gets
+# names read_handle, and it has it.
+expect_true("read_handle" %in% s$tools_filter)
+local({
+    on.exit({
+        options(corteza.policy = NULL)
+        corteza:::clear_handles()
+    }, add = TRUE)
+    options(corteza.policy = function(call) {
+        list(model = "cloud", approval = "allow", reason = "test allow")
+    })
+    corteza::ensure_skills()
+    listing <- paste(c("No room matches 'x'. This bot's rooms:",
+                       sprintf("- room %02d", 1:60)), collapse = "\n")
+    h <- corteza:::.make_tool_handler(s, tool_executor = function(name, args) {
+        if (identical(name, "read_handle")) {
+            return(corteza:::call_skill(name, as.list(args),
+                                        ctx = list(session = s)))
+        }
+        list(content = list(list(type = "text", text = listing)), isError = TRUE)
+    })
+    cut <- h("delegate", list(task = "t", room = "x"))
+    expect_true(grepl("[tool output truncated]", cut, fixed = TRUE))
+    expect_false(grepl("room 55", cut, fixed = TRUE))
+    id <- regmatches(cut, regexpr("\\.[ho]_[0-9]+", cut))
+    expect_true(grepl(sprintf("read_handle(\"%s\", op = \"grep\"", id), cut,
+                      fixed = TRUE))
+    expect_true(grepl("56: - room 55",
+                      h("read_handle", list(handle = id, op = "grep",
+                                            pattern = "room 55")), fixed = TRUE))
+    expect_true(grepl("No line matches 'hacer'. All 61 lines were searched.",
+                      h("read_handle", list(handle = id, op = "grep",
+                                            pattern = "hacer")), fixed = TRUE))
+})
 expect_true(grepl("^base prompt", s$system))
 expect_true(grepl("Never guess", s$system, fixed = TRUE))
 # The talker is told it may search: the provider's web search is on for
