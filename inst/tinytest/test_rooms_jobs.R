@@ -635,6 +635,16 @@ local({
     unlink(corteza:::bot_notice_dir(), recursive = TRUE)
 })
 
+# The bot retires its rooms' idle workers each step. With no worker
+# alive there is nothing to do, and no config is read to find that out.
+local({
+    quiet <- registry(make_session("!q1:ex"), make_session("!q2:ex"))
+    expect_identical(corteza:::bot_retire_workers(
+        quiet, cfg = stop("config must not be read")), 0L)
+    expect_identical(length(corteza:::job_workers_live(
+        corteza:::bot_sessions_list(quiet))), 0L)
+})
+
 # With the asking session gone, the result is still posted where it was
 # asked for.
 local({

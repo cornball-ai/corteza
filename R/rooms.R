@@ -2539,6 +2539,10 @@ bot_run_step <- function(state, timeout = 30000L) {
             }
         }
     }
+    # Close job workers that have sat idle, and keep the number of them
+    # bounded. After the pump, so a worker whose job just ended is
+    # counted as idle from now. Needs no client.
+    bot_retire_workers(state$sessions)
     # Out-of-band archive trigger: another process (e.g. a cornelius
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns

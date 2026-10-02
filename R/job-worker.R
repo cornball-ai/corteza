@@ -23,7 +23,11 @@
 # The parent side never blocks on the worker. job_pump() polls with a
 # zero timeout and returns events for the caller's surface to present.
 
-JOB_WORKER_DEFAULTS <- list(max_turns = 50L)
+# idle_minutes and max_workers bound the worker processes a surface with
+# many sessions keeps (job_workers_retire()); `jobs$worker_idle_minutes`
+# and `jobs$max_workers` in the config replace them.
+JOB_WORKER_DEFAULTS <- list(max_turns = 50L, idle_minutes = 30,
+                            max_workers = 8L)
 
 # The session's key for its jobs and its worker checkpoint. Surfaces set
 # session$job_key (a Matrix room or thread key, a REPL session key); the
@@ -425,6 +429,15 @@ job_worker_start <- function(session, role = "doer") {
     })
     session$.job_worker <- worker
     session$.job_worker_role <- role
+    # A worker closed for sitting idle (job_workers_retire()) was closed
+    # between jobs, with its checkpoint current. Its replacement says so,
+    # so a surface can tell a routine restart from a crash.
+    notes <- session$.job_worker_notes %||% list()
+    if (isTRUE(notes[[role]]$retired) && is.list(restore)) {
+        restore$retired <- TRUE
+    }
+    notes[[role]]$retired <- NULL
+    session$.job_worker_notes <- notes
     job_worker_note(session, role, dir = job_worker_dir(session))
     restore
 }
@@ -504,6 +517,103 @@ job_worker_close_all <- function(session) {
     }
     session$.job_workers_parked <- NULL
     invisible(TRUE)
+}
+
+# ---- Retiring workers ----------------------------------------------------
+#
+# A worker is started by a session's first job and reused by its later
+# ones. Nothing used to stop it: a bot serving many rooms and threads
+# kept a doer, and after a review a reviewer, for each one that had ever
+# delegated, for as long as the bot ran.
+#
+# A worker that is not running a job can be closed at no cost to
+# correctness. Its R workspace and conversation were checkpointed when
+# its last job ended, and the next job for that session starts a new
+# process that restores them (and says so). What does not come back is
+# what a checkpoint cannot hold: open connections and other external
+# pointers.
+#
+# A worker running a job is never closed here, and a job waiting for an
+# approval is a running job.
+
+# Every live worker the sessions hold, one entry each: the session, the
+# role, whether it is the session's active worker, whether it is busy,
+# and when it last had work.
+job_workers_live <- function(sessions) {
+    out <- list()
+    alive <- function(w) {
+        !is.null(w) && isTRUE(tryCatch(w$is_alive(), error = function(e) FALSE))
+    }
+    for (s in sessions) {
+        notes <- s$.job_worker_notes %||% list()
+        if (alive(s$.job_worker)) {
+            role <- s$.job_worker_role
+            out[[length(out) + 1L]] <- list(session = s, role = role,
+                active = TRUE, busy = !is.null(s$.job_current),
+                used = notes[[role]]$used)
+        }
+        parked <- s$.job_workers_parked %||% list()
+        for (role in names(parked)) {
+            if (alive(parked[[role]])) {
+                out[[length(out) + 1L]] <- list(
+                    session = s, role = role, active = FALSE, busy = FALSE,
+                    used = notes[[role]]$used)
+            }
+        }
+    }
+    out
+}
+
+# Close workers idle for `idle_minutes`, then, if more than `max_workers`
+# remain, the ones idle longest until the count fits. Returns how many
+# were closed.
+#
+# The limit bounds what is kept, not what runs: busy workers are never
+# closed, so more than `max_workers` jobs running at once leaves more
+# than `max_workers` processes until they finish. `idle_minutes` of 0
+# turns idle retirement off and leaves only the limit.
+job_workers_retire <- function(sessions,
+                               idle_minutes = JOB_WORKER_DEFAULTS$idle_minutes,
+                               max_workers = JOB_WORKER_DEFAULTS$max_workers,
+                               now = Sys.time()) {
+    live <- job_workers_live(sessions)
+    if (!length(live)) {
+        return(invisible(0L))
+    }
+    idle <- vapply(live, function(w) {
+        # A worker with no record of use is treated as just used.
+        as.numeric(difftime(now, w$used %||% now, units = "mins"))
+    }, numeric(1))
+    busy <- vapply(live, function(w) isTRUE(w$busy), logical(1))
+    retire <- !busy & idle_minutes > 0 & idle >= idle_minutes
+    excess <- sum(!retire) - max_workers
+    if (excess > 0) {
+        # Longest idle first, among those kept so far and not busy.
+        order_idle <- order(idle, decreasing = TRUE)
+        spare <- order_idle[!retire[order_idle] & !busy[order_idle]]
+        retire[utils::head(spare, excess)] <- TRUE
+    }
+    for (w in live[retire]) {
+        if (isTRUE(w$active)) {
+            job_worker_close(w$session)
+        } else {
+            job_worker_drop_parked(w$session, w$role)
+        }
+        notes <- w$session$.job_worker_notes %||% list()
+        notes[[w$role]]$retired <- TRUE
+        w$session$.job_worker_notes <- notes
+    }
+    invisible(sum(retire))
+}
+
+# One of the two retirement settings from a config value: a non-negative
+# number, or the default when the value is missing or not one.
+job_worker_limit <- function(x, default) {
+    x <- suppressWarnings(as.numeric(x %||% default))
+    if (length(x) != 1L || is.na(x) || x < 0) {
+        return(default)
+    }
+    x
 }
 
 # Everything a session holds about its jobs and workers.
@@ -802,7 +912,13 @@ job_dispatch <- function(session, j, checkout) {
     if (inherits(restore, "error")) {
         return(refuse(conditionMessage(restore)))
     }
-    if (isTRUE(restore$restored)) {
+    # A restore is reported because it has limits the user should hear
+    # about: objects holding external pointers come back dead. A worker
+    # that was retired for sitting idle and had no objects to restore
+    # has nothing to report, and saying so before most jobs would bury
+    # the report that matters, the one after a crash.
+    routine <- isTRUE(restore$retired) && !length(restore$objects)
+    if (isTRUE(restore$restored) && !routine) {
         events[[length(events) + 1L]] <- list(type = "restored",
             job = j, restore = restore)
     }

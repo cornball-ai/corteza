@@ -190,6 +190,37 @@ bot_notices_retry <- function(chat, sessions, owner, now = Sys.time()) {
     invisible(delivered)
 }
 
+# Retire the bot's idle job workers (job_workers_retire()). A bot has a
+# session per room and per thread, each of which keeps a doer and a
+# reviewer process once it has used them, so without this the count only
+# grows while the bot runs.
+#
+# The two settings are the bot's, not a room's: `jobs$worker_idle_minutes`
+# and `jobs$max_workers` in the corteza config that applies to the bot's
+# own directory (the global config, with the bot's project config over
+# it). The config is read only while there is a worker to retire.
+bot_retire_workers <- function(sessions, cfg = NULL, now = Sys.time()) {
+    all <- bot_sessions_list(sessions)
+    if (!length(job_workers_live(all))) {
+        return(invisible(0L))
+    }
+    if (is.null(cfg)) {
+        cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
+    }
+    jobs <- if (is.null(cfg)) {
+        list()
+    } else {
+        tryCatch(load_config(bot_default_cwd(cfg))$jobs,
+                 error = function(e) NULL) %||% list()
+    }
+    job_workers_retire(all,
+                       idle_minutes = job_worker_limit(jobs$worker_idle_minutes,
+            JOB_WORKER_DEFAULTS$idle_minutes),
+                       max_workers = job_worker_limit(jobs$max_workers,
+            JOB_WORKER_DEFAULTS$max_workers),
+                       now = now)
+}
+
 bot_pump_jobs <- function(sessions, chat, cfg) {
     for (s in bot_job_sessions(sessions)) {
         events <- tryCatch(job_pump(s), error = function(e) {
@@ -486,6 +517,15 @@ bot_job_result_text <- function(job) {
 }
 
 bot_job_restored_text <- function(restore) {
+    # Closed for sitting idle, between jobs: nothing was interrupted.
+    if (isTRUE(restore$retired)) {
+        return(sprintf(paste("The job worker had been closed after sitting",
+                             "idle. It is running again with its workspace",
+                             "from the end of job %s (%d objects); objects",
+                             "holding connections or external pointers do",
+                             "not survive that."),
+                       restore$job %||% "?", length(restore$objects)))
+    }
     sprintf(paste("The job worker restarted and restored its workspace from",
                   "the end of job %s (%d objects). Anything an unfinished",
                   "job held in memory is gone; objects holding connections",

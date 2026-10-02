@@ -53,6 +53,16 @@
   directory. `/clear` and `/model` no longer orphan a running job: the
   job and its worker move to the replacement session.
 
+- **A Matrix bot retires idle job workers.** Each room and thread kept a
+  doer process, and a reviewer once it had one, for as long as the bot
+  ran. A worker idle for `jobs$worker_idle_minutes` (default 30; 0 to
+  disable) is now closed, and no more than `jobs$max_workers` (default
+  8) are kept, longest idle closed first. Both are read from the corteza
+  config for the bot's own directory. A worker running a job, or waiting
+  on an approval, is never closed, so the count can exceed the limit
+  while that many jobs run. The next job in that room starts a new
+  process that restores the worker's saved workspace and conversation.
+
 - **A `thinking` setting names the Anthropic thinking type.** `thinking`
   in the corteza config, in a `talker` block, or under `jobs` and
   `jobs$reviewer`, is sent as the request's `thinking.type`. Claude

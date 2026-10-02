@@ -472,6 +472,105 @@ unlink(c(gate, dir_a, dir_b), recursive = TRUE)
 corteza:::job_worker_close_all(mover)
 corteza:::job_worker_close_all(second)
 
+# --- Idle workers are retired, and the number kept is bounded ---
+# Three sessions that have each run a job hold three worker processes.
+live_n <- function(ss) length(corteza:::job_workers_live(ss))
+pool <- lapply(c("room-p1", "room-p2", "room-p3"), function(k) {
+    p <- make_session(k, counting)
+    pump_until(p, corteza:::job_submit(p, "first"))
+    p
+})
+expect_identical(live_n(pool), 3L)
+t_now <- Sys.time()
+# Not idle long enough and under the limit: nothing is closed.
+expect_identical(corteza:::job_workers_retire(pool, idle_minutes = 30,
+                                              max_workers = 8, now = t_now),
+                 0L)
+expect_identical(live_n(pool), 3L)
+# Over the limit: the one idle longest goes, and only as many as needed.
+pool[[2L]]$.job_worker_notes$doer$used <- t_now - 600
+pids <- vapply(pool, function(p) p$.job_worker$get_pid(), 1L)
+expect_identical(corteza:::job_workers_retire(pool, idle_minutes = 30,
+                                              max_workers = 2, now = t_now),
+                 1L)
+expect_null(pool[[2L]]$.job_worker)
+expect_identical(pool[[1L]]$.job_worker$get_pid(), pids[[1L]])
+expect_identical(pool[[3L]]$.job_worker$get_pid(), pids[[3L]])
+# Idle past the timeout: the rest go.
+expect_identical(corteza:::job_workers_retire(pool, idle_minutes = 30,
+                                              max_workers = 8,
+                                              now = t_now + 31 * 60), 2L)
+expect_identical(live_n(pool), 0L)
+# idle_minutes = 0 turns idle retirement off; nothing left to close here.
+expect_identical(corteza:::job_workers_retire(pool, idle_minutes = 0,
+                                              max_workers = 8,
+                                              now = t_now + 86400), 0L)
+# The next job brings a retired worker back with its workspace: the
+# count carries on from the checkpoint, in a new process. It had an
+# object to restore, so the surface is told, and told it was routine.
+back <- corteza:::job_submit(pool[[2L]], "second")
+# The first pump hands over what job_submit() held, the restore included.
+seen_back <- pump_until(pool[[2L]], back)
+expect_identical(corteza:::job_read(back)$outcome$result, "second #2")
+expect_false(identical(pool[[2L]]$.job_worker$get_pid(), pids[[2L]]))
+restored <- Filter(function(e) identical(e$type, "restored"), seen_back)
+expect_identical(length(restored), 1L)
+expect_true(isTRUE(restored[[1L]]$restore$retired))
+expect_true(grepl("sitting idle",
+                  corteza:::bot_job_restored_text(restored[[1L]]$restore)))
+expect_false(grepl("sitting idle", corteza:::bot_job_restored_text(
+    list(restored = TRUE, job = "x", objects = "a"))))
+# The mark is spent: a later crash of this worker is not called routine.
+expect_null(pool[[2L]]$.job_worker_notes$doer$retired)
+
+# A worker running a job is never retired, however old or however far
+# over the limit; neither is one waiting on an approval, which is a
+# running job. A parked worker for another role is fair game.
+gate2 <- tempfile("job-gate2")
+Sys.setenv(JOB_TEST_GATE = gate2)
+busy_s <- make_session("room-busy", function(task) {
+    gate <- Sys.getenv("JOB_TEST_GATE")
+    deadline <- Sys.time() + 20
+    while (!file.exists(gate) && Sys.time() < deadline) Sys.sleep(0.05)
+    list(reply = "finished")
+})
+pump_until(busy_s, corteza:::job_submit(busy_s, "review me",
+                                        role = "reviewer"), timeout = 0.5)
+file.create(gate2)
+pump_until(busy_s, corteza:::job_list(origin_key = "room-busy")[[1L]]$id)
+unlink(gate2)
+bj2 <- corteza:::job_submit(busy_s, "long")
+for (i in 1:50) {
+    corteza:::job_pump(busy_s)
+    if (identical(corteza:::job_read(bj2)$status, "running")) break
+    Sys.sleep(0.1)
+}
+expect_identical(corteza:::job_read(bj2)$status, "running")
+# Doer active and busy, reviewer parked.
+expect_identical(live_n(list(busy_s)), 2L)
+busy_pid <- busy_s$.job_worker$get_pid()
+expect_identical(corteza:::job_workers_retire(list(busy_s), idle_minutes = 1,
+                                              max_workers = 0,
+                                              now = Sys.time() + 86400), 1L)
+expect_identical(live_n(list(busy_s)), 1L)
+expect_identical(busy_s$.job_worker$get_pid(), busy_pid)
+expect_identical(busy_s$.job_current, bj2)
+expect_null(busy_s$.job_workers_parked$reviewer)
+file.create(gate2)
+pump_until(busy_s, bj2)
+expect_identical(corteza:::job_read(bj2)$status, "done")
+Sys.unsetenv("JOB_TEST_GATE")
+unlink(gate2)
+# Settings from a config: a missing or malformed value is the default.
+expect_identical(corteza:::job_worker_limit(NULL, 30), 30)
+expect_identical(corteza:::job_worker_limit(5, 30), 5)
+expect_identical(corteza:::job_worker_limit(0, 30), 0)
+expect_identical(corteza:::job_worker_limit("ten", 30), 30)
+expect_identical(corteza:::job_worker_limit(-1, 30), 30)
+for (p in c(pool, list(busy_s))) {
+    corteza:::job_worker_close_all(p)
+}
+
 for (sess in list(s, slow, failing, dying, broken, asker, probe)) {
     corteza:::job_worker_close(sess)
 }
