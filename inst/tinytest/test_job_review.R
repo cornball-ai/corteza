@@ -44,6 +44,8 @@ expect_identical(rv$tools, corteza:::JOB_REVIEWER_TOOLS)
 expect_false(any(c("bash", "cmd", "run_r", "run_r_script", "write_file",
                    "replace_in_file", "web_search", "fetch_url",
                    "spawn_subagent", "delegate") %in% rv$tools))
+# It can read the rest of a result that was cut for length.
+expect_true("read_handle" %in% rv$tools)
 expect_false(rv$web_search)
 expect_identical(rv$allowed_paths, plain)
 expect_identical(rv$system, corteza:::JOB_REVIEWER_SYSTEM)

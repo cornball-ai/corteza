@@ -30,9 +30,11 @@
 # lock is released when the review ends.
 
 # Look, do not touch: no bash, no run_r, no write tools, no network.
+# `read_handle` reads the rest of a result of these that was cut for
+# length; it opens nothing else.
 JOB_REVIEWER_TOOLS <- c("read_file", "skill_instructions", "grep_files",
                         "list_files", "git_status", "git_diff", "git_log",
-                        "r_help")
+                        "r_help", "read_handle")
 
 JOB_REVIEWER_SYSTEM <- paste(
                              "You are the reviewer for work a doer agent has just finished in this",

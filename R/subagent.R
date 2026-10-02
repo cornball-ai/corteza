@@ -605,9 +605,11 @@ SUBAGENT_PRESETS <- list(
                          # supervisor. No web_search/fetch_url either: it reads the
                          # worker's transcript, which is attacker-influenceable text,
                          # so it gets no outbound channel. See PRESET_WEB_SEARCH below;
-                         # the tool list alone does not deliver that.
+                         # the tool list alone does not deliver that. `read_handle`
+                         # reads the rest of one of its own results that was cut for
+                         # length, from its own process's store.
                          monitor = c("read_file", "skill_instructions", "grep_files", "list_files",
-                                     "git_status", "git_diff", "git_log")
+                                     "git_status", "git_diff", "git_log", "read_handle")
 )
 
 # Provider-native (server-side) web search per preset.

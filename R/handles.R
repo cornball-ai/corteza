@@ -274,6 +274,9 @@ tool_read_handle <- function(handle, op = "str", pattern = NULL,
 #' @noRd
 handle_read_from <- function(store, handle, op = "str", pattern = NULL,
                              start = NULL, end = NULL) {
+    if (!is.character(handle) || length(handle) != 1L || is.na(handle)) {
+        return(err("read_handle needs `handle`: one handle id, such as .h_001."))
+    }
     value <- get_handle(handle, store = store)
     if (is.null(value) && !exists(handle, envir = store, inherits = FALSE)) {
         return(err(sprintf("Unknown handle: %s", handle)))

@@ -172,6 +172,14 @@ res <- corteza:::call_tool("read_handle",
                            list(handle = h$handle, op = "bogus"))
 expect_true(isTRUE(res$isError))
 
+# No handle, or several, is a clean error too: a model that passes what
+# a regular expression found in a marker can pass nothing.
+for (bad in list(character(), c(".h_001", ".h_002"), NA_character_)) {
+    res <- corteza:::tool_read_handle(bad, op = "grep", pattern = "x")
+    expect_true(isTRUE(res$isError))
+    expect_true(grepl("one handle id", res$content[[1]]$text, fixed = TRUE))
+}
+
 # --- read_handle: searching and paging a stored tool result ------------
 
 corteza:::clear_handles()

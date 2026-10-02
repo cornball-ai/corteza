@@ -23,13 +23,14 @@
 - **A tool result that was cut for length can be searched.**
   `read_handle` gains `op = "grep"` (the lines matching `pattern`, with
   line numbers and a count of how many lines were searched) and
-  `op = "lines"` (`start` to `end`, 40 at a time). The talker now has
-  `read_handle`: it was shown the first 40 lines of a long result and
-  told to read the rest with a tool it did not have. The notice on a cut
-  result now names only a tool the session has, and says so when it has
-  none. In a Matrix bot each room keeps its own cut results (named
-  `.o_001`, ...), so one room cannot open what another room's tools
-  returned; they shared the process's store before.
+  `op = "lines"` (`start` to `end`, 40 at a time). The talker, the
+  reviewer, and the monitor now have `read_handle`: the talker was
+  shown the first 40 lines of a long result and told to read the rest
+  with a tool it did not have, and the other two had no way at all. The
+  notice on a cut result now names only a tool the session has, and
+  says so when it has none. In a Matrix bot each room keeps its own cut
+  results (named `.o_001`, ...), so one room cannot open what another
+  room's tools returned; they shared the process's store before.
 
 - **Matrix approvals only accept an operator or the room's one human.**
   Any reaction other than the bot's own used to answer an approval prompt,
