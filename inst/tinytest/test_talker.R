@@ -186,17 +186,27 @@ expect_identical(corteza:::.gate_reasoning_args(
 # `thinking_budget_tokens` formal sits ahead of `...`: `thinking` alone
 # is taken as the budget. Naming the budget keeps them apart. Checked
 # against agent()'s real formals, with the body swapped for a probe.
+# llm.api 0.1.9.13 adds a `thinking` formal; the probe reads the type
+# from there when it exists and from the dots when it does not, so the
+# prepared call is checked the same way against either.
+agent_formals <- formals(llm.api::agent)
 probe <- function() NULL
-formals(probe) <- formals(llm.api::agent)
-body(probe) <- quote(list(budget = thinking_budget_tokens,
-                          dots = names(list(...))))
+formals(probe) <- agent_formals
+body(probe) <- if ("thinking" %in% names(agent_formals)) {
+    quote(list(budget = thinking_budget_tokens, type = thinking))
+} else {
+    quote(list(budget = thinking_budget_tokens,
+               type = list(...)[["thinking"]]))
+}
 th_args <- list(prompt = "p", thinking = list(type = "between_tools"))
-# Negative control: unprepared, the type lands in the budget.
-expect_identical(do.call(probe, th_args)$budget,
-                 list(type = "between_tools"))
+if (!"thinking" %in% names(agent_formals)) {
+    # Negative control: unprepared, the type lands in the budget.
+    expect_identical(do.call(probe, th_args)$budget,
+                     list(type = "between_tools"))
+}
 sent <- do.call(probe, corteza:::.agent_call_args(th_args))
 expect_null(sent$budget)
-expect_true("thinking" %in% sent$dots)
+expect_identical(sent$type, list(type = "between_tools"))
 # Nothing to do without a thinking type, and a set budget is left alone.
 expect_identical(corteza:::.agent_call_args(list(prompt = "p")),
                  list(prompt = "p"))

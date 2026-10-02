@@ -336,6 +336,10 @@
 # single integer"). A formal already matched exactly is out of that
 # round, so naming the budget, NULL included, sends `thinking` on to the
 # dots. `[<-` with list(NULL) keeps the NULL element; `$<-` would drop it.
+#
+# llm.api 0.1.9.13 gives agent() a `thinking` formal, which matches
+# exactly and makes this a no-op. Remove it once the llm.api floor in
+# DESCRIPTION reaches that version.
 .agent_call_args <- function(args) {
     if (!is.null(args[["thinking"]]) &&
         !"thinking_budget_tokens" %in% names(args)) {
