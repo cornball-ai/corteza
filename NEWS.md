@@ -25,8 +25,10 @@
   gets: the shared instructions file, the project's AGENTS.md or
   CLAUDE.md, the briefing, and configured context files. The task text
   is all a talker hands over, so without this a project's rules reached
-  the doer only when the talker restated them. A reviewer keeps its own
-  short prompt.
+  the doer only when the talker restated them. A reviewer gets the
+  shared and project instructions after its own prompt, so it can say
+  when the work broke one; its tools stay read-only and confined to the
+  checkout.
 
 - **A Matrix bot's rooms can hand work to each other.** `delegate`
   takes `room` (a room's name, id, or project directory). The job is

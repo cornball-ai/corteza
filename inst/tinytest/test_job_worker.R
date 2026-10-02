@@ -353,14 +353,49 @@ bare$cwd <- proj
 bp <- corteza:::job_submit(bare, "check")
 pump_until(bare, bp)
 expect_identical(corteza:::job_read(bp)$outcome$result, "FALSE TRUE")
-expect_true(corteza:::job_worker_spec(ctxprobe)$project_context)
-expect_false(corteza:::job_worker_spec(ctxprobe, "reviewer")$project_context)
+expect_identical(corteza:::job_worker_spec(ctxprobe)$project_context, "full")
+expect_identical(corteza:::job_worker_spec(ctxprobe,
+                                           "reviewer")$project_context,
+                 "instructions")
 # The helper itself: role first, project text after, and the role alone
 # is never lost.
 jc <- corteza:::job_worker_context("ROLE-LINE", cwd = proj)
 expect_true(startsWith(jc, "ROLE-LINE"))
 expect_true(grepl("doer-context-sentinel", jc, fixed = TRUE))
+# "instructions": the rules, without corteza's own account of how to
+# work, which is for an agent that acts.
+preamble <- "Use the bash tool to run shell commands"
+expect_true(grepl(preamble, jc, fixed = TRUE))
+ji <- corteza:::job_worker_context("ROLE-LINE", cwd = proj,
+                                   scope = "instructions")
+expect_true(startsWith(ji, "ROLE-LINE"))
+expect_true(grepl("doer-context-sentinel", ji, fixed = TRUE))
+expect_false(grepl(preamble, ji, fixed = TRUE))
+expect_true(nchar(ji) < nchar(jc))
 corteza:::job_worker_close(bare)
+
+# A reviewer has to know the rules the work is held to. It starts with
+# its own role, then the shared and project instructions, and is still
+# confined to its checkout: the instructions are read by the worker
+# process before its tools are confined, not through them.
+revprobe <- make_session("room-review-context", function(task) {
+    st <- get(".subagent_state", envir = asNamespace("corteza"))
+    sys <- paste(st$session$system, collapse = "\n")
+    list(reply = paste(
+        grepl("doer-context-sentinel", sys, fixed = TRUE),
+        startsWith(sys, "You are the reviewer"),
+        grepl("Use the bash tool to run shell commands", sys, fixed = TRUE),
+        identical(normalizePath(getOption("corteza.allowed_paths")),
+                  normalizePath(getwd())),
+        "bash" %in% st$session$tools_filter))
+})
+revprobe$job_worker_spec$init_fn <- NULL
+revprobe$cwd <- proj
+rp <- corteza:::job_submit(revprobe, "review this", role = "reviewer")
+pump_until(revprobe, rp)
+expect_identical(corteza:::job_read(rp)$outcome$result,
+                 "TRUE TRUE FALSE TRUE FALSE")
+corteza:::job_worker_close_all(revprobe)
 unlink(proj, recursive = TRUE)
 
 # --- The job, the session, and the worker name one directory ---

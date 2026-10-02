@@ -29,22 +29,32 @@ load_context <- function(cwd = getwd()) {
 #'   before corteza's normal preamble (used by the Matrix adapter).
 #' @param instruction_catalog Optional prebuilt session catalog.
 #' @param include_instruction_catalog Whether to render its compact header.
+#' @param instructions_only Render only `prefix_sources` and what the
+#'   manifest discovers by itself: the shared instructions file and the
+#'   project's AGENTS.md or CLAUDE.md. For a reader that has to know the
+#'   rules without being told how to work (a job's reviewer): no corteza
+#'   preamble or runtime guidance, no briefing, no workspace identity.
 #' @return List with system, manifest, and instruction catalog.
 #' @noRd
 load_context_bundle <- function(cwd = getwd(), prefix_sources = list(),
                                 instruction_catalog = NULL,
-                                include_instruction_catalog = TRUE) {
+                                include_instruction_catalog = TRUE,
+                                instructions_only = FALSE) {
     config <- load_config(cwd)
-    if (is.null(instruction_catalog)) {
+    if (is.null(instruction_catalog) && !isTRUE(instructions_only)) {
         instruction_catalog <- build_instruction_catalog(cwd)
     }
-    sources <- c(prefix_sources, context_base_sources(cwd),
-                 context_workspace_sources(config),
-                 context_custom_sources(cwd, config),
-                 context_dynamic_sources(
-            cwd, config, instruction_catalog,
-            include_instruction_catalog = include_instruction_catalog
-        ))
+    if (isTRUE(instructions_only)) {
+        sources <- prefix_sources
+    } else {
+        sources <- c(prefix_sources, context_base_sources(cwd),
+                     context_workspace_sources(config),
+                     context_custom_sources(cwd, config),
+                     context_dynamic_sources(
+                cwd, config, instruction_catalog,
+                include_instruction_catalog = include_instruction_catalog
+            ))
+    }
     manifest <- saber::context_manifest(
                                         agent = "corteza",
                                         project_dir = cwd,

@@ -179,11 +179,13 @@ job_worker_spec <- function(session, role = "doer") {
                  max_turns = as.integer(cfg$max_turns %||%
                                         JOB_WORKER_DEFAULTS$max_turns),
                  system = job_worker_system(role),
-                 # A doer works on the project, so it gets the project's
-                 # context (job_worker_context()). A reviewer judges one
-                 # change against the task it was given and keeps its
-                 # own short prompt.
-                 project_context = !reviewer,
+                 # What of the project's context the worker starts with
+                 # (job_worker_context()). A doer works on the project
+                 # and gets all of it. A reviewer has to know the rules
+                 # the work is held to, or it cannot say the work broke
+                 # one; it gets the shared and project instructions and
+                 # nothing about how to work, since it only reads.
+                 project_context = if (reviewer) "instructions" else "full",
                  plan_mode = isTRUE(session$plan_mode),
                  # The originating session's channel, so policy judges the
                  # worker's calls as it would the session's own.
@@ -224,12 +226,19 @@ job_worker_system <- function(role) {
 # it for the tools the worker actually has. An error here stops the
 # worker from starting, which the job reports; a doer that quietly
 # starts without the rules is the failure this exists to prevent.
-job_worker_context <- function(system, cwd = getwd()) {
+#
+# `scope` is the spec's `project_context`: "full" for all of the above,
+# "instructions" for the shared and project instruction files alone.
+# This reads files as the worker process, before any tool confinement is
+# set, so a reviewer confined to its checkout still gets the shared
+# instructions file that lives outside it.
+job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     role <- context_text_source("job_worker_role", "runtime", system, -400,
                                 "corteza::job_worker_system", "session")
     bundle <- load_context_bundle(cwd,
                                   prefix_sources = Filter(Negate(is.null), list(role)),
-                                  include_instruction_catalog = FALSE)
+                                  include_instruction_catalog = FALSE,
+                                  instructions_only = identical(scope, "instructions"))
     bundle$system %||% system
 }
 
@@ -245,8 +254,10 @@ job_worker_context <- function(system, cwd = getwd()) {
     worker_init(cwd)
     init <- spec$init_fn %||% function(spec) {
         system <- spec$system
-        if (isTRUE(spec$project_context)) {
-            system <- job_worker_context(system)
+        scope <- spec$project_context
+        if (isTRUE(scope) || isTRUE(scope %in% c("full", "instructions"))) {
+            system <- job_worker_context(system,
+                scope = if (isTRUE(scope)) "full" else scope)
         }
         subagent_turn_init(provider = spec$provider, model = spec$model,
                            tools_filter = spec$tools, system = system,
