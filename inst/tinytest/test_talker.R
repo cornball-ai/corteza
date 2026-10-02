@@ -31,6 +31,10 @@ expect_false(any(c("write_file", "replace_in_file", "bash", "run_r",
                    "run_r_script") %in% s$tools_filter))
 expect_true(grepl("^base prompt", s$system))
 expect_true(grepl("Never guess", s$system, fixed = TRUE))
+# The talker is told it may search: the provider's web search is on for
+# it although no listed tool provides it.
+expect_true(grepl("web search is available", s$system, fixed = TRUE))
+expect_true(isTRUE(corteza:::.session_web_search(s)))
 # The doer's spec gets the configured model back.
 spec <- corteza:::job_worker_spec(s)
 expect_identical(spec$model, "claude-opus-5-5")

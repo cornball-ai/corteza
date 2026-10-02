@@ -22,7 +22,12 @@ TALKER_DEFAULT_MODELS <- list(anthropic = "claude-haiku-4-5-20251001",
                               openai = "gpt-6-luna",
                               openai_codex = "gpt-6-luna")
 
-# What the talker can do itself: look, not touch.
+# What the talker can do itself: look, not touch. Web search is not in
+# this list and the talker has it anyway: on providers that support it,
+# turn() turns on the provider's own search (.session_web_search()),
+# which does not come from the skill registry. The guidance says so,
+# because a model that is not told answers "I don't have access" and
+# then searches.
 TALKER_TOOLS <- c("read_file", "skill_instructions", "grep_files",
                   "list_files", "git_status", "git_diff", "git_log",
                   "r_help", "delegate", "job_status", "job_cancel")
@@ -31,7 +36,11 @@ TALKER_GUIDANCE <- paste(
                          "## Talker mode",
                          "",
                          "You are the talker. Stay responsive: answer quick questions yourself",
-                         "with your read-only tools. For anything that needs edits, commands,",
+                         "with your read-only tools. When web search is available to you, a",
+                         "question about current facts (a score, news, a price) is a quick",
+                         "question: search and answer with what you found. Do not open by",
+                         "saying you lack access to something you are about to look up.",
+                         "For anything that needs edits, commands,",
                          "tests, or a long investigation, call `delegate` with a self-contained",
                          "task. The doer does not see this conversation, so the task must say",
                          "everything it needs: files, goal, constraints, how to check the work.",
