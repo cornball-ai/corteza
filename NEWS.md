@@ -20,6 +20,14 @@
   In the CLI and `chat()`, results and approvals appear before the next
   prompt; `/jobs` and `/cancel` manage them. Off by default.
 
+- **The doer starts with the project's context.** A delegated job's
+  worker gets, after its role, what a session opened in its directory
+  gets: the shared instructions file, the project's AGENTS.md or
+  CLAUDE.md, the briefing, and configured context files. The task text
+  is all a talker hands over, so without this a project's rules reached
+  the doer only when the talker restated them. A reviewer keeps its own
+  short prompt.
+
 - **A `thinking` setting names the Anthropic thinking type.** `thinking`
   in the corteza config, in a `talker` block, or under `jobs` and
   `jobs$reviewer`, is sent as the request's `thinking.type`. Claude

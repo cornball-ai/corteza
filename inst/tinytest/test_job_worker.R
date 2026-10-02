@@ -312,6 +312,52 @@ pr <- corteza:::job_submit(probe, "check")
 pump_until(probe, pr)
 expect_identical(corteza:::job_read(pr)$outcome$result, "TRUE matrix")
 
+# --- A doer starts with the project's context; a reviewer does not ---
+# The task text is all a talker hands over. The project's rules have to
+# be in the doer's own prompt, read from the directory it works in, with
+# its role ahead of them.
+proj <- tempfile("job-project")
+dir.create(proj)
+writeLines(c("# Agent Instructions", "", "doer-context-sentinel"),
+           file.path(proj, "AGENTS.md"))
+ctxprobe <- make_session("room-context", function(task) {
+    st <- get(".subagent_state", envir = asNamespace("corteza"))
+    sys <- paste(st$session$system, collapse = "\n")
+    at <- function(x) regexpr(x, sys, fixed = TRUE)[[1L]]
+    list(reply = paste(at("doer-context-sentinel") > 0,
+                       at("You are the doer") == 1L,
+                       at("You are the doer") < at("doer-context-sentinel")))
+})
+ctxprobe$job_worker_spec$init_fn <- NULL
+ctxprobe$cwd <- proj
+cp <- corteza:::job_submit(ctxprobe, "check")
+pump_until(ctxprobe, cp)
+expect_identical(corteza:::job_read(cp)$outcome$result, "TRUE TRUE TRUE")
+# Negative control: with the context switched off in the spec, the same
+# worker in the same directory has only its role.
+corteza:::job_worker_close(ctxprobe)
+bare <- make_session("room-bare", function(task) {
+    st <- get(".subagent_state", envir = asNamespace("corteza"))
+    sys <- paste(st$session$system, collapse = "\n")
+    list(reply = paste(grepl("doer-context-sentinel", sys, fixed = TRUE),
+                       grepl("You are the doer", sys, fixed = TRUE)))
+})
+bare$job_worker_spec$init_fn <- NULL
+bare$job_worker_spec$project_context <- FALSE
+bare$cwd <- proj
+bp <- corteza:::job_submit(bare, "check")
+pump_until(bare, bp)
+expect_identical(corteza:::job_read(bp)$outcome$result, "FALSE TRUE")
+expect_true(corteza:::job_worker_spec(ctxprobe)$project_context)
+expect_false(corteza:::job_worker_spec(ctxprobe, "reviewer")$project_context)
+# The helper itself: role first, project text after, and the role alone
+# is never lost.
+jc <- corteza:::job_worker_context("ROLE-LINE", cwd = proj)
+expect_true(startsWith(jc, "ROLE-LINE"))
+expect_true(grepl("doer-context-sentinel", jc, fixed = TRUE))
+corteza:::job_worker_close(bare)
+unlink(proj, recursive = TRUE)
+
 for (sess in list(s, slow, failing, dying, broken, asker, probe)) {
     corteza:::job_worker_close(sess)
 }

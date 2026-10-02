@@ -163,6 +163,11 @@ job_worker_spec <- function(session, role = "doer") {
                  max_turns = as.integer(cfg$max_turns %||%
                                         JOB_WORKER_DEFAULTS$max_turns),
                  system = job_worker_system(role),
+                 # A doer works on the project, so it gets the project's
+                 # context (job_worker_context()). A reviewer judges one
+                 # change against the task it was given and keeps its
+                 # own short prompt.
+                 project_context = !reviewer,
                  plan_mode = isTRUE(session$plan_mode),
                  # The originating session's channel, so policy judges the
                  # worker's calls as it would the session's own.
@@ -186,6 +191,32 @@ job_worker_system <- function(role) {
            "environment and this conversation persist between jobs.")
 }
 
+# The system prompt for a worker that works on the project in `cwd`: its
+# role first, then the context a session opened in that directory gets
+# (load_context_bundle(): the shared instructions file, the project's
+# AGENTS.md or CLAUDE.md, the briefing, configured context files).
+#
+# The task text is the only thing a talker hands over, and a talker
+# cannot be relied on to restate a project's rules in every task. A doer
+# without them edits a repository knowing nothing of how its owner works
+# in it: which tools, which git habits, what never to do.
+#
+# Built in the worker's own process, for the directory it runs in, and
+# not copied from the talker: the talker's prompt also carries its
+# surface (the Matrix room, talker guidance), which is not the doer's.
+# The instruction catalog is left out because subagent_turn_init() adds
+# it for the tools the worker actually has. An error here stops the
+# worker from starting, which the job reports; a doer that quietly
+# starts without the rules is the failure this exists to prevent.
+job_worker_context <- function(system, cwd = getwd()) {
+    role <- context_text_source("job_worker_role", "runtime", system, -400,
+                                "corteza::job_worker_system", "session")
+    bundle <- load_context_bundle(cwd,
+                                  prefix_sources = Filter(Negate(is.null), list(role)),
+                                  include_instruction_catalog = FALSE)
+    bundle$system %||% system
+}
+
 # ---- child side --------------------------------------------------------
 
 # Child-process state: the job being run and the approval timeout. Each
@@ -197,8 +228,12 @@ job_worker_system <- function(role) {
 .job_worker_child_init <- function(cwd, spec, state_dir) {
     worker_init(cwd)
     init <- spec$init_fn %||% function(spec) {
+        system <- spec$system
+        if (isTRUE(spec$project_context)) {
+            system <- job_worker_context(system)
+        }
         subagent_turn_init(provider = spec$provider, model = spec$model,
-                           tools_filter = spec$tools, system = spec$system,
+                           tools_filter = spec$tools, system = system,
                            max_turns = spec$max_turns,
                            plan_mode = spec$plan_mode, channel = spec$channel,
                            web_search = spec$web_search,
