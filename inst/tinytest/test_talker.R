@@ -59,6 +59,71 @@ for (p in list(c("anthropic_claude", "claude-haiku-4-5-20251001"),
     expect_identical(b$doer_provider, p[1L], info = p[1L])
     expect_identical(b$doer_model, "claude-opus-5", info = p[1L])
 }
+# --- Reasoning settings move to the doer with the model ---
+# They were chosen for the configured model. Sent with the talker's fast
+# model they are a 400 ("This model does not support the effort
+# parameter"), so every reply fails -- which is what a bot configured
+# with reasoning_effort did the first time talker mode was turned on.
+e <- corteza::new_session("matrix", provider = "anthropic",
+                          model_map = list(cloud = "claude-opus-5"),
+                          reasoning_effort = "xhigh",
+                          thinking_budget_tokens = 4096L)
+# A config-level setting is the configured model's too.
+e$config <- list(reasoning_effort = "max", thinking_budget_tokens = 2048L)
+corteza:::talker_enable(e, list(enabled = TRUE))
+expect_null(corteza:::.session_reasoning_effort(e))
+expect_null(corteza:::.session_thinking_budget(e))
+# What turn() would send for the talker carries no effort at all.
+sent <- corteza:::.gate_reasoning_args(
+    list(reasoning_effort = corteza:::.session_reasoning_effort(e)),
+    e$provider)
+expect_null(sent$reasoning_effort)
+expect_null(sent$output_config)
+# The doer gets them.
+expect_identical(e$doer_reasoning_effort, "xhigh")
+expect_identical(e$doer_thinking_budget, 4096L)
+dspec <- corteza:::job_worker_spec(e)
+expect_identical(dspec$model, "claude-opus-5")
+expect_identical(dspec$reasoning_effort, "xhigh")
+expect_identical(dspec$thinking_budget_tokens, 4096L)
+# A reviewer on the same model keeps them; on another model it gets the
+# provider's defaults unless its own config names a setting.
+expect_identical(corteza:::job_worker_spec(e, "reviewer")$reasoning_effort,
+                 "xhigh")
+e$config$jobs <- list(reviewer = list(model = "claude-haiku-4-5-20251001"))
+other <- corteza:::job_worker_spec(e, "reviewer")
+expect_identical(other$model, "claude-haiku-4-5-20251001")
+expect_null(other$reasoning_effort)
+expect_null(other$thinking_budget_tokens)
+e$config$jobs$reviewer$reasoning_effort <- "low"
+expect_identical(corteza:::job_worker_spec(e, "reviewer")$reasoning_effort,
+                 "low")
+# A doer moved to another model by jobs$model does not inherit them.
+e$config$jobs <- list(model = "claude-sonnet-5-5")
+expect_null(corteza:::job_worker_spec(e)$reasoning_effort)
+e$config$jobs$reasoning_effort <- "high"
+expect_identical(corteza:::job_worker_spec(e)$reasoning_effort, "high")
+# Only the config's own effort when nothing was set on the session.
+c2 <- corteza::new_session("matrix", provider = "anthropic",
+                           model_map = list(cloud = "claude-opus-5"))
+c2$config <- list(reasoning_effort = "max")
+corteza:::talker_enable(c2, list(enabled = TRUE))
+expect_null(corteza:::.session_reasoning_effort(c2))
+expect_identical(corteza:::job_worker_spec(c2)$reasoning_effort, "max")
+# The talker config can give the talker a setting of its own.
+t2 <- corteza::new_session("matrix", provider = "openai",
+                           model_map = list(cloud = "gpt-6"),
+                           reasoning_effort = "high")
+corteza:::talker_enable(t2, list(enabled = TRUE, reasoning_effort = "low"))
+expect_identical(corteza:::.session_reasoning_effort(t2), "low")
+expect_identical(corteza:::job_worker_spec(t2)$reasoning_effort, "high")
+# Without talker mode nothing changes: session, then config.
+n <- corteza::new_session("matrix", provider = "anthropic")
+n$config <- list(reasoning_effort = "max")
+expect_identical(corteza:::.session_reasoning_effort(n), "max")
+n$reasoning_effort <- "low"
+expect_identical(corteza:::.session_reasoning_effort(n), "low")
+
 # A provider with no default and no configured model is an error, not a
 # silent fall-through to some other model.
 m <- corteza::new_session("matrix", provider = "anthropic")

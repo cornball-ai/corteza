@@ -350,9 +350,15 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 
 # Resolve the reasoning-effort setting: explicit session field wins,
 # then config. NULL means "provider default".
+#
+# A talker session does not fall back to the config: the configured
+# setting belongs to the configured model, which talker_enable() moved
+# to the doer, and the talker's own model may not accept it at all.
 .session_reasoning_effort <- function(session) {
-    .check_reasoning_effort(session$reasoning_effort %||%
-                            session$config$reasoning_effort,
+    configured <- if (!isTRUE(session$talker)) {
+        session$config$reasoning_effort
+    }
+    .check_reasoning_effort(session$reasoning_effort %||% configured,
                             "session/config reasoning_effort")
 }
 
@@ -367,8 +373,11 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # provider's own floor (1024) and the max_tokens ceiling, so this only
 # has to agree that it is a positive whole number.
 .session_thinking_budget <- function(session) {
-    .check_max_tokens(session$thinking_budget_tokens %||%
-                      session$config$thinking_budget_tokens,
+    # Not from the config for a talker; see .session_reasoning_effort().
+    configured <- if (!isTRUE(session$talker)) {
+        session$config$thinking_budget_tokens
+    }
+    .check_max_tokens(session$thinking_budget_tokens %||% configured,
                       "session/config thinking_budget_tokens",
                       what = "thinking_budget_tokens")
 }

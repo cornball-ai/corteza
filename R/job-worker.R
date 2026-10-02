@@ -94,7 +94,29 @@ job_worker_spec <- function(session, role = "doer") {
     # (talker_enable() records it as doer_model).
     provider <- cfg$provider %||% session$doer_provider %||%
     session$provider %||% "anthropic"
-    model <- cfg$model %||% session$doer_model %||% session$model_map$cloud
+    configured <- session$doer_model %||% session$model_map$cloud
+    model <- cfg$model %||% configured
+    # Reasoning settings follow the model they were chosen for. For a
+    # talker session those are the ones talker_enable() set aside for
+    # the doer. A worker on some other model (`jobs$model`, or a
+    # reviewer's own below) gets the provider's defaults unless its
+    # config names a setting: effort tuned for one model can be an
+    # error on another.
+    effort <- if (isTRUE(session$talker)) {
+        session$doer_reasoning_effort
+    } else {
+        .session_reasoning_effort(session)
+    }
+    budget <- if (isTRUE(session$talker)) {
+        session$doer_thinking_budget
+    } else {
+        .session_thinking_budget(session)
+    }
+    if (!identical(model, configured)) {
+        effort <- budget <- NULL
+    }
+    effort <- cfg$reasoning_effort %||% effort
+    budget <- cfg$thinking_budget_tokens %||% budget
     reviewer <- identical(role, "reviewer")
     if (reviewer) {
         # The reviewer may run on another provider or model than the
@@ -102,17 +124,25 @@ job_worker_spec <- function(session, role = "doer") {
         # shares the first one's blind spots. A model named without a
         # provider keeps the doer's provider.
         rc <- cfg$reviewer %||% list()
+        doer <- list(provider = provider, model = model)
         if (!is.null(rc$provider) && is.null(rc$model) &&
             !identical(rc$provider, provider)) {
             model <- NULL
         }
         provider <- rc$provider %||% provider
         model <- rc$model %||% model
+        if (!identical(list(provider = provider, model = model), doer)) {
+            effort <- budget <- NULL
+        }
+        effort <- rc$reasoning_effort %||% effort
+        budget <- rc$thinking_budget_tokens %||% budget
     }
     spec <- list(
                  role = role,
                  provider = provider,
                  model = model,
+                 reasoning_effort = effort,
+                 thinking_budget_tokens = budget,
                  tools = tools,
                  # Read-only has to mean no network and no files outside
                  # the checkout: a tool list alone grants neither limit
@@ -163,7 +193,9 @@ job_worker_system <- function(role) {
                            max_turns = spec$max_turns,
                            plan_mode = spec$plan_mode, channel = spec$channel,
                            web_search = spec$web_search,
-                           allowed_paths = spec$allowed_paths)
+                           allowed_paths = spec$allowed_paths,
+                           reasoning_effort = spec$reasoning_effort,
+                           thinking_budget_tokens = spec$thinking_budget_tokens)
     }
     init(spec)
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600

@@ -67,6 +67,19 @@ talker_enable <- function(session, talker = list()) {
     }
     session$doer_model <- .resolve_model(session)
     session$doer_provider <- session$provider
+    # The reasoning settings were chosen for the configured model, so
+    # they go to the doer with it. Left on the session they are sent
+    # with the talker's model, and a fast model refuses them outright
+    # ("This model does not support the effort parameter"), which fails
+    # every reply. The talker runs on the provider's defaults unless the
+    # talker config names its own.
+    session$doer_reasoning_effort <- .session_reasoning_effort(session)
+    session$doer_thinking_budget <- .session_thinking_budget(session)
+    session$reasoning_effort <- .check_reasoning_effort(
+        talker$reasoning_effort, "talker$reasoning_effort")
+    session$thinking_budget_tokens <- .check_max_tokens(
+        talker$thinking_budget_tokens, "talker$thinking_budget_tokens",
+        what = "thinking_budget_tokens")
     # model_map$cloud is what turn() dispatches on (.resolve_model()).
     session$model_map$cloud <- model
     session$provider <- provider

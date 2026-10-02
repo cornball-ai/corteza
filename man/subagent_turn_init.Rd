@@ -13,7 +13,9 @@ subagent_turn_init(
   plan_mode = FALSE,
   web_search = NULL,
   allowed_paths = NULL,
-  channel = "console"
+  channel = "console",
+  reasoning_effort = NULL,
+  thinking_budget_tokens = NULL
 )
 }
 \arguments{
@@ -54,6 +56,11 @@ this as well.}
 passes its originating session's channel so work delegated from a
 Matrix room is judged by the Matrix column of the policy tensor, not
 the looser console one.}
+
+\item{reasoning_effort,thinking_budget_tokens}{Reasoning settings for
+the child's session, as in [new_session()]. NULL (default) leaves
+them to the child's config and the provider's defaults, as before.
+A job worker passes the ones configured for its model.}
 }
 \value{
 Invisible TRUE.

@@ -631,12 +631,15 @@ corteza:::job_pump(s_tmp)
 
 # --- The real init applies the reviewer's limits in the child ---
 probe <- make_session("!probe:ex", "@claude:ex")
+# The reasoning settings in the spec reach the child's session too.
+probe$reasoning_effort <- "high"
 probe$job_worker_spec <- list(run_fn = function(task) {
     st <- get(".subagent_state", envir = asNamespace("corteza"))
     list(reply = paste(
         identical(st$session$tools_filter, corteza:::JOB_REVIEWER_TOOLS),
         isFALSE(st$session$web_search),
         identical(getOption("corteza.allowed_paths"), getwd()),
+        identical(st$session$reasoning_effort, "high"),
         sep = " "))
 })
 pr <- corteza:::job_create("probe", role = "reviewer", workspace = plain,
@@ -647,7 +650,7 @@ while (!final(pr) && Sys.time() < deadline) {
     corteza:::job_pump(probe)
     Sys.sleep(0.1)
 }
-expect_identical(corteza:::job_read(pr)$outcome$result, "TRUE TRUE TRUE")
+expect_identical(corteza:::job_read(pr)$outcome$result, "TRUE TRUE TRUE TRUE")
 
 # --- delegate(review = ...) ---
 corteza::ensure_skills()

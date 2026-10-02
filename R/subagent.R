@@ -183,6 +183,10 @@ resolve_subagent_id <- function(input) {
 #'   passes its originating session's channel so work delegated from a
 #'   Matrix room is judged by the Matrix column of the policy tensor, not
 #'   the looser console one.
+#' @param reasoning_effort,thinking_budget_tokens Reasoning settings for
+#'   the child's session, as in [new_session()]. NULL (default) leaves
+#'   them to the child's config and the provider's defaults, as before.
+#'   A job worker passes the ones configured for its model.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
@@ -190,7 +194,9 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
                                max_turns = 10L, depth = 0L,
                                plan_mode = FALSE, web_search = NULL,
-                               allowed_paths = NULL, channel = "console") {
+                               allowed_paths = NULL, channel = "console",
+                               reasoning_effort = NULL,
+                               thinking_budget_tokens = NULL) {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
@@ -210,7 +216,9 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                            tools_filter = tools_filter, system = system,
                            max_turns = as.integer(max_turns),
                            plan_mode = isTRUE(plan_mode),
-                           web_search = web_search)
+                           web_search = web_search,
+                           reasoning_effort = reasoning_effort,
+                           thinking_budget_tokens = thinking_budget_tokens)
     session$is_subagent <- TRUE
     session$config <- load_config(getwd())
     session$instruction_catalog <- instruction_catalog
