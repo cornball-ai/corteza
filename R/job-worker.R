@@ -109,6 +109,7 @@ job_worker_spec <- function(session, role = "doer") {
     cfg <- session$config$jobs %||% list()
     tools <- switch(role, doer = SUBAGENT_PRESETS$work,
                     reviewer = JOB_REVIEWER_TOOLS,
+                    monitor = SUBAGENT_PRESETS$monitor,
                     stop("unknown job role: ", role, call. = FALSE))
     # A talker session keeps its configured model for the doer
     # (talker_enable() records it as doer_model).
@@ -145,12 +146,22 @@ job_worker_spec <- function(session, role = "doer") {
     # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
     thinking <- cfg[["thinking"]] %||% thinking
     reviewer <- identical(role, "reviewer")
-    if (reviewer) {
+    monitor <- identical(role, "monitor")
+    # Both read and neither writes: no network, nothing outside the
+    # checkout, and of the project's context only its rules.
+    read_only <- reviewer || monitor
+    sup <- if (monitor) supervisor_config()
+    if (read_only) {
         # The reviewer may run on another provider or model than the
         # doer (`jobs$reviewer`); a second opinion from the same model
         # shares the first one's blind spots. A model named without a
-        # provider keeps the doer's provider.
-        rc <- cfg$reviewer %||% list()
+        # provider keeps the doer's provider. The monitor likewise, from
+        # the user's own `supervisor` settings (supervisor_config()).
+        if (monitor) {
+            rc <- sup
+        } else {
+            rc <- cfg$reviewer %||% list()
+        }
         doer <- list(provider = provider, model = model)
         if (!is.null(rc$provider) && is.null(rc$model) &&
             !identical(rc$provider, provider)) {
@@ -176,12 +187,15 @@ job_worker_spec <- function(session, role = "doer") {
                  # Read-only has to mean no network and no files outside
                  # the checkout: a tool list alone grants neither limit
                  # (see PRESET_WEB_SEARCH and PRESET_CONFINED).
-                 web_search = if (reviewer) FALSE,
-                 allowed_paths = if (reviewer) {
+                 web_search = if (read_only) FALSE,
+                 allowed_paths = if (read_only) {
             job_checkout(session$cwd %||% getwd())
         },
-                 max_turns = as.integer(cfg$max_turns %||%
-                                        JOB_WORKER_DEFAULTS$max_turns),
+                 max_turns = if (monitor) {
+            sup$max_turns
+        } else {
+            as.integer(cfg$max_turns %||% JOB_WORKER_DEFAULTS$max_turns)
+        },
                  system = job_worker_system(role),
                  # What of the project's context the worker starts with
                  # (job_worker_context()). A doer works on the project
@@ -189,7 +203,16 @@ job_worker_spec <- function(session, role = "doer") {
                  # the work is held to, or it cannot say the work broke
                  # one; it gets the shared and project instructions and
                  # nothing about how to work, since it only reads.
-                 project_context = if (reviewer) "instructions" else "full",
+                 project_context = if (read_only) "instructions" else "full",
+                 # How this worker's tool calls are supervised
+                 # (R/supervisor.R), for a session that says so
+                 # (`session$job_supervise`). The monitor is the
+                 # supervisor and is not itself supervised: it can only
+                 # read, inside the checkout.
+                 supervise = if (!monitor && !is.null(session$job_supervise)) {
+            utils::modifyList(list(write_roots = supervisor_config()$write_roots),
+                              session$job_supervise)
+        },
                  plan_mode = isTRUE(session$plan_mode),
                  # The originating session's channel, so policy judges the
                  # worker's calls as it would the session's own.
@@ -205,6 +228,9 @@ job_worker_spec <- function(session, role = "doer") {
 job_worker_system <- function(role) {
     if (identical(role, "reviewer")) {
         return(JOB_REVIEWER_SYSTEM)
+    }
+    if (identical(role, "monitor")) {
+        return(JOB_MONITOR_SYSTEM)
     }
     paste0("You are the ", role, " for jobs a talker agent delegates ",
            "to you. Each message is one job. Work it in the current ",
@@ -275,11 +301,51 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     }
     init(spec)
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600
+    # A monitor's stand-in for its model, as `run_fn` is a doer's.
+    .job_worker_state$monitor_run_fn <- if (identical(spec$role, "monitor")) {
+        spec$run_fn
+    }
     # Replace the subagent default (deny everything) with the bridge.
     if (!is.null(.subagent_state$session)) {
         .subagent_state$session$approval_cb <- .job_worker_child_ask
+        if (!is.null(spec$supervise)) {
+            # Every call is read by the rules here, in the process that
+            # would run it; what they do not settle is sent to the
+            # session's process, which owns the monitor and the room.
+            .subagent_state$session$auto_gate <- supervisor_gate(
+                ask = .job_worker_child_supervised_ask, cwd = cwd,
+                mode = spec$supervise$mode %||% "human",
+                write_roots = spec$supervise$write_roots %||% character(),
+                on_decision = function(record) {
+                id <- .job_worker_state$job_id
+                if (!is.null(id)) {
+                    supervisor_log_append(id, record)
+                }
+            })
+        }
     }
     .job_worker_child_restore(state_dir, spec$identity)
+}
+
+# The supervised worker's way of getting a call answered: the request
+# says who should answer it (`route`) and what the rules noticed, and
+# the answer says who did and why.
+.job_worker_child_supervised_ask <- function(route, call, decision, notes) {
+    job_id <- .job_worker_state$job_id
+    if (is.null(job_id)) {
+        return(list(approved = FALSE, by = "nobody",
+                    reason = "no job is running, so there is nobody to ask"))
+    }
+    req <- job_approval_request(job_id, call, decision,
+                                extra = list(route = route, notes = as.list(notes)))
+    a <- job_approval_await(job_id, req,
+                            timeout = .job_worker_state$approval_timeout %||% 600)
+    list(approved = identical(a$verdict, "approved"),
+         by = a$by %||% a$verdict,
+         reason = a$reason %||% switch(a$verdict,
+                                       timeout = "nobody answered in time",
+                                       cancelled = "the job was cancelled",
+                                       decision$reason))
 }
 
 # The worker's approval callback: ask through the job's approval files
@@ -404,13 +470,10 @@ job_worker_in_place <- function(session, role) {
     identical(session$.job_worker_notes[[role]]$dir, job_worker_dir(session))
 }
 
-# Start the session's worker, restoring its last checkpoint. Blocks for
-# the child's startup (a second or two) -- the one synchronous step, and
-# it happens only when a job is dispatched to a session with no live
-# worker. Returns the restore info.
-job_worker_start <- function(session, role = "doer") {
-    job_worker_close(session)
-    job_worker_drop_parked(session, role)
+# Start a process for `role` and initialize it. Returns the process and
+# what its init returned (the restore info). The process is the
+# caller's to keep: nothing on the session points at it yet.
+job_worker_process <- function(session, role) {
     spec <- job_worker_spec(session, role)
     worker <- callr::r_session$new(
                                    options = .run_r_worker_session_options(session$config %||% list(),
@@ -427,7 +490,19 @@ job_worker_start <- function(session, role = "doer") {
         tryCatch(worker$close(), error = function(e2) NULL)
         stop("Failed to start job worker: ", conditionMessage(e), call. = FALSE)
     })
-    session$.job_worker <- worker
+    list(worker = worker, restore = restore)
+}
+
+# Start the session's worker, restoring its last checkpoint. Blocks for
+# the child's startup (a second or two) -- the one synchronous step, and
+# it happens only when a job is dispatched to a session with no live
+# worker. Returns the restore info.
+job_worker_start <- function(session, role = "doer") {
+    job_worker_close(session)
+    job_worker_drop_parked(session, role)
+    started <- job_worker_process(session, role)
+    restore <- started$restore
+    session$.job_worker <- started$worker
     session$.job_worker_role <- role
     # A worker closed for sitting idle (job_workers_retire()) was closed
     # between jobs, with its checkpoint current. Its replacement says so,
@@ -516,6 +591,7 @@ job_worker_close_all <- function(session) {
         tryCatch(w$close(), error = function(e) NULL)
     }
     session$.job_workers_parked <- NULL
+    job_monitor_close(session)
     invisible(TRUE)
 }
 
@@ -560,6 +636,15 @@ job_workers_live <- function(sessions) {
                     used = notes[[role]]$used)
             }
         }
+        # The monitor (R/job-monitor.R) is neither active nor parked: it
+        # runs beside the worker whose calls it rules on. It is busy
+        # while a call waits for its answer.
+        if (alive(s$.job_monitor)) {
+            out[[length(out) + 1L]] <- list(
+                session = s, role = "monitor", active = FALSE,
+                busy = !is.null(s$.job_monitor_pending),
+                used = notes[["monitor"]]$used)
+        }
     }
     out
 }
@@ -594,6 +679,12 @@ job_workers_retire <- function(sessions,
         retire[utils::head(spare, excess)] <- TRUE
     }
     for (w in live[retire]) {
+        if (identical(w$role, "monitor")) {
+            # Holds nothing between calls, so there is nothing to restore
+            # and nothing to report when the next call starts another.
+            job_monitor_close(w$session)
+            next
+        }
         if (isTRUE(w$active)) {
             job_worker_close(w$session)
         } else {
@@ -620,7 +711,8 @@ job_worker_limit <- function(x, default) {
 JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
                        ".job_workers_parked", ".job_worker_notes",
                        ".job_current", ".job_events", ".job_asked",
-                       ".job_blocked", ".job_prompts")
+                       ".job_blocked", ".job_prompts", ".job_monitor",
+                       ".job_monitor_pending")
 
 # Move a session's job state to the session that replaces it under the
 # same key (a /clear, a /model switch). The ledger finds a room's jobs
@@ -724,12 +816,13 @@ job_pump_approvals <- function(session, id) {
 
 # Answer one of this session's approval requests. FALSE when the answer
 # no longer counts (see job_approval_answer()).
-job_answer <- function(session, id, req, approved, by = "local") {
+job_answer <- function(session, id, req, approved, by = "local",
+                       reason = NULL) {
     j <- job_read(id)
     if (!job_in_session(j, session)) {
         stop("no job ", id, " in this session", call. = FALSE)
     }
-    job_approval_answer(id, req, approved, by = by)
+    job_approval_answer(id, req, approved, by = by, reason = reason)
 }
 
 job_pump_current <- function(session, id) {

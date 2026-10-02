@@ -91,12 +91,122 @@ if (at_home()) local({
   expect_identical(s$fallback, "gpt-5.6-sol openai_codex")
   expect_identical(s$fallback_cooldown, 30)
   expect_identical(s$fallback_primary_retry_at, "Mon 03:00")
-  # Default approval_cb declines (auto_approve_asks = FALSE)
-  expect_false(s$approval_cb(list(), list()))
+  # A room session is supervised, and auto_approve_asks picks who rules
+  # on what the rules in code leave open: a person, or a monitor.
+  expect_true(is.function(s$auto_gate))
+  expect_identical(s$job_supervise$mode, "human")
 
   cfg$auto_approve_asks <- TRUE
   s2 <- corteza:::bot_new_session(cfg)
-  expect_true(s2$approval_cb(list(), list()))
+  expect_true(is.function(s2$auto_gate))
+  expect_identical(s2$job_supervise$mode, "monitor")
+})
+
+# Supervising a room session's own calls. The monitor's model is a
+# function, and the bot config is a temp path, so the person's prompt
+# has no homeserver to reach and comes back unanswered.
+local({
+  tmp_home <- tempfile("home-")
+  dir.create(tmp_home)
+  state <- file.path(tmp_home, "state")
+  dir.create(state)
+  vars <- c(CORTEZA_MATRIX_CONFIG = file.path(tmp_home, "matrix.json"),
+            R_USER_CONFIG_DIR = file.path(tmp_home, "config"),
+            CORTEZA_STATE_DIR = state)
+  orig <- Sys.getenv(names(vars), unset = NA)
+  do.call(Sys.setenv, as.list(vars))
+  on.exit({
+    keep <- orig[!is.na(orig)]
+    if (length(keep)) {
+      do.call(Sys.setenv, as.list(keep))
+    }
+    drop <- names(orig)[is.na(orig)]
+    if (length(drop)) {
+      Sys.unsetenv(drop)
+    }
+    unlink(tmp_home, recursive = TRUE)
+  }, add = TRUE)
+  cfg <- list(server = "https://ex.invalid", user = "bot", token = "tok",
+              user_id = "@bot:ex", device_id = "DEV", room_id = "!r:ex",
+              approval_timeout_sec = 1L)
+  proj <- file.path(tmp_home, "project")
+  dir.create(file.path(proj, ".git"), recursive = TRUE)
+  fake <- function(task) {
+    id <- sub(".*REQUEST-ID: ([A-Za-z0-9_-]+).*", "\\1", task)
+    verdict <- if (grepl("refuse-me", task)) {
+      "refuse"
+    } else if (grepl("escalate-me", task)) {
+      "escalate"
+    } else {
+      "approve"
+    }
+    list(reply = sprintf("REQUEST: %s\nVERDICT: %s\nREASON: because %s", id,
+                         verdict, verdict))
+  }
+  supervised <- function(auto) {
+    s <- new.env()
+    s$cwd <- proj
+    s$config <- list()
+    s$job_key <- "!r:ex"
+    s$supervisor_goal <- list(text = "tidy the package", id = "$m1")
+    s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
+                              run_fn = fake)
+    corteza:::bot_supervise_session(s, c(cfg, list(auto_approve_asks = auto)),
+                                    "!r:ex")
+    s
+  }
+  ask <- list(approval = "ask", reason = "config: bash requires approval")
+  bash <- function(cmd) list(tool = "bash", args = list(command = cmd))
+
+  s <- supervised(TRUE)
+  expect_identical(s$job_supervise$mode, "monitor")
+  # A read policy allows runs with nobody asked and no monitor started.
+  r <- s$auto_gate(list(tool = "read_file",
+                        args = list(path = file.path(proj, "x.R"))),
+                   list(approval = "allow", reason = "default"))
+  expect_identical(r$action, "proceed")
+  expect_false(corteza:::job_monitor_alive(s))
+  # What the rules leave open is the monitor's.
+  r <- s$auto_gate(bash("git add R/x.R"), ask)
+  expect_identical(r$action, "proceed")
+  expect_true(corteza:::job_monitor_alive(s))
+  r <- s$auto_gate(bash("echo refuse-me"), ask)
+  expect_identical(r$action, "refuse")
+  expect_identical(r$reason, "because refuse")
+  # What the monitor passes on, and what a rule catches, goes to a
+  # person. Nobody is there, so it is not approved: never a yes.
+  r <- s$auto_gate(bash("echo escalate-me"), ask)
+  expect_identical(r$action, "declined")
+  expect_true(grepl("the monitor passed this to you: because escalate", r$reason))
+  r <- s$auto_gate(bash("git push origin main"), ask)
+  expect_identical(r$action, "declined")
+  expect_true(grepl("pushes commits", r$reason))
+  corteza:::job_worker_close_all(s)
+
+  # A room that asks never starts a monitor.
+  s <- supervised(FALSE)
+  expect_identical(s$job_supervise$mode, "human")
+  r <- s$auto_gate(bash("git add R/x.R"), ask)
+  expect_identical(r$action, "declined")
+  expect_false(corteza:::job_monitor_alive(s))
+
+  # The callback left for a session with no gate asks too; the setting
+  # that once made it say yes to everything no longer does.
+  cb <- corteza:::bot_approval_cb(c(cfg, list(auto_approve_asks = TRUE)),
+                                  room_id = "!r:ex")
+  expect_false(isTRUE(cb(bash("ls"), ask)))
+})
+
+# The prompt shows enough of a command to rule on, and the whole reason.
+local({
+  cmd <- paste(rep("git add R/a-long-file-name.R &&", 12L), collapse = " ")
+  why <- paste(rep("pushes commits (git push);", 8L), collapse = " ")
+  p <- corteza:::bot_approval_prompt(
+      list(tool = "bash", args = list(command = cmd, path = strrep("p", 200L))),
+      list(reason = why), 600L)
+  expect_true(grepl(substr(cmd, 1L, 300L), p, fixed = TRUE))
+  expect_false(grepl(strrep("p", 100L), p, fixed = TRUE))
+  expect_true(grepl(why, p, fixed = TRUE))
 })
 
 # bot_msg_record maps the contract's chat_message onto the record the

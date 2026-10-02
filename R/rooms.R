@@ -172,10 +172,16 @@ bot_save_config <- function(cfg) {
 #' @param tools_filter Character vector or NULL. Passed to
 #'   \code{get_tools()} to restrict which tools the bot can invoke.
 #'   NULL allows all registered tools.
-#' @param auto_approve_asks Logical. When TRUE, tool calls that policy
-#'   returns \code{"ask"} for are auto-approved. Suitable for a
-#'   personal bot on a trusted tailnet. When FALSE (default) asks are
-#'   declined until the thumbs-up reaction protocol lands.
+#' @param auto_approve_asks Logical. Who rules on a tool call that
+#'   needs approval. Rules in code read every call first, and what they
+#'   catch (credentials, writes outside the project, elevated
+#'   privileges, other machines, publishing, discarded work) is always
+#'   put to a person by reaction in the room. When TRUE, the rest goes
+#'   to a monitor: a read-only model in its own process that approves,
+#'   refuses, or passes the call on to a person. When FALSE (default) a
+#'   person is asked for the rest as well. Nothing is approved unseen.
+#'   The monitor's model is set under \code{supervisor} in the user's
+#'   corteza config; see \code{vignette("configuration")}.
 #' @param bots Character vector or NULL. Full Matrix IDs of other known
 #'   bot accounts. Their messages only get a reply when they mention
 #'   this bot, and they are not counted as humans when deciding whether
@@ -1403,23 +1409,23 @@ bot_room_cwd <- function(cfg, topic = NULL) {
     candidate
 }
 
-# Build the approval callback for the Matrix channel. Fires only for
-# "ask" verdicts from policy (personal+anything-on-matrix is already
-# "deny" in the default tensor). Two modes:
-#   auto_approve_asks = TRUE  -> always approve (trusted tailnet use)
-#   auto_approve_asks = FALSE -> post an approval prompt to the room,
-#                                wait for a thumbs-up / thumbs-down
-#                                reaction from a user other than the
-#                                bot itself, return TRUE / FALSE.
+# Build the approval callback for the Matrix channel: post an approval
+# prompt to the room, wait for a thumbs-up / thumbs-down reaction from
+# someone allowed to answer, return TRUE / FALSE.
+#
+# A room session's calls are answered through its supervising gate
+# (bot_supervise_session()), which reaches a person through the same
+# prompt, so this callback is what is left for a session without one.
+# It always asks. `auto_approve_asks` used to make it return TRUE for
+# every call, the credential-path rule's "ask" included; that setting
+# now chooses who rules on what the rules in code leave open (a monitor
+# or a person), and nothing approves a call unseen.
+#
 # Timeout defaults to 60 seconds; configurable via
 # cfg$approval_timeout_sec or options("corteza.bot_approval_timeout").
 bot_approval_cb <- function(cfg, room_id = cfg$room_id) {
-    auto <- isTRUE(cfg$auto_approve_asks)
     force(room_id)
     function(call, decision) {
-        if (auto) {
-            return(TRUE)
-        }
         # Re-read rather than use the cfg this closure was built with. A
         # session outlives many token rotations, and a prompt sent on a
         # rejected token fails into FALSE -- which the model reads as the
@@ -1427,6 +1433,65 @@ bot_approval_cb <- function(cfg, room_id = cfg$room_id) {
         # blocking, so a config read costs nothing here.
         live <- tryCatch(bot_load_config(), error = function(e) cfg)
         bot_reaction_approval(live, call, decision, room_id = room_id)
+    }
+}
+
+# Supervise a room session's tool calls (R/supervisor.R): its own, made
+# in its turns, and through `job_supervise` those of the workers it
+# starts.
+#
+# `auto_approve_asks` picks the mode. TRUE: what the rules in code leave
+# open goes to the session's monitor, and a person is asked only for
+# what the rules catch or the monitor passes on. Otherwise a person is
+# asked for all of it, as a room without the setting always did.
+bot_supervise_session <- function(s, cfg, room_id) {
+    if (isTRUE(cfg$auto_approve_asks)) {
+        mode <- "monitor"
+    } else {
+        mode <- "human"
+    }
+    s$job_supervise <- list(mode = mode)
+    s$auto_gate <- supervisor_gate(
+                                   ask = bot_supervisor_ask(s, cfg, room_id),
+                                   cwd = function() s$cwd %||% getwd(),
+                                   mode = mode,
+                                   write_roots = supervisor_config()$write_roots,
+                                   on_decision = function(record) {
+        log_event("supervisor_decision", tool = record$tool,
+                  action = record$action, by = record$by,
+                  route = record$route, reason = record$reason)
+    })
+    invisible(s)
+}
+
+# How a call made in a room session's own turn gets answered. The turn
+# holds the bot's loop, so this waits: for the monitor, then, if the
+# monitor passes the call on or cannot be asked, for a reaction.
+bot_supervisor_ask <- function(s, cfg, room_id) {
+    force(room_id)
+    function(route, call, decision, notes) {
+        if (identical(route, "monitor")) {
+            goal <- s$supervisor_goal %||% list()
+            v <- job_monitor_ask_wait(s, list(
+                    scope = paste0("turn:", goal$id %||% ""),
+                    request_id = sprintf("t%06d", sample.int(999999L, 1L)),
+                    goal = goal$text %||% "(a message in the room)",
+                    tool = call$tool, args = job_approval_args(call$args),
+                    reason = decision$reason, notes = notes))
+            if (v$verdict %in% c("approve", "refuse")) {
+                return(list(approved = identical(v$verdict, "approve"),
+                            by = "monitor", reason = v$reason))
+            }
+            decision$reason <- sprintf("the monitor passed this to you: %s",
+                                       v$reason %||% "no reason given")
+        }
+        # Derived at the point of use: the token rotates (see
+        # bot_approval_cb()).
+        live <- tryCatch(bot_load_config(), error = function(e) cfg)
+        approved <- bot_reaction_approval(live, call, decision,
+            room_id = room_id)
+        list(approved = isTRUE(approved), by = "person",
+             reason = decision$reason)
     }
 }
 
@@ -1618,8 +1683,12 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
               mapply(function(k, v) {
             # Model-controlled name AND value: sanitize both (strip ANSI/
             # control chars incl. newlines) and bound, so neither can forge a
-            # line in the prompt.
-            s <- .sanitize_inline(as.character(v)[1L], max_chars = 60L)
+            # line in the prompt. A command or code body gets more room
+            # than a path: it is the thing being approved, and a person
+            # cannot rule on its first 60 characters.
+            wide <- isTRUE(k %in% c("command", "cmd", "code", "script"))
+            s <- .sanitize_inline(as.character(v)[1L],
+                                  max_chars = if (wide) 400L else 60L)
             sprintf("%s=%s", .sanitize_inline(k, max_chars = 40L), s)
         }, names(args), args, USE.NAMES = FALSE),
               collapse = ", "
@@ -1637,7 +1706,7 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
             "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
             .sanitize_inline(call$tool %||% "", max_chars = 60L), args_str,
             expl_line, .sanitize_inline(decision$reason %||% "ask",
-                                        max_chars = 120L),
+                                        max_chars = 300L),
             timeout_sec
     )
 }
@@ -1706,6 +1775,7 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {
         s$context_manifest <- context_manifest
         s$context_prefix_sources <- context_bundle$prefix_sources
@@ -2194,6 +2264,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # or thread.
         session$job_requester <- sender
         session$job_origin <- list(room = m$channel, thread = m$thread)
+        # What was asked, for a monitor ruling on a call this turn makes
+        # itself (bot_supervisor_ask()). The message id marks where one
+        # request's calls end and the next one's begin.
+        session$supervisor_goal <- list(text = ingest_body, id = m$id)
         # And how to hand a job to another room's doer, should this turn
         # ask to (`delegate` with `room`). Per turn, like the two fields
         # above, and removed after it: it holds this poll's client and
@@ -2517,6 +2591,11 @@ bot_run_step <- function(state, timeout = 30000L) {
     # prompt is not held behind a 30-second long-poll.
     if (bot_jobs_active(state$sessions)) {
         timeout <- min(timeout, BOT_JOB_POLL_MS)
+    }
+    # And more briefly still while a monitor is ruling on a call: a
+    # worker is stopped on that call until its answer is collected.
+    if (bot_monitor_waiting(state$sessions)) {
+        timeout <- min(timeout, BOT_MONITOR_POLL_MS)
     }
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,

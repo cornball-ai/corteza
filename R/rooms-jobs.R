@@ -230,8 +230,22 @@ bot_pump_jobs <- function(sessions, chat, cfg) {
         for (ev in events) {
             bot_present_job_event(chat, cfg, s, ev, sessions = sessions)
         }
+        # After the events: a request raised this step has just been
+        # sent to the monitor, and one sent earlier may have its answer.
+        bot_monitor_answer(chat, cfg, s)
     }
     invisible(TRUE)
+}
+
+# Poll interval while a monitor is ruling on a call. A worker is stopped
+# on that call until the answer is collected, so this is shorter than
+# BOT_JOB_POLL_MS.
+BOT_MONITOR_POLL_MS <- 500L
+
+# TRUE when any room's monitor has a call it has not answered.
+bot_monitor_waiting <- function(sessions) {
+    any(vapply(bot_sessions_list(sessions),
+               function(s) !is.null(s$.job_monitor_pending), logical(1)))
 }
 
 # `sessions` is the room registry, needed only to reach the session of a
@@ -533,19 +547,101 @@ bot_job_restored_text <- function(restore) {
             restore$job %||% "?", length(restore$objects))
 }
 
-# An approval request from a running job. auto_approve_asks keeps its
-# meaning here: the room's own turns never prompt under it, and neither
-# do its jobs. Otherwise the approvers are worked out as for a turn's
-# approval (bot_approvers()), a prompt is posted with both reactions
-# seeded, and the prompt is remembered on the session until a reaction
-# answers it.
+# An approval request from a running job.
+#
+# A room's workers are supervised (R/supervisor.R), so the request says
+# who should answer it. One the rules in code left open (`route` is
+# "monitor") goes to the session's monitor when the bot is configured
+# to approve without asking (`auto_approve_asks`); the answer is
+# collected by bot_monitor_answer() on a later step, and nothing waits
+# for it here. Every other request goes to a person: one the rules
+# caught, one from a room that asks, and one that names no route.
+#
+# `auto_approve_asks` used to answer every request "yes" on the spot.
+# Nothing does that now.
 bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
-    if (isTRUE(cfg$auto_approve_asks)) {
-        job_answer(s, job$id, req$id, TRUE, by = "auto_approve_asks")
+    if (identical(req$route, "monitor") && isTRUE(cfg$auto_approve_asks)) {
+        asked <- tryCatch({
+            job_monitor_ask(s, bot_monitor_question(job, req))
+            TRUE
+        }, error = function(e) conditionMessage(e))
+        if (isTRUE(asked)) {
+            return(invisible(NULL))
+        }
+        req$reason <- sprintf("the monitor could not be asked (%s); policy said: %s",
+                              asked, req$reason %||% "ask")
+    }
+    bot_job_ask_person(chat, cfg, s, job, req)
+}
+
+# What the monitor is asked about a job's request.
+bot_monitor_question <- function(job, req) {
+    list(scope = job$id, request_id = req$id, job = job$id, req = req,
+         goal = job$task %||% "", tool = req$tool, args = req$args,
+         reason = req$reason, notes = req$notes,
+         earlier = tryCatch(job_monitor_earlier(job$id),
+                            error = function(e) character()))
+}
+
+# Collect the monitor's answer for this session, if it has one. An
+# approval or a refusal answers the job's request. Anything else (the
+# monitor passed the call on, failed, or ran out of time) becomes a
+# prompt for a person, with the monitor's reason.
+bot_monitor_answer <- function(chat, cfg, s) {
+    v <- tryCatch(job_monitor_poll(s), error = function(e) {
+        p <- s$.job_monitor_pending
+        s$.job_monitor_pending <- NULL
+        if (is.null(p)) {
+            return(NULL)
+        }
+        list(verdict = "escalate", q = p$q,
+             reason = paste("the monitor failed:", conditionMessage(e)))
+    })
+    if (is.null(v)) {
         return(invisible(NULL))
     }
+    q <- v$q
+    if (v$verdict %in% c("approve", "refuse")) {
+        tryCatch(job_answer(s, q$job, q$request_id,
+                            identical(v$verdict, "approve"), by = "monitor",
+                            reason = v$reason),
+                 error = function(e) FALSE)
+        return(invisible(v))
+    }
+    # The request may have closed while the monitor worked: the job was
+    # cancelled, or the worker stopped waiting.
+    open <- vapply(tryCatch(job_approval_pending(q$job),
+                            error = function(e) list()),
+                   function(r) r$id, character(1))
+    if (q$request_id %in% open) {
+        req <- q$req
+        req$reason <- sprintf("the monitor passed this to you: %s",
+                              v$reason %||% "no reason given")
+        bot_job_ask_person(chat, cfg, s, job_read(q$job), req)
+    }
+    invisible(v)
+}
+
+# Seconds a request's worker will still wait for an answer.
+bot_job_request_remaining <- function(s, req) {
+    total <- as.numeric(s$config$jobs$approval_timeout_sec %||% 600)
+    asked <- tryCatch(as.POSIXct(req$requested_at,
+                                 format = "%Y-%m-%dT%H:%M:%OS%z"),
+                      error = function(e) NA)
+    if (length(asked) != 1L || is.na(asked)) {
+        return(as.integer(total))
+    }
+    spent <- as.numeric(difftime(Sys.time(), asked, units = "secs"))
+    as.integer(max(total - spent, 0))
+}
+
+# Ask a person to answer a job's request. The approvers are worked out
+# as for a turn's approval (bot_approvers()), a prompt is posted with
+# both reactions seeded, and the prompt is remembered on the session
+# until a reaction answers it.
+bot_job_ask_person <- function(chat, cfg, s, job, req) {
     room <- job$origin$room %||% s$room_id
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
                         error = function(e) cfg$user_id)
@@ -560,8 +656,7 @@ bot_job_approval <- function(chat, cfg, s, ev) {
     }
     text <- paste0(sprintf("Job %s: ", job$id),
                    bot_approval_prompt(call, list(reason = req$reason),
-                                       timeout_sec = as.integer(
-                s$config$jobs$approval_timeout_sec %||% 600)))
+                                       timeout_sec = bot_job_request_remaining(s, req)))
     eid <- bot_job_send(chat, s, job, text)
     if (is.null(eid)) {
         # Nobody can see a prompt that was never posted.

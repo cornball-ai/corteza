@@ -421,20 +421,22 @@ job_approval_args <- function(args, max_chars = 2000L) {
     })
 }
 
-# Worker side: record a request. Returns the request id.
-job_approval_request <- function(id, call, decision) {
+# Worker side: record a request. Returns the request id. `extra` adds
+# fields to the record; a supervised worker (R/supervisor.R) says there
+# who should answer (`route`) and what its own check noticed (`notes`).
+job_approval_request <- function(id, call, decision, extra = list()) {
     job_check_id(id)
     req <- job_new_request_id()
     dir.create(file.path(job_dir(id), "approvals"), recursive = TRUE,
                showWarnings = FALSE)
-    job_write_file(job_approval_path(id, req, "request"), list(
-            id = req,
-            job = id,
-            requested_at = job_now(),
-            tool = call$tool %||% call$name %||% "",
-            args = job_approval_args(call$args),
-            reason = decision$reason %||% "ask"
-        ))
+    job_write_file(job_approval_path(id, req, "request"), c(list(
+                id = req,
+                job = id,
+                requested_at = job_now(),
+                tool = call$tool %||% call$name %||% "",
+                args = job_approval_args(call$args),
+                reason = decision$reason %||% "ask"
+            ), extra))
     req
 }
 
@@ -443,12 +445,20 @@ job_approval_request <- function(id, call, decision) {
 # on timeout, or when the job is cancelled or has ended. `interval` and
 # `timeout` are seconds.
 job_approval_wait <- function(id, req, timeout = 600, interval = 0.5) {
+    identical(job_approval_await(id, req, timeout, interval)$verdict,
+              "approved")
+}
+
+# As job_approval_wait(), returning how the wait ended: `verdict`
+# ("approved", "denied", "cancelled", or "timeout") and, for an answer,
+# who gave it (`by`) and why (`reason`).
+job_approval_await <- function(id, req, timeout = 600, interval = 0.5) {
     job_check_id(id)
     job_check_request_id(req)
-    close_as <- function(verdict) {
+    close_as <- function(verdict, answer = NULL) {
         job_write_file(job_approval_path(id, req, "closed"),
                        list(closed_at = job_now(), verdict = verdict))
-        identical(verdict, "approved")
+        list(verdict = verdict, by = answer$by, reason = answer$reason)
     }
     dir <- job_dir(id)
     deadline <- Sys.time() + timeout
@@ -456,7 +466,7 @@ job_approval_wait <- function(id, req, timeout = 600, interval = 0.5) {
         answer <- job_read_file(job_approval_path(id, req, "answer"))
         if (!is.null(answer)) {
             return(close_as(if (isTRUE(answer$approved)) "approved" else
-                            "denied"))
+                            "denied", answer))
         }
         if (file.exists(file.path(dir, "cancel.json")) ||
             file.exists(file.path(dir, "outcome.json"))) {
@@ -488,8 +498,10 @@ job_approval_pending <- function(id) {
 # Owner side: answer a request. Returns TRUE when the answer was
 # recorded, FALSE when it can no longer count -- the request was already
 # answered or closed, or the job has ended. Who is allowed to answer is
-# the surface's decision; `by` records who did.
-job_approval_answer <- function(id, req, approved, by = "local") {
+# the surface's decision; `by` records who did, and `reason` what they
+# said, which a refusal passes back to the worker.
+job_approval_answer <- function(id, req, approved, by = "local",
+                                reason = NULL) {
     job_check_id(id)
     job_check_request_id(req)
     if (!file.exists(job_approval_path(id, req, "request"))) {
@@ -501,6 +513,7 @@ job_approval_answer <- function(id, req, approved, by = "local") {
         return(FALSE)
     }
     job_write_file(job_approval_path(id, req, "answer"),
-                   list(approved = isTRUE(approved), by = by, answered_at = job_now()))
+                   c(list(approved = isTRUE(approved), by = by, answered_at = job_now()),
+            if (!is.null(reason)) list(reason = reason)))
     TRUE
 }

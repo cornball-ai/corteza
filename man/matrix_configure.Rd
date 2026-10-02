@@ -40,10 +40,16 @@ to. If the bot has been invited but not joined, it will be joined.}
 \code{get_tools()} to restrict which tools the bot can invoke.
 NULL allows all registered tools.}
 
-\item{auto_approve_asks}{Logical. When TRUE, tool calls that policy
-returns \code{"ask"} for are auto-approved. Suitable for a
-personal bot on a trusted tailnet. When FALSE (default) asks are
-declined until the thumbs-up reaction protocol lands.}
+\item{auto_approve_asks}{Logical. Who rules on a tool call that
+needs approval. Rules in code read every call first, and what they
+catch (credentials, writes outside the project, elevated
+privileges, other machines, publishing, discarded work) is always
+put to a person by reaction in the room. When TRUE, the rest goes
+to a monitor: a read-only model in its own process that approves,
+refuses, or passes the call on to a person. When FALSE (default) a
+person is asked for the rest as well. Nothing is approved unseen.
+The monitor's model is set under \code{supervisor} in the user's
+corteza config; see \code{vignette("configuration")}.}
 
 \item{bots}{Character vector or NULL. Full Matrix IDs of other known
 bot accounts. Their messages only get a reply when they mention

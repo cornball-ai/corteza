@@ -70,14 +70,17 @@ rx <- function(key, target, sender = "@troy:ex", room = "!room:ex",
 }
 # A dispatched job with one open approval request, as a worker would
 # leave it.
-job_waiting <- function(s) {
+# `route` is what a supervised worker's request says about who should
+# answer it; NULL is a request that says nothing.
+job_waiting <- function(s, cmd = "rm x", route = NULL) {
     id <- corteza:::job_create("rm stale files",
                                origin = list(session_key = s$job_key,
                                              room = s$room_id))
     corteza:::job_mark_dispatched(id)
     req <- corteza:::job_approval_request(
-        id, list(tool = "bash", args = list(cmd = "rm x")),
-        list(reason = "code/exec/matrix"))
+        id, list(tool = "bash", args = list(cmd = cmd)),
+        list(reason = "code/exec/matrix"),
+        extra = if (!is.null(route)) list(route = route) else list())
     list(event = list(type = "approval", job = corteza:::job_read(id),
                       request = corteza:::job_approval_pending(id)[[1L]]),
          id = id, req = req)
@@ -122,18 +125,152 @@ local({
         corteza:::job_read(id2))))
 })
 
-# --- auto_approve_asks answers at once, with no prompt ---
+# --- auto_approve_asks: the monitor rules, and nothing is approved unseen ---
+# The monitor's model is a function that answers from the command.
+fake_monitor <- function(task) {
+    id <- sub(".*REQUEST-ID: ([A-Za-z0-9_-]+).*", "\\1", task)
+    verdict <- if (grepl("refuse-me", task)) {
+        "refuse"
+    } else if (grepl("escalate-me", task)) {
+        "escalate"
+    } else {
+        "approve"
+    }
+    if (grepl("slow-me", task)) Sys.sleep(60)
+    list(reply = sprintf("REQUEST: %s\nVERDICT: %s\nREASON: because %s", id,
+                         verdict, verdict))
+}
+monitored <- function(key) {
+    s <- make_session(key)
+    s$cwd <- tempdir()
+    s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
+                              run_fn = fake_monitor)
+    s
+}
+auto_cfg <- c(cfg, list(auto_approve_asks = TRUE))
+# Collect the monitor's answer the way the bot's loop does.
+monitor_answer <- function(chat, s, timeout = 20) {
+    deadline <- Sys.time() + timeout
+    repeat {
+        v <- corteza:::bot_monitor_answer(chat, auto_cfg, s)
+        if (!is.null(v) || Sys.time() > deadline) {
+            return(v)
+        }
+        Sys.sleep(0.05)
+    }
+}
 local({
     rec <- new.env()
     chat <- make_chat(rec)
-    s <- make_session()
-    w <- job_waiting(s)
-    corteza:::bot_present_job_event(chat, c(cfg, list(auto_approve_asks = TRUE)),
-                                    s, w$event)
+    s <- monitored("!mon:ex")
+    on.exit(corteza:::job_worker_close_all(s), add = TRUE)
+    reg <- registry(s)
+
+    # What the rules left open goes to the monitor. Nothing is posted,
+    # and nothing is answered until the monitor has ruled.
+    w <- job_waiting(s, "git add R/x.R", route = "monitor")
+    expect_false(corteza:::bot_monitor_waiting(reg))
+    corteza:::bot_present_job_event(chat, auto_cfg, s, w$event)
+    expect_true(corteza:::bot_monitor_waiting(reg))
+    v <- monitor_answer(chat, s)
+    expect_identical(v$verdict, "approve")
+    expect_false(corteza:::bot_monitor_waiting(reg))
     a <- answer_of(w$id, w$req)
     expect_true(a$approved)
-    expect_identical(a$by, "auto_approve_asks")
+    expect_identical(a$by, "monitor")
+    expect_identical(a$reason, "because approve")
     expect_identical(length(rec$sent), 0L)
+
+    # A refusal answers the request too, with the reason for the worker.
+    w <- job_waiting(s, "echo refuse-me", route = "monitor")
+    corteza:::bot_present_job_event(chat, auto_cfg, s, w$event)
+    monitor_answer(chat, s)
+    a <- answer_of(w$id, w$req)
+    expect_false(a$approved)
+    expect_identical(a$by, "monitor")
+    expect_identical(a$reason, "because refuse")
+    expect_identical(length(rec$sent), 0L)
+
+    # What the monitor passes on becomes a prompt, with its reason, and
+    # a reaction answers it.
+    w <- job_waiting(s, "echo escalate-me", route = "monitor")
+    corteza:::bot_present_job_event(chat, auto_cfg, s, w$event)
+    monitor_answer(chat, s)
+    expect_null(answer_of(w$id, w$req))
+    expect_identical(length(rec$sent), 1L)
+    expect_true(grepl("the monitor passed this to you: because escalate",
+                      rec$sent[[1L]]$text, fixed = TRUE))
+    eid <- names(s$.job_prompts)
+    corteza:::bot_handle_job_reactions(list(rx(intToUtf8(0x1F44D), eid,
+                                               room = "!mon:ex")),
+                                       reg, chat, auto_cfg)
+    a <- answer_of(w$id, w$req)
+    expect_true(a$approved)
+    expect_identical(a$by, "@troy:ex")
+
+    # A request that closed while the monitor worked gets no prompt.
+    w <- job_waiting(s, "echo escalate-me again", route = "monitor")
+    corteza:::bot_present_job_event(chat, auto_cfg, s, w$event)
+    corteza:::job_settle(w$id, "cancelled", reason = "test")
+    jsonlite::write_json(list(verdict = "cancelled"),
+                         corteza:::job_approval_path(w$id, w$req, "closed"))
+    monitor_answer(chat, s)
+    expect_identical(length(rec$sent), 1L)
+})
+
+# What a rule caught, and a request that names no route, go to a person
+# even under auto_approve_asks; the monitor is not started for them.
+local({
+    for (route in list("human", NULL)) {
+        rec <- new.env()
+        chat <- make_chat(rec)
+        s <- monitored("!rule:ex")
+        w <- job_waiting(s, "git push", route = route)
+        corteza:::bot_present_job_event(chat, auto_cfg, s, w$event)
+        expect_null(answer_of(w$id, w$req))
+        expect_identical(length(rec$sent), 1L)
+        expect_true(grepl("Approval needed", rec$sent[[1L]]$text))
+        expect_false(corteza:::job_monitor_alive(s))
+    }
+})
+
+# A room that asks sends the monitor's share to a person as well.
+local({
+    rec <- new.env()
+    chat <- make_chat(rec)
+    s <- monitored("!asks:ex")
+    w <- job_waiting(s, "git add R/x.R", route = "monitor")
+    corteza:::bot_present_job_event(chat, cfg, s, w$event)
+    expect_identical(length(rec$sent), 1L)
+    expect_false(corteza:::job_monitor_alive(s))
+})
+
+# A monitor that cannot be started approves nothing: the person is asked
+# and told why.
+local({
+    rec <- new.env()
+    chat <- make_chat(rec)
+    s <- monitored("!nomon:ex")
+    s$job_worker_spec$init_fn <- function(spec) stop("no provider key")
+    w <- job_waiting(s, "git add R/x.R", route = "monitor")
+    corteza:::bot_present_job_event(chat, auto_cfg, s, w$event)
+    expect_null(answer_of(w$id, w$req))
+    expect_identical(length(rec$sent), 1L)
+    expect_true(grepl("the monitor could not be asked", rec$sent[[1L]]$text))
+})
+
+# The prompt's timeout is what is left of the worker's wait.
+local({
+    s <- make_session()
+    s$config <- list(jobs = list(approval_timeout_sec = 600))
+    left <- function(ago) {
+        corteza:::bot_job_request_remaining(s, list(requested_at = format(
+            Sys.time() - ago, "%Y-%m-%dT%H:%M:%OS3%z")))
+    }
+    expect_true(left(0) > 595 && left(0) <= 600)
+    expect_true(left(100) > 495 && left(100) <= 500)
+    expect_identical(left(900), 0L)
+    expect_identical(corteza:::bot_job_request_remaining(s, list()), 600L)
 })
 
 # --- No approver in the room: declined, with a notice ---

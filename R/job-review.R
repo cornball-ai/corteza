@@ -452,5 +452,9 @@ job_outcome_notes <- function(job) {
                 } else {
                     o$verdict
                 })
-        })
+        },
+        # How the job's calls that needed approval were answered, when
+        # it ran supervised (R/supervisor.R).
+        supervisor_summary_text(tryCatch(supervisor_log_summary(job$id),
+                error = function(e) NULL)))
 }

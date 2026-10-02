@@ -728,6 +728,17 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                 stop(auto_escalate_condition(gate$reason %||% "unspecified",
                         call$tool %||% "?"))
             }
+            if (identical(action, "declined")) {
+                # A gate that asks a person itself (supervisor_gate())
+                # reports their no, or their silence, as the approval
+                # prompt below would.
+                return(outcome_text(
+                                    "declined",
+                                    nudge(sprintf("[user declined: %s]",
+                                .sanitize_inline(gate$reason %||% ""))),
+                                    FALSE
+                    ))
+            }
             if (!identical(action, "proceed")) {
                 return(outcome_text(
                                     "declined",

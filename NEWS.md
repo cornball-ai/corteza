@@ -1,13 +1,32 @@
 # corteza 0.7.1.57
 
+- **Matrix tool calls are supervised; `auto_approve_asks` no longer
+  approves everything.** The setting used to answer "yes" to every call
+  policy asked about, in a room's turns and in its jobs, the
+  credential-path rule's "ask" included. Now every call in a room goes
+  through three steps. Rules in code read it first, shell commands and R
+  code included, and put to a person: credentials, writes outside the
+  project, elevated privileges, other machines, publishing, and git
+  commands that throw work away. With `auto_approve_asks: true`, what the
+  rules leave open goes to a monitor, a model with read-only tools and
+  the project's instructions in a process of its own, which approves,
+  refuses with a reason the working agent reads, or passes the call to a
+  person. A person answers by reaction in the room, as before; without
+  the setting a person is asked in place of the monitor. A job's result
+  says how its calls were answered. The monitor's model and any extra
+  writable directories are set under `supervisor` in the user's own
+  config (a project config cannot set them); see
+  `vignette("configuration")`. The monitor is started on first need,
+  retired when idle, and counted against `jobs.max_workers` like a doer
+  or reviewer. The rules read text and are not a sandbox.
+
 - **Matrix approvals only accept an operator or the room's one human.**
   Any reaction other than the bot's own used to answer an approval prompt,
   so a second bot in the room could approve this bot's tool calls.
   Approvers are now the configured `operators`, or, with none configured,
   the room's one human when it has exactly one. Other reactions are
   ignored. A room with no possible approver gets a notice and the request
-  is declined. Bots not listed under `bots` count as humans. Configs with
-  `auto_approve_asks: true` are unaffected, since they never prompt.
+  is declined. Bots not listed under `bots` count as humans.
 
 - **Talker mode: delegate work and keep talking.** With
   `"talker": {"enabled": true}` in a bot config or the corteza config, a

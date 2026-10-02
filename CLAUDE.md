@@ -91,6 +91,37 @@ Returns `list(model, approval, reason)` where `approval` is
 5. Config overlay from `.corteza/config.json` (`approval_mode`,
    `dangerous_tools`, per-tool `permissions`).
 
+## Supervision of unattended calls (`R/supervisor.R`)
+
+A Matrix room session and the job workers it starts carry a gate on
+`session$auto_gate` (`supervisor_gate()`), which `turn()` consults for
+every call that survived `policy()`, "allow" verdicts included. Three
+steps, in order:
+
+1. **Rules in code** (`supervisor_route()`, `R/exec-scan.R`). They read
+   path arguments and the text of shell commands and R code. A hit
+   (credentials, a write outside the checkout, sudo, another machine,
+   pushing or publishing, destructive git) goes to a person. No model
+   decides what a model may decide.
+2. **The monitor** (`R/job-monitor.R`), only where the bot config has
+   `auto_approve_asks: true`. A third worker process per session beside
+   the doer and reviewer: read-only tools, confined to the checkout,
+   started with the shared and project instructions. Approves, refuses
+   (the worker is told why and continues), or passes the call on.
+3. **A person**, by reaction in the room.
+
+A worker's rules run in the worker's process; its request file says who
+should answer (`route`), and the bot's process owns the monitor and the
+room (`bot_job_approval()`, `bot_monitor_answer()`). Nothing approves a
+call unseen: `auto_approve_asks` chooses between steps 2 and 3 for what
+step 1 leaves open. Settings live under `supervisor` in the user's
+config only (`supervisor_config()`); a project config cannot set them.
+
+`R/monitor.R` is the older hall monitor for `/auto` runs in the CLI and
+`chat()`. Same idea, another failure rule: it ends the run where this
+one asks a person. `exec_scan()` is not a sandbox. A path built at run
+time is invisible to it.
+
 ## Configuration
 
 Config merges global (`tools::R_user_dir("corteza", "config")/config.json`)
@@ -247,6 +278,10 @@ session outlives many rotations.
 R/
 ├── turn.R             # Shared agent turn (entry point for all surfaces)
 ├── policy.R           # Tool-call policy engine (allow/ask/deny)
+├── supervisor.R       # Gate for unattended calls: rules, monitor, person
+├── exec-scan.R        # Reads shell commands and R code for the rules
+│                      #   (shell-parse.R, shell-scan.R, r-code-scan.R)
+├── job-monitor.R      # The monitor worker process
 ├── context.R          # System prompt assembly
 ├── registry.R         # Shared .skill_registry environment
 ├── skill.R            # skill_spec, skill_run, SKILL.md loading
