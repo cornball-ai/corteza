@@ -420,6 +420,53 @@ worker_session <- function(key, cwd = tempdir()) {
 ops_cfg <- c(cfg, list(operators = "@troy:ex"))
 text_of <- function(res) res$content[[1L]]$text
 
+# A miss in a bot with many rooms. The reply has to fit under the cut a
+# long tool result gets, or the talker cannot tell a room that does not
+# exist from one in the part it was not shown.
+local({
+    base <- tempfile("many-rooms")
+    dir.create(base)
+    on.exit(unlink(base, recursive = TRUE), add = TRUE)
+    labels <- c("saber", "pensar", "corteza", sprintf("project%02d", 1:57))
+    many <- lapply(seq_along(labels), function(i) {
+        list(id = sprintf("!r%d:ex", i), name = labels[[i]],
+             cwd = file.path(base, labels[[i]]))
+    })
+    dir.create(file.path(base, "hacer"))
+    dir.create(file.path(base, "saber"))
+    txt <- corteza:::bot_room_no_match(many, "hacer")
+    expect_true(grepl("All 60 of this bot's rooms were checked", txt,
+                      fixed = TRUE))
+    expect_true(length(strsplit(txt, "\n")[[1L]]) < 20L)
+    expect_true(nchar(txt) < 2000L)
+    expect_false(grepl("project40", txt))
+    # The project exists and no room works in it: say so, and how the
+    # work can still be done.
+    expect_true(grepl(file.path(base, "hacer"), txt, fixed = TRUE))
+    expect_true(grepl("no room works in it", txt))
+    expect_true(grepl("delegate without `room`", txt, fixed = TRUE))
+    # Named as a path, the same.
+    expect_true(grepl("no room works in it",
+                      corteza:::bot_room_no_match(many, file.path(base, "hacer"))))
+    # A near name is offered, and only that.
+    near <- corteza:::bot_room_no_match(many, "cortezza")
+    expect_true(grepl("The closest:", near, fixed = TRUE))
+    expect_true(grepl("!r3:ex", near, fixed = TRUE))
+    expect_false(grepl("!r1:ex", near, fixed = TRUE))
+    expect_false(grepl("no room works in it", near))
+    # A directory some room works in is not unclaimed, and neither is
+    # one that does not exist.
+    expect_null(corteza:::bot_room_unclaimed_dir(many, "saber"))
+    expect_null(corteza:::bot_room_unclaimed_dir(many, "nowhere"))
+    # A long list of matches is cut with a count of the rest.
+    shared <- lapply(1:40, function(i) {
+        list(id = sprintf("!s%d:ex", i), name = NULL, cwd = base)
+    })
+    listing <- corteza:::bot_room_listing(shared, max = 25L)
+    expect_identical(length(strsplit(listing, "\n")[[1L]]), 26L)
+    expect_true(grepl("(and 15 more)", listing, fixed = TRUE))
+})
+
 # Room matching: id, then name, then directory, then its last component.
 rr <- function(want) {
     vapply(corteza:::bot_resolve_room(rooms_dir, want), function(r) r$id, "")
@@ -489,9 +536,12 @@ local({
     expect_false(grepl("!b:ex", text_of(no), fixed = TRUE))
     none <- hand("corteza", cfg_now = cfg)
     expect_true(isTRUE(none$isError))
-    # A miss lists the rooms; an ambiguous name asks for an id.
+    # A miss says every room was checked and, with few rooms, lists
+    # them; an ambiguous name asks for an id.
     miss <- hand("nowhere")
     expect_true(isTRUE(miss$isError))
+    expect_true(grepl("All 3 of this bot's rooms were checked", text_of(miss),
+                      fixed = TRUE))
     expect_true(grepl("!b:ex", text_of(miss), fixed = TRUE))
     amb <- hand(tempdir())
     expect_true(grepl("more than one room", text_of(amb)))

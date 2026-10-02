@@ -345,10 +345,83 @@ bot_room_label <- function(room) {
     name[[1L]]
 }
 
-bot_room_listing <- function(rooms) {
-    paste(vapply(rooms, function(r) {
+# The most rooms a tool result lists. A long result is cut before the
+# model sees it (R/tool-output-cap.R), and a list cut short reads as
+# "the room may be in the part I was not shown".
+BOT_ROOM_LIST_MAX <- 12L
+
+bot_room_listing <- function(rooms, max = BOT_ROOM_LIST_MAX) {
+    lines <- vapply(utils::head(rooms, max), function(r) {
         sprintf("- %s (%s), working in %s", bot_room_label(r), r$id, r$cwd)
-    }, ""), collapse = "\n")
+    }, "")
+    if (length(rooms) > max) {
+        lines <- c(lines, sprintf("(and %d more)", length(rooms) - max))
+    }
+    paste(lines, collapse = "\n")
+}
+
+# Rooms whose name or directory is close to `want`: one contains the
+# other, or they differ by a character or two.
+bot_rooms_near <- function(rooms, want) {
+    want <- tolower(basename(trimws(want)))
+    if (!nzchar(want)) {
+        return(list())
+    }
+    near <- function(x) {
+        x <- tolower(x)
+        grepl(want, x, fixed = TRUE) ||
+        (nchar(x) > 2L && grepl(x, want, fixed = TRUE)) ||
+        (nchar(want) > 3L && isTRUE(agrepl(want, x, max.distance = 0.2)))
+    }
+    Filter(function(r) near(bot_room_label(r)) || near(basename(r$cwd)), rooms)
+}
+
+# A directory `want` names that no room works in: `want` itself when it
+# is a path, otherwise a directory of that name beside a room's own.
+# NULL when there is none.
+bot_room_unclaimed_dir <- function(rooms, want) {
+    want <- trimws(want)
+    cwds <- vapply(rooms, function(r) r$cwd, "")
+    found <- if (grepl("^(~/|/|\\./)", want)) {
+        path.expand(want)
+    } else {
+        file.path(unique(dirname(cwds)), want)
+    }
+    found <- found[dir.exists(found)]
+    claimed <- normalizePath(cwds, mustWork = FALSE)
+    found <- found[!normalizePath(found, mustWork = FALSE) %in% claimed]
+    if (length(found)) {
+        found[[1L]]
+    } else {
+        NULL
+    }
+}
+
+# What a talker is told when `want` matches no room. Every room was
+# checked, and the reply says so and stays short: the nearest names
+# rather than the whole list, and the reason when the project exists
+# and no room works in it.
+bot_room_no_match <- function(rooms, want) {
+    out <- sprintf(paste0("No room matches '%s'. All %d of this bot's rooms ",
+                          "were checked, by id, name, and working directory."),
+                   want, length(rooms))
+    near <- bot_rooms_near(rooms, want)
+    if (length(near)) {
+        out <- c(out, "The closest:", bot_room_listing(near))
+    } else if (length(rooms) <= BOT_ROOM_LIST_MAX) {
+        out <- c(out, "This bot's rooms:", bot_room_listing(rooms))
+    }
+    dir <- bot_room_unclaimed_dir(rooms, want)
+    if (!is.null(dir)) {
+        out <- c(out, sprintf(
+                              paste0("The directory %s exists, but no room works in it. A ",
+                                     "room works in the directory its topic names, so ",
+                                     "handing work there needs a room with that topic. ",
+                                     "This room's own doer (delegate without `room`) can ",
+                                     "work on it from here; its writes outside this ",
+                                     "room's project each need approval."), dir))
+    }
+    paste(out, collapse = "\n")
 }
 
 # The rooms `want` could mean, most specific reading first: a room id,
@@ -395,13 +468,13 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
     }
     hits <- bot_resolve_room(rooms, room)
     if (!length(hits)) {
-        return(err(sprintf("No room matches '%s'. This bot's rooms:\n%s",
-                           room, bot_room_listing(rooms))))
+        return(err(bot_room_no_match(rooms, room)))
     }
     if (length(hits) > 1L) {
-        return(err(sprintf(paste0("'%s' matches more than one room. Name ",
-                                  "one by its id:\n%s"),
-                           room, bot_room_listing(hits))))
+        return(err(sprintf(paste0("'%s' matches more than one room (%d). ",
+                                  "Name one by its id:\n%s"),
+                           room, length(hits),
+                           bot_room_listing(hits, max = 25L))))
     }
     target_room <- hits[[1L]]
     if (identical(target_room$id, origin$room)) {

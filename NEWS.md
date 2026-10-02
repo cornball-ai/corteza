@@ -58,7 +58,11 @@
   cancel it. Only a configured operator's request is handed over. A room
   whose topic names another directory than its running session works in
   is not handed work until the two agree (`/clear` there starts a
-  session in the new directory).
+  session in the new directory). When no room matches, the talker is
+  told that every room was checked, shown the nearest names, and told
+  when the project directory exists with no room working in it; the
+  reply no longer lists every room, which a bot in many rooms had cut
+  short.
 
 - **A job's result is retried until it is posted.** A result, or the
   notice of a hand-off, that could not be sent (homeserver down, token
