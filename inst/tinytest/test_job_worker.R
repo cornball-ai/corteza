@@ -218,6 +218,11 @@ local({
     fake$close <- function() invisible(NULL)
     stuck$.job_worker <- fake
     stuck$.job_worker_role <- "doer"
+    # As job_worker_start() records for a worker it starts. Without the
+    # note the worker is not known to be in the session's directory and
+    # is replaced rather than reused.
+    corteza:::job_worker_note(stuck, "doer",
+                              dir = corteza:::job_worker_dir(stuck))
     h <- corteza:::job_submit(stuck, "never runs")
     hj <- corteza:::job_read(h)
     expect_identical(hj$status, "indeterminate")
@@ -357,6 +362,80 @@ expect_true(startsWith(jc, "ROLE-LINE"))
 expect_true(grepl("doer-context-sentinel", jc, fixed = TRUE))
 corteza:::job_worker_close(bare)
 unlink(proj, recursive = TRUE)
+
+# --- The job, the session, and the worker name one directory ---
+# A worker is a process with a working directory of its own. If the
+# session's directory changes, a live worker is still in the old one.
+where <- function(task) list(reply = normalizePath(getwd()))
+dir_a <- tempfile("job-dir-a")
+dir_b <- tempfile("job-dir-b")
+dir.create(dir_a)
+dir.create(dir_b)
+mover <- make_session("room-mover", where)
+mover$cwd <- dir_a
+m1 <- corteza:::job_submit(mover, "where")
+pump_until(mover, m1)
+expect_identical(corteza:::job_read(m1)$outcome$result, normalizePath(dir_a))
+pid_a <- mover$.job_worker$get_pid()
+# Same directory: the live worker is reused.
+m2 <- corteza:::job_submit(mover, "where")
+pump_until(mover, m2)
+expect_identical(mover$.job_worker$get_pid(), pid_a)
+# A job queued for one directory is not run after the session moved to
+# another: nothing reaches a worker, and the record says why.
+m3 <- corteza:::job_create("where", workspace = dir_a,
+                           origin = list(session_key = "room-mover"))
+expect_identical(corteza:::job_read(m3)$status, "queued")
+mover$cwd <- dir_b
+pump_until(mover, m3)
+r3 <- corteza:::job_read(m3)
+expect_identical(r3$status, "failed")
+expect_true(grepl("nothing was run", r3$outcome$error, fixed = TRUE))
+expect_true(grepl(normalizePath(dir_a), r3$outcome$error, fixed = TRUE))
+expect_null(r3$dispatch)
+# A job queued after the move runs in the new directory, in a new
+# process: the worker left in the old directory is not reused.
+m4 <- corteza:::job_submit(mover, "where")
+pump_until(mover, m4)
+expect_identical(corteza:::job_read(m4)$outcome$result, normalizePath(dir_b))
+expect_false(identical(mover$.job_worker$get_pid(), pid_a))
+expect_identical(mover$.job_worker_notes$doer$dir, normalizePath(dir_b))
+
+# --- A session replaced mid-job hands its jobs to the replacement ---
+# /clear replaces the room's session. The ledger finds jobs by key and
+# the pump runs them through whichever session holds it, so the job in
+# flight and its worker have to move too.
+gate <- tempfile("job-gate")
+waiter <- function(task) {
+    gate <- Sys.getenv("JOB_TEST_GATE")
+    deadline <- Sys.time() + 20
+    while (!file.exists(gate) && Sys.time() < deadline) Sys.sleep(0.05)
+    list(reply = "finished after the session was replaced")
+}
+Sys.setenv(JOB_TEST_GATE = gate)
+first <- make_session("room-replaced", waiter)
+running <- corteza:::job_submit(first, "long job")
+for (i in 1:50) {
+    corteza:::job_pump(first)
+    if (identical(corteza:::job_read(running)$status, "running")) break
+    Sys.sleep(0.1)
+}
+expect_identical(corteza:::job_read(running)$status, "running")
+second <- make_session("room-replaced", waiter)
+worker_pid <- first$.job_worker$get_pid()
+corteza:::job_state_move(first, second)
+expect_null(first$.job_worker)
+expect_null(first$.job_current)
+expect_identical(second$.job_current, running)
+expect_identical(second$.job_worker$get_pid(), worker_pid)
+file.create(gate)
+seen <- pump_until(second, running)
+expect_identical(corteza:::job_read(running)$status, "done")
+expect_true("settled" %in% types(seen))
+Sys.unsetenv("JOB_TEST_GATE")
+unlink(c(gate, dir_a, dir_b), recursive = TRUE)
+corteza:::job_worker_close_all(mover)
+corteza:::job_worker_close_all(second)
 
 for (sess in list(s, slow, failing, dying, broken, asker, probe)) {
     corteza:::job_worker_close(sess)

@@ -30,6 +30,11 @@ make_chat <- function(rec, members = c("@bot:ex", "@troy:ex")) {
                  first_run = FALSE)
         },
         .send = function(client, text, room = NULL, ...) {
+            # rec$fail: every send fails, as with the homeserver down.
+            # rec$fail_rooms: sends to those rooms fail.
+            if (isTRUE(rec$fail) || isTRUE(room %in% rec$fail_rooms)) {
+                stop("homeserver unreachable")
+            }
             n <<- n + 1L
             rec$sent[[length(rec$sent) + 1L]] <- list(room = room,
                                                       text = text)
@@ -441,6 +446,193 @@ local({
                              origin_key = "!b:ex", owner = "@bot:ex")[[1L]]
     expect_error(corteza:::job_cancel(other, j2$id), "no job")
     expect_true(corteza:::job_cancel(a, j2$id, by = "@troy:ex"))
+    # The request is a file; room B's pump is what stops the job and
+    # gives the checkout back, and both rooms hear that it ended.
+    sent_before <- length(rec$sent)
+    deadline <- Sys.time() + 30
+    repeat {
+        corteza:::bot_pump_jobs(reg, chat, ops_cfg)
+        if (corteza:::job_read(j2$id)$status %in%
+            corteza:::JOB_STATUSES_FINAL || Sys.time() > deadline) {
+            break
+        }
+        Sys.sleep(0.1)
+    }
+    expect_identical(corteza:::job_read(j2$id)$status, "cancelled")
+    expect_null(corteza:::job_lock_holder(
+        corteza:::job_checkout(rooms_dir[[2L]]$cwd)))
+    ended <- vapply(rec$sent[-seq_len(sent_before)], function(x) x$room, "")
+    expect_true(all(c("!a:ex", "!b:ex") %in% ended))
+})
+
+# A room's directory is read from its topic at the hand-off; its session
+# took its own when it started. If the topic was edited since, the room
+# would be matched and described by the new directory while the job ran
+# in the old one. Nothing is accepted until they agree.
+local({
+    rec <- new.env()
+    chat <- make_chat(rec)
+    old_dir <- tempfile("old-project")
+    new_dir <- tempfile("new-project")
+    dir.create(old_dir)
+    dir.create(new_dir)
+    # Rooms of its own: the ledger is shared across this file, and a job
+    # left queued under another block's room would be run by it.
+    a <- worker_session("!a2:ex")
+    b <- worker_session("!b2:ex", old_dir)
+    reg <- registry(a, b)
+    on.exit({
+        corteza:::job_worker_close_all(b)
+        unlink(c(old_dir, new_dir), recursive = TRUE)
+    }, add = TRUE)
+    moved <- list(list(id = "!a2:ex", name = "llm.api", cwd = tempdir()),
+                  list(id = "!b2:ex", name = "Corteza", cwd = new_dir))
+    before <- length(corteza:::job_list())
+    res <- corteza:::bot_job_handoff(reg, a, ops_cfg, chat, "@troy:ex",
+        list(room = "!a2:ex"), room = basename(new_dir), task = "do it",
+        rooms = moved, new_session = function(id) get(id, envir = reg))
+    expect_true(isTRUE(res$isError))
+    expect_true(grepl("nothing was handed over", text_of(res)))
+    expect_true(grepl(normalizePath(new_dir), text_of(res), fixed = TRUE))
+    expect_true(grepl(normalizePath(old_dir), text_of(res), fixed = TRUE))
+    expect_true(grepl("/clear", text_of(res), fixed = TRUE))
+    expect_identical(length(corteza:::job_list()), before)
+    expect_identical(length(rec$sent), 0L)
+    expect_identical(length(b$history), 0L)
+    # Positive control: once the session works where the topic says, the
+    # same request is accepted and reports that directory.
+    b$cwd <- new_dir
+    ok_res <- corteza:::bot_job_handoff(reg, a, ops_cfg, chat, "@troy:ex",
+        list(room = "!a2:ex"), room = basename(new_dir), task = "do it",
+        rooms = moved, new_session = function(id) get(id, envir = reg))
+    expect_null(ok_res$isError)
+    expect_true(grepl(normalizePath(new_dir), text_of(ok_res), fixed = TRUE))
+    j <- corteza:::job_list(origin_key = "!b2:ex", owner = "@bot:ex")
+    expect_identical(length(j), 1L)
+    expect_identical(normalizePath(j[[1L]]$workspace),
+                     normalizePath(new_dir))
+    # Left queued; cancelled so no later block's pump finds it open.
+    corteza:::job_cancel(b, j[[1L]]$id)
+})
+
+# A post that cannot be sent is kept and retried, and nothing claims it
+# was delivered. The job is submitted once however many tries the
+# message takes.
+local({
+    rec <- new.env()
+    chat <- make_chat(rec)
+    dir3 <- tempfile("corteza")
+    dir.create(dir3)
+    a <- worker_session("!a3:ex")
+    b <- worker_session("!b3:ex", dir3)
+    reg <- registry(a, b)
+    on.exit({
+        corteza:::job_worker_close_all(b)
+        unlink(dir3, recursive = TRUE)
+    }, add = TRUE)
+    rooms3 <- list(list(id = "!a3:ex", name = "llm.api", cwd = tempdir()),
+                   list(id = "!b3:ex", name = "Corteza", cwd = dir3))
+    notices <- function() {
+        list.files(corteza:::bot_notice_dir(), pattern = "[.]json$",
+                   full.names = TRUE)
+    }
+    unlink(corteza:::bot_notice_dir(), recursive = TRUE)
+    expect_false(corteza:::bot_notices_pending())
+    jobs_before <- length(corteza:::job_list(origin_key = "!b3:ex",
+                                             owner = "@bot:ex"))
+
+    rec$fail <- TRUE
+    res <- corteza:::bot_job_handoff(reg, a, ops_cfg, chat, "@troy:ex",
+        list(room = "!a3:ex"), room = "corteza", task = "check the floor",
+        rooms = rooms3, new_session = function(id) get(id, envir = reg))
+    # Accepted, and said to be; the notice is said not to have gone out.
+    expect_null(res$isError)
+    expect_false(grepl("has been told", text_of(res), fixed = TRUE))
+    expect_true(grepl("could not be posted", text_of(res), fixed = TRUE))
+    expect_true(grepl("do not delegate it again", text_of(res),
+                      fixed = TRUE))
+    expect_identical(length(rec$sent), 0L)
+    expect_identical(length(notices()), 1L)
+    expect_true(corteza:::bot_notices_pending())
+    queued <- corteza:::job_read_file(notices()[[1L]])
+    expect_identical(queued$room, "!b3:ex")
+    expect_true(grepl("accepted from llm.api", queued$text, fixed = TRUE))
+    # The running room's talker knows regardless.
+    expect_identical(length(b$history), 1L)
+    expect_identical(length(b$seen_event_ids), 0L)
+
+    # Not due yet: nothing is sent. Still down when due: it stays queued
+    # and waits longer.
+    rec$fail <- FALSE
+    expect_identical(corteza:::bot_notices_retry(chat, reg, "@bot:ex"), 0L)
+    expect_identical(length(rec$sent), 0L)
+    rec$fail <- TRUE
+    corteza:::bot_notices_retry(chat, reg, "@bot:ex", now = Sys.time() + 10)
+    again <- corteza:::job_read_file(notices()[[1L]])
+    expect_identical(again$attempts, 2L)
+    expect_true(again$next_at > queued$next_at)
+    # Another bot sharing the state directory does not send it.
+    rec$fail <- FALSE
+    expect_identical(corteza:::bot_notices_retry(chat, reg, "@codex:ex",
+                                                 now = Sys.time() + 3600), 0L)
+    expect_identical(length(rec$sent), 0L)
+    # Back up: delivered once, recorded as the bot's own, and removed.
+    expect_identical(corteza:::bot_notices_retry(chat, reg, "@bot:ex",
+                                                 now = Sys.time() + 3600), 1L)
+    expect_identical(length(rec$sent), 1L)
+    expect_identical(rec$sent[[1L]]$room, "!b3:ex")
+    expect_identical(length(notices()), 0L)
+    expect_identical(length(b$seen_event_ids), 1L)
+    expect_identical(corteza:::bot_notices_retry(chat, reg, "@bot:ex",
+                                                 now = Sys.time() + 7200), 0L)
+    expect_identical(length(rec$sent), 1L)
+    # One job, not one per attempt.
+    expect_identical(length(corteza:::job_list(origin_key = "!b3:ex",
+                                               owner = "@bot:ex")),
+                     jobs_before + 1L)
+
+    # The result: the asking room is unreachable when the job ends. The
+    # running room gets its post, the asking room's is queued, and both
+    # talkers have the result in history.
+    rec$fail_rooms <- "!a3:ex"
+    deadline <- Sys.time() + 30
+    repeat {
+        corteza:::bot_pump_jobs(reg, chat, ops_cfg)
+        if (!length(corteza:::job_list(status = corteza:::JOB_STATUSES_OPEN,
+                                       origin_key = "!b3:ex",
+                                       owner = "@bot:ex")) ||
+            Sys.time() > deadline) {
+            break
+        }
+        Sys.sleep(0.1)
+    }
+    rooms_sent <- vapply(rec$sent, function(x) x$room, "")
+    expect_identical(rooms_sent, c("!b3:ex", "!b3:ex"))
+    expect_identical(length(notices()), 1L)
+    held <- corteza:::job_read_file(notices()[[1L]])
+    expect_identical(held$room, "!a3:ex")
+    expect_true(grepl("did: check the floor", held$text, fixed = TRUE))
+    expect_identical(length(a$history), 1L)
+    rec$fail_rooms <- NULL
+    corteza:::bot_notices_retry(chat, reg, "@bot:ex", now = Sys.time() + 60)
+    expect_identical(vapply(rec$sent, function(x) x$room, ""),
+                     c("!b3:ex", "!b3:ex", "!a3:ex"))
+    expect_identical(length(notices()), 0L)
+    expect_identical(length(a$seen_event_ids), 1L)
+
+    # A post that never goes out is set aside after a day, not retried
+    # forever, and kept on disk.
+    rec$fail <- TRUE
+    corteza:::bot_post_or_queue(chat, "@bot:ex", "!gone:ex", "hello")
+    expect_identical(length(notices()), 1L)
+    suppressMessages(corteza:::bot_notices_retry(
+        chat, reg, "@bot:ex",
+        now = Sys.time() + corteza:::BOT_NOTICE_MAX_AGE + 60))
+    expect_identical(length(notices()), 0L)
+    expect_identical(length(list.files(corteza:::bot_notice_dir(),
+                                       pattern = "[.]undelivered$")), 1L)
+    expect_false(corteza:::bot_notices_pending())
+    unlink(corteza:::bot_notice_dir(), recursive = TRUE)
 })
 
 # With the asking session gone, the result is still posted where it was

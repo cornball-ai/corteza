@@ -71,6 +71,125 @@ bot_job_send <- function(chat, s, job, text) {
     sent
 }
 
+# ---- Posts that have to arrive -----------------------------------------
+#
+# A job's result, and the notice that a room's doer has been given
+# another room's work, are posted once by code and by nobody else: no
+# later turn repeats them. A send that fails (the homeserver is down, a
+# token is mid-rotation) used to be dropped, and the caller carried on
+# as if the room had been told.
+#
+# These posts are tried at once and, on failure, written to the state
+# directory and retried by the poll loop until they go out. The job they
+# are about is never resubmitted; only the message is retried. Callers
+# get back whether it was delivered, so what they report is true.
+
+# Seconds to wait before each retry; the last value repeats.
+BOT_NOTICE_BACKOFF <- c(5, 15, 60, 300)
+# A post not delivered after this long is set aside and logged.
+BOT_NOTICE_MAX_AGE <- 24 * 3600
+
+bot_notice_dir <- function() {
+    file.path(bot_signal_dir(), "notices")
+}
+
+# Send one notice. On success, record it as the bot's own on the session
+# it belongs to (so its echo through sync is skipped) and return the
+# event id; NULL when it did not go out.
+bot_notice_send <- function(chat, n, session = NULL) {
+    sent <- tryCatch(bot_reply_send(chat, n$room, n$text, markdown = TRUE,
+                                    thread = n$thread),
+                     error = function(e) NULL)
+    if (!is.character(sent) || length(sent) != 1L || is.na(sent) ||
+        !nzchar(sent)) {
+        return(NULL)
+    }
+    if (is.environment(session)) {
+        session$seen_event_ids <- bot_remember_event(session$seen_event_ids,
+            sent)
+        bot_transcript_add(session, sent, "assistant", n$text)
+    }
+    sent
+}
+
+# Post `text` to a room, or keep it for retry if it cannot be sent now.
+# Returns the event id, or NULL when it was queued instead.
+bot_post_or_queue <- function(chat, owner, room, text, thread = NULL,
+                              session = NULL, session_key = NULL, job = NULL) {
+    n <- list(owner = owner, room = room, text = text, job = job,
+              session_key = session_key)
+    if (!is.null(thread)) {
+        n$thread <- thread
+    }
+    if (is.null(chat)) {
+        sent <- NULL
+    } else {
+        sent <- bot_notice_send(chat, n, session)
+    }
+    if (!is.null(sent)) {
+        return(sent)
+    }
+    n$created_at <- as.numeric(Sys.time())
+    n$attempts <- 1L
+    n$next_at <- n$created_at + BOT_NOTICE_BACKOFF[[1L]]
+    dir <- bot_notice_dir()
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    job_write_file(file.path(dir, paste0(job_new_id(), ".json")), n)
+    NULL
+}
+
+bot_notices_pending <- function() {
+    dir <- bot_notice_dir()
+    dir.exists(dir) &&
+    length(list.files(dir, pattern = "^[0-9T-]+-[0-9a-f]+[.]json$")) > 0L
+}
+
+# Retry this bot's queued posts that are due. Delivered ones are removed;
+# failed ones wait longer each time; one older than BOT_NOTICE_MAX_AGE is
+# set aside (renamed, kept for inspection) and logged, so a room that is
+# gone for good does not keep the loop retrying forever.
+bot_notices_retry <- function(chat, sessions, owner, now = Sys.time()) {
+    dir <- bot_notice_dir()
+    if (!dir.exists(dir)) {
+        return(invisible(0L))
+    }
+    now <- as.numeric(now)
+    delivered <- 0L
+    files <- sort(list.files(dir, pattern = "^[0-9T-]+-[0-9a-f]+[.]json$",
+                             full.names = TRUE))
+    for (path in files) {
+        n <- tryCatch(job_read_file(path), error = function(e) NULL)
+        # Another bot's post in a shared state directory is not ours to
+        # send: it would go out under the wrong name.
+        if (is.null(n) || !identical(n$owner, owner) ||
+            isTRUE(n$next_at > now)) {
+            next
+        }
+        key <- n$session_key
+        session <- if (!is.null(sessions) && !is.null(key) &&
+            exists(key, envir = sessions, inherits = FALSE)) {
+            get(key, envir = sessions)
+        }
+        if (!is.null(bot_notice_send(chat, n, session))) {
+            unlink(path)
+            delivered <- delivered + 1L
+            next
+        }
+        if (now - n$created_at > BOT_NOTICE_MAX_AGE) {
+            file.rename(path, sub("[.]json$", ".undelivered", path))
+            message(sprintf("bot: gave up posting to %s after %d tries: %s",
+                            n$room, n$attempts,
+                            .sanitize_inline(n$text, max_chars = 80L)))
+            next
+        }
+        n$attempts <- as.integer(n$attempts) + 1L
+        wait <- BOT_NOTICE_BACKOFF[[min(n$attempts, length(BOT_NOTICE_BACKOFF))]]
+        n$next_at <- now + wait
+        job_write_file(path, n)
+    }
+    invisible(delivered)
+}
+
 bot_pump_jobs <- function(sessions, chat, cfg) {
     for (s in bot_job_sessions(sessions)) {
         events <- tryCatch(job_pump(s), error = function(e) {
@@ -105,7 +224,12 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     } else {
         paste0(result, "\n\n_Requested from ", from$label %||% from$room, "._")
     }
-    sent <- bot_job_send(chat, s, job, text)
+    # A result is posted once; if it cannot go out now it is retried
+    # (bot_post_or_queue()) rather than lost.
+    sent <- bot_post_or_queue(chat, job$owner %||% job_worker_owner(s),
+                              job$origin$room %||% s$room_id, text,
+                              thread = job$origin$thread, session = s,
+                              session_key = job_worker_key(s), job = job$id)
     # Into the talker's history either way. The post can fail; the
     # talker still has to know the job ended, or it will keep telling the
     # user the work is in progress.
@@ -126,21 +250,18 @@ bot_job_report_back <- function(chat, sessions, job, result) {
     from <- job$origin$from
     text <- paste0(result, "\n\n_Run by the doer in ",
                    job$origin$label %||% job$origin$room, "._")
-    sent <- tryCatch(bot_reply_send(chat, from$room, text, markdown = TRUE,
-                                    thread = from$thread),
-                     error = function(e) NULL)
     key <- from$session_key
-    if (is.null(sessions) || is.null(key) ||
-        !exists(key, envir = sessions, inherits = FALSE)) {
-        return(invisible(sent))
+    asker <- if (!is.null(sessions) && !is.null(key) &&
+        exists(key, envir = sessions, inherits = FALSE)) {
+        get(key, envir = sessions)
     }
-    asker <- get(key, envir = sessions)
-    if (!is.null(sent)) {
-        asker$seen_event_ids <- bot_remember_event(asker$seen_event_ids, sent)
-        bot_transcript_add(asker, sent, "assistant", text)
+    sent <- bot_post_or_queue(chat, job$owner %||% "local", from$room, text,
+                              thread = from$thread, session = asker,
+                              session_key = key, job = job$id)
+    if (is.environment(asker)) {
+        asker$history <- c(asker$history %||% list(),
+                           list(list(role = "assistant", content = text)))
     }
-    asker$history <- c(asker$history %||% list(),
-                       list(list(role = "assistant", content = text)))
     invisible(sent)
 }
 
@@ -246,6 +367,20 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
         return(err(sprintf("Could not open a session for %s.",
                            bot_room_label(target_room))))
     }
+    # The room was matched, and will be described, by the directory its
+    # topic names now. The job runs where the room's session works, and a
+    # session takes its directory when it starts: a topic edited since
+    # leaves the two apart until that session is replaced. Accepting the
+    # job anyway would run it in the old project while saying the new.
+    listed <- normalizePath(path.expand(target_room$cwd), mustWork = FALSE)
+    if (!identical(listed, job_worker_dir(target))) {
+        return(err(sprintf(paste0(
+                                  "%s is set to work in %s, but its running session is still ",
+                                  "working in %s, so nothing was handed over. The room takes ",
+                                  "its directory when its session starts: /clear in that room ",
+                                  "starts one in the new directory. Then ask again."),
+                           bot_room_label(target_room), listed, job_worker_dir(target))))
+    }
     # The default is the running room's: its project decides whether its
     # work is reviewed.
     review <- if (is.null(review)) {
@@ -282,17 +417,29 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
                              "it; the result will be posted here and in %s.%s"),
                       id, from_label, job_title(job, max_chars = 120L),
                       sender, from_label, queued)
-    bot_job_send(chat, target, job, notice)
+    told <- bot_post_or_queue(chat, job$owner %||% job_worker_owner(target),
+                              target_room$id, notice, session = target,
+                              session_key = job_worker_key(target), job = id)
     # In the running room's talker's history whether or not the post went
     # out: asked what its doer is busy with, it has to be able to say.
     target$history <- c(target$history %||% list(),
                         list(list(role = "assistant", content = notice)))
+    # What the talker is told about the notice is what happened to it.
+    # Either way the job is accepted, and saying so plainly is what keeps
+    # a talker from delegating it a second time.
+    told_text <- if (is.null(told)) {
+        paste("The notice to that room could not be posted just now and",
+              "will be retried; the job is accepted all the same, so do",
+              "not delegate it again.")
+    } else {
+        "That room has been told."
+    }
     ok(sprintf(paste0("Handed to %s as job %s. That room's doer runs it in ",
-                      "%s, and that room has been told. The result will ",
+                      "%s. %s The result will ",
                       "arrive here as its own message and is posted there ",
                       "too; tell the user which room took it, and do not ",
                       "answer the delegated question yourself.%s%s"),
-               label, id, target_room$cwd, queued,
+               label, id, job$workspace, told_text, queued,
             if (review) {
                 " A review of the work will follow it."
             } else {

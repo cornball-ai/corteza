@@ -34,7 +34,22 @@
   its checkout lock, with approvals asked there. That room is told when
   the job is accepted, in the room and in its talker's history, and the
   result is posted in both rooms. Either room can ask about the job or
-  cancel it. Only a configured operator's request is handed over.
+  cancel it. Only a configured operator's request is handed over. A room
+  whose topic names another directory than its running session works in
+  is not handed work until the two agree (`/clear` there starts a
+  session in the new directory).
+
+- **A job's result is retried until it is posted.** A result, or the
+  notice of a hand-off, that could not be sent (homeserver down, token
+  mid-rotation) was dropped and reported as delivered. It is now kept in
+  the state directory and retried by the poll loop with a growing delay,
+  and set aside after a day. The job itself is never resubmitted.
+
+- **A job runs in the directory its record names.** A job queued for one
+  directory fails without running if its session has since moved to
+  another, and a live worker is reused only while it is in the session's
+  directory. `/clear` and `/model` no longer orphan a running job: the
+  job and its worker move to the replacement session.
 
 - **A `thinking` setting names the Anthropic thinking type.** `thinking`
   in the corteza config, in a `talker` block, or under `jobs` and

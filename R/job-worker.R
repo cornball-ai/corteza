@@ -359,6 +359,36 @@ job_worker_alive <- function(session) {
     !is.null(w) && isTRUE(tryCatch(w$is_alive(), error = function(e) FALSE))
 }
 
+# The directory this session's jobs run in, in the form job records and
+# worker notes compare by.
+job_worker_dir <- function(session) {
+    normalizePath(session$cwd %||% getwd(), mustWork = FALSE)
+}
+
+# What the session knows about its worker for `role`: the directory the
+# process was started in, and when it last had work. The first says
+# whether a live worker may be reused (job_worker_activate()), the
+# second when an idle one may be retired (job_workers_retire()).
+job_worker_note <- function(session, role, dir = NULL, used = Sys.time()) {
+    notes <- session$.job_worker_notes %||% list()
+    note <- notes[[role]] %||% list()
+    if (!is.null(dir)) {
+        note$dir <- dir
+    }
+    note$used <- used
+    notes[[role]] <- note
+    session$.job_worker_notes <- notes
+    invisible(note)
+}
+
+# Is the live worker for `role` in the directory the session works in
+# now? A worker is a process with a working directory of its own; one
+# started before the session's directory changed would run the next job
+# somewhere else than its record says.
+job_worker_in_place <- function(session, role) {
+    identical(session$.job_worker_notes[[role]]$dir, job_worker_dir(session))
+}
+
 # Start the session's worker, restoring its last checkpoint. Blocks for
 # the child's startup (a second or two) -- the one synchronous step, and
 # it happens only when a job is dispatched to a session with no live
@@ -384,6 +414,7 @@ job_worker_start <- function(session, role = "doer") {
     })
     session$.job_worker <- worker
     session$.job_worker_role <- role
+    job_worker_note(session, role, dir = job_worker_dir(session))
     restore
 }
 
@@ -409,10 +440,18 @@ job_worker_close <- function(session) {
 # Make the worker for `role` the active one, starting it if there is
 # none alive. Returns the restore info when a worker was started, NULL
 # when a live one was reused.
+#
+# A live worker is reused only while it is in the directory the session
+# works in (job_worker_in_place()). One that is not is replaced: started
+# fresh in the right directory, where it restores that directory's own
+# checkpoint if there is one.
 job_worker_activate <- function(session, role) {
     if (job_worker_alive(session) &&
         identical(session$.job_worker_role, role)) {
-        return(NULL)
+        if (job_worker_in_place(session, role)) {
+            return(NULL)
+        }
+        return(job_worker_start(session, role))
     }
     parked <- session$.job_workers_parked %||% list()
     if (job_worker_alive(session)) {
@@ -425,9 +464,12 @@ job_worker_activate <- function(session, role) {
     session$.job_workers_parked <- parked
     if (!is.null(w) &&
         isTRUE(tryCatch(w$is_alive(), error = function(e) FALSE))) {
-        session$.job_worker <- w
-        session$.job_worker_role <- role
-        return(NULL)
+        if (job_worker_in_place(session, role)) {
+            session$.job_worker <- w
+            session$.job_worker_role <- role
+            return(NULL)
+        }
+        tryCatch(w$close(), error = function(e) NULL)
     }
     job_worker_start(session, role)
 }
@@ -451,6 +493,31 @@ job_worker_close_all <- function(session) {
     }
     session$.job_workers_parked <- NULL
     invisible(TRUE)
+}
+
+# Everything a session holds about its jobs and workers.
+JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
+                       ".job_workers_parked", ".job_worker_notes",
+                       ".job_current", ".job_events", ".job_asked",
+                       ".job_blocked", ".job_prompts")
+
+# Move a session's job state to the session that replaces it under the
+# same key (a /clear, a /model switch). The ledger finds a room's jobs
+# by key, and the pump runs them through whichever session holds that
+# key, so the worker handles and the job in flight have to be there.
+#
+# The replacement may work in another directory (the room's topic was
+# edited). The job in flight finishes where it started; after that
+# job_worker_activate() sees the worker is not in the session's
+# directory and starts one that is.
+job_state_move <- function(from, to) {
+    for (field in JOB_SESSION_STATE) {
+        if (exists(field, envir = from, inherits = FALSE)) {
+            assign(field, get(field, envir = from), envir = to)
+            rm(list = field, envir = from)
+        }
+    }
+    invisible(to)
 }
 
 # Queue a job for this session and try to start it. Returns the id.
@@ -552,6 +619,8 @@ job_pump_current <- function(session, id) {
     finish <- function(status, ...) {
         job_settle(id, status, ...)
         session$.job_current <- NULL
+        # Idle from now, as far as retiring the worker goes.
+        job_worker_note(session, j$role)
         if (job_role_locks(j$role)) {
             job_lock_release(job_checkout(j$workspace), id)
         }
@@ -695,24 +764,38 @@ job_dispatch_next <- function(session) {
 # current job, or ends it and gives the lock back.
 job_dispatch <- function(session, j, checkout) {
     events <- list()
-    if (!job_worker_alive(session) ||
-        !identical(session$.job_worker_role, j$role)) {
-        restore <- tryCatch(job_worker_activate(session, j$role),
-                            error = function(e) e)
-        if (inherits(restore, "error")) {
-            # Nothing reached a worker, so the job had no effect: it
-            # fails cleanly rather than going indeterminate.
-            job_settle(j$id, "failed", error = conditionMessage(restore))
-            if (!is.null(checkout)) {
-                job_lock_release(checkout, j$id)
-            }
-            return(list(list(type = "settled", job = job_read(j$id))))
+    # Nothing has reached a worker yet, so a job stopped here had no
+    # effect: it fails cleanly rather than going indeterminate.
+    refuse <- function(why) {
+        job_settle(j$id, "failed", error = why)
+        if (!is.null(checkout)) {
+            job_lock_release(checkout, j$id)
         }
-        if (isTRUE(restore$restored)) {
-            events[[length(events) + 1L]] <- list(type = "restored",
-                job = j, restore = restore)
-        }
+        list(list(type = "settled", job = job_read(j$id)))
     }
+    # The job's record, the session, and the worker have to name one
+    # directory. The record was written when the job was queued; a
+    # session that works somewhere else by now would run it in a place
+    # its record, its lock, and whoever asked for it know nothing of.
+    wanted <- normalizePath(j$workspace, mustWork = FALSE)
+    if (!identical(wanted, job_worker_dir(session))) {
+        return(refuse(sprintf(paste0("this job was queued to run in %s, but ",
+                                     "its session now works in %s; nothing ",
+                                     "was run. Ask again."),
+                              wanted, job_worker_dir(session))))
+    }
+    # Always through job_worker_activate(): it reuses a live worker only
+    # when that worker is in the session's directory.
+    restore <- tryCatch(job_worker_activate(session, j$role),
+                        error = function(e) e)
+    if (inherits(restore, "error")) {
+        return(refuse(conditionMessage(restore)))
+    }
+    if (isTRUE(restore$restored)) {
+        events[[length(events) + 1L]] <- list(type = "restored",
+            job = j, restore = restore)
+    }
+    job_worker_note(session, j$role)
     spec <- job_worker_spec(session, j$role)
     # Every way out of the hand-off ends the job and gives back the lock.
     # Without this, a failure here left the job marked running and

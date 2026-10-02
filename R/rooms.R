@@ -1754,13 +1754,23 @@ bot_new_session_registry <- function() {
 bot_reset_session <- function(registry, key, cfg, sent_id, ack,
                               system = NULL, model = NULL, provider = NULL,
                               tools_filter = NULL, room_id = key) {
+    old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
+        old <- get(key, envir = registry)
         rm(list = key, envir = registry)
     }
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
                                    tools_filter = tools_filter,
                                    room_id = room_id)
+    # The room's jobs outlive its conversation. A job running when the
+    # session is replaced is pumped by whichever session holds the
+    # registry key, so the worker handles and the job in flight move to
+    # the replacement; left on the discarded session, the job would never
+    # be settled and its worker would run on unowned.
+    if (is.environment(old)) {
+        job_state_move(old, s)
+    }
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -2514,11 +2524,19 @@ bot_run_step <- function(state, timeout = 30000L) {
     # Advance every room's jobs: start queued ones, post results, raise
     # approval prompts. Never blocks on a worker. Client derived now, as
     # for the flush below.
-    if (length(bot_job_sessions(state$sessions))) {
+    pending_posts <- bot_notices_pending()
+    if (length(bot_job_sessions(state$sessions)) || pending_posts) {
         job_cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
         job_chat <- tryCatch(bot_chat_client(job_cfg), error = function(e) NULL)
         if (!is.null(job_chat)) {
             bot_pump_jobs(state$sessions, job_chat, job_cfg)
+            # Posts an earlier step could not deliver (a job's result, a
+            # hand-off notice). After the pump, so one queued this step
+            # waits out its first delay instead of being retried at once.
+            if (pending_posts) {
+                bot_notices_retry(job_chat, state$sessions,
+                                  bot_job_owner(job_cfg))
+            }
         }
     }
     # Out-of-band archive trigger: another process (e.g. a cornelius
