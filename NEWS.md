@@ -29,6 +29,7 @@
   "thinking": "between_tools"}`. The value belongs to one model, so a
   fallback to another model does not carry it and `/model` clears a
   talker's. It cannot be combined with `thinking_budget_tokens`.
+  Requires llm.api 0.1.9.13, whose `agent()` takes `thinking`.
 
 - **Jobs are durable and never re-run blindly.** Each job's intent is
   written before a worker sees it and its outcome beside it. After a

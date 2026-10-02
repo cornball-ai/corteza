@@ -182,37 +182,19 @@ expect_identical(names(corteza:::.gate_reasoning_args(
 expect_identical(corteza:::.gate_reasoning_args(
     list(thinking_budget_tokens = 2048L), "anthropic")$thinking_budget_tokens,
     2048L)
-# The same prefix rule applies to the call into llm.api::agent(), whose
-# `thinking_budget_tokens` formal sits ahead of `...`: `thinking` alone
-# is taken as the budget. Naming the budget keeps them apart. Checked
-# against agent()'s real formals, with the body swapped for a probe.
-# llm.api 0.1.9.13 adds a `thinking` formal; the probe reads the type
-# from there when it exists and from the dots when it does not, so the
-# prepared call is checked the same way against either.
-agent_formals <- formals(llm.api::agent)
+# The same prefix rule would apply to the call into llm.api::agent():
+# before llm.api 0.1.9.13, `thinking = ` matched agent()'s
+# `thinking_budget_tokens` formal and the call failed as a bad budget.
+# That version gives agent() a `thinking` formal of its own, which is
+# why DESCRIPTION requires it. Checked against agent()'s real formals,
+# with the body swapped for a probe.
 probe <- function() NULL
-formals(probe) <- agent_formals
-body(probe) <- if ("thinking" %in% names(agent_formals)) {
-    quote(list(budget = thinking_budget_tokens, type = thinking))
-} else {
-    quote(list(budget = thinking_budget_tokens,
-               type = list(...)[["thinking"]]))
-}
-th_args <- list(prompt = "p", thinking = list(type = "between_tools"))
-if (!"thinking" %in% names(agent_formals)) {
-    # Negative control: unprepared, the type lands in the budget.
-    expect_identical(do.call(probe, th_args)$budget,
-                     list(type = "between_tools"))
-}
-sent <- do.call(probe, corteza:::.agent_call_args(th_args))
+formals(probe) <- formals(llm.api::agent)
+body(probe) <- quote(list(budget = thinking_budget_tokens, type = thinking))
+sent <- do.call(probe, list(prompt = "p",
+                            thinking = list(type = "between_tools")))
 expect_null(sent$budget)
 expect_identical(sent$type, list(type = "between_tools"))
-# Nothing to do without a thinking type, and a set budget is left alone.
-expect_identical(corteza:::.agent_call_args(list(prompt = "p")),
-                 list(prompt = "p"))
-expect_identical(corteza:::.agent_call_args(
-    list(prompt = "p", thinking_budget_tokens = 2048L)),
-    list(prompt = "p", thinking_budget_tokens = 2048L))
 # A malformed value is an error where it is read.
 expect_error(corteza:::talker_enable(
     corteza::new_session("matrix", provider = "anthropic"),
