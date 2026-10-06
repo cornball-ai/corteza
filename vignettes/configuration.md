@@ -273,6 +273,34 @@ corteza::bot_configure(
 )
 ```
 
+#### Voice in a call
+
+A bot can take part in a call as a participant: it hears each person's
+audio from the SFU, answers, and speaks. The call runs in a worker
+process beside the bot (`R/call-worker.R`); the bot process keeps the
+Matrix side. It needs `livekitr` (Suggests) and the two speech routes
+below. These keys live in the bot config (`bot_configure()`'s file),
+under `voice`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `voice.stt.url` | string | required | Base URL of an OpenAI-shaped transcription route (`/v1/audio/transcriptions` is appended) |
+| `voice.stt.model` | string | required | Model name sent with each utterance |
+| `voice.stt.language` | string | unset | Language hint sent with each utterance |
+| `voice.stt.key` / `voice.stt.key_env` | string | unset | Bearer credential, literally or as the name of an environment variable |
+| `voice.tts.url` | string | required | Base URL of an OpenAI-shaped synthesis route (`/v1/audio/speech`) |
+| `voice.tts.model` | string | required | Model name |
+| `voice.tts.voice` | string | unset | Voice name |
+| `voice.tts.key` / `voice.tts.key_env` | string | unset | As for `stt` |
+| `voice.call.answer` | string | `"addressed"` | With several people in the call, answer only when addressed by name or as a follow-up (`"addressed"`), or answer everyone (`"always"`). With one person the bot always answers. |
+| `voice.call.vad` | object | unset | Endpointing settings passed to the energy detector: `start_ms` (200), `end_ms` (700), `margin_db` (10), `min_ms` (300), `max_ms` (30000) |
+
+The transcription route takes one file per utterance, so the bot
+decides where an utterance ends itself, from signal energy. Replies are
+synthesized a sentence at a time; someone talking over the bot stops it
+within about a fifth of a second, and the reply posted to the room is
+trimmed to what was heard.
+
 ### Legacy memory
 
 | Key | Type | Default | Description |

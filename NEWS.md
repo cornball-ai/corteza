@@ -1,3 +1,26 @@
+# corteza 0.7.1.57
+
+- **A bot can take part in a call.** The voice brain that serves the
+  1:1 AgentVoice mode (`voice_turn()`, `voice_turn_report()`) now has a
+  second media backend: a call over LiveKit, where the bot is a
+  participant and hears one audio stream per person. The call runs in a
+  worker process beside the bot (`R/call-loop.R`, `R/call-worker.R`):
+  it cuts each person's audio into utterances by signal energy, posts
+  each to an OpenAI-shaped transcription route, answers through the
+  room's session, synthesizes the reply a sentence at a time through an
+  OpenAI-shaped synthesis route, and publishes it in 200 ms chunks.
+  Someone talking over the bot stops it within a chunk, cancels the
+  generation, and trims the reply posted to the room to what was heard.
+  With several people the bot answers when addressed by one of its
+  names or as a follow-up within 20 s; with one, always. The bot
+  process posts and edits on the worker's behalf and tells it the
+  call's media keys; the worker never holds a Matrix credential.
+  Configured under `voice.stt`, `voice.tts` and `voice.call` in the bot
+  config (see `vignette("configuration")`); needs `livekitr` (Suggests).
+  Joining a MatrixRTC call from the bot's Matrix account is not wired
+  yet: it needs the chat transport to expose the call's membership and
+  key exchange, and an SFU to join.
+
 # corteza 0.7.1.56
 
 - **`run_r` releases its output sink when a worker call is interrupted.**
