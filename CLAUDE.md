@@ -116,10 +116,15 @@ heard. Two media backends call them:
   mailbox to the bot process, which posts, edits, and exchanges media
   keys; the child never holds a Matrix credential.
 
-The Matrix side of a call (joining from the bot's account,
-`mx.client::mx_call_join`, key exchange) is not wired: it has to run in
-the bot process, which owns the crypto store, and the chat transport
-does not expose it yet.
+The Matrix side of a call runs in the bot process, which owns the
+crypto store, through chat.api's call surface (`chat_call_join()`,
+`chat_call_media()`, `chat_call_updates()`, `chat_call_leave()`; chat.api
+0.1.0.1). `R/call-bot.R` handles `/call` and `/hangup`, starts the
+worker from the join's token and keys, forwards the keys each poll
+brings, and posts and edits for the worker (`bot_call_pump()` from
+`bot_run_step()`, whose long poll is cut to `BOT_CALL_POLL_MS` while a
+call is on). chat.api keeps a client's calls on the identity's crypto
+context, since corteza builds a chat client per poll.
 
 ## Configuration
 

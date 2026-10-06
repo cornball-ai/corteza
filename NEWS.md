@@ -17,9 +17,13 @@
   call's media keys; the worker never holds a Matrix credential.
   Configured under `voice.stt`, `voice.tts` and `voice.call` in the bot
   config (see `vignette("configuration")`); needs `livekitr` (Suggests).
-  Joining a MatrixRTC call from the bot's Matrix account is not wired
-  yet: it needs the chat transport to expose the call's membership and
-  key exchange, and an SFU to join.
+  `/call` in a room joins that room's MatrixRTC call from the bot's
+  account through chat.api's call surface (`chat_call_join()`, chat.api
+  0.1.0.1, an encrypted client); `/hangup` leaves. The bot process
+  forwards the media keys that arrive on each poll to the worker and
+  shortens its long poll to half a second while a call is on, so the
+  worker's replies are posted promptly. Not yet tried against a real
+  SFU: the fleet has none.
 
 # corteza 0.7.1.56
 

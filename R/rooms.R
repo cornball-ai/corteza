@@ -77,7 +77,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.0.1.24"
+.CHAT_API_MIN <- "0.1.0.1"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -1980,6 +1980,23 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             next
         }
 
+        call_cmd <- bot_parse_call_command(m$body)
+        if (!is.null(call_cmd)) {
+            ack <- bot_call_command(session, cfg, chat_now(), m$channel, call_cmd)
+            sent_id <- tryCatch(
+                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                error = function(e) NULL
+            )
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(
+                    session$seen_event_ids, sent_id
+                )
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
         model_cmd <- bot_parse_model_command(m$body)
         if (!is.null(model_cmd)) {
             ack <- bot_apply_model_command(session, model_cmd, cfg = cfg)
@@ -2001,6 +2018,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_clear_command(m$body)) {
+            # A call belongs to the session being discarded; left here,
+            # its worker would run on with nothing pumping it.
+            bot_call_stop(session, chat_now())
             # The segment title reads the transcript, so it must be
             # taken before the archive drains it.
             seg_title <- bot_segment_title(session)
@@ -2381,9 +2401,19 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 bot_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
+    # A call worker's requests (a reply to post) wait on this loop, so
+    # the long poll is cut short while a room is in a call.
+    if (bot_calls_active(state$sessions)) {
+        timeout <- min(timeout, BOT_CALL_POLL_MS)
+    }
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions)
+    if (bot_calls_active(state$sessions)) {
+        call_chat <- tryCatch(bot_chat_client(bot_load_config()),
+                              error = function(e) NULL)
+        bot_calls_pump(state$sessions, call_chat)
+    }
     # Out-of-band archive trigger: another process (e.g. a cornelius
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns

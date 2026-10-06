@@ -41,7 +41,7 @@ Imports:
     saber (>= 0.7.2.3),
     utils
 Suggests:
-    chat.api (>= 0.0.1.24),
+    chat.api (>= 0.1.0.1),
     clipr,
     fortunes,
     livekitr,

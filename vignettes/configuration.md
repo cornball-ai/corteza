@@ -301,6 +301,13 @@ synthesized a sentence at a time; someone talking over the bot stops it
 within about a fifth of a second, and the reply posted to the room is
 trimmed to what was heard.
 
+`/call` in a room joins that room's MatrixRTC call (what Element Call
+and FluffyChat 2.10 start) from the bot's account; `/hangup` leaves it.
+Joining needs chat.api 0.1.0.1 and a bot configured with `e2ee: true`,
+since the call's media keys travel over Olm. In an encrypted room the
+trim of an interrupted reply is not applied: chat.api does not edit in
+encrypted rooms, so the full reply stands.
+
 ### Legacy memory
 
 | Key | Type | Default | Description |
