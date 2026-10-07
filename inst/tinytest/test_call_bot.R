@@ -233,6 +233,58 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
     expect_identical(length(log$sent), 2L)
     expect_identical(log$sent[[1L]]$text, "Hello there.")
 
+    # A poll's call notices: someone else in a room's call makes the bot
+    # join as /call would, once; a room off the allowlist, a notice with
+    # nobody in, or auto_join off does not.
+    log_n <- with_fake_chat(function(log) {
+        worker$alive <- TRUE
+        started <<- list()
+        notice <- function(channel, members, left = character()) {
+            structure(list(channel = channel, members = members, left = left),
+                      class = "chat_call_notice")
+        }
+        quiet <- function(...) suppressMessages(corteza:::bot_calls_notice(...))
+        allow <- cfg
+        allow$voice$call <- list(rooms = "!r:ex")
+        n <- quiet(list(notice("!r:ex", "@troy:ex:PHONE"),
+                        notice("!elsewhere:ex", "@ann:ex:LAPTOP")),
+                   sessions, allow, "chat", start = start)
+        expect_identical(n, 1L)
+        expect_identical(length(started), 1L)
+        expect_identical(started[[1L]]$args$room_id, "!r:ex")
+        expect_false(is.null(s$call))
+        expect_identical(log$sent[[length(log$sent)]]$text, "Joining the call.")
+        # Already in: a second notice for the room does nothing.
+        n <- quiet(list(notice("!r:ex", "@troy:ex:PHONE")), sessions, allow, "chat",
+                   start = start)
+        expect_identical(n, 0L)
+        expect_identical(length(started), 1L)
+        # The last other member leaving ends the call, from the call's own
+        # membership rather than the notice.
+        log$call$changes$members <- c("@bot:ex:DEV")
+        expect_false(suppressMessages(corteza:::bot_call_pump(s, "chat")))
+        expect_null(s$call)
+        expect_false(worker$alive)
+        # Nobody in (a leave) does not start one; neither does auto_join off.
+        worker$alive <- TRUE
+        n <- quiet(list(notice("!r:ex", character(), left = "@troy:ex")), sessions,
+                   allow, "chat", start = start)
+        expect_identical(n, 0L)
+        off <- allow
+        off$voice$call$auto_join <- FALSE
+        n <- quiet(list(notice("!r:ex", "@troy:ex:PHONE")), sessions, off, "chat",
+                   start = start)
+        expect_identical(n, 0L)
+        expect_identical(length(started), 1L)
+        # Without an allowlist, any room the bot is in.
+        n <- quiet(list(notice("!other:ex", "@troy:ex:PHONE")), sessions, cfg, "chat",
+                   start = start)
+        expect_identical(n, 1L)
+        expect_identical(started[[2L]]$args$room_id, "!other:ex")
+        other <- get("!other:ex", envir = sessions)
+        corteza:::bot_call_stop(other, "chat")
+    })
+
     # Refusals, by reason.
     with_fake_chat(function(log) {
         bad <- cfg

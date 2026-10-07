@@ -1820,6 +1820,18 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         bot_accept_invites(chat_now(), invites)
     }
 
+    # A call button posts a membership event and nothing else, so this
+    # is the bot's one signal that someone started or left a call in a
+    # room it is in. Not on the baseline sync: a membership that was in
+    # the room before the bot started is not an invitation to join now.
+    joined_calls <- 0L
+    if (!first_run && length(res$calls)) {
+        joined_calls <- bot_calls_notice(res$calls, sessions, cfg, chat_now(),
+            system = system, model = model,
+            provider = provider,
+            tools_filter = tools_filter)
+    }
+
     if (first_run) {
         message("bot_poll: baseline established, no history processed")
         return(invisible(0L))
@@ -1846,7 +1858,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         sessions <- bot_new_session_registry()
     }
 
-    replied <- 0L
+    replied <- joined_calls
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
         # A thread is its own conversation, so it gets its own session.

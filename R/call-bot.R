@@ -32,8 +32,10 @@ bot_parse_call_command <- function(body) {
     NULL
 }
 
-# Act on a call command. Returns the acknowledgement to post.
-bot_call_command <- function(session, cfg, chat, room_id, cmd) {
+# Act on a call command. Returns the acknowledgement to post. `start`
+# is the worker starter, replaced in tests.
+bot_call_command <- function(session, cfg, chat, room_id, cmd,
+                             start = call_worker_start) {
     if (identical(cmd, "hangup")) {
         if (is.null(session$call)) {
             return("Not in a call here.")
@@ -49,7 +51,7 @@ bot_call_command <- function(session, cfg, chat, room_id, cmd) {
         return(paste("Cannot join a call:", why))
     }
     tryCatch({
-        bot_call_start(session, cfg, chat, room_id)
+        bot_call_start(session, cfg, chat, room_id, start = start)
         "Joining the call."
     }, error = function(e) {
         paste("Could not join the call:", conditionMessage(e))
@@ -139,6 +141,12 @@ bot_call_pump <- function(session, chat) {
     if (!is.null(upd$own)) {
         call_worker_command(c0$worker, bot_call_key(c0$call$identity, upd$own))
     }
+    # The call's membership was re-read and nobody but the bot is left.
+    if (!is.null(upd$members) && all(upd$members == c0$call$identity)) {
+        message("corteza call ", c0$room_id, ": everyone else left")
+        bot_call_stop(session, chat, note = "everyone else left")
+        return(FALSE)
+    }
     call_worker_pump(c0$worker,
                      post = function(room_id, text) {
         bot_event_id(bot_reply_send(chat, room_id, text))
@@ -178,6 +186,60 @@ bot_call_stop <- function(session, chat, note = NULL) {
                  error = function(e) NULL)
     }
     invisible(TRUE)
+}
+
+# Act on the poll's call notices (chat.api: one per room where someone
+# other than the bot announced or withdrew a call membership). A call
+# button posts that membership and nothing else, so this is how a call
+# started by a person reaches the bot: with someone in the call, in a
+# room the config allows, the bot joins as `/call` would. Returns how
+# many acknowledgements were posted.
+bot_calls_notice <- function(notices, sessions, cfg, chat, system = NULL,
+                             model = NULL, provider = NULL,
+                             tools_filter = NULL, start = call_worker_start) {
+    if (!bot_call_auto_join(cfg)) {
+        return(0L)
+    }
+    n <- 0L
+    for (nt in notices) {
+        room_id <- nt$channel
+        if (!length(nt$members) || !bot_call_room_allowed(cfg, room_id)) {
+            next
+        }
+        skey <- bot_session_key(room_id, NULL)
+        if (exists(skey, envir = sessions, inherits = FALSE) &&
+            !is.null(get(skey, envir = sessions)$call)) {
+            next
+        }
+        session <- bot_get_or_create_session(sessions, skey, cfg,
+            system = system, model = model, provider = provider,
+            tools_filter = tools_filter, room_id = room_id)
+        ack <- bot_call_command(session, cfg, chat, room_id, "join", start = start)
+        message("corteza call ", room_id, ": ", paste(nt$members, collapse = ", "),
+                " in the call; ", ack)
+        sent_id <- tryCatch(bot_reply_send(chat, room_id, ack), error = function(e) NULL)
+        if (!is.null(sent_id)) {
+            session$seen_event_ids <- bot_remember_event(session$seen_event_ids,
+                sent_id)
+            bot_transcript_add(session, sent_id, "assistant", ack)
+        }
+        n <- n + 1L
+    }
+    n
+}
+
+# Joining on a notice is on wherever voice is configured, unless
+# `voice.call.auto_join` is false.
+bot_call_auto_join <- function(cfg) {
+    is.list(cfg$voice$stt) && is.list(cfg$voice$tts) &&
+    !isFALSE(cfg$voice$call$auto_join)
+}
+
+# `voice.call.rooms` lists the rooms whose calls the bot joins on its
+# own; absent, any room it is in.
+bot_call_room_allowed <- function(cfg, room_id) {
+    rooms <- cfg$voice$call$rooms
+    is.null(rooms) || room_id %in% as.character(rooms)
 }
 
 # Pump every room session that is in a call. Called once per poll.

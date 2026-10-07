@@ -21,9 +21,12 @@
   `wire: "gpu-host"`, a gpu.ctl host's `POST /infer` spoken directly
   (whisper and chatterbox entries; the bearer token from `key_file`,
   the voice cloned from the reference WAV named by `voice.tts.voice`).
-  `/call` in a room joins that room's MatrixRTC call from the bot's
-  account through chat.api's call surface (`chat_call_join()`, chat.api
-  0.1.0.1, an encrypted client); `/hangup` leaves. The bot process
+  The bot joins a room's MatrixRTC call when someone else is in it (a
+  call button posts a membership event and nothing else; chat.api
+  0.1.0.1 reports those from the poll), in the rooms `voice.call.rooms`
+  allows, and hangs up when everyone else has left; `/call` joins by
+  hand and `/hangup` leaves. Joining goes through chat.api's call
+  surface (`chat_call_join()`, an encrypted client). The bot process
   forwards the media keys that arrive on each poll to the worker and
   shortens its long poll to half a second while a call is on, so the
   worker's replies are posted promptly. Not yet tried against a real

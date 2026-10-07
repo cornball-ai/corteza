@@ -294,6 +294,10 @@ under `voice`:
 | `voice.tts.model` | string | required | Model name; on the gpu-host wire, the catalog entry (`chatterbox-turbo`) |
 | `voice.tts.voice` | string | unset | Voice name; on the gpu-host wire, required, the path of a reference WAV the voice is cloned from |
 | `voice.tts.key` / `voice.tts.key_env` / `voice.tts.key_file` | string | unset | As for `stt` |
+| `voice.call.auto_join` | logical | `true` | Join a room's call when someone else is in it (a call button posts a membership event; that is the bot's signal). `/call` still works when this is off. |
+| `voice.call.rooms` | array | unset | Rooms whose calls the bot joins on its own; absent, any room it is in |
+| `voice.call.livekit_log` | string | unset | livekitr's log level in the call worker (`warn`, `info`, `debug`, `trace`), forwarded to the bot's log |
+| `voice.call.ice_transport` | string | unset | Passed to `livekitr::lk_connect()`: `"relay"` forces media through TURN, `"all"` (the default) allows every candidate |
 | `voice.call.answer` | string | `"addressed"` | With several people in the call, answer only when addressed by name or as a follow-up (`"addressed"`), or answer everyone (`"always"`). With one person the bot always answers. |
 | `voice.call.vad` | object | unset | Endpointing settings passed to the energy detector: `start_ms` (200), `end_ms` (700), `margin_db` (10), `min_ms` (300), `max_ms` (30000) |
 
@@ -303,8 +307,10 @@ synthesized a sentence at a time; someone talking over the bot stops it
 within about a fifth of a second, and the reply posted to the room is
 trimmed to what was heard.
 
-`/call` in a room joins that room's MatrixRTC call (what Element Call
-and FluffyChat 2.10 start) from the bot's account; `/hangup` leaves it.
+The bot joins a room's MatrixRTC call (what Element Call and FluffyChat
+2.10 start with their call button) when someone else is in it, in the
+rooms `voice.call.rooms` allows, and hangs up when everyone else has
+left. `/call` in a room joins by hand and `/hangup` leaves.
 Joining needs chat.api 0.1.0.1 and a bot configured with `e2ee: true`,
 since the call's media keys travel over Olm. In an encrypted room the
 trim of an interrupted reply is not applied: chat.api does not edit in
