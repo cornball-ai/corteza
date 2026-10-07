@@ -83,9 +83,12 @@ bot_call_start <- function(session, cfg, chat, room_id,
     keys <- c(list(bot_call_key(media$identity, media$key)),
               lapply(media$peers, function(p) bot_call_key(p$identity, p)))
     peers <- vapply(media$peers, function(p) paste0(p$identity, "@", p$index), "")
+    reached <- media$shared_with %||% character()
     message("corteza call ", room_id, ": joining as ", media$identity,
             ", own key at index ", media$key$index, "; peer keys: ",
-        if (length(peers)) paste(peers, collapse = ", ") else "none yet")
+        if (length(peers)) paste(peers, collapse = ", ") else "none yet",
+            "; own key reached ",
+        if (length(reached)) paste(reached, collapse = ", ") else "nobody yet")
     history <- tryCatch(chat.api::chat_history(chat, room_id, limit = 30L)$messages,
                         error = function(e) list())
     dir <- file.path(bot_call_dir(), gsub("[^A-Za-z0-9]", "_", room_id))
