@@ -9,6 +9,9 @@ env:
 jobs:
   ci:
     strategy:
+      # A failure on one runner should not cancel the other: the second
+      # result says whether the failure is the platform's or the code's.
+      fail-fast: false
       matrix:
         include:
           - {os: macos-latest}
@@ -110,3 +113,16 @@ jobs:
 
       - name: Test
         run: ./run.sh run_tests
+
+      # R CMD check prints the last 13 lines of a failed test run, which
+      # for this suite is the warnings that trail the real failure. The
+      # failing assertions are in the .Rout.fail the check leaves behind.
+      - name: Show failed test output
+        if: failure()
+        run: |
+          f=corteza.Rcheck/tests/tinytest.Rout.fail
+          if [ -f "$f" ]; then
+            grep -n -A12 'FAILED\[\|^Error' "$f" | head -400
+          else
+            echo "no $f"
+          fi
