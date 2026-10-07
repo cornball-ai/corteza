@@ -203,11 +203,36 @@ call_worker_main <- function(args) {
     note <- function(...) {
         .call_request(box, list(type = "note", text = paste0(...)))
     }
+    call_opts <- args$cfg$voice$call %||% list()
+    # livekitr reports through message(); in a child nobody reads those,
+    # so every message becomes a note the bot process logs. The level is
+    # the config's (`voice.call.livekit_log`: warn, info, debug, trace).
+    if (is.character(call_opts$livekit_log)) {
+        options(livekitr.log = call_opts$livekit_log)
+    }
+    withCallingHandlers(.call_worker_run(args, box, note, call_opts),
+                        message = function(m) {
+        note(trimws(conditionMessage(m)))
+        invokeRestart("muffleMessage")
+    })
+}
+
+.call_worker_run <- function(args, box, note, call_opts) {
     if (!requireNamespace("livekitr", quietly = TRUE)) {
         stop("a call needs livekitr installed", call. = FALSE)
     }
     e2ee <- if (length(args$keys)) call_e2ee_options()
-    session <- livekitr::lk_connect(args$url, args$jwt, e2ee = e2ee)
+    # `voice.call.ice_transport = "relay"` makes a node that only serves
+    # media through TURN fail fast and say why, instead of waiting out
+    # host candidates that can never pair.
+    lk_opts <- list()
+    if (is.character(call_opts$ice_transport)) {
+        lk_opts$ice_transport <- call_opts$ice_transport
+    }
+    note("connecting to ", args$url,
+        if (length(lk_opts)) paste0(" (ice_transport = ",
+                                    lk_opts$ice_transport, ")"))
+    session <- livekitr::lk_connect(args$url, args$jwt, e2ee = e2ee, opts = lk_opts)
     on.exit(try(livekitr::lk_disconnect(session), silent = TRUE), add = TRUE)
     for (k in args$keys) {
         .call_set_key(session, k)
@@ -235,7 +260,6 @@ call_worker_main <- function(args) {
             members = function(room_id) character()))
     brain <- call_brain(state, args$room_id)
     speech <- call_speech(call_media_config(cfg))
-    call_opts <- cfg$voice$call %||% list()
     cl <- call_loop_new(media, speech$stt, speech$tts, brain,
                         list(answer = call_opts$answer %||% "addressed",
                              names = args$names, vad = call_opts$vad,
