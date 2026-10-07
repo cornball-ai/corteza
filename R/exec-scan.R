@@ -30,7 +30,12 @@ scan_new <- function(root, cwd = root, write_roots = character()) {
         .resolve_real(p, sx$root)
     }, character(1), USE.NAMES = FALSE)
     tmp <- Sys.getenv("TMPDIR")
-    scratch <- c("/tmp", "/var/tmp", .resolve_real(tempdir(), "/"),
+    # Resolved like the paths they are compared with: on macOS /tmp and
+    # /var are links into /private, and a path's real form is what
+    # scan_zone() sees.
+    scratch <- c("/tmp", "/var/tmp", .resolve_real("/tmp", "/"),
+                 .resolve_real("/var/tmp", "/"),
+                 .resolve_real(tempdir(), "/"),
         if (nzchar(tmp)) .resolve_real(tmp, "/"))
     # Never the filesystem root: an empty or odd TMPDIR must not turn
     # every path into scratch.
