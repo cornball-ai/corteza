@@ -297,6 +297,26 @@ call_should_answer <- function(cl, text, identity) {
     invisible(turn)
 }
 
+# Say a fixed text, outside any turn: the greeting on joining. Through
+# the same sayer as a reply, so barge-in stops it and the chunking is
+# the same. Nothing is posted to the room and no turn is recorded.
+call_loop_say <- function(cl, text) {
+    if (!is.character(text) || length(text) != 1L || !nzchar(trimws(text))) {
+        return(invisible(FALSE))
+    }
+    say <- .call_sayer(cl)
+    cl$speaking <- TRUE
+    cl$barge_in <- NULL
+    on.exit({
+        cl$speaking <- FALSE
+    }, add = TRUE)
+    cl$log("saying: ", text)
+    if (isTRUE(say$send(text))) {
+        say$flush()
+    }
+    invisible(is.null(cl$barge_in))
+}
+
 # The sayer for one turn: collects deltas, synthesizes and publishes
 # each sentence as soon as it is complete, and knows how much was heard.
 #

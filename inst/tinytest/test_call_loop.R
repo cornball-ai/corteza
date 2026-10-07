@@ -349,6 +349,34 @@ local({
     expect_identical(edits[[2L]], "Hello there.")
 })
 
+# ---- a fixed text, said outside any turn ----
+local({
+    m <- fake_media()
+    tts <- fake_tts()
+    brain <- fake_brain("Yes.")
+    logged <- character()
+    cl <- corteza:::call_loop_new(m, fake_stt()$fn, tts$fn, brain,
+                                  list(log = function(...) logged <<- c(logged, paste0(...))))
+    expect_true(corteza:::call_loop_say(cl, "Hello, this is tiny. Can you hear me?"))
+    # Two sentences, each synthesized and published in chunks; no turn.
+    expect_identical(tts$log$texts, c("Hello, this is tiny. ", "Can you hear me?"))
+    expect_true(length(m$published) > 2L)
+    expect_identical(cl$turns, 0L)
+    expect_identical(brain$log$turns, list())
+    expect_true(any(grepl("saying: Hello, this is tiny", logged, fixed = TRUE)))
+    expect_false(cl$speaking)
+    # Nothing to say is nothing done.
+    expect_false(corteza:::call_loop_say(cl, "  "))
+    expect_false(corteza:::call_loop_say(cl, NULL))
+    # A barge-in stops it like a reply.
+    m2 <- fake_media()
+    cl2 <- corteza:::call_loop_new(m2, fake_stt()$fn, fake_tts()$fn, fake_brain("Yes."),
+                                   list(log = quiet_log))
+    m2$barge_after <- 2L
+    expect_false(corteza:::call_loop_say(cl2, "One two three four five six. Seven eight."))
+    expect_identical(cl2$barge_in, "@ann:ex:PHONE")
+})
+
 # ---- what the loop logs about the room and what it hears ----
 # Room events become one line each, a new voice is announced, and what
 # arrived from each participant is summarized every CALL_STATS_S seconds

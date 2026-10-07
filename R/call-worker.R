@@ -265,6 +265,13 @@ call_worker_main <- function(args) {
                              names = args$names, vad = call_opts$vad,
                              log = note))
     note("in the call as ", session$identity)
+    # `voice.call.greeting`: said once on joining. It tells the people in
+    # the call the agent is there, and it exercises the agent's own
+    # track and key before anyone has spoken.
+    if (is.character(call_opts$greeting) && nzchar(call_opts$greeting)) {
+        call_loop_step(cl, 0.5)
+        call_loop_say(cl, call_opts$greeting)
+    }
     call_loop_run(cl, until = function() {
         for (cmd in .call_commands(box)) {
             if (identical(cmd$type, "leave")) {
