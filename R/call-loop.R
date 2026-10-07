@@ -36,6 +36,14 @@ CALL_VAD_FRAME_MS <- 20L
 # After one person's turn, their next words within this many seconds
 # are answered without being addressed, so a conversation continues.
 CALL_FOLLOW_UP_S <- 20
+# How often what arrived from each participant is logged.
+CALL_STATS_S <- 10
+# The room events worth a log line each.
+CALL_LOGGED_EVENTS <- c("participant_connected", "participant_disconnected",
+                        "track_published", "track_subscribed",
+                        "track_unsubscribed", "connection_state_changed",
+                        "disconnected", "e2ee_state_changed",
+                        "participant_encryption_status_changed")
 
 # A loop over its collaborators. `opts`: `answer` ("addressed" or
 # "always"; see call_should_answer), `names` (what the agent is called,
@@ -59,6 +67,7 @@ call_loop_new <- function(media, stt, tts, brain, opts = list()) {
     cl$rate <- as.integer(opts$rate %||% CALL_AUDIO_RATE)
     cl$log <- opts$log %||% function(...) message("corteza call: ", ...)
     cl$vads <- new.env(parent = emptyenv())
+    cl$stats <- new.env(parent = emptyenv())
     cl$participants <- character()
     cl$queue <- list()
     cl$speaking <- FALSE
@@ -81,7 +90,9 @@ call_loop_new <- function(media, stt, tts, brain, opts = list()) {
     if (is.null(v)) {
         v <- do.call(vad_new, c(list(rate = cl$rate), cl$vad_opts))
         assign(identity, v, envir = cl$vads)
+        cl$log("hearing ", identity)
     }
+    .call_hear_stats(cl, identity, pcm)
     n <- as.integer(cl$rate * CALL_VAD_FRAME_MS / 1000)
     starts <- seq.int(1L, length(pcm), by = n)
     for (s in starts) {
@@ -96,6 +107,34 @@ call_loop_new <- function(media, stt, tts, brain, opts = list()) {
             }
         }
     }
+    invisible(NULL)
+}
+
+# What arrived from a participant, logged every CALL_STATS_S seconds:
+# how much audio and how loud its loudest frame was. Silence at -inf
+# with audio arriving is a track that carries nothing the agent can
+# read (an encryption key it does not have, a muted microphone); no
+# line at all is a track that was never subscribed.
+.call_hear_stats <- function(cl, identity, pcm) {
+    st <- cl$stats[[identity]]
+    if (is.null(st)) {
+        st <- list(samples = 0L, peak = 0, since = cl$clock())
+    }
+    st$samples <- st$samples + length(pcm)
+    st$peak <- max(st$peak, abs(as.numeric(pcm)), na.rm = TRUE)
+    now <- cl$clock()
+    if (now - st$since >= CALL_STATS_S) {
+        peak_db <- if (st$peak > 0) {
+            sprintf("%.0f dBFS", 20 * log10(st$peak / 32768))
+        } else {
+            "silence"
+        }
+        cl$log("heard ", round(st$samples / cl$rate, 1), " s from ",
+               cl$speaker(identity), " in the last ", round(now - st$since),
+               " s, peak ", peak_db)
+        st <- list(samples = 0L, peak = 0, since = now)
+    }
+    cl$stats[[identity]] <- st
     invisible(NULL)
 }
 
@@ -133,6 +172,18 @@ call_loop_stop <- function(cl) {
 .call_room_event <- function(cl, ev) {
     type <- ev$type %||% ""
     id <- ev$identity %||% ev$participant %||% NULL
+    # Every room event is one log line: who came and went, which tracks
+    # were published and subscribed, and what the encryption said. This
+    # is how "the agent heard nothing" is told apart from "nothing was
+    # sent".
+    if (type %in% CALL_LOGGED_EVENTS) {
+        detail <- Filter(Negate(is.null),
+                         ev[intersect(names(ev), c("identity", "kind", "state",
+                        "encrypted", "track_sid"))])
+        cl$log("room: ", type,
+            if (length(detail)) paste0(" ", paste(names(detail), "=", unlist(detail),
+                    collapse = " ")))
+    }
     if (identical(type, "participant_connected") && !is.null(id)) {
         cl$participants <- union(cl$participants, id)
     } else if (identical(type, "participant_disconnected") && !is.null(id)) {

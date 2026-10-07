@@ -348,3 +348,39 @@ local({
     drain(cl, m)
     expect_identical(edits[[2L]], "Hello there.")
 })
+
+# ---- what the loop logs about the room and what it hears ----
+# Room events become one line each, a new voice is announced, and what
+# arrived from each participant is summarized every CALL_STATS_S seconds
+# with its peak level, so a silent track can be told from a missing one.
+local({
+    m <- fake_media()
+    now <- 1000
+    logged <- character()
+    cl <- corteza:::call_loop_new(m, fake_stt()$fn, fake_tts()$fn, fake_brain("Yes."),
+                                  list(clock = function() now,
+                                       log = function(...) logged <<- c(logged, paste0(...))))
+    m$incoming[[1L]] <- list(event = list(type = "track_subscribed",
+                                          identity = "@ann:ex:PHONE", kind = "audio",
+                                          track_sid = "TR_1"))
+    m$incoming[[2L]] <- list(event = list(type = "e2ee_state_changed",
+                                          identity = "@ann:ex:PHONE", state = "ok"))
+    corteza:::call_loop_step(cl, 0)
+    corteza:::call_loop_step(cl, 0)
+    expect_true(any(grepl("room: track_subscribed identity = @ann:ex:PHONE kind = audio",
+                          logged, fixed = TRUE)))
+    expect_true(any(grepl("room: e2ee_state_changed identity = @ann:ex:PHONE state = ok",
+                          logged, fixed = TRUE)))
+    # Ten seconds of near-silence from ann, then the clock passes the window.
+    deliver(m, "@ann:ex:PHONE", quiet(1000))
+    drain(cl, m)
+    expect_true(any(grepl("hearing @ann:ex:PHONE", logged, fixed = TRUE)))
+    expect_false(any(grepl("^heard ", logged)))
+    now <- now + corteza:::CALL_STATS_S
+    deliver(m, "@ann:ex:PHONE", tone(100, dbfs = -20))
+    drain(cl, m)
+    stats <- grep("^heard ", logged, value = TRUE)
+    expect_identical(length(stats), 1L)
+    # A -20 dBFS RMS tone peaks 3 dB higher.
+    expect_true(grepl("from ann in the last 10 s, peak -17 dBFS", stats))
+})
