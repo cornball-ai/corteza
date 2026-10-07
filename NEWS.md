@@ -17,6 +17,10 @@
   call's media keys; the worker never holds a Matrix credential.
   Configured under `voice.stt`, `voice.tts` and `voice.call` in the bot
   config (see `vignette("configuration")`); needs `livekitr` (Suggests).
+  Each route speaks one of two wires: the OpenAI audio API, or
+  `wire: "gpu-host"`, a gpu.ctl host's `POST /infer` spoken directly
+  (whisper and chatterbox entries; the bearer token from `key_file`,
+  the voice cloned from the reference WAV named by `voice.tts.voice`).
   `/call` in a room joins that room's MatrixRTC call from the bot's
   account through chat.api's call surface (`chat_call_join()`, chat.api
   0.1.0.1, an encrypted client); `/hangup` leaves. The bot process

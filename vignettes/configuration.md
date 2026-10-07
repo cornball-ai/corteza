@@ -284,14 +284,16 @@ under `voice`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `voice.stt.url` | string | required | Base URL of an OpenAI-shaped transcription route (`/v1/audio/transcriptions` is appended) |
-| `voice.stt.model` | string | required | Model name sent with each utterance |
-| `voice.stt.language` | string | unset | Language hint sent with each utterance |
-| `voice.stt.key` / `voice.stt.key_env` | string | unset | Bearer credential, literally or as the name of an environment variable |
-| `voice.tts.url` | string | required | Base URL of an OpenAI-shaped synthesis route (`/v1/audio/speech`) |
-| `voice.tts.model` | string | required | Model name |
-| `voice.tts.voice` | string | unset | Voice name |
-| `voice.tts.key` / `voice.tts.key_env` | string | unset | As for `stt` |
+| `voice.stt.wire` | string | `"openai"` | The route's shape: `"openai"` (the OpenAI audio API) or `"gpu-host"` (a gpu.ctl host's `POST /infer`, spoken directly) |
+| `voice.stt.url` | string | required | Base URL: of an OpenAI-shaped transcription route (`/v1/audio/transcriptions` is appended), or of the gpu.ctl host |
+| `voice.stt.model` | string | required | Model name sent with each utterance; on the gpu-host wire, the catalog entry (`whisper-small`) |
+| `voice.stt.language` | string | unset | Language hint sent with each utterance (OpenAI wire) |
+| `voice.stt.key` / `voice.stt.key_env` / `voice.stt.key_file` | string | unset | Bearer credential: literally, as the name of an environment variable, or as the path of a file of raw bytes sent base64-encoded (the gpu-host token; read at each request) |
+| `voice.tts.wire` | string | `"openai"` | As for `stt` |
+| `voice.tts.url` | string | required | Base URL of an OpenAI-shaped synthesis route (`/v1/audio/speech`), or of the gpu.ctl host |
+| `voice.tts.model` | string | required | Model name; on the gpu-host wire, the catalog entry (`chatterbox-turbo`) |
+| `voice.tts.voice` | string | unset | Voice name; on the gpu-host wire, required, the path of a reference WAV the voice is cloned from |
+| `voice.tts.key` / `voice.tts.key_env` / `voice.tts.key_file` | string | unset | As for `stt` |
 | `voice.call.answer` | string | `"addressed"` | With several people in the call, answer only when addressed by name or as a follow-up (`"addressed"`), or answer everyone (`"always"`). With one person the bot always answers. |
 | `voice.call.vad` | object | unset | Endpointing settings passed to the energy detector: `start_ms` (200), `end_ms` (700), `margin_db` (10), `min_ms` (300), `max_ms` (30000) |
 

@@ -115,3 +115,108 @@ local({
                  "synthesis route answered HTTP 500: no such voice")
     expect_error(corteza:::call_tts(m, "x", http = fake(body = "not audio")), "RIFF")
 })
+
+# ---- the gpu-host/1 wire ----
+# One POST /infer per request: protocol, entry, content-hash key, input;
+# whisper takes audio_b64 and answers an {ok, value} envelope; chatterbox
+# takes text and the reference clip and answers float32 PCM with the
+# rate in a header. The token file's bytes travel base64-encoded.
+local({
+    token <- tempfile("gpuhost-token-")
+    writeBin(as.raw(1:32), token)
+    clip <- tempfile("ref-", fileext = ".wav")
+    writeBin(corteza:::wav_encode(as.integer(sin(seq_len(2400) / 10) * 8000), 24000L),
+             clip)
+    gcfg <- list(voice = list(
+        stt = list(wire = "gpu-host", url = "http://g5:7878/", model = "whisper-small",
+                   key_file = token),
+        tts = list(wire = "gpu-host", url = "http://g5:7878", model = "chatterbox-turbo",
+                   voice = clip, key_file = token)))
+    m <- corteza:::call_media_config(gcfg)
+    expect_identical(m$stt$wire, "gpu-host")
+    expect_identical(m$stt$key_file, token)
+    expect_identical(jsonlite::base64_dec(m$tts$voice_b64),
+                     readBin(clip, "raw", file.size(clip)))
+    expect_identical(corteza:::.call_auth(m$stt),
+                     c(authorization = paste("Bearer", jsonlite::base64_enc(as.raw(1:32)))))
+    # Refusals in the config.
+    bad <- gcfg
+    bad$voice$tts$voice <- "/nonexistent/ref.wav"
+    expect_error(corteza:::call_media_config(bad), "reference WAV")
+    bad <- gcfg
+    bad$voice$stt$wire <- "grpc"
+    expect_error(corteza:::call_media_config(bad), "voice.stt.wire")
+    bad <- gcfg
+    bad$voice$stt$key_file <- "/nonexistent/token"
+    expect_error(corteza:::call_media_config(bad), "no file at")
+
+    seen <- new.env()
+    fake <- function(status = 200L, body = raw(0), headers = list()) {
+        function(url, headers_sent = character(), form = NULL, json = NULL,
+                 timeout_ms = 0L, ...) {
+            seen$url <- url
+            seen$headers <- headers_sent
+            seen$body <- jsonlite::fromJSON(as.character(json), simplifyVector = FALSE)
+            list(status = status, body = if (is.raw(body)) body else charToRaw(body),
+                 headers = headers)
+        }
+    }
+    # The fake takes `headers` positionally as the second argument.
+    fake2 <- function(...) {
+        f <- fake(...)
+        function(url, headers = character(), form = NULL, json = NULL, timeout_ms = 0L) {
+            f(url, headers_sent = headers, form = form, json = json, timeout_ms = timeout_ms)
+        }
+    }
+
+    # Transcription.
+    samples <- as.integer(sin(seq_len(16000) / 5) * 10000)
+    text <- corteza:::call_stt(m, samples, 16000L,
+                               http = fake2(body = '{"ok": true, "value": {"text": " hello there ", "segments": []}}'))
+    expect_identical(text, "hello there")
+    expect_identical(seen$url, "http://g5:7878/infer")
+    expect_identical(seen$headers[["content-type"]], "application/json")
+    expect_true(startsWith(seen$headers[["authorization"]], "Bearer "))
+    expect_identical(seen$body$v, "gpu-host/1")
+    expect_identical(seen$body$entry, "whisper-small")
+    expect_identical(jsonlite::base64_dec(seen$body$input$audio_b64),
+                     corteza:::wav_encode(samples, 16000L))
+    expect_true(grepl("^corteza-whisper-small-[0-9a-f]{64}$", seen$body$key))
+    # The key is the content's: same audio, same key; other audio, another.
+    k1 <- seen$body$key
+    corteza:::call_stt(m, samples, 16000L,
+                       http = fake2(body = '{"ok": true, "value": {"text": "x"}}'))
+    expect_identical(seen$body$key, k1)
+    corteza:::call_stt(m, samples[-1L], 16000L,
+                       http = fake2(body = '{"ok": true, "value": {"text": "x"}}'))
+    expect_false(identical(seen$body$key, k1))
+    # Refusals.
+    expect_error(corteza:::call_stt(m, samples, 16000L,
+                                    http = fake2(body = '{"ok": false, "error": "no card"}')),
+                 "transcription entry failed: no card")
+    expect_error(corteza:::call_stt(m, samples, 16000L,
+                                    http = fake2(503L, '{"error": "busy"}')),
+                 "transcription route answered HTTP 503")
+    expect_error(corteza:::call_stt(m, samples, 16000L,
+                                    http = fake2(body = '{"ok": true, "value": {}}')),
+                 "without a text field")
+
+    # Synthesis: float32 in, int16 out, the rate from the header.
+    pcm <- c(0, 0.5, -0.5, 1, -1, 2)
+    audio <- writeBin(pcm, raw(), size = 4L, endian = "little")
+    out <- corteza:::call_tts(m, "Hello.",
+                              http = fake2(body = audio,
+                                           headers = list("content-type" = "application/octet-stream",
+                                                          "x-gpuhost-meta" = '{"sample_rate": 24000, "reused": false}')))
+    expect_identical(out$rate, 24000L)
+    expect_identical(out$samples, c(0L, 16384L, -16384L, 32767L, -32767L, 32767L))
+    expect_identical(seen$body$entry, "chatterbox-turbo")
+    expect_identical(seen$body$input$text, "Hello.")
+    expect_identical(seen$body$input$voice_b64, m$tts$voice_b64)
+    expect_error(corteza:::call_tts(m, "x", http = fake2(body = audio,
+                                                           headers = list("content-type" = "application/octet-stream"))),
+                 "without a sample_rate")
+    expect_error(corteza:::call_tts(m, "x", http = fake2(body = '{"ok": false, "error": "text too long"}',
+                                                           headers = list("content-type" = "application/json"))),
+                 "returned no audio")
+})
