@@ -235,7 +235,7 @@ call_worker_main <- function(args) {
     session <- livekitr::lk_connect(args$url, args$jwt, e2ee = e2ee, opts = lk_opts)
     on.exit(try(livekitr::lk_disconnect(session), silent = TRUE), add = TRUE)
     for (k in args$keys) {
-        .call_set_key(session, k)
+        .call_set_key(session, k, note)
     }
     if (!is.null(args$identity) &&
         !identical(session$identity, args$identity)) {
@@ -271,7 +271,7 @@ call_worker_main <- function(args) {
                 return(TRUE)
             }
             if (identical(cmd$type, "key")) {
-                .call_set_key(session, cmd)
+                .call_set_key(session, cmd, note)
             }
         }
         FALSE
@@ -281,10 +281,17 @@ call_worker_main <- function(args) {
 
 # A participant's media key, as mx.client hands it on: base64 bytes and
 # the key index both sides use.
-.call_set_key <- function(session, k) {
+.call_set_key <- function(session, k, note = NULL) {
     key <- jsonlite::base64_dec(k$key)
+    index <- as.integer(k$index %||% 0L)
+    # The identity and index, never the key: an undecryptable track is
+    # almost always a key filed under another identity or index.
+    if (is.function(note)) {
+        note("key for ", k$identity, " at index ", index, " (",
+             length(key), " bytes)")
+    }
     livekitr::lk_set_e2ee_key(session, key, identity = k$identity,
-                              key_index = as.integer(k$index %||% 0L))
+                              key_index = index)
 }
 
 # How a MatrixRTC call is encrypted, as Element Call and FluffyChat

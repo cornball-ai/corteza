@@ -82,6 +82,10 @@ bot_call_start <- function(session, cfg, chat, room_id,
     media <- chat.api::chat_call_media(call)
     keys <- c(list(bot_call_key(media$identity, media$key)),
               lapply(media$peers, function(p) bot_call_key(p$identity, p)))
+    peers <- vapply(media$peers, function(p) paste0(p$identity, "@", p$index), "")
+    message("corteza call ", room_id, ": joining as ", media$identity,
+            ", own key at index ", media$key$index, "; peer keys: ",
+        if (length(peers)) paste(peers, collapse = ", ") else "none yet")
     history <- tryCatch(chat.api::chat_history(chat, room_id, limit = 30L)$messages,
                         error = function(e) list())
     dir <- file.path(bot_call_dir(), gsub("[^A-Za-z0-9]", "_", room_id))
@@ -136,10 +140,18 @@ bot_call_pump <- function(session, chat) {
     }
     upd <- chat.api::chat_call_updates(c0$call)
     for (k in upd$keys) {
+        message("corteza call ", c0$room_id, ": key from ", k$identity,
+                " at index ", k$index)
         call_worker_command(c0$worker, bot_call_key(k$identity, k))
     }
     if (!is.null(upd$own)) {
+        message("corteza call ", c0$room_id, ": own key rotated to index ",
+                upd$own$index)
         call_worker_command(c0$worker, bot_call_key(c0$call$identity, upd$own))
+    }
+    if (!is.null(upd$members)) {
+        message("corteza call ", c0$room_id, ": members ",
+                paste(upd$members, collapse = ", "))
     }
     # The call's membership was re-read and nobody but the bot is left.
     if (!is.null(upd$members) && all(upd$members == c0$call$identity)) {
