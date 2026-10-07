@@ -51,9 +51,13 @@ for (p in c("~/.bashrc", "/etc/hosts", file.path(root, ".git", "config"),
 # A relative path is the project's.
 expect_identical(route("replace_in_file", list(path = "R/x.R"))$route, "monitor")
 # (The test project sits in the temp directory, which is scratch, so
-# climbing out of it has to go further than one level to be "outside".)
+# climbing out of it has to reach the filesystem root to be "outside".
+# How deep the temp directory is depends on the runner: R CMD check
+# nests one Rtmp inside another, so the climb is counted, not written.)
+climb <- paste(rep("..", length(strsplit(root, "/", fixed = TRUE)[[1L]])),
+               collapse = "/")
 expect_identical(route("write_file",
-                       list(path = "../../../../../../etc/elsewhere.txt"))$route,
+                       list(path = file.path(climb, "etc", "elsewhere.txt")))$route,
                  "human")
 # A write that names no path cannot be bounded.
 v <- route("write_file", list(content = "x"))
