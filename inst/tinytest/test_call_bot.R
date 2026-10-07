@@ -113,7 +113,11 @@ fake_worker <- function() {
     w
 }
 
-if (requireNamespace("chat.api", quietly = TRUE)) {
+# The fakes replace chat.api's call surface, so this needs a chat.api
+# that has one. CI's verify step enforces the floor; a developer with an
+# older chat.api skips these rather than erroring on the missing names.
+if (requireNamespace("chat.api", quietly = TRUE) &&
+    utils::packageVersion("chat.api") >= corteza:::.CHAT_API_MIN) {
     ns <- asNamespace("corteza")
     # corteza's worker verbs, redirected at the fake.
     worker <- fake_worker()
