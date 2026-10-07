@@ -24,6 +24,10 @@ if (nzchar(Sys.which("git"))) {
 plain <- tempfile("plaindir")
 dir.create(plain)
 expect_identical(corteza:::job_checkout(plain), normalizePath(plain))
+# A lock is keyed by the checkout as job_checkout() resolves it. The
+# worker resolves its own; this file's direct calls pass the same form,
+# which on macOS differs from tempfile()'s (/var is a link into /private).
+plain <- normalizePath(plain)
 
 # --- Only one job holds a checkout ---
 a <- corteza:::job_create("a", workspace = plain)
