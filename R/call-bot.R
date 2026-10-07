@@ -153,6 +153,14 @@ bot_call_pump <- function(session, chat) {
         message("corteza call ", c0$room_id, ": members ",
                 paste(upd$members, collapse = ", "))
     }
+    if (!is.null(upd$shared_with)) {
+        reached <- if (length(upd$shared_with)) {
+            paste(upd$shared_with, collapse = ", ")
+        } else {
+            "nobody"
+        }
+        message("corteza call ", c0$room_id, ": own key reached ", reached)
+    }
     # The call's membership was re-read and nobody but the bot is left.
     if (!is.null(upd$members) && all(upd$members == c0$call$identity)) {
         message("corteza call ", c0$room_id, ": everyone else left")
