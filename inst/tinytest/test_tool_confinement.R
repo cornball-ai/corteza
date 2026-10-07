@@ -383,7 +383,20 @@ if (.Platform$OS.type != "windows") {
                       "filter.mark.process=", "filter.mark.required=false")
                     %in% off))
     expect_true("protocol.allow=never" %in% corteza:::GIT_SAFE_CONFIG)
+    # A repository that configures none of this yields nothing. Read with
+    # the global and system configuration out of the way: git-lfs, where
+    # installed, registers its filter globally (the GitHub runners have
+    # it), and those entries are rightly turned off too, but they are
+    # the machine's, not this repository's.
+    old_cfg <- Sys.getenv(c("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"),
+                          unset = NA)
+    Sys.setenv(GIT_CONFIG_GLOBAL = file.path(root, "empty.gitconfig"),
+               GIT_CONFIG_NOSYSTEM = "1")
+    file.create(file.path(root, "empty.gitconfig"))
     expect_identical(corteza:::git_programs_off(outside), character())
+    for (v in names(old_cfg)) {
+        if (is.na(old_cfg[[v]])) Sys.unsetenv(v) else do.call(Sys.setenv, as.list(old_cfg[v]))
+    }
 }
 
 unlink(root, recursive = TRUE)
