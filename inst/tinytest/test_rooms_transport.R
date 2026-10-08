@@ -141,7 +141,7 @@ seeded_sessions <- function(rooms) {
     sessions <- corteza:::bot_new_session_registry()
     for (rid in rooms) {
         s <- new.env(parent = emptyenv())
-        s$model <- "qwen3:8b"
+        s$model_map <- list(cloud = "qwen3:8b")
         s$provider <- "ollama"
         s$default_model <- "qwen3:8b"
         s$default_provider <- "ollama"
@@ -929,7 +929,7 @@ local({
     # Pre-seeded registry: no session_setup, no provider calls.
     sessions <- corteza:::bot_new_session_registry()
     s <- new.env(parent = emptyenv())
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     s$default_model <- "qwen3:8b"
     s$default_provider <- "ollama"
@@ -1054,7 +1054,7 @@ local({
     orig_new <- corteza:::bot_new_session
     assignInNamespace("bot_new_session", function(cfg, ...) {
         e <- new.env(parent = emptyenv())
-        e$model <- "qwen3:8b"
+        e$model_map <- list(cloud = "qwen3:8b")
         e$provider <- "ollama"
         e$history <- list()
         e$transcript <- list()
@@ -1066,7 +1066,7 @@ local({
 
     sessions <- corteza:::bot_new_session_registry()
     s <- new.env(parent = emptyenv())
-    s$model <- "qwen3:8b"
+    s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     s$history <- list()
     s$transcript <- list()
@@ -1702,7 +1702,7 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
         sessions <- corteza:::bot_new_session_registry()
         s <- new.env(parent = emptyenv())
         s$provider <- "anthropic"
-        s$model <- "claude-sonnet-4-6"
+        s$model_map <- list(cloud = "claude-sonnet-4-6")
         s$history <- list()
         s$transcript <- list()
         s$seen_event_ids <- character()

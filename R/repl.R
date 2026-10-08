@@ -122,13 +122,21 @@
 # @noRd
 run_repl_loop <- function(ctx) {
     .repl_install_compaction_hook(ctx)
+    .repl_jobs_setup(ctx)
+    # Covers exits by error or interrupt; /quit and EOF call it directly
+    # so its message comes before "Bye.". A second call is a no-op.
+    on.exit(.repl_jobs_shutdown(ctx), add = TRUE)
     while (TRUE) {
+        # Delegated jobs surface here, between commands: the input read
+        # below blocks, and nothing can print while it waits.
+        .repl_pump_jobs(ctx)
         prompt <- ctx$read_input("> ")
         if (length(prompt) == 0L) {
             # EOF. For an attended session that is Ctrl+D and "Bye." is
             # right; a driver that ends the loop by returning EOF (see
             # run_auto_loop) sets its own message, since the run did not
             # end because anyone said goodbye.
+            .repl_jobs_shutdown(ctx)
             cat(ctx$eof_message %||% "\nBye.\n")
             break
         }
@@ -161,6 +169,7 @@ run_repl_loop <- function(ctx) {
             cmd <- tolower(parts[1])
 
             if (cmd %in% c("/quit", "/exit", "/q")) {
+                .repl_jobs_shutdown(ctx)
                 if (ctx$ws_enabled) {
                     ws_prune()
                     tryCatch(ws_save(ctx$disk_session$sessionId),
@@ -233,6 +242,14 @@ run_repl_loop <- function(ctx) {
                 cat(ctx$help_text())
                 next
             }
+            if (cmd == "/jobs") {
+                .repl_cmd_jobs(ctx, parts)
+                next
+            }
+            if (cmd == "/cancel") {
+                .repl_cmd_cancel(ctx, parts)
+                next
+            }
             if (cmd == "/copy") {
                 ctx$handle_copy(ctx$last_assistant_response)
                 next
@@ -273,6 +290,9 @@ run_repl_loop <- function(ctx) {
                     next
                 }
                 ctx$session$model_map$cloud <- parts[2]
+                # A thinking type set on the session (a talker's) names
+                # the model it was set for and is an error on another.
+                ctx$session$thinking <- NULL
                 ctx$model <- parts[2]
                 if (!is.null(ctx$disk_session)) {
                     ctx$disk_session$session$model <- parts[2]

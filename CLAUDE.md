@@ -91,6 +91,37 @@ Returns `list(model, approval, reason)` where `approval` is
 5. Config overlay from `.corteza/config.json` (`approval_mode`,
    `dangerous_tools`, per-tool `permissions`).
 
+## Supervision of unattended calls (`R/supervisor.R`)
+
+A Matrix room session and the job workers it starts carry a gate on
+`session$auto_gate` (`supervisor_gate()`), which `turn()` consults for
+every call that survived `policy()`, "allow" verdicts included. Three
+steps, in order:
+
+1. **Rules in code** (`supervisor_route()`, `R/exec-scan.R`). They read
+   path arguments and the text of shell commands and R code. A hit
+   (credentials, a write outside the checkout, sudo, another machine,
+   pushing or publishing, destructive git) goes to a person. No model
+   decides what a model may decide.
+2. **The monitor** (`R/job-monitor.R`), only where the bot config has
+   `auto_approve_asks: true`. A third worker process per session beside
+   the doer and reviewer: read-only tools, confined to the checkout,
+   started with the shared and project instructions. Approves, refuses
+   (the worker is told why and continues), or passes the call on.
+3. **A person**, by reaction in the room.
+
+A worker's rules run in the worker's process; its request file says who
+should answer (`route`), and the bot's process owns the monitor and the
+room (`bot_job_approval()`, `bot_monitor_answer()`). Nothing approves a
+call unseen: `auto_approve_asks` chooses between steps 2 and 3 for what
+step 1 leaves open. Settings live under `supervisor` in the user's
+config only (`supervisor_config()`); a project config cannot set them.
+
+`R/monitor.R` is the older hall monitor for `/auto` runs in the CLI and
+`chat()`. Same idea, another failure rule: it ends the run where this
+one asks a person. `exec_scan()` is not a sandbox. A path built at run
+time is invisible to it.
+
 ## Voice: one brain, two media backends (`R/voice-turn.R`)
 
 `voice_turn()` and `voice_turn_report()` are the voice brain: a turn
@@ -169,6 +200,15 @@ Implications:
 - Large outputs from either tool are captured as handles (e.g.
   `.h_001`) for the agent to reference later; those are read-only
   snapshots, not workspace state.
+- Any tool result over the cap (`R/tool-output-cap.R`) is cut to a
+  preview and stashed the same way; `read_handle` searches it
+  (`op = "grep"`) or pages it (`op = "lines"`). A session with
+  `handle_store` set keeps its cut results there, named `.o_NNN`, out of
+  reach of `run_r` and of other sessions in the process. Matrix room
+  sessions set it (`bot_new_session()`), since a bot's rooms share one
+  process. The cut notice names only a tool in the session's
+  `tools_filter`, so a role that gets neither `read_handle` nor `run_r`
+  is told it cannot open the handle.
 - Same isolation rationale as `run_r_script` applies to subagents:
   each `subagent_spawn()` opens a private `callr::r_session` so child
   work can't leak into the parent's R session.
@@ -282,6 +322,10 @@ session outlives many rotations.
 R/
 ├── turn.R             # Shared agent turn (entry point for all surfaces)
 ├── policy.R           # Tool-call policy engine (allow/ask/deny)
+├── supervisor.R       # Gate for unattended calls: rules, monitor, person
+├── exec-scan.R        # Reads shell commands and R code for the rules
+│                      #   (shell-parse.R, shell-scan.R, r-code-scan.R)
+├── job-monitor.R      # The monitor worker process
 ├── context.R          # System prompt assembly
 ├── registry.R         # Shared .skill_registry environment
 ├── skill.R            # skill_spec, skill_run, SKILL.md loading

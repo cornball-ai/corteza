@@ -33,6 +33,19 @@ tool_check_path <- function(path, operation = "access") {
     list(ok = validation$ok, message = validation$message, path = full_path)
 }
 
+# The subset of `paths` the session may read, each judged by where it
+# resolves (symlinks followed). The config is loaded once for the batch.
+tool_readable_paths <- function(paths) {
+    if (!length(paths)) {
+        return(paths)
+    }
+    cfg <- tool_config()
+    keep <- vapply(paths, function(p) {
+        isTRUE(validate_path(tool_resolve_path(p), cfg, operation = "read")$ok)
+    }, logical(1))
+    paths[keep]
+}
+
 tool_read_text <- function(path) {
     info <- file.info(path)
     size <- info$size[[1]]
@@ -69,20 +82,223 @@ format_numbered_lines <- function(lines, start = 1L) {
     paste(numbered, collapse = "\n")
 }
 
-git_run <- function(args, path = ".") {
+# Run git with `args` in `path`. No shell is involved: each element of
+# `args` reaches git as one argument, whatever it contains. This used to
+# go through system2(), which builds a shell command line, so a ref of
+# "HEAD; touch x" ran `touch` -- command execution through tools that
+# policy classes as reads.
+#
+# Nor does git run a program of the repository's choosing. A repository's
+# own config (.git/config, which anything with write access can edit)
+# can name programs that git starts during an ordinary status, diff, or
+# add: an fsmonitor hook, clean/smudge filters, the post-index-change
+# hook, gpg for signatures, a transport for a lazy fetch. Tools that
+# policy classes as reads, and the job snapshot, must not be a way to
+# run them, so every call here turns them off (GIT_SAFE_CONFIG,
+# GIT_SAFE_ENV, git_programs_off()). The cost: a file under a clean
+# filter (git-lfs) is compared and snapshotted as its raw content, a
+# partial clone does not fetch missing objects, and a submodule is
+# compared by its commit, not by the state of its working tree.
+#
+# Pathspecs are literal: ":(top)x" and "*.R" name files, they are not
+# pathspec magic or globs. `stdin` is a file to feed git; `bytes = TRUE`
+# returns stdout as a raw vector in `bytes` (for NUL-separated output)
+# instead of `text`.
+#
+# The filters are turned off for every command, not only the ones that
+# look like they read file content. Git re-hashes a recently modified
+# file whenever it writes an index, so `write-tree` runs a clean filter
+# as readily as `add` does.
+git_run <- function(args, path = ".", env = NULL, stdin = NULL, bytes = FALSE) {
     repo_path <- tool_resolve_path(path)
-    output <- tryCatch(
-                       system2("git", c("-C", repo_path, args), stdout = TRUE, stderr = TRUE),
-                       error = function(e) structure(paste("Error:", e$message), status = 1L)
-    )
+    off <- git_programs_off(repo_path)
+    if (is.null(off)) {
+        return(list(status = 1L, bytes = raw(), text = GIT_CONFIG_ERROR))
+    }
+    git_exec(c(rbind("-c", c(GIT_SAFE_CONFIG, off)), "--no-pager",
+               "--literal-pathspecs", "-C", repo_path, args), env = env,
+             stdin = stdin, bytes = bytes)
+}
 
-    list(status = attr(output, "status") %||% 0L,
-         text = paste(output, collapse = "\n"))
+# No fsmonitor hook, no hooks directory, no gpg, no transport.
+GIT_SAFE_CONFIG <- c("core.fsmonitor=", "core.hooksPath=/dev/null",
+                     "log.showSignature=false", "protocol.allow=never")
+
+GIT_CONFIG_ERROR <- paste("Error: git was not run, because the programs",
+                          "this repository's configuration names could not",
+                          "be turned off (unreadable git configuration, or",
+                          "a filter driver or protocol with \"=\" in its",
+                          "name)")
+
+# No index refresh written back (which would fire post-index-change), no
+# fetch of objects a partial clone lacks, no credential prompt.
+GIT_SAFE_ENV <- c(GIT_OPTIONAL_LOCKS = "0", GIT_NO_LAZY_FETCH = "1",
+                  GIT_TERMINAL_PROMPT = "0")
+
+# Start git with exactly `args`. With `bytes`, stdout goes through a
+# file, since an R string cannot hold the NUL bytes in `-z` output.
+git_exec <- function(args, env = NULL, stdin = NULL, bytes = FALSE) {
+    out <- "|"
+    if (bytes) {
+        out <- tempfile("corteza-git-")
+        on.exit(unlink(out), add = TRUE)
+    }
+    res <- tryCatch(
+                    processx::run("git", args, error_on_status = FALSE, stdout = out,
+                                  stderr = if (bytes) NULL else "|",
+                                  stderr_to_stdout = !bytes, stdin = stdin,
+                                  env = c("current", GIT_SAFE_ENV, env)),
+                    error = function(e) {
+        list(status = 1L, stdout = paste("Error:", conditionMessage(e)))
+    })
+    status <- as.integer(res$status %||% 1L)
+    if (bytes) {
+        got <- if (file.exists(out)) {
+            readBin(out, "raw", file.size(out))
+        } else {
+            raw()
+        }
+        return(list(status = status, bytes = got, text = ""))
+    }
+    list(status = status, text = sub("\r?\n$", "", res$stdout %||% ""))
+}
+
+# NUL-separated git output as a character vector. Names are kept as the
+# bytes git printed: a tab, a newline, or a quote in a filename arrives
+# as itself, where git's default output would quote and escape it.
+git_split_nul <- function(bytes) {
+    n <- sum(bytes == as.raw(0L))
+    if (n == 0L) {
+        return(character())
+    }
+    readBin(bytes, "character", n = n)
+}
+
+# `-c` settings for what GIT_SAFE_CONFIG cannot name in advance, because
+# the names are the configuration's own:
+# - every filter driver is emptied, so no clean, smudge, or process
+#   command runs. Git has no switch for this;
+# - every protocol allowed by name is refused. `protocol.allow=never`
+#   only sets the default, and `protocol.ext.allow=always` with a remote
+#   of "ext::<command>" is a program a lazy fetch would start.
+# NULL when that cannot be done: the configuration is unreadable, or a
+# name holds "=", which `-c name=value` cannot express.
+git_programs_off <- function(repo_path) {
+    if (!dir.exists(repo_path)) {
+        # Git will not start there either; let it say so itself.
+        return(character())
+    }
+    res <- git_exec(c("-C", repo_path, "config", "-z", "--name-only",
+                      "--get-regexp",
+                      paste0("^(filter\\..*\\.(clean|smudge|process|required)",
+                             "|protocol\\..*\\.allow)$")),
+                    bytes = TRUE)
+    # Exit 1 is git's "nothing matched".
+    if (res$status == 1L) {
+        return(character())
+    }
+    if (res$status != 0L) {
+        return(NULL)
+    }
+    keys <- unique(git_split_nul(res$bytes))
+    if (any(grepl("=", keys, fixed = TRUE, useBytes = TRUE))) {
+        return(NULL)
+    }
+    is_filter <- startsWith(keys, "filter.")
+    drivers <- unique(sub("^filter\\.(.*)\\.[^.]*$", "\\1", keys[is_filter],
+                          useBytes = TRUE))
+    c(unlist(lapply(drivers, function(d) {
+        c(paste0("filter.", d, c(".clean=", ".smudge=", ".process=")),
+            paste0("filter.", d, ".required=false"))
+    })), paste0(keys[!is_filter], rep("=never", sum(!is_filter))))
 }
 
 git_repo_available <- function(path = ".") {
     result <- git_run(c("rev-parse", "--is-inside-work-tree"), path = path)
+    if (identical(result$text, GIT_CONFIG_ERROR)) {
+        # Not the same as "no repository here": say why git did not run.
+        return(structure(FALSE, reason = GIT_CONFIG_ERROR))
+    }
     identical(trimws(result$text), "true") && result$status == 0L
+}
+
+# Path confinement for the git tools, which used to apply none: with a
+# `path` argument they read any repository on the machine, whatever
+# allowed_paths said. Returns list(ok, message, path, scope). `scope` is
+# a pathspec limiting git to the directory when the repository's root
+# lies outside what the session may read (a session confined to a
+# subdirectory of a repo), and NULL otherwise.
+git_tool_repo <- function(path = ".") {
+    checked <- tool_check_path(path %||% ".", operation = "read")
+    if (!checked$ok) {
+        return(list(ok = FALSE, message = checked$message))
+    }
+    available <- git_repo_available(checked$path)
+    if (!available) {
+        return(list(ok = FALSE, message = attr(available, "reason") %||%
+                    "Not inside a git repository"))
+    }
+    top <- git_run(c("rev-parse", "--show-toplevel"), path = checked$path)
+    scope <- NULL
+    if (top$status != 0L ||
+        !validate_path(tool_resolve_path(top$text), tool_config(),
+                       operation = "read")$ok) {
+        scope <- c("--", ".")
+    }
+    list(ok = TRUE, message = NULL, path = checked$path, scope = scope)
+}
+
+# A ref from the model must be a ref, not an option. Without a shell an
+# argument can no longer run a command, but one starting with "-" would
+# still be read by git as a flag: --output=<file> makes `git diff` write
+# a file, --no-index makes it read paths outside the repository.
+#
+# Nor may it name a path. "HEAD:b/secret.R" is a file's content at a
+# commit, and `git diff HEAD:b/secret.R -- a/x.R` prints it, from
+# anywhere in the repository, whatever directory the session is
+# confined to. No commit, branch, tag, or range needs a colon.
+git_ref_ok <- function(ref) {
+    !startsWith(ref, "-") && !grepl(":", ref, fixed = TRUE)
+}
+
+GIT_REF_MESSAGE <- paste("ref must be a commit, branch, tag, or range,",
+                         "not an option or a <rev>:<path>")
+
+# Why `ref` may not be used, or NULL when it may.
+#
+# The spelling rules of git_ref_ok() are not enough. A file's content
+# has an object id of its own, and a tag can point at one, so
+# `git diff <blob> -- a/x.R` prints a file from anywhere in the
+# repository with no colon in sight. What counts is what the ref
+# resolves to: git expands it (a name, a range, "^A", "A^!") into object
+# ids, and every one of them has to be a commit, or a tag of one. A
+# diff or log between commits is limited by its pathspec; a blob or a
+# tree is not.
+git_ref_problem <- function(ref, repo_path) {
+    if (!nzchar(ref)) {
+        return(NULL)
+    }
+    if (!git_ref_ok(ref)) {
+        return(GIT_REF_MESSAGE)
+    }
+    parsed <- git_run(c("rev-parse", "--revs-only", ref), path = repo_path)
+    ids <- sub("^\\^", "", strsplit(parsed$text, "\n", fixed = TRUE)[[1L]])
+    if (parsed$status != 0L || !length(ids) ||
+        !all(grepl("^[0-9a-f]{40,64}$", ids))) {
+        return(sprintf("'%s' is not a revision in this repository", ref))
+    }
+    feed <- tempfile("corteza-refs-")
+    on.exit(unlink(feed), add = TRUE)
+    writeLines(paste0(ids, "^{commit}"), feed)
+    types <- git_run(c("cat-file", "--batch-check=%(objecttype)"),
+                     path = repo_path, stdin = feed)
+    found <- strsplit(types$text, "\n", fixed = TRUE)[[1L]]
+    if (types$status != 0L || length(found) != length(ids) ||
+        !all(found == "commit")) {
+        return(paste("ref must name commits (a commit, branch, tag of a",
+                     "commit, or range of them), not a file or a tree"))
+    }
+    NULL
 }
 
 # File tools ----
@@ -119,7 +335,19 @@ tool_list_files <- function(path = ".", pattern = NULL, recursive = FALSE,
     entries <- list.files(path = path, pattern = pattern %||% NULL,
                           all.files = all_files, recursive = recursive,
                           full.names = TRUE, include.dirs = TRUE, no.. = TRUE)
+    # A recursive listing follows symlinked directories; entries that
+    # resolve outside what the session may read are not listed. Checked
+    # in sorted order and only until the display limit is passed, so a
+    # huge tree costs no more checks than it shows.
     entries <- sort(entries)
+    kept <- character()
+    i <- 0L
+    while (length(kept) <= limit && i < length(entries)) {
+        chunk <- entries[seq.int(i + 1L, min(i + limit + 1L, length(entries)))]
+        kept <- c(kept, tool_readable_paths(chunk))
+        i <- i + length(chunk)
+    }
+    entries <- kept
 
     if (length(entries) == 0) {
         return(ok(paste("No files found in", path)))
@@ -400,6 +628,12 @@ tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
     file_pattern <- file_pattern %||% "*.R"
 
     files <- Sys.glob(file.path(path, file_pattern))
+    # Checking `path` is not enough: the glob is the model's too, and
+    # "../other/*.R" or a symlink walks out of it. Every file the glob
+    # produced is checked where it really resolves; one outside what the
+    # session may read is dropped without being opened.
+    files <- tool_readable_paths(files)
+    files <- files[!dir.exists(files)]
     if (length(files) == 0) {
         return(ok("No files to search"))
     }
@@ -1009,12 +1243,17 @@ tool_fetch_url <- function(url, max_chars = 8000L) {
 #' @keywords internal
 #' @export
 tool_git_status <- function(path = ".") {
-    repo_path <- path %||% "."
-    if (!git_repo_available(repo_path)) {
-        return(err("Not inside a git repository"))
+    repo <- git_tool_repo(path)
+    if (!repo$ok) {
+        return(err(repo$message))
     }
+    repo_path <- repo$path
 
-    result <- git_run(c("status", "--short", "--branch"), path = repo_path)
+    # A submodule's commit is compared, its working tree is not: that
+    # takes a second git inside the submodule, under its configuration.
+    result <- git_run(c("status", "--short", "--branch",
+                        "--ignore-submodules=dirty", repo$scope),
+                      path = repo_path)
     if (result$status != 0L) {
         return(err(result$text))
     }
@@ -1034,12 +1273,17 @@ tool_git_status <- function(path = ".") {
 #' @export
 tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
                           staged = FALSE, context_lines = 3L) {
-    repo_path <- path %||% "."
-    if (!git_repo_available(repo_path)) {
-        return(err("Not inside a git repository"))
+    repo <- git_tool_repo(path)
+    if (!repo$ok) {
+        return(err(repo$message))
     }
+    repo_path <- repo$path
 
     ref <- trimws(ref %||% "HEAD")
+    problem <- git_ref_problem(ref, repo_path)
+    if (!is.null(problem)) {
+        return(err(problem))
+    }
     file_path <- trimws(file_path %||% "")
     staged <- isTRUE(staged)
     context_lines <- as.integer(context_lines %||% 3L)
@@ -1047,7 +1291,10 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
         context_lines <- 3L
     }
 
-    cmd <- c("diff", "--no-ext-diff", "--find-renames",
+    # --no-textconv with --no-ext-diff: neither a configured external
+    # diff nor a textconv filter runs a program on behalf of a read.
+    cmd <- c("diff", "--no-ext-diff", "--no-textconv", "--find-renames",
+             "--ignore-submodules=dirty",
              sprintf("--unified=%d", context_lines))
     if (staged) {
         cmd <- c(cmd, "--cached")
@@ -1055,8 +1302,24 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
     if (nchar(ref) > 0) {
         cmd <- c(cmd, ref)
     }
+    # "--" always: what precedes it is a revision, never a path.
     if (nchar(file_path) > 0) {
+        # The filter is a path like any other: it has to resolve inside
+        # what the session may read. git_run() passes it to git as a
+        # literal name, so git reads it the way this check does and
+        # ":(top)b/x.R" cannot reach out of the directory.
+        target <- if (grepl("^(/|~|[A-Za-z]:)", file_path)) {
+            file_path
+        } else {
+            file.path(repo_path, file_path)
+        }
+        checked <- tool_check_path(target, operation = "read")
+        if (!checked$ok) {
+            return(err(checked$message))
+        }
         cmd <- c(cmd, "--", file_path)
+    } else {
+        cmd <- c(cmd, repo$scope %||% "--")
     }
 
     result <- git_run(cmd, path = repo_path)
@@ -1079,21 +1342,27 @@ tool_git_diff <- function(ref = "HEAD", path = ".", file_path = "",
 #' @keywords internal
 #' @export
 tool_git_log <- function(n = 10L, ref = "HEAD", path = ".") {
-    repo_path <- path %||% "."
-    if (!git_repo_available(repo_path)) {
-        return(err("Not inside a git repository"))
+    repo <- git_tool_repo(path)
+    if (!repo$ok) {
+        return(err(repo$message))
     }
+    repo_path <- repo$path
 
     n <- as.integer(n %||% 10L)
     if (is.na(n) || n < 1L) {
         n <- 10L
     }
     ref <- trimws(ref %||% "HEAD")
+    problem <- git_ref_problem(ref, repo_path)
+    if (!is.null(problem)) {
+        return(err(problem))
+    }
 
     cmd <- c("log", "--oneline", "--decorate", sprintf("-n%d", n))
     if (nchar(ref) > 0) {
         cmd <- c(cmd, ref)
     }
+    cmd <- c(cmd, repo$scope %||% "--")
 
     result <- git_run(cmd, path = repo_path)
     if (result$status != 0L) {
@@ -1313,18 +1582,36 @@ register_builtin_skills <- function() {
         ))
     register_skill(skill_spec(
                               "read_handle",
-                              paste("Inspect a large value previously returned as a handle.",
-                                    "The handle remains in the same persistent R workspace."),
+                              paste("Inspect a large value previously returned as a handle,",
+                                    "or a tool result that was cut for length.",
+                                    "Search it with op = \"grep\", page through it with",
+                                    "op = \"lines\"."),
                               params = list(
-                handle = list(type = "string", description = "Handle id, e.g. .h_001.",
+                handle = list(type = "string",
+                              description = "Handle id, e.g. .h_001 or .o_001.",
                               required = TRUE),
                 op = list(type = "string",
-                          description = "Inspection: str, head, summary, or print.",
-                          enum = c("str", "head", "summary", "print"),
-                          required = FALSE)
+                          description = paste("Inspection: str, head, summary, print,",
+                        "grep (lines matching `pattern`), or lines (`start` to `end`)."),
+                          enum = c("str", "head", "summary", "print", "grep",
+                                   "lines"),
+                          required = FALSE),
+                pattern = list(type = "string",
+                               description = paste("For op = \"grep\": a regular expression,",
+                        "matched without regard to case."),
+                               required = FALSE),
+                start = list(type = "number",
+                             description = "For op = \"lines\": first line wanted. Default 1.",
+                             required = FALSE),
+                end = list(type = "number",
+                           description = paste("For op = \"lines\": last line wanted.",
+                        "At most 40 lines come back."),
+                           required = FALSE)
             ),
                               handler = function(args, ctx) {
-        .tool_read_handle_session(args$handle, args$op %||% "str", ctx)
+        .tool_read_handle_session(args$handle, args$op %||% "str", ctx,
+                                  pattern = args$pattern, start = args$start,
+                                  end = args$end)
     }
         ))
     register_skill_from_fn("run_r_script", tool_run_r_script)
@@ -1387,6 +1674,12 @@ register_builtin_skills <- function() {
     register_skill_from_fn("collect_subagent", tool_collect_subagent)
     register_skill_from_fn("list_subagents", tool_list_subagents)
     register_skill_from_fn("kill_subagent", tool_kill_subagent)
+
+    # Talker job tools: exposed only to talker-mode sessions
+    # (see .talker_filter_tools).
+    register_skill_from_fn("delegate", tool_delegate)
+    register_skill_from_fn("job_status", tool_job_status)
+    register_skill_from_fn("job_cancel", tool_job_cancel)
 
     # Plan mode: exit_plan_mode is registered always but exposed in the
     # tool list only when session$plan_mode is TRUE

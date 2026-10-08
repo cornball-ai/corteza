@@ -337,6 +337,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         !provider %in% .anthropic_providers) {
         args$thinking_budget_tokens <- NULL
     }
+    # `thinking` is the Anthropic body field itself (.session_thinking()):
+    # an unknown field on any other wire. `[[`, not `$`: on a list `$`
+    # matches by prefix, and "thinking" is a prefix of
+    # "thinking_budget_tokens".
+    if (!is.null(args[["thinking"]]) && !provider %in% .anthropic_providers) {
+        args[["thinking"]] <- NULL
+    }
     # Prompt caching is Anthropic-only. llm.api does warn and degrade to
     # "none" itself, but that warning would then fire on every turn of
     # every non-Anthropic session -- including each fallback candidate --
@@ -350,9 +357,15 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 
 # Resolve the reasoning-effort setting: explicit session field wins,
 # then config. NULL means "provider default".
+#
+# A talker session does not fall back to the config: the configured
+# setting belongs to the configured model, which talker_enable() moved
+# to the doer, and the talker's own model may not accept it at all.
 .session_reasoning_effort <- function(session) {
-    .check_reasoning_effort(session$reasoning_effort %||%
-                            session$config$reasoning_effort,
+    configured <- if (!isTRUE(session$talker)) {
+        session$config$reasoning_effort
+    }
+    .check_reasoning_effort(session$reasoning_effort %||% configured,
                             "session/config reasoning_effort")
 }
 
@@ -367,10 +380,45 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # provider's own floor (1024) and the max_tokens ceiling, so this only
 # has to agree that it is a positive whole number.
 .session_thinking_budget <- function(session) {
-    .check_max_tokens(session$thinking_budget_tokens %||%
-                      session$config$thinking_budget_tokens,
+    # Not from the config for a talker; see .session_reasoning_effort().
+    configured <- if (!isTRUE(session$talker)) {
+        session$config$thinking_budget_tokens
+    }
+    .check_max_tokens(session$thinking_budget_tokens %||% configured,
                       "session/config thinking_budget_tokens",
                       what = "thinking_budget_tokens")
+}
+
+# Resolve the Anthropic `thinking.type` to send, or NULL to send no
+# `thinking` field and take the model's default.
+#
+# The value is the wire's own word, not a portable on/off, because what
+# a model accepts differs by model and the API refuses the wrong one by
+# name. Claude Sonnet 5.5 thinks by default, turns up-front thinking off
+# with "between_tools", and answers 400 to "disabled"; Claude Sonnet 5
+# takes "disabled"; Claude Haiku 4.5 does not think unless asked. A
+# setting here is therefore tied to the session's model: fallback
+# candidates do not get it (.agent_with_fallback()).
+.session_thinking <- function(session) {
+    # Not from the config for a talker; see .session_reasoning_effort().
+    # `[[` for the config list: `$thinking` would also match a
+    # `thinking_budget_tokens` entry by prefix and return the budget.
+    configured <- if (!isTRUE(session$talker)) {
+        session$config[["thinking"]]
+    }
+    .check_thinking(session$thinking %||% configured, "session/config thinking")
+}
+
+.check_thinking <- function(x, where) {
+    if (is.null(x)) {
+        return(NULL)
+    }
+    if (!is.character(x) || length(x) != 1L || is.na(x) || !nzchar(x)) {
+        stop("thinking must be a single non-empty string naming an ",
+             "Anthropic thinking type, such as \"adaptive\" or ",
+             "\"between_tools\" (", where, ")", call. = FALSE)
+    }
+    x
 }
 
 # Resolve the per-response output-token budget. Explicit
@@ -679,6 +727,17 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             if (identical(action, "escalate")) {
                 stop(auto_escalate_condition(gate$reason %||% "unspecified",
                         call$tool %||% "?"))
+            }
+            if (identical(action, "declined")) {
+                # A gate that asks a person itself (supervisor_gate())
+                # reports their no, or their silence, as the approval
+                # prompt below would.
+                return(outcome_text(
+                                    "declined",
+                                    nudge(sprintf("[user declined: %s]",
+                                .sanitize_inline(gate$reason %||% ""))),
+                                    FALSE
+                    ))
             }
             if (!identical(action, "proceed")) {
                 return(outcome_text(
@@ -1031,6 +1090,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     tools <- .task_filter_tools(tools, session$channel)
+    tools <- .talker_filter_tools(tools, isTRUE(session$talker))
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api
@@ -1156,6 +1216,18 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tb <- .session_thinking_budget(session)
     if (!is.null(tb)) {
         agent_args$thinking_budget_tokens <- tb
+    }
+    # A thinking type is the body field as it goes out; llm.api splices
+    # it in verbatim. It takes no budget (the API refuses the pair), so
+    # naming both is a configuration error, said here rather than left
+    # to whichever of the two llm.api happens to write last.
+    th <- .session_thinking(session)
+    if (!is.null(th)) {
+        if (!is.null(tb)) {
+            stop("set `thinking` or `thinking_budget_tokens`, not both: ",
+                 "a thinking type takes no budget", call. = FALSE)
+        }
+        agent_args$thinking <- list(type = th)
     }
     ch <- .session_cache(session)
     if (!is.null(ch)) {

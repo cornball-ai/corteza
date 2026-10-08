@@ -724,7 +724,8 @@ unlink(conf_root, recursive = TRUE)
 
 # The monitor preset resolves to a read-only tool list.
 mon_tools <- corteza:::resolve_subagent_tools(preset = "monitor")
-expect_true(all(c("read_file", "grep_files", "git_diff") %in% mon_tools))
+expect_true(all(c("read_file", "grep_files", "git_diff", "read_handle") %in%
+                mon_tools))
 for (forbidden in c("write_file", "replace_in_file", "bash", "run_r",
                     "web_search", "fetch_url")) {
     expect_false(forbidden %in% mon_tools)

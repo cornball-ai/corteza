@@ -172,10 +172,16 @@ bot_save_config <- function(cfg) {
 #' @param tools_filter Character vector or NULL. Passed to
 #'   \code{get_tools()} to restrict which tools the bot can invoke.
 #'   NULL allows all registered tools.
-#' @param auto_approve_asks Logical. When TRUE, tool calls that policy
-#'   returns \code{"ask"} for are auto-approved. Suitable for a
-#'   personal bot on a trusted tailnet. When FALSE (default) asks are
-#'   declined until the thumbs-up reaction protocol lands.
+#' @param auto_approve_asks Logical. Who rules on a tool call that
+#'   needs approval. Rules in code read every call first, and what they
+#'   catch (credentials, writes outside the project, elevated
+#'   privileges, other machines, publishing, discarded work) is always
+#'   put to a person by reaction in the room. When TRUE, the rest goes
+#'   to a monitor: a read-only model in its own process that approves,
+#'   refuses, or passes the call on to a person. When FALSE (default) a
+#'   person is asked for the rest as well. Nothing is approved unseen.
+#'   The monitor's model is set under \code{supervisor} in the user's
+#'   corteza config; see \code{vignette("configuration")}.
 #' @param bots Character vector or NULL. Full Matrix IDs of other known
 #'   bot accounts. Their messages only get a reply when they mention
 #'   this bot, and they are not counted as humans when deciding whether
@@ -902,8 +908,25 @@ bot_available_models <- function(cfg = NULL, ollama_models = NULL) {
 # Render the numbered /model menu with the session's current pick
 # marked. Menu content (Ollama names, config entries) is external
 # input, so every rendered field is sanitized.
+# The model a room session dispatches on. turn() reads model_map$cloud
+# (.resolve_model()), so /model, the menu, and the badge read and write
+# that field too. They used to use session$model, which turn() never
+# reads: /model renamed the badge and left every reply on the old model,
+# and a session created from cfg$model was badged with the provider's
+# default because session$model started out unset.
+bot_session_model <- function(session) {
+    session$model_map$cloud
+}
+
+bot_set_session_model <- function(session, model) {
+    mm <- session$model_map %||% list()
+    mm$cloud <- model
+    session$model_map <- mm
+    invisible(session)
+}
+
 bot_render_model_menu <- function(entries, session) {
-    cur_model <- session$model %||% ""
+    cur_model <- bot_session_model(session) %||% ""
     cur_provider <- session$provider %||% ""
     current <- sprintf("Current: %s (%s)",
                        .sanitize_inline(if (nzchar(cur_model)) cur_model else "(unset)",
@@ -932,8 +955,9 @@ bot_render_model_menu <- function(entries, session) {
 
 # Apply a parsed model command to a session. Returns the ack text to
 # post back to the room. For a query (`/model` with no args), renders
-# the numbered menu of available models. For a setter, mutates
-# session$model and (optionally) session$provider in place so the next
+# the numbered menu of available models. For a setter, mutates the
+# session's model (bot_set_session_model()) and optionally its provider
+# in place so the next
 # turn picks them up; a bare number picks that menu entry, so nobody
 # has to thumb-type a model name from a phone client. `available` is
 # injectable for tests; NULL assembles the menu from cfg + live Ollama.
@@ -957,18 +981,18 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
                           bot_render_model_menu(available, session)))
         }
         entry <- available[[idx]]
-        session$model <- entry$model
+        bot_set_session_model(session, entry$model)
         session$provider <- entry$provider
         return(sprintf("Model set: %s (provider: %s). Effective on the next reply.",
                        .sanitize_inline(entry$model, max_chars = 80L),
                        .sanitize_inline(entry$provider, max_chars = 40L)))
     }
-    session$model <- cmd$model
+    bot_set_session_model(session, cmd$model)
     if (!is.na(cmd$provider)) {
         session$provider <- cmd$provider
     }
     sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-            .sanitize_inline(session$model %||% "", max_chars = 80L),
+            .sanitize_inline(bot_session_model(session) %||% "", max_chars = 80L),
             .sanitize_inline(session$provider %||% "(unchanged)", max_chars = 40L))
 }
 
@@ -985,14 +1009,16 @@ bot_badge_mode <- function(cfg) {
 # bot_new_session stamps default_model/default_provider, so only a
 # /model switch makes the live values differ.
 bot_session_is_default <- function(session) {
-    identical(session$model %||% "", session$default_model %||% "") &&
+    identical(bot_session_model(session) %||% "",
+              session$default_model %||% "") &&
     identical(session$provider %||% "", session$default_provider %||% "")
 }
 
 # The model name a badge should display for this session: the explicit
 # session model, else the provider's default.
 bot_badge_model <- function(session) {
-    session$model %||% default_provider_model(session$provider) %||%
+    bot_session_model(session) %||%
+    default_provider_model(session$provider) %||%
     "(provider default)"
 }
 
@@ -1383,23 +1409,23 @@ bot_room_cwd <- function(cfg, topic = NULL) {
     candidate
 }
 
-# Build the approval callback for the Matrix channel. Fires only for
-# "ask" verdicts from policy (personal+anything-on-matrix is already
-# "deny" in the default tensor). Two modes:
-#   auto_approve_asks = TRUE  -> always approve (trusted tailnet use)
-#   auto_approve_asks = FALSE -> post an approval prompt to the room,
-#                                wait for a thumbs-up / thumbs-down
-#                                reaction from a user other than the
-#                                bot itself, return TRUE / FALSE.
+# Build the approval callback for the Matrix channel: post an approval
+# prompt to the room, wait for a thumbs-up / thumbs-down reaction from
+# someone allowed to answer, return TRUE / FALSE.
+#
+# A room session's calls are answered through its supervising gate
+# (bot_supervise_session()), which reaches a person through the same
+# prompt, so this callback is what is left for a session without one.
+# It always asks. `auto_approve_asks` used to make it return TRUE for
+# every call, the credential-path rule's "ask" included; that setting
+# now chooses who rules on what the rules in code leave open (a monitor
+# or a person), and nothing approves a call unseen.
+#
 # Timeout defaults to 60 seconds; configurable via
 # cfg$approval_timeout_sec or options("corteza.bot_approval_timeout").
 bot_approval_cb <- function(cfg, room_id = cfg$room_id) {
-    auto <- isTRUE(cfg$auto_approve_asks)
     force(room_id)
     function(call, decision) {
-        if (auto) {
-            return(TRUE)
-        }
         # Re-read rather than use the cfg this closure was built with. A
         # session outlives many token rotations, and a prompt sent on a
         # rejected token fails into FALSE -- which the model reads as the
@@ -1407,6 +1433,65 @@ bot_approval_cb <- function(cfg, room_id = cfg$room_id) {
         # blocking, so a config read costs nothing here.
         live <- tryCatch(bot_load_config(), error = function(e) cfg)
         bot_reaction_approval(live, call, decision, room_id = room_id)
+    }
+}
+
+# Supervise a room session's tool calls (R/supervisor.R): its own, made
+# in its turns, and through `job_supervise` those of the workers it
+# starts.
+#
+# `auto_approve_asks` picks the mode. TRUE: what the rules in code leave
+# open goes to the session's monitor, and a person is asked only for
+# what the rules catch or the monitor passes on. Otherwise a person is
+# asked for all of it, as a room without the setting always did.
+bot_supervise_session <- function(s, cfg, room_id) {
+    if (isTRUE(cfg$auto_approve_asks)) {
+        mode <- "monitor"
+    } else {
+        mode <- "human"
+    }
+    s$job_supervise <- list(mode = mode)
+    s$auto_gate <- supervisor_gate(
+                                   ask = bot_supervisor_ask(s, cfg, room_id),
+                                   cwd = function() s$cwd %||% getwd(),
+                                   mode = mode,
+                                   write_roots = supervisor_config()$write_roots,
+                                   on_decision = function(record) {
+        log_event("supervisor_decision", tool = record$tool,
+                  action = record$action, by = record$by,
+                  route = record$route, reason = record$reason)
+    })
+    invisible(s)
+}
+
+# How a call made in a room session's own turn gets answered. The turn
+# holds the bot's loop, so this waits: for the monitor, then, if the
+# monitor passes the call on or cannot be asked, for a reaction.
+bot_supervisor_ask <- function(s, cfg, room_id) {
+    force(room_id)
+    function(route, call, decision, notes) {
+        if (identical(route, "monitor")) {
+            goal <- s$supervisor_goal %||% list()
+            v <- job_monitor_ask_wait(s, list(
+                    scope = paste0("turn:", goal$id %||% ""),
+                    request_id = sprintf("t%06d", sample.int(999999L, 1L)),
+                    goal = goal$text %||% "(a message in the room)",
+                    tool = call$tool, args = job_approval_args(call$args),
+                    reason = decision$reason, notes = notes))
+            if (v$verdict %in% c("approve", "refuse")) {
+                return(list(approved = identical(v$verdict, "approve"),
+                            by = "monitor", reason = v$reason))
+            }
+            decision$reason <- sprintf("the monitor passed this to you: %s",
+                                       v$reason %||% "no reason given")
+        }
+        # Derived at the point of use: the token rotates (see
+        # bot_approval_cb()).
+        live <- tryCatch(bot_load_config(), error = function(e) cfg)
+        approved <- bot_reaction_approval(live, call, decision,
+            room_id = room_id)
+        list(approved = isTRUE(approved), by = "person",
+             reason = decision$reason)
     }
 }
 
@@ -1429,6 +1514,33 @@ bot_deny_keys <- function(cfg) {
     c(intToUtf8(0x1F44E), intToUtf8(0x274C), "n", "no", "nope")
 }
 
+# Who may answer an approval prompt in this room. Configured operators
+# when there are any. Otherwise the room's one human, if it has exactly
+# one: a private conversation, where whoever is talking to the bot is
+# the person it acts for. Anything else -- several humans, or a member
+# list that could not be read -- is nobody, and the request is declined.
+#
+# Any non-self reaction used to count. Once a second bot shares a room,
+# that let it approve this bot's tool calls. Humans are counted the way
+# the reply gate counts them (bot_room_humans()), so an unlisted bot
+# reads as a second human and closes the room to approvals rather than
+# opening it.
+bot_approvers <- function(cfg, members, bots = character()) {
+    ops <- bot_operators(cfg)
+    if (length(ops)) {
+        return(ops)
+    }
+    if (is.null(members)) {
+        return(character())
+    }
+    humans <- bot_room_humans(members, NULL, bots)
+    if (length(humans) == 1L) {
+        humans
+    } else {
+        character()
+    }
+}
+
 # First verdict wins, in the order the homeserver reported them.
 #
 # Self reactions are skipped, and that is load-bearing rather than
@@ -1438,12 +1550,16 @@ bot_deny_keys <- function(cfg) {
 #
 # The room is checked too. The prompt goes to the session's room, which
 # is not the config's default room in any room but one.
+#
+# Only a sender in `approvers` counts. Anyone else's reaction is skipped,
+# not treated as a denial, so a stray tap cannot veto the operator.
 bot_reaction_verdict <- function(reactions, room_id, target, approve_keys,
-                                 deny_keys) {
+                                 deny_keys, approvers) {
     for (r in reactions) {
         if (isTRUE(r$self) ||
             !identical(r$channel, room_id) ||
-            !identical(r$target, target)) {
+            !identical(r$target, target) ||
+            !isTRUE(r$sender %in% approvers)) {
             next
         }
         if (r$key %in% approve_keys) {
@@ -1476,6 +1592,23 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
     chat <- tryCatch(bot_chat_client(cfg, save_cursor = FALSE),
                      error = function(e) NULL)
     if (is.null(chat)) {
+        return(FALSE)
+    }
+
+    # Membership is read fresh rather than from the session's 10-minute
+    # cache: this decides who may authorize a tool call, and someone who
+    # joined since would otherwise leave a stale "one human" answer.
+    self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
+                        error = function(e) cfg$user_id)
+    members <- tryCatch(chat.api::chat_members(chat, room_id),
+                        error = function(e) NULL)
+    approvers <- bot_approvers(cfg, members, bot_known_bots(cfg, self_id))
+    if (!length(approvers)) {
+        # Say so in the room. A silent decline reads to the user as the
+        # model changing its mind.
+        tryCatch(chat.api::chat_send(chat, room_id,
+                                     bot_no_approver_notice(call)),
+                 error = function(e) NULL)
         return(FALSE)
     }
 
@@ -1534,7 +1667,7 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
             next
         }
         verdict <- bot_reaction_verdict(res$reactions, room_id, eid,
-                                        approve_keys, deny_keys)
+                                        approve_keys, deny_keys, approvers)
         if (!is.null(verdict)) {
             return(verdict)
         }
@@ -1550,8 +1683,12 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
               mapply(function(k, v) {
             # Model-controlled name AND value: sanitize both (strip ANSI/
             # control chars incl. newlines) and bound, so neither can forge a
-            # line in the prompt.
-            s <- .sanitize_inline(as.character(v)[1L], max_chars = 60L)
+            # line in the prompt. A command or code body gets more room
+            # than a path: it is the thing being approved, and a person
+            # cannot rule on its first 60 characters.
+            wide <- isTRUE(k %in% c("command", "cmd", "code", "script"))
+            s <- .sanitize_inline(as.character(v)[1L],
+                                  max_chars = if (wide) 400L else 60L)
             sprintf("%s=%s", .sanitize_inline(k, max_chars = 40L), s)
         }, names(args), args, USE.NAMES = FALSE),
               collapse = ", "
@@ -1569,9 +1706,20 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
             "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
             .sanitize_inline(call$tool %||% "", max_chars = 60L), args_str,
             expl_line, .sanitize_inline(decision$reason %||% "ask",
-                                        max_chars = 120L),
+                                        max_chars = 300L),
             timeout_sec
     )
+}
+
+# Posted instead of an approval prompt when nobody in the room may
+# answer one. Names the two ways to open it up.
+bot_no_approver_notice <- function(call) {
+    sprintf(paste0("Approval needed for %s, but nobody here can approve ",
+                   "it: the bot has no operators configured and this ",
+                   "room does not have exactly one human. Declined. Set ",
+                   "`operators` in the bot config, or list the other bots ",
+                   "under `bots`."),
+            .sanitize_inline(call$tool %||% "", max_chars = 60L))
 }
 
 # Build a fresh corteza session from a Matrix config. Does not fetch any
@@ -1627,6 +1775,11 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # Tool results cut for length are kept for this room alone. A bot's
+    # rooms share one process, and the process's handle store would let
+    # one room's `read_handle` open what another room's tools returned.
+    s$handle_store <- new.env(parent = emptyenv())
+    bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {
         s$context_manifest <- context_manifest
         s$context_prefix_sources <- context_bundle$prefix_sources
@@ -1643,7 +1796,7 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     .fallback_primary_retry_at(s)
     # Creation-time defaults, the baseline the model badge compares
     # against: only a /model switch makes the live values differ.
-    s$default_model <- s$model
+    s$default_model <- bot_session_model(s)
     s$default_provider <- s$provider
     # Event ids of own outbound messages already reflected in $history via
     # turn(). Lets us tell apart "echo of our own reply" (skip) from
@@ -1675,13 +1828,23 @@ bot_new_session_registry <- function() {
 bot_reset_session <- function(registry, key, cfg, sent_id, ack,
                               system = NULL, model = NULL, provider = NULL,
                               tools_filter = NULL, room_id = key) {
+    old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
+        old <- get(key, envir = registry)
         rm(list = key, envir = registry)
     }
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
                                    tools_filter = tools_filter,
                                    room_id = room_id)
+    # The room's jobs outlive its conversation. A job running when the
+    # session is replaced is pumped by whichever session holds the
+    # registry key, so the worker handles and the job in flight move to
+    # the replacement; left on the discarded session, the job would never
+    # be settled and its worker would run on unowned.
+    if (is.environment(old)) {
+        job_state_move(old, s)
+    }
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -1703,6 +1866,20 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     s <- bot_new_session(cfg, system = system, model = model,
                          provider = provider, tools_filter = tools_filter,
                          room_id = room_id)
+    # The session key is the job key: a thread's jobs belong to the
+    # thread's session, and their results come back to it.
+    s$job_key <- key
+    # This bot owns the jobs its rooms delegate; other bots sharing the
+    # ledger, or the same room, do not touch them.
+    s$job_owner <- bot_job_owner(cfg)
+    talker <- talker_config(cfg)
+    if (!is.null(talker)) {
+        talker_enable(s, talker)
+        # The talker model is this session's default; only a /model
+        # switch should move it off default for the badge.
+        s$default_model <- bot_session_model(s)
+        s$default_provider <- s$provider
+    }
     assign(key, s, envir = registry)
     s
 }
@@ -1836,6 +2013,12 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         message("bot_poll: baseline established, no history processed")
         return(invisible(0L))
     }
+
+    # Reactions answering a job's approval prompt. Read from this sync
+    # rather than a private poll, so a job waiting on approval never
+    # holds the loop. Before the message check: a sync carrying only a
+    # thumbs-up is still an answer.
+    bot_handle_job_reactions(res$reactions, sessions, chat, cfg)
 
     # The adapter's message list, cleartext and decrypted alike. corteza
     # used to re-extract from the raw sync and then run its own decrypt
@@ -1975,7 +2158,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         if (bot_is_status_command(m$body)) {
             ack <- sprintf("model: %s\nprovider: %s\ncwd: %s",
-                           session$model %||% "(unset)",
+                           bot_session_model(session) %||% "(unset)",
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd())
             sent_id <- tryCatch(
@@ -2112,9 +2295,31 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # a session outlives the turn and a leftover one would keep
         # writing into an accumulator whose message has already been
         # finalized.
+        # Who asked and where, for any job this turn delegates: the job
+        # records its requester, and its result goes back to this room
+        # or thread.
+        session$job_requester <- sender
+        session$job_origin <- list(room = m$channel, thread = m$thread)
+        # What was asked, for a monitor ruling on a call this turn makes
+        # itself (bot_supervisor_ask()). The message id marks where one
+        # request's calls end and the next one's begin.
+        session$supervisor_goal <- list(text = ingest_body, id = m$id)
+        # And how to hand a job to another room's doer, should this turn
+        # ask to (`delegate` with `room`). Per turn, like the two fields
+        # above, and removed after it: it holds this poll's client and
+        # this message's sender. A room with no session yet gets one
+        # with the run's own options, as a message there would.
+        session$job_handoff <- bot_job_handoff_fn(
+            sessions, session, cfg, chat_now(), sender, session$job_origin,
+            new_session = function(room_id) {
+            bot_get_or_create_session(sessions, room_id, cfg,
+                                      system = system, model = model, provider = provider,
+                                      tools_filter = tools_filter, room_id = room_id)
+        })
         reply <- rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg)
+        session$job_handoff <- NULL
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
@@ -2383,6 +2588,11 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
                 provider = provider, chat = chat)
         }
     }
+    # Jobs a previous process left unfinished. After backfill, so the
+    # room sessions that will run any still-queued jobs exist.
+    if (!is.null(cfg)) {
+        bot_recover_jobs(chat, owner = bot_job_owner(cfg))
+    }
 
     flush_signal <- file.path(bot_signal_dir(), "archive.signal")
 
@@ -2413,6 +2623,16 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 bot_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
+    # With work in flight, poll briefly so a finished job or an approval
+    # prompt is not held behind a 30-second long-poll.
+    if (bot_jobs_active(state$sessions)) {
+        timeout <- min(timeout, BOT_JOB_POLL_MS)
+    }
+    # And more briefly still while a monitor is ruling on a call: a
+    # worker is stopped on that call until its answer is collected.
+    if (bot_monitor_waiting(state$sessions)) {
+        timeout <- min(timeout, BOT_MONITOR_POLL_MS)
+    }
     # A call worker's requests (a reply to post) wait on this loop, so
     # the long poll is cut short while a room is in a call.
     if (bot_calls_active(state$sessions)) {
@@ -2421,6 +2641,28 @@ bot_run_step <- function(state, timeout = 30000L) {
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions)
+    # Advance every room's jobs: start queued ones, post results, raise
+    # approval prompts. Never blocks on a worker. Client derived now, as
+    # for the flush below.
+    pending_posts <- bot_notices_pending()
+    if (length(bot_job_sessions(state$sessions)) || pending_posts) {
+        job_cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
+        job_chat <- tryCatch(bot_chat_client(job_cfg), error = function(e) NULL)
+        if (!is.null(job_chat)) {
+            bot_pump_jobs(state$sessions, job_chat, job_cfg)
+            # Posts an earlier step could not deliver (a job's result, a
+            # hand-off notice). After the pump, so one queued this step
+            # waits out its first delay instead of being retried at once.
+            if (pending_posts) {
+                bot_notices_retry(job_chat, state$sessions,
+                                  bot_job_owner(job_cfg))
+            }
+        }
+    }
+    # Close job workers that have sat idle, and keep the number of them
+    # bounded. After the pump, so a worker whose job just ended is
+    # counted as idle from now. Needs no client.
+    bot_retire_workers(state$sessions)
     if (bot_calls_active(state$sessions)) {
         call_chat <- tryCatch(bot_chat_client(bot_load_config()),
                               error = function(e) NULL)

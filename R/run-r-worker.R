@@ -97,16 +97,7 @@
     env <- .run_r_worker_state$workspace
     checkpoint <- bindings[[.run_r_worker_checkpoint_key]]
     if (!is.null(checkpoint)) {
-        if (!identical(checkpoint$format, "corteza_workspace_v1") ||
-            !is.raw(checkpoint$data)) {
-            stop("Invalid run_r workspace checkpoint", call. = FALSE)
-        }
-        restored <- unserialize(checkpoint$data, refhook = function(ref) {
-            if (!identical(ref, "workspace")) {
-                stop("Unknown run_r checkpoint reference", call. = FALSE)
-            }
-            env
-        })
+        restored <- .workspace_checkpoint_values(checkpoint, env)
         bindings[[.run_r_worker_checkpoint_key]] <- NULL
         restored[names(bindings)] <- bindings
         bindings <- restored
@@ -147,22 +138,10 @@
 
 #' Child-side handle reader for a supervised workspace.
 #' @noRd
-.run_r_worker_child_read_handle <- function(handle, op) {
+.run_r_worker_child_read_handle <- function(handle, op, pattern = NULL,
+    start = NULL, end = NULL) {
     env <- .run_r_worker_state$workspace
-    store <- handle_store_for(env)
-    value <- get_handle(handle, store = store)
-    if (is.null(value) && !exists(handle, envir = store, inherits = FALSE)) {
-        return(err(sprintf("Unknown handle: %s", handle)))
-    }
-    text <- tryCatch(
-                     switch(op, str = utils::capture.output(utils::str(value)),
-                            head = utils::capture.output(utils::head(value)),
-                            summary = utils::capture.output(summary(value)),
-                            print = utils::capture.output(print(value)),
-                            return(err(sprintf("Unknown op: %s", op)))),
-                     error = function(e) paste("Error:", conditionMessage(e))
-    )
-    ok(paste(text, collapse = "\n"))
+    handle_read_from(handle_store_for(env), handle, op, pattern, start, end)
 }
 
 #' Resolve a requested subagent artifact in its supervised workspace.
@@ -191,7 +170,31 @@
 #' Child-side atomic checkpoint for a supervised workspace.
 #' @noRd
 .run_r_worker_child_save <- function(path, exclude = character()) {
-    env <- .run_r_worker_state$workspace
+    .workspace_checkpoint_write(.run_r_worker_state$workspace, path, exclude)
+}
+
+#' Decode a workspace checkpoint payload into a named list of values.
+#'
+#' References to the saved workspace are pointed at `env`, the workspace
+#' the values are being restored into. Shared by the supervised run_r
+#' worker and the job worker, which checkpoints its global environment.
+#' @noRd
+.workspace_checkpoint_values <- function(checkpoint, env) {
+    if (!identical(checkpoint$format, "corteza_workspace_v1") ||
+        !is.raw(checkpoint$data)) {
+        stop("Invalid run_r workspace checkpoint", call. = FALSE)
+    }
+    unserialize(checkpoint$data, refhook = function(ref) {
+        if (!identical(ref, "workspace")) {
+            stop("Unknown run_r checkpoint reference", call. = FALSE)
+        }
+        env
+    })
+}
+
+#' Atomically checkpoint the objects in `env` to `path`.
+#' @noRd
+.workspace_checkpoint_write <- function(env, path, exclude = character()) {
     objects <- setdiff(ls(env, all.names = TRUE), exclude)
     objects <- objects[!grepl("^\\.h_[0-9]+$", objects)]
     # Preserve the entire object graph, including helpers nested in lists and
@@ -296,14 +299,19 @@
 #' layout (`arch`, which callr resolves to `R.home("bin")/<arch>/R`).
 #' That last one lets a strict host run only the model's R under a
 #' sandbox wrapper while the host process itself stays unconfined.
+#'
+#' `field` names the config entry to read, so the job worker can take
+#' its own options (`job_worker_options`) with the same validation and
+#' default packages.
 #' @noRd
-.run_r_worker_session_options <- function(config) {
-    extra <- config$run_r_worker_options
+.run_r_worker_session_options <- function(config,
+    field = "run_r_worker_options") {
+    extra <- config[[field]]
     if (is.null(extra)) {
         extra <- list()
     } else if (!is.list(extra) || is.null(names(extra)) ||
                any(!nzchar(names(extra)))) {
-        stop("config$run_r_worker_options must be a named list of ",
+        stop("config$", field, " must be a named list of ",
              "callr::r_session_options() arguments", call. = FALSE)
     }
     opts <- do.call(callr::r_session_options, extra)
@@ -474,12 +482,23 @@
 }
 
 #' Model-facing handle reader that follows worker-owned handles.
+#'
+#' A handle in the session's own store (a tool result that was cut,
+#' see session_handle_store()) is read from there first. Its name
+#' differs from a workspace handle's, so this never shadows one.
 #' @noRd
-.tool_read_handle_session <- function(handle, op = "str", ctx = list()) {
-    if (!identical(.run_r_mode(ctx), "worker")) {
-        return(tool_read_handle(handle, op))
-    }
+.tool_read_handle_session <- function(handle, op = "str", ctx = list(),
+                                      pattern = NULL, start = NULL,
+                                      end = NULL) {
     session <- ctx$session
+    own <- session_handle_store(session)
+    if (!is.null(own) && is.character(handle) && length(handle) == 1L &&
+        exists(handle, envir = own, inherits = FALSE)) {
+        return(handle_read_from(own, handle, op, pattern, start, end))
+    }
+    if (!identical(.run_r_mode(ctx), "worker")) {
+        return(tool_read_handle(handle, op, pattern, start, end))
+    }
     worker <- session$.run_r_worker
     if (is.null(worker) || !isTRUE(tryCatch(worker$is_alive(),
                 error = function(e) FALSE))) {
@@ -487,12 +506,13 @@
     }
     result <- tryCatch(
                        worker$run(
-                                  function(id, action) {
+                                  function(id, action, pattern, start, end) {
         read_handle <- get(".run_r_worker_child_read_handle",
                            envir = asNamespace("corteza"), inherits = FALSE)
-        read_handle(id, action)
+        read_handle(id, action, pattern, start, end)
     },
-                                  list(id = handle, action = op)
+                                  list(id = handle, action = op, pattern = pattern,
+                                       start = start, end = end)
         ),
                        error = function(e) err(paste("read_handle worker failed:",
                 conditionMessage(e)))

@@ -371,6 +371,13 @@
         # error -- so leaving it in would make the fallback fail harder
         # than no fallback at all.
         args <- .gate_reasoning_args(args, cand$provider)
+        # A thinking type belongs to one model, not to a wire: the
+        # "between_tools" that turns thinking off on Claude Sonnet 5.5 is
+        # a 400 on Claude Haiku 4.5. Another model answers on its own
+        # default.
+        if (!identical(cand$model, primary$model)) {
+            args[["thinking"]] <- NULL
+        }
 
         before <- length(session$history %||% list())
         result <- tryCatch(.call(args), error = function(e) e)

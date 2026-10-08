@@ -23,11 +23,11 @@
 
 #' Mint the next handle id for the current session.
 #' @noRd
-.next_handle_id <- function(store = .handle_store) {
+.next_handle_id <- function(store = .handle_store, prefix = ".h_") {
     existing <- ls(store, all.names = TRUE)
     n <- length(existing) + 1L
     repeat {
-        id <- sprintf(".h_%03d", n)
+        id <- sprintf("%s%03d", prefix, n)
         if (!exists(id, envir = store, inherits = FALSE)) {
             return(id)
         }
@@ -78,14 +78,40 @@
 #' @param value The R object to retain.
 #' @param summary_fn A function that turns the value into a short
 #'   description string. Defaults to [.default_summary()].
+#' @param store The store that owns the value.
+#' @param prefix What the handle's name starts with. A session's own
+#'   store (see [session_handle_store()]) names its handles differently
+#'   from the workspace's, so one name never means two things.
 #' @return A list with `summary` (character) and `handle` (character).
 #' @noRd
 with_handle <- function(value, summary_fn = .default_summary,
-                        store = .handle_store) {
-    id <- .next_handle_id(store)
+                        store = .handle_store, prefix = ".h_") {
+    id <- .next_handle_id(store, prefix)
     assign(id, value, envir = store)
     list(summary = summary_fn(value), handle = id)
 }
+
+#' The handle store a session owns, or NULL when it has none.
+#'
+#' A tool result too long for the model is cut and stashed
+#' (R/tool-output-cap.R). By default it goes in the process's store,
+#' where `run_r` code can also reach it by name. A process that serves
+#' several conversations, as a Matrix bot serves its rooms, would then
+#' let one conversation open what another's tools returned. A session
+#' that carries `handle_store` keeps its cut results there instead, and
+#' only its own `read_handle` reads them.
+#' @noRd
+session_handle_store <- function(session) {
+    store <- session$handle_store
+    if (is.environment(store)) {
+        store
+    } else {
+        NULL
+    }
+}
+
+# What a session's own handles are named: "o" for output.
+SESSION_HANDLE_PREFIX <- ".o_"
 
 #' Look up a previously stashed value by handle id.
 #'
@@ -220,19 +246,59 @@ handle_eval_env <- function(parent = globalenv(),
 #'
 #' The LLM's only window onto large stashed objects. Supports a few
 #' common ops: `str` (structure), `head` (first six rows / elements),
-#' `summary` (R's summary()), `print` (full print of the object).
+#' `summary` (R's summary()), `print` (full print of the object),
+#' `grep` (the lines matching `pattern`, numbered), and `lines` (a range
+#' of lines, `start` to `end`). The last two are how a tool result that
+#' was cut for length is searched and paged; each returns few enough
+#' lines not to be cut again.
 #'
 #' @param handle (character) Handle id, e.g. `.h_001`.
-#' @param op (character; one of: str, head, summary, print) Inspection
-#'   operation.
+#' @param op (character; one of: str, head, summary, print, grep, lines)
+#'   Inspection operation.
+#' @param pattern (character) For `op = "grep"`: a regular expression,
+#'   matched without regard to case. Text that is not a valid
+#'   expression is matched as written.
+#' @param start (integer) For `op = "lines"`: the first line wanted.
+#'   Defaults to 1.
+#' @param end (integer) For `op = "lines"`: the last line wanted. At most
+#'   40 lines come back.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_read_handle <- function(handle, op = "str") {
-    value <- get_handle(handle)
-    if (is.null(value) &&
-        !exists(handle, envir = .handle_store, inherits = FALSE)) {
+tool_read_handle <- function(handle, op = "str", pattern = NULL,
+                             start = NULL, end = NULL) {
+    handle_read_from(.handle_store, handle, op, pattern, start, end)
+}
+
+#' Read a handle out of one store. Returns an MCP tool-result list.
+#' @noRd
+handle_read_from <- function(store, handle, op = "str", pattern = NULL,
+                             start = NULL, end = NULL) {
+    if (!is.character(handle) || length(handle) != 1L || is.na(handle)) {
+        return(err("read_handle needs `handle`: one handle id, such as .h_001."))
+    }
+    value <- get_handle(handle, store = store)
+    if (is.null(value) && !exists(handle, envir = store, inherits = FALSE)) {
         return(err(sprintf("Unknown handle: %s", handle)))
+    }
+    handle_read(value, op, pattern, start, end)
+}
+
+# The most a `grep` or `lines` read returns. Under the cut a tool result
+# gets (R/tool-output-cap.R), header included: a read that was itself
+# cut would hand back another handle to read.
+HANDLE_READ_MAX_LINES <- 40L
+HANDLE_READ_MAX_CHARS <- 4000L
+
+#' Apply a read op to a stashed value. Returns an MCP tool-result list.
+#' @noRd
+handle_read <- function(value, op = "str", pattern = NULL, start = NULL,
+                        end = NULL) {
+    if (identical(op, "grep")) {
+        return(handle_grep(value, pattern))
+    }
+    if (identical(op, "lines")) {
+        return(handle_range(value, start, end))
     }
     text <- tryCatch(switch(op,
                             str = utils::capture.output(utils::str(value)),
@@ -242,4 +308,101 @@ tool_read_handle <- function(handle, op = "str") {
                             return(err(sprintf("Unknown op: %s", op)))),
                      error = function(e) paste("Error:", conditionMessage(e)))
     ok(paste(text, collapse = "\n"))
+}
+
+#' A stashed value as lines of text: a character vector as it is, since
+#' that is what a cut tool result is stored as, anything else as it
+#' prints.
+#' @noRd
+handle_lines <- function(value) {
+    if (is.character(value)) {
+        return(as.character(value))
+    }
+    utils::capture.output(print(value))
+}
+
+#' How many of `lines`, from the first, fit a read's line and character
+#' limits. At least one, so a single very long line is still shown (cut
+#' to the character limit by the caller).
+#' @noRd
+handle_fit <- function(lines) {
+    fits <- cumsum(nchar(lines) + 1L) <= HANDLE_READ_MAX_CHARS
+    max(1L, min(sum(fits), HANDLE_READ_MAX_LINES, length(lines)))
+}
+
+#' The lines of a stashed value that match `pattern`, with their line
+#' numbers. Says how many matched of how many, so "none" is an answer
+#' and not a gap.
+#' @noRd
+handle_grep <- function(value, pattern) {
+    if (!is.character(pattern) || length(pattern) != 1L || is.na(pattern) ||
+        !nzchar(pattern)) {
+        return(err(paste("op = \"grep\" needs `pattern`: a regular expression,",
+                         "or plain text.")))
+    }
+    lines <- handle_lines(value)
+    # An invalid expression warns and then errors; only the error means
+    # "match it as written".
+    hits <- tryCatch(suppressWarnings(grep(pattern, lines,
+                ignore.case = TRUE, perl = TRUE)),
+                     error = function(e) NULL)
+    if (is.null(hits)) {
+        hits <- which(grepl(tolower(pattern), tolower(lines), fixed = TRUE))
+    }
+    if (!length(hits)) {
+        return(ok(sprintf("No line matches '%s'. All %d lines were searched.",
+                          pattern, length(lines))))
+    }
+    body <- sprintf("%d: %s", hits, lines[hits])
+    n <- handle_fit(body)
+    head <- sprintf("%d of %d lines match '%s'%s", length(hits), length(lines),
+                    pattern, if (n < length(hits)) {
+            sprintf(paste0("; the first %d are shown. Narrow the pattern, or ",
+                           "read around a line with op = \"lines\"."), n)
+        } else {
+            ":"
+        })
+    ok(paste(c(head, substr(body[seq_len(n)], 1L, HANDLE_READ_MAX_CHARS)),
+             collapse = "\n"))
+}
+
+#' Lines `start` to `end` of a stashed value, at most a read's worth,
+#' with where to continue when there is more.
+#' @noRd
+handle_range <- function(value, start = NULL, end = NULL) {
+    lines <- handle_lines(value)
+    total <- length(lines)
+    whole <- function(x, default) {
+        if (is.null(x)) {
+            return(default)
+        }
+        x <- suppressWarnings(as.integer(x))
+        if (length(x) != 1L || is.na(x) || x < 1L) {
+            NA_integer_
+        } else {
+            x
+        }
+    }
+    start <- whole(start, 1L)
+    end <- whole(end, max(total, start))
+    if (is.na(start) || is.na(end) || end < start) {
+        return(err(paste("op = \"lines\" takes `start` and `end` as line",
+                         "numbers, 1 or more, with end not before start.")))
+    }
+    if (start > total) {
+        return(ok(sprintf("There is no line %d: the value has %d lines.",
+                          start, total)))
+    }
+    end <- min(end, total)
+    wanted <- lines[start:end]
+    n <- handle_fit(wanted)
+    last <- start + n - 1L
+    head <- sprintf("lines %d to %d of %d%s", start, last, total,
+        if (last < total) {
+            sprintf(" (more with start = %d)", last + 1L)
+        } else {
+            ""
+        })
+    ok(paste(c(head, substr(wanted[seq_len(n)], 1L, HANDLE_READ_MAX_CHARS)),
+             collapse = "\n"))
 }

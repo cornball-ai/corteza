@@ -125,6 +125,8 @@ Commands (in chat):
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
+  /jobs [id]     List delegated jobs (talker mode), or show one.
+  /cancel <id>   Cancel a delegated job.
   /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions
@@ -185,6 +187,8 @@ Commands:
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
+  /jobs [id]     List delegated jobs (talker mode), or show one.
+  /cancel <id>   Cancel a delegated job.
   /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions for this directory

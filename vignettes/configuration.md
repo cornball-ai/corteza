@@ -145,6 +145,40 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `denied_paths` | string[] | `["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.kube", "~/.docker"]` | Blocked paths |
 | `allowed_paths` | string[] or null | null | If set, only these paths allowed |
 
+### Supervisor
+
+A Matrix room's tool calls, and those of the jobs it delegates, run with
+nobody at a prompt. Each call goes through three steps:
+
+1. **Rules in code.** They read the call, shell commands and R code
+   included. Credentials, writes outside the project, elevated
+   privileges, other machines, publishing, and git commands that throw
+   work away are put to a person. No model is asked about these.
+2. **A monitor**, where the bot config sets `auto_approve_asks: true`.
+   It is a model with read-only tools in its own process, started with
+   the shared and project instructions. It rules on what the rules left
+   open: it approves the call, refuses it with a reason the working
+   agent reads, or passes it to a person.
+3. **A person**, by reaction in the room, for what steps 1 and 2 sent
+   on. Without `auto_approve_asks` a person is asked in place of step 2.
+
+No setting approves a call unseen. The rules read text and are not a
+sandbox: a command can be written so that they miss it, which is what
+the monitor and the tool policy above are also there for.
+
+These keys are read from the user's config file only. A project's
+`.corteza/config.json` cannot set them.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `supervisor.provider` | string | the working agent's | Provider for the monitor |
+| `supervisor.model` | string | the working agent's | Model for the monitor. A small, fast model keeps each ruling to a few seconds |
+| `supervisor.thinking` | string | provider default | Anthropic `thinking.type` for the monitor |
+| `supervisor.reasoning_effort` | string | provider default | Reasoning effort for the monitor |
+| `supervisor.timeout_sec` | number | `120` | A monitor that has not ruled by then is stopped and the call goes to a person |
+| `supervisor.max_turns` | integer | `6` | Model turns the monitor may take on one call |
+| `supervisor.write_roots` | string[] | `[]` | Directories outside the project that may be written without asking a person, such as a notes directory |
+
 ### Skills
 
 | Key | Type | Default | Description |

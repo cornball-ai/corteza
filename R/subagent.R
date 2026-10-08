@@ -178,6 +178,18 @@ resolve_subagent_id <- function(input) {
 #'   a filesystem sandbox on its own -- `read_file` reaches anything the
 #'   process can -- so a child that should only see its project needs
 #'   this as well.
+#' @param channel Policy channel for the child's tool calls: "console"
+#'   (default, the historical behavior), "cli", or "matrix". A job worker
+#'   passes its originating session's channel so work delegated from a
+#'   Matrix room is judged by the Matrix column of the policy tensor, not
+#'   the looser console one.
+#' @param reasoning_effort,thinking_budget_tokens Reasoning settings for
+#'   the child's session, as in [new_session()]. NULL (default) leaves
+#'   them to the child's config and the provider's defaults, as before.
+#'   A job worker passes the ones configured for its model.
+#' @param thinking Character or NULL. The Anthropic `thinking.type` the
+#'   child's requests carry, such as `"adaptive"` or `"between_tools"`.
+#'   NULL (default) sends no `thinking` field.
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
@@ -185,7 +197,9 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                tools_filter = NULL, system = NULL,
                                max_turns = 10L, depth = 0L,
                                plan_mode = FALSE, web_search = NULL,
-                               allowed_paths = NULL) {
+                               allowed_paths = NULL, channel = "console",
+                               reasoning_effort = NULL,
+                               thinking_budget_tokens = NULL, thinking = NULL) {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
@@ -201,11 +215,15 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
     if (nzchar(instruction_header)) {
         system <- paste(c(system, instruction_header), collapse = "\n\n")
     }
-    session <- new_session(channel = "console", provider = provider,
+    session <- new_session(channel = channel, provider = provider,
                            tools_filter = tools_filter, system = system,
                            max_turns = as.integer(max_turns),
                            plan_mode = isTRUE(plan_mode),
-                           web_search = web_search)
+                           web_search = web_search,
+                           reasoning_effort = reasoning_effort,
+                           thinking_budget_tokens = thinking_budget_tokens)
+    session$thinking <- .check_thinking(thinking,
+                                        "subagent_turn_init(thinking=)")
     session$is_subagent <- TRUE
     session$config <- load_config(getwd())
     session$instruction_catalog <- instruction_catalog
@@ -587,9 +605,11 @@ SUBAGENT_PRESETS <- list(
                          # supervisor. No web_search/fetch_url either: it reads the
                          # worker's transcript, which is attacker-influenceable text,
                          # so it gets no outbound channel. See PRESET_WEB_SEARCH below;
-                         # the tool list alone does not deliver that.
+                         # the tool list alone does not deliver that. `read_handle`
+                         # reads the rest of one of its own results that was cut for
+                         # length, from its own process's store.
                          monitor = c("read_file", "skill_instructions", "grep_files", "list_files",
-                                     "git_status", "git_diff", "git_log")
+                                     "git_status", "git_diff", "git_log", "read_handle")
 )
 
 # Provider-native (server-side) web search per preset.

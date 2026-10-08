@@ -1,3 +1,168 @@
+# corteza 0.7.1.59
+
+- **Matrix tool calls are supervised; `auto_approve_asks` no longer
+  approves everything.** The setting used to answer "yes" to every call
+  policy asked about, in a room's turns and in its jobs, the
+  credential-path rule's "ask" included. Now every call in a room goes
+  through three steps. Rules in code read it first, shell commands and R
+  code included, and put to a person: credentials, writes outside the
+  project, elevated privileges, other machines, publishing, and git
+  commands that throw work away. With `auto_approve_asks: true`, what the
+  rules leave open goes to a monitor, a model with read-only tools and
+  the project's instructions in a process of its own, which approves,
+  refuses with a reason the working agent reads, or passes the call to a
+  person. A person answers by reaction in the room, as before; without
+  the setting a person is asked in place of the monitor. A job's result
+  says how its calls were answered. The monitor's model and any extra
+  writable directories are set under `supervisor` in the user's own
+  config (a project config cannot set them); see
+  `vignette("configuration")`. The monitor is started on first need,
+  retired when idle, and counted against `jobs.max_workers` like a doer
+  or reviewer. The rules read text and are not a sandbox.
+
+- **A tool result that was cut for length can be searched.**
+  `read_handle` gains `op = "grep"` (the lines matching `pattern`, with
+  line numbers and a count of how many lines were searched) and
+  `op = "lines"` (`start` to `end`, 40 at a time). The talker, the
+  reviewer, and the monitor now have `read_handle`: the talker was
+  shown the first 40 lines of a long result and told to read the rest
+  with a tool it did not have, and the other two had no way at all. The
+  notice on a cut result now names only a tool the session has, and
+  says so when it has none. In a Matrix bot each room keeps its own cut
+  results (named `.o_001`, ...), so one room cannot open what another
+  room's tools returned; they shared the process's store before.
+
+- **Matrix approvals only accept an operator or the room's one human.**
+  Any reaction other than the bot's own used to answer an approval prompt,
+  so a second bot in the room could approve this bot's tool calls.
+  Approvers are now the configured `operators`, or, with none configured,
+  the room's one human when it has exactly one. Other reactions are
+  ignored. A room with no possible approver gets a notice and the request
+  is declined. Bots not listed under `bots` count as humans.
+
+- **Talker mode: delegate work and keep talking.** With
+  `"talker": {"enabled": true}` in a bot config or the corteza config, a
+  session runs on a fast model (Haiku 4.5 for anthropic, gpt-6-luna for
+  openai, or `talker$model`) with read-only tools plus `delegate`,
+  `job_status`, and `job_cancel`. Delegated work runs on a persistent
+  per-session worker using the session's configured model. In Matrix the
+  bot keeps answering while jobs run, posts each result to the room or
+  thread it came from, and takes approvals as reactions on later polls.
+  In the CLI and `chat()`, results and approvals appear before the next
+  prompt; `/jobs` and `/cancel` manage them. Off by default.
+
+- **The doer starts with the project's context.** A delegated job's
+  worker gets, after its role, what a session opened in its directory
+  gets: the shared instructions file, the project's AGENTS.md or
+  CLAUDE.md, the briefing, and configured context files. The task text
+  is all a talker hands over, so without this a project's rules reached
+  the doer only when the talker restated them. A reviewer gets the
+  shared and project instructions after its own prompt, so it can say
+  when the work broke one; its tools stay read-only and confined to the
+  checkout.
+
+- **A Matrix bot's rooms can hand work to each other.** `delegate`
+  takes `room` (a room's name, id, or project directory). The job is
+  then that room's: it runs on that room's doer, in its directory, under
+  its checkout lock, with approvals asked there. That room is told when
+  the job is accepted, in the room and in its talker's history, and the
+  result is posted in both rooms. Either room can ask about the job or
+  cancel it. Only a configured operator's request is handed over. A room
+  whose topic names another directory than its running session works in
+  is not handed work until the two agree (`/clear` there starts a
+  session in the new directory). When no room matches, the talker is
+  told that every room was checked, shown the nearest names, and told
+  when the project directory exists with no room working in it; the
+  reply no longer lists every room, which a bot in many rooms had cut
+  short.
+
+- **A job's result is retried until it is posted.** A result, or the
+  notice of a hand-off, that could not be sent (homeserver down, token
+  mid-rotation) was dropped and reported as delivered. It is now kept in
+  the state directory and retried by the poll loop with a growing delay,
+  and set aside after a day. The job itself is never resubmitted.
+
+- **A job runs in the directory its record names.** A job queued for one
+  directory fails without running if its session has since moved to
+  another, and a live worker is reused only while it is in the session's
+  directory. `/clear` and `/model` no longer orphan a running job: the
+  job and its worker move to the replacement session.
+
+- **A Matrix bot retires idle job workers.** Each room and thread kept a
+  doer process, and a reviewer once it had one, for as long as the bot
+  ran. A worker idle for `jobs$worker_idle_minutes` (default 30; 0 to
+  disable) is now closed, and no more than `jobs$max_workers` (default
+  8) are kept, longest idle closed first. Both are read from the corteza
+  config for the bot's own directory. A worker running a job, or waiting
+  on an approval, is never closed, so the count can exceed the limit
+  while that many jobs run. The next job in that room starts a new
+  process that restores the worker's saved workspace and conversation.
+
+- **A `thinking` setting names the Anthropic thinking type.** `thinking`
+  in the corteza config, in a `talker` block, or under `jobs` and
+  `jobs$reviewer`, is sent as the request's `thinking.type`. Claude
+  Sonnet 5.5 thinks unless told otherwise and refuses `"disabled"`;
+  `"between_tools"` is its setting for answering without thinking first,
+  as in `"talker": {"enabled": true, "model": "claude-sonnet-5-5",
+  "thinking": "between_tools"}`. The value belongs to one model, so a
+  fallback to another model does not carry it and `/model` clears a
+  talker's. It cannot be combined with `thinking_budget_tokens`.
+  Requires llm.api 0.1.9.13, whose `agent()` takes `thinking`.
+
+- **Jobs are durable and never re-run blindly.** Each job's intent is
+  written before a worker sees it and its outcome beside it. After a
+  restart, a job that never started is still queued; one that started
+  with no outcome is reported `indeterminate` and not re-run. The worker
+  checkpoints its R workspace and history at each job boundary and a
+  replacement restores them. Jobs carry an owner, so bots sharing a
+  machine or a room never settle or start each other's jobs.
+
+- **One writing job per checkout.** A job that edits takes its checkout's
+  lock (the git toplevel) and later writers queue until it ends, across
+  every bot on the machine. Edits made outside jobs are not covered.
+
+- **Optional review of delegated work.** `delegate(task, review = TRUE)`,
+  or `"jobs": {"review": true}` as the default, follows a finished job
+  with a review by a second worker that has read-only tools, no network,
+  no access outside the checkout, and no way to run code. It reads the
+  job's diff and report and answers with a verdict and findings. The
+  diff is taken between snapshots of the checkout as the job started and
+  ended, so it leaves out changes that were already there, and it covers
+  untracked files up to `"jobs": {"review_snapshot_max_mb": 20}` in total
+  (ignored files are never covered). Past that limit the two snapshots
+  still cover the same files: files that were untracked at the start are
+  left out of both, or the job's new files are left out of the end, and
+  the reviewer is told which. The checkout stays locked from the
+  start of the job to the end of the review. If the bot restarts in
+  between and another job takes the checkout first, the review is
+  cancelled instead of run on a changed tree.
+  `"jobs": {"reviewer": {"provider": ..., "model": ...}}` runs the
+  reviewer on a different model. The reviewer cannot run tests, and a
+  review does not start a revision by itself.
+
+- **`git_status`, `git_diff`, and `git_log` no longer run commands or
+  read outside `allowed_paths`.** A ref or path could carry shell
+  commands, a ref could be an option, and `path` could name any
+  repository on the machine. Git now runs without a shell, and a
+  session confined with `allowed_paths` is held to it, including inside
+  a subdirectory of a repository. Three things behave differently in
+  every session:
+  - The file filter of `git_diff` is a literal path. Globs and pathspec
+    magic such as `:(top)` are not interpreted.
+  - A ref has to resolve to commits. `<rev>:<path>`, the object id of a
+    file or a tree, a tag on one, and anything starting with `-` are
+    refused.
+  - Git runs none of the programs a repository's configuration names:
+    no fsmonitor hook, clean/smudge filter, `post-index-change` hook,
+    external diff, textconv, or gpg, and no fetch of objects a partial
+    clone lacks. A file under a clean filter (git-lfs) is compared as
+    its raw content, and a submodule by its commit only.
+
+- **Matrix `/model` now changes the model replies use.** It set a field
+  `turn()` never read, so it only renamed the badge. The badge also
+  showed the provider's default model for sessions created from
+  `cfg$model`; it now shows the model in use.
+
 # corteza 0.7.1.58
 
 - **A bot can take part in a call.** The voice brain that serves the
