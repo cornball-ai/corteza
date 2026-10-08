@@ -229,6 +229,15 @@ call_worker_main <- function(args) {
     if (is.character(call_opts$ice_transport)) {
         lk_opts$ice_transport <- call_opts$ice_transport
     }
+    # `voice.call.connect_delay_s`: wait this long after the membership
+    # was posted before joining the media room. A client that only
+    # notices participants who connect after it does (FluffyChat 2.10's
+    # ring) sees the agent only when the agent arrives second.
+    delay <- suppressWarnings(as.numeric(call_opts$connect_delay_s %||% 0))
+    if (length(delay) == 1L && is.finite(delay) && delay > 0) {
+        note("waiting ", delay, " s before connecting")
+        Sys.sleep(delay)
+    }
     note("connecting to ", args$url,
         if (length(lk_opts)) paste0(" (ice_transport = ",
                                     lk_opts$ice_transport, ")"))

@@ -296,6 +296,7 @@ under `voice`:
 | `voice.tts.key` / `voice.tts.key_env` / `voice.tts.key_file` | string | unset | As for `stt` |
 | `voice.call.auto_join` | logical | `true` | Join a room's call when someone else is in it (a call button posts a membership event; that is the bot's signal). `/call` still works when this is off. |
 | `voice.call.rooms` | array | unset | Rooms whose calls the bot joins on its own; absent, any room it is in |
+| `voice.call.connect_delay_s` | number | 0 | Seconds to wait after posting the call membership before joining the media room; for a client that only notices participants who connect after it does |
 | `voice.call.greeting` | string | unset | Said once on joining a call, before anyone has spoken; not posted to the room |
 | `voice.call.livekit_log` | string | unset | livekitr's log level in the call worker (`warn`, `info`, `debug`, `trace`), forwarded to the bot's log |
 | `voice.call.ice_transport` | string | unset | Passed to `livekitr::lk_connect()`: `"relay"` forces media through TURN, `"all"` (the default) allows every candidate |
