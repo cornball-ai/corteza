@@ -113,6 +113,58 @@ voice_room_session <- function(state, room_id) {
     bot_run_turn_in_cwd(text, s)
 }
 
+# One turn of the voice brain, for any media backend. `send(delta)` is
+# called with each text delta as it is generated and returns TRUE when
+# it was delivered; anything else, or an error, cancels the generation
+# (see .voice_stream_cb). When it is over, the
+# full reply is posted to the room and the turn is recorded in `turns`
+# (an environment keyed by turn id) for voice_turn_report(). `speaker`
+# names who said `text` when more than one person can: the brain's
+# session then sees the words with the name in front of them.
+#
+# Returns list(turn_id, text, event_id, alive): alive is FALSE when a
+# send failed, so the caller knows the peer stopped listening.
+voice_turn <- function(state, room_id, text, send, turns, speaker = NULL,
+                       turn_id = voice_id(state)) {
+    relay <- .voice_stream_cb(send, state$hooks$cancel)
+    reply <- state$hooks$run_turn(state, room_id,
+                                  voice_speaker_text(text, speaker), relay$fun)
+
+    # A provider (or an llm.api too old for on_delta) that streamed
+    # nothing still produced a reply. One delta carrying all of it keeps
+    # the contract -- the concatenated stream IS the turn text -- rather
+    # than a silent stream followed by a room post from nowhere.
+    if (relay$empty() && is.character(reply) && nzchar(reply)) {
+        relay$fun(reply)
+    }
+    full <- relay$text()
+
+    # Post the full reply now (see header). A post that fails leaves
+    # event_id NULL; a report then has nothing to edit and says so.
+    event_id <- tryCatch(state$hooks$post(room_id, full),
+                         error = function(e) {
+        message("corteza voice: could not post reply ", "to ", room_id,
+                ": ", conditionMessage(e))
+        NULL
+    })
+    assign(turn_id,
+           list(text = full, event_id = event_id, stored = NULL),
+           envir = turns)
+    list(turn_id = turn_id, text = full, event_id = event_id,
+         alive = relay$alive())
+}
+
+# What the brain's session is given for a spoken turn: the words, with
+# the speaker's name in front when there is one to tell apart. A room
+# with one person needs no names, and the 1:1 voice mode passes none.
+voice_speaker_text <- function(text, speaker = NULL) {
+    if (!is.character(speaker) || length(speaker) != 1L || is.na(speaker) ||
+        !nzchar(speaker)) {
+        return(text)
+    }
+    paste0(speaker, ": ", text)
+}
+
 # Converse: one turn, streamed. TurnStart with the turn id must go out
 # before any delta -- the client cannot report a turn it has no id for.
 .voice_converse <- function(state, ev) {
@@ -128,40 +180,18 @@ voice_room_session <- function(state, room_id) {
     start$start <- .voice_type("TurnStart")$new(turn_id = turn_id)
     rgrpc::grpc_send(ev, start)
 
-    relay <- .voice_stream_cb(function(delta) {
+    turn <- voice_turn(state, rec$room_id, text, function(delta) {
         m <- .voice_type("ConverseEvent")$new()
         m$delta <- .voice_type("TextDelta")$new(text = delta)
         rgrpc::grpc_send(ev, m)
-    }, state$hooks$cancel)
-    reply <- state$hooks$run_turn(state, rec$room_id, text, relay$fun)
-
-    # A provider (or an llm.api too old for on_delta) that streamed
-    # nothing still produced a reply. One delta carrying all of it keeps
-    # the contract -- the concatenated stream IS the turn text -- rather
-    # than a silent stream followed by a room post from nowhere.
-    if (relay$empty() && is.character(reply) && nzchar(reply)) {
-        relay$fun(reply)
-    }
-    full <- relay$text()
+    }, turns = rec$turns, turn_id = turn_id)
 
     done <- .voice_type("ConverseEvent")$new()
     done$end <- .voice_type("TurnEnd")$new()
-    if (relay$alive()) {
+    if (turn$alive) {
         try(rgrpc::grpc_send(ev, done), silent = TRUE)
     }
     try(rgrpc::grpc_finish(ev), silent = TRUE)
-
-    # Post the full reply now (see header). A post that fails leaves
-    # event_id NULL; ReportTurn then has nothing to edit and says so.
-    event_id <- tryCatch(state$hooks$post(rec$room_id, full),
-                         error = function(e) {
-        message("corteza voice: could not post reply ", "to ", rec$room_id,
-                ": ", conditionMessage(e))
-        NULL
-    })
-    assign(turn_id,
-           list(text = full, event_id = event_id, stored = NULL),
-           envir = rec$turns)
     invisible(NULL)
 }
 
@@ -201,29 +231,22 @@ voice_room_session <- function(state, room_id) {
          text = function() paste(buf, collapse = ""))
 }
 
-# ReportTurn: truncate the stored reply to what was heard.
-.voice_report <- function(state, ev) {
-    req <- RProtoBuf::read(.voice_type("ReportTurnRequest"), ev$request)
-    rec <- voice_session_auth(state, req$session_id, ev$metadata)
-    turn <- rec$turns[[req$turn_id]]
-    if (is.null(turn)) {
-        voice_refuse("NOT_FOUND", "no such turn: %s", req$turn_id)
+# Truncate a recorded turn's room post to the `heard` code points of
+# it. Returns the text the room now holds. Refuses (voice_refuse, with
+# a status the gRPC handler maps and the call worker reads as an
+# error) when the turn is unknown, was never posted, or cannot be
+# edited. A second report of the same turn answers what the first
+# stored, with no second edit: the first report decided.
+voice_turn_report <- function(state, room_id, turns, turn_id, heard) {
+    turn <- if (is.character(turn_id) && length(turn_id) == 1L &&
+        nzchar(turn_id)) {
+        turns[[turn_id]]
     }
-    # Presence, not value: explicit 0 is a legitimate report (barge-in
-    # before the first word), absence is a client that said nothing --
-    # reading it as 0 would erase a fully-heard reply on its say-so.
-    if (!req$has("text_heard")) {
-        voice_refuse("INVALID_ARGUMENT",
-                     paste0("text_heard is required; report 0 explicitly ",
-                            "if nothing was heard"))
+    if (is.null(turn)) {
+        voice_refuse("NOT_FOUND", "no such turn: %s", turn_id)
     }
     if (!is.null(turn$stored)) {
-        # Reported already. Idempotent answer, no second edit: the first
-        # report decided what the room holds.
-        resp <- .voice_type("ReportTurnResponse")$new()
-        resp$stored_text <- turn$stored
-        rgrpc::grpc_reply(ev, resp)
-        return(invisible(NULL))
+        return(turn$stored)
     }
     # A turn whose post failed has no room record AT ALL, so no report
     # against it can be honoured -- including a fully-heard one, where
@@ -235,17 +258,17 @@ voice_room_session <- function(state, room_id) {
                      paste0("the reply was never posted to the room, so ",
                             "there is nothing to report against"))
     }
-    heard <- as.numeric(req$text_heard)
-    if (is.na(heard)) {
+    heard <- suppressWarnings(as.numeric(heard))
+    if (length(heard) != 1L || is.na(heard)) {
         voice_refuse("INVALID_ARGUMENT", "text_heard is not a number")
     }
     stored <- voice_truncate(turn$text, heard)
     if (!identical(stored, turn$text)) {
         # If the edit fails the room still shows the full text, and
         # answering OK would hand the client a stored_text the history
-        # does not hold -- the exact mismatch this RPC exists to
-        # prevent. Refuse instead; the client may retry.
-        tryCatch(state$hooks$edit(rec$room_id, turn$event_id, stored),
+        # does not hold -- the exact mismatch this exists to prevent.
+        # Refuse instead; the caller may retry.
+        tryCatch(state$hooks$edit(room_id, turn$event_id, stored),
                  error = function(e) {
             voice_refuse("UNAVAILABLE",
                          "could not edit the room record: %s",
@@ -253,7 +276,27 @@ voice_room_session <- function(state, room_id) {
         })
     }
     turn$stored <- stored
-    assign(req$turn_id, turn, envir = rec$turns)
+    assign(turn_id, turn, envir = turns)
+    stored
+}
+
+# ReportTurn: truncate the stored reply to what was heard.
+.voice_report <- function(state, ev) {
+    req <- RProtoBuf::read(.voice_type("ReportTurnRequest"), ev$request)
+    rec <- voice_session_auth(state, req$session_id, ev$metadata)
+    if (!nzchar(req$turn_id) || is.null(rec$turns[[req$turn_id]])) {
+        voice_refuse("NOT_FOUND", "no such turn: %s", req$turn_id)
+    }
+    # Presence, not value: explicit 0 is a legitimate report (barge-in
+    # before the first word), absence is a client that said nothing --
+    # reading it as 0 would erase a fully-heard reply on its say-so.
+    if (!req$has("text_heard")) {
+        voice_refuse("INVALID_ARGUMENT",
+                     paste0("text_heard is required; report 0 explicitly ",
+                            "if nothing was heard"))
+    }
+    stored <- voice_turn_report(state, rec$room_id, rec$turns, req$turn_id,
+                                req$text_heard)
     resp <- .voice_type("ReportTurnResponse")$new()
     resp$stored_text <- stored
     rgrpc::grpc_reply(ev, resp)
