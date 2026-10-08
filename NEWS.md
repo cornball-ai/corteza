@@ -1,4 +1,4 @@
-# corteza 0.7.1.57
+# corteza 0.7.1.58
 
 - **A bot can take part in a call.** The voice brain that serves the
   1:1 AgentVoice mode (`voice_turn()`, `voice_turn_report()`) now has a
