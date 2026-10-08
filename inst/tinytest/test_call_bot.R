@@ -119,6 +119,13 @@ fake_worker <- function() {
 if (requireNamespace("chat.api", quietly = TRUE) &&
     utils::packageVersion("chat.api") >= corteza:::.CHAT_API_MIN) {
     ns <- asNamespace("corteza")
+    # Creating a bot session validates the provider key, and CI has no
+    # ANTHROPIC_API_KEY. A fake one lets session setup proceed; the test
+    # never calls the model (every turn here is faked), so nothing hits
+    # the network. Restored below so a later file's key-absent test still
+    # sees it unset.
+    old_key <- Sys.getenv("ANTHROPIC_API_KEY", NA_character_)
+    Sys.setenv(ANTHROPIC_API_KEY = "fake-test-key")
     # corteza's worker verbs, redirected at the fake.
     worker <- fake_worker()
     redirect <- list(
@@ -157,6 +164,11 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
         for (nm in names(saved)) {
             assign(nm, saved[[nm]], envir = ns)
             lockBinding(nm, ns)
+        }
+        if (is.na(old_key)) {
+            Sys.unsetenv("ANTHROPIC_API_KEY")
+        } else {
+            Sys.setenv(ANTHROPIC_API_KEY = old_key)
         }
     }
     started <- list()
