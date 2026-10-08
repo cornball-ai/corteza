@@ -130,6 +130,22 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
         call_worker_close = function(w, grace = 5) {
             w$alive <- FALSE
             invisible(w$result)
+        },
+        # livekitr (a Suggests) is not installed in CI, and these blocks
+        # inject a fake worker, so the real worker's native dependency is
+        # beside the point here. Stub out its presence check while keeping
+        # the others, so a join proceeds to the fake start and the refusal
+        # tests still exercise the caps and voice-config branches.
+        bot_call_unavailable = function(cfg, chat) {
+            caps <- tryCatch(chat.api::chat_capabilities(chat),
+                             error = function(e) list())
+            if (!isTRUE(caps$calls)) {
+                return("the chat transport cannot join calls")
+            }
+            if (!is.list(cfg$voice$stt) || !is.list(cfg$voice$tts)) {
+                return("voice.stt and voice.tts are not configured")
+            }
+            NULL
         })
     saved <- list()
     for (nm in names(redirect)) {
