@@ -620,10 +620,11 @@ local({
 local({
     desc <- read.dcf(system.file("DESCRIPTION", package = "corteza"),
                      fields = "Suggests")[1L, 1L]
+    # The installed field is reflowed, so the bound may wrap after ">=".
     m <- regmatches(desc,
-                    regexpr("rgrpc \\(>= [0-9.]+\\)", desc))
+                    regexpr("rgrpc \\(>=[[:space:]]+[0-9.]+\\)", desc))
     expect_equal(length(m), 1L)
-    declared <- unname(sub("rgrpc \\(>= ([0-9.]+)\\)", "\\1", m))
+    declared <- unname(sub("rgrpc \\(>=[[:space:]]+([0-9.]+)\\)", "\\1", m))
     expect_equal(declared, corteza:::.VOICE_RGRPC_MIN)
 })
 

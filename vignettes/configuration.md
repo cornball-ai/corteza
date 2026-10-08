@@ -307,6 +307,51 @@ corteza::bot_configure(
 )
 ```
 
+#### Voice in a call
+
+A bot can take part in a call as a participant: it hears each person's
+audio from the SFU, answers, and speaks. The call runs in a worker
+process beside the bot (`R/call-worker.R`); the bot process keeps the
+Matrix side. It needs `livekitr` (Suggests) and the two speech routes
+below. These keys live in the bot config (`bot_configure()`'s file),
+under `voice`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `voice.stt.wire` | string | `"openai"` | The route's shape: `"openai"` (the OpenAI audio API) or `"gpu-host"` (a gpu.ctl host's `POST /infer`, spoken directly) |
+| `voice.stt.url` | string | required | Base URL: of an OpenAI-shaped transcription route (`/v1/audio/transcriptions` is appended), or of the gpu.ctl host |
+| `voice.stt.model` | string | required | Model name sent with each utterance; on the gpu-host wire, the catalog entry (`whisper-small`) |
+| `voice.stt.language` | string | unset | Language hint sent with each utterance (OpenAI wire) |
+| `voice.stt.key` / `voice.stt.key_env` / `voice.stt.key_file` | string | unset | Bearer credential: literally, as the name of an environment variable, or as the path of a file of raw bytes sent base64-encoded (the gpu-host token; read at each request) |
+| `voice.tts.wire` | string | `"openai"` | As for `stt` |
+| `voice.tts.url` | string | required | Base URL of an OpenAI-shaped synthesis route (`/v1/audio/speech`), or of the gpu.ctl host |
+| `voice.tts.model` | string | required | Model name; on the gpu-host wire, the catalog entry (`chatterbox-turbo`) |
+| `voice.tts.voice` | string | unset | Voice name; on the gpu-host wire, required, the path of a reference WAV the voice is cloned from |
+| `voice.tts.key` / `voice.tts.key_env` / `voice.tts.key_file` | string | unset | As for `stt` |
+| `voice.call.auto_join` | logical | `true` | Join a room's call when someone else is in it (a call button posts a membership event; that is the bot's signal). `/call` still works when this is off. |
+| `voice.call.rooms` | array | unset | Rooms whose calls the bot joins on its own; absent, any room it is in |
+| `voice.call.connect_delay_s` | number | 0 | Seconds to wait after posting the call membership before joining the media room; for a client that only notices participants who connect after it does |
+| `voice.call.greeting` | string | unset | Said once on joining a call, before anyone has spoken; not posted to the room |
+| `voice.call.livekit_log` | string | unset | livekitr's log level in the call worker (`warn`, `info`, `debug`, `trace`), forwarded to the bot's log |
+| `voice.call.ice_transport` | string | unset | Passed to `livekitr::lk_connect()`: `"relay"` forces media through TURN, `"all"` (the default) allows every candidate |
+| `voice.call.answer` | string | `"addressed"` | With several people in the call, answer only when addressed by name or as a follow-up (`"addressed"`), or answer everyone (`"always"`). With one person the bot always answers. |
+| `voice.call.vad` | object | unset | Endpointing settings passed to the energy detector: `start_ms` (200), `end_ms` (700), `margin_db` (10), `min_ms` (300), `max_ms` (30000) |
+
+The transcription route takes one file per utterance, so the bot
+decides where an utterance ends itself, from signal energy. Replies are
+synthesized a sentence at a time; someone talking over the bot stops it
+within about a fifth of a second, and the reply posted to the room is
+trimmed to what was heard.
+
+The bot joins a room's MatrixRTC call (what Element Call and FluffyChat
+2.10 start with their call button) when someone else is in it, in the
+rooms `voice.call.rooms` allows, and hangs up when everyone else has
+left. `/call` in a room joins by hand and `/hangup` leaves.
+Joining needs chat.api 0.1.0.1 and a bot configured with `e2ee: true`,
+since the call's media keys travel over Olm. In an encrypted room the
+trim of an interrupted reply is not applied: chat.api does not edit in
+encrypted rooms, so the full reply stands.
+
 ### Legacy memory
 
 | Key | Type | Default | Description |

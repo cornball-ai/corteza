@@ -1,4 +1,4 @@
-# corteza 0.7.1.57
+# corteza 0.7.1.59
 
 - **Matrix tool calls are supervised; `auto_approve_asks` no longer
   approves everything.** The setting used to answer "yes" to every call
@@ -162,6 +162,45 @@
   `turn()` never read, so it only renamed the badge. The badge also
   showed the provider's default model for sessions created from
   `cfg$model`; it now shows the model in use.
+
+# corteza 0.7.1.58
+
+- **A bot can take part in a call.** The voice brain that serves the
+  1:1 AgentVoice mode (`voice_turn()`, `voice_turn_report()`) now has a
+  second media backend: a call over LiveKit, where the bot is a
+  participant and hears one audio stream per person. The call runs in a
+  worker process beside the bot (`R/call-loop.R`, `R/call-worker.R`):
+  it cuts each person's audio into utterances by signal energy, posts
+  each to an OpenAI-shaped transcription route, answers through the
+  room's session, synthesizes the reply a sentence at a time through an
+  OpenAI-shaped synthesis route, and publishes it in 200 ms chunks.
+  Someone talking over the bot stops it within a chunk, cancels the
+  generation, and trims the reply posted to the room to what was heard.
+  With several people the bot answers when addressed by one of its
+  names or as a follow-up within 20 s; with one, always. The bot
+  process posts and edits on the worker's behalf and tells it the
+  call's media keys; the worker never holds a Matrix credential.
+  Configured under `voice.stt`, `voice.tts` and `voice.call` in the bot
+  config (see `vignette("configuration")`); needs `livekitr` (Suggests).
+  Each route speaks one of two wires: the OpenAI audio API, or
+  `wire: "gpu-host"`, a gpu.ctl host's `POST /infer` spoken directly
+  (whisper and chatterbox entries; the bearer token from `key_file`,
+  the voice cloned from the reference WAV named by `voice.tts.voice`).
+  The bot joins a room's MatrixRTC call when someone else is in it (a
+  call button posts a membership event and nothing else; chat.api
+  0.1.0.1 reports those from the poll), in the rooms `voice.call.rooms`
+  allows, and hangs up when everyone else has left; `/call` joins by
+  hand and `/hangup` leaves. Joining goes through chat.api's call
+  surface (`chat_call_join()`, an encrypted client). The bot process
+  forwards the media keys that arrive on each poll to the worker and
+  shortens its long poll to half a second while a call is on, so the
+  worker's replies are posted promptly. `voice.call.greeting` is said
+  once on joining; `voice.call.connect_delay_s` holds the worker
+  between the membership and the media connection for clients that
+  only notice participants who arrive after them. Tried live against
+  FluffyChat 2.10 on a LiveKit SFU: the bot joins, is heard, and hears
+  the room once the peers' media keys arrive; the log names each key's
+  sender and recipients, never the keys.
 
 # corteza 0.7.1.56
 

@@ -122,6 +122,41 @@ config only (`supervisor_config()`); a project config cannot set them.
 one asks a person. `exec_scan()` is not a sandbox. A path built at run
 time is invisible to it.
 
+## Voice: one brain, two media backends (`R/voice-turn.R`)
+
+`voice_turn()` and `voice_turn_report()` are the voice brain: a turn
+streams deltas to a `send` function (TRUE means delivered; anything
+else cancels the generation), posts the whole reply to the room, and
+records the turn; a report trims the post to the code points that were
+heard. Two media backends call them:
+
+- **AgentVoice** (`R/voice.R`, `voice_serve()`): the 1:1 mode for the
+  FluffyChat fork over rgrpc. Audio never crosses corteza; the client
+  streams PCM to the STT/TTS hosts named in the `AllocateVoice` grant
+  from gpu.ctl, and only text and session control reach the brain.
+- **A call** (`R/call-loop.R`): the bot as a participant in a LiveKit
+  room via livekitr. Audio does cross corteza here, by necessity: the
+  loop cuts each participant's PCM into utterances by energy
+  (`R/call-audio.R`), posts them to an OpenAI-shaped transcription
+  route and the replies to a synthesis route (`R/call-media.R`, curl,
+  configured under `voice.stt` / `voice.tts`), and publishes speech in
+  200 ms chunks with a poll between, which is where barge-in is
+  noticed. The loop takes its four collaborators (media, stt, tts,
+  brain) as arguments so tests fake them; `R/call-adapters.R` binds the
+  real ones. It runs in a child process (`R/call-worker.R`) with a file
+  mailbox to the bot process, which posts, edits, and exchanges media
+  keys; the child never holds a Matrix credential.
+
+The Matrix side of a call runs in the bot process, which owns the
+crypto store, through chat.api's call surface (`chat_call_join()`,
+`chat_call_media()`, `chat_call_updates()`, `chat_call_leave()`; chat.api
+0.1.0.1). `R/call-bot.R` handles `/call` and `/hangup`, starts the
+worker from the join's token and keys, forwards the keys each poll
+brings, and posts and edits for the worker (`bot_call_pump()` from
+`bot_run_step()`, whose long poll is cut to `BOT_CALL_POLL_MS` while a
+call is on). chat.api keeps a client's calls on the identity's crypto
+context, since corteza builds a chat client per poll.
+
 ## Configuration
 
 Config merges global (`tools::R_user_dir("corteza", "config")/config.json`)
@@ -309,6 +344,11 @@ R/
 ├── permissions.R      # /permissions surface helpers
 ├── plan-mode.R        # Plan-mode gate helpers
 ├── workspace.R        # Workspace dir management
+├── voice.R            # AgentVoice gRPC service (1:1 voice; voice-alloc.R, voice-auth.R)
+├── voice-turn.R       # The voice brain: voice_turn(), voice_turn_report()
+├── call-loop.R        # A call over LiveKit: hear, transcribe, think, speak
+├── call-worker.R      # The call in a child process + mailbox to the bot
+│                      #   (call-audio.R, call-media.R, call-adapters.R)
 └── (many more helpers: chunk.R, handles.R, retrieval.R, etc.)
 
 inst/
