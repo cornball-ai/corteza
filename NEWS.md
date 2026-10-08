@@ -29,8 +29,13 @@
   surface (`chat_call_join()`, an encrypted client). The bot process
   forwards the media keys that arrive on each poll to the worker and
   shortens its long poll to half a second while a call is on, so the
-  worker's replies are posted promptly. Not yet tried against a real
-  SFU: the fleet has none.
+  worker's replies are posted promptly. `voice.call.greeting` is said
+  once on joining; `voice.call.connect_delay_s` holds the worker
+  between the membership and the media connection for clients that
+  only notice participants who arrive after them. Tried live against
+  FluffyChat 2.10 on a LiveKit SFU: the bot joins, is heard, and hears
+  the room once the peers' media keys arrive; the log names each key's
+  sender and recipients, never the keys.
 
 # corteza 0.7.1.56
 
