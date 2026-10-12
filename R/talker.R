@@ -52,6 +52,10 @@ TALKER_GUIDANCE <- paste(
                          "task must carry everything it needs -- files, goal, constraints, how",
                          "to check the work -- and any document or text the work must act on.",
                          "Put all of that in the task argument, never in your reply here.",
+                         "When the work is about something the user just provided here -- an",
+                         "article, a document, a log -- do not copy it into the task: call",
+                         "`delegate` with `attach_context = true` and a short task that refers",
+                         "to it, and their message is attached for the doer to read.",
                          "Pass `review = true` when the result should be checked before anyone",
                          "relies on it; the check arrives as a later message, and whether to",
                          "act on it is the user's call; do not start a revision on your own.",
@@ -140,11 +144,19 @@ talker_enable <- function(session, talker = list()) {
 #'   The work then runs in that room's project, that room is told, and
 #'   the result is posted in both rooms. Omit for this room. Only where
 #'   the bot serves several rooms.
+#' @param attach_context (logical) Attach the message this turn is
+#'   answering to the task, so the doer can read it without the task
+#'   repeating it. Use it when the work is about something the user just
+#'   provided here (an article, a document, a log): the content is
+#'   written beside the job and the task points the doer at it, instead
+#'   of being copied into the task text and through the model's output
+#'   budget. This session's doer only; not for a `room` hand-off.
 #' @param ctx Server-side context; supplies the session.
 #' @return An MCP tool-result list.
 #' @keywords internal
 #' @export
-tool_delegate <- function(task, review = NULL, room = NULL, ctx = list()) {
+tool_delegate <- function(task, review = NULL, room = NULL,
+                          attach_context = NULL, ctx = list()) {
     session <- ctx$session
     if (!is.environment(session)) {
         return(err("delegate needs a live session"))
@@ -172,11 +184,15 @@ tool_delegate <- function(task, review = NULL, room = NULL, ctx = list()) {
     } else {
         isTRUE(review)
     }
+    context <- if (isTRUE(attach_context)) {
+        p <- session$current_prompt
+        if (is.character(p) && length(p) == 1L && nzchar(trimws(p))) p
+    }
     tryCatch({
         id <- job_submit(session, task,
                          requester = session$job_requester %||% "local",
                          origin = session$job_origin %||% list(),
-                         review = review)
+                         review = review, context = context)
         ok(sprintf(paste0("Delegated as job %s. The result will arrive as ",
                           "its own message; do not answer the delegated ",
                           "question yourself.%s"), id,

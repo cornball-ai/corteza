@@ -3,7 +3,13 @@
 \alias{tool_delegate}
 \title{Hand a task to this session's doer.}
 \usage{
-tool_delegate(task, review = NULL, room = NULL, ctx = list())
+tool_delegate(
+  task,
+  review = NULL,
+  room = NULL,
+  attach_context = NULL,
+  ctx = list()
+)
 }
 \arguments{
 \item{task}{(character) Complete description of the work: files,
@@ -19,6 +25,14 @@ of this one's: the room's name, its id, or its project directory.
 The work then runs in that room's project, that room is told, and
 the result is posted in both rooms. Omit for this room. Only where
 the bot serves several rooms.}
+
+\item{attach_context}{(logical) Attach the message this turn is
+answering to the task, so the doer can read it without the task
+repeating it. Use it when the work is about something the user just
+provided here (an article, a document, a log): the content is
+written beside the job and the task points the doer at it, instead
+of being copied into the task text and through the model's output
+budget. This session's doer only; not for a `room` hand-off.}
 
 \item{ctx}{Server-side context; supplies the session.}
 }

@@ -115,7 +115,7 @@ job_create <- function(task, role = "doer", workspace = getwd(),
                        requester = "local", origin = list(), parent = NULL,
                        backend = "subagent", permissions = list(),
                        limits = list(), owner = "local", review = FALSE,
-                       review_of = NULL) {
+                       review_of = NULL, context = NULL) {
     if (!is.character(task) || length(task) != 1L || is.na(task) ||
         !nzchar(trimws(task))) {
         stop("job task must be one non-empty string", call. = FALSE)
@@ -142,10 +142,27 @@ job_create <- function(task, role = "doer", workspace = getwd(),
     id <- job_new_id()
     dir <- job_dir(id)
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    # Content the delegator attached by reference (for example the message
+    # a talker was acting on) is written beside the job rather than copied
+    # into the task text, so a large paste does not have to pass through
+    # the delegator's token budget. The task points the worker at it.
+    context_file <- NULL
+    if (is.character(context) && length(context) == 1L && !is.na(context) &&
+        nzchar(trimws(context))) {
+        context_file <- file.path(dir, "context.md")
+        writeLines(context, context_file)
+        task <- paste0(task,
+                       "\n\n## Provided content\n",
+                       "The content this task refers to (what the user ",
+                       "provided) is in this file, not repeated above:\n",
+                       context_file,
+                       "\nRead it with read_file before acting on it.")
+    }
     job_write_file(file.path(dir, "intent.json"), list(
             id = id,
             created_at = job_now(),
             task = task,
+            context_file = context_file,
             task_digest = digest::digest(task, algo = "sha256",
                 serialize = FALSE),
             role = role,

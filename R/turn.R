@@ -1078,6 +1078,12 @@ observer_progress <- function() {
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     stopifnot(is.environment(session))
 
+    # The message this turn is answering, where a tool can reach it: the
+    # running history llm.api builds is not on the session until the turn
+    # returns, so a tool called mid-run (delegate's attach_context) reads
+    # the current prompt from here instead.
+    session$current_prompt <- prompt
+
     # Each user request is a fresh agent run: clear the narration streak so a
     # silent tail of the previous run can't bleed into this one. Reset at the
     # run boundary (here, before agent()) rather than after, so an interrupt
