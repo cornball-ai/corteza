@@ -44,6 +44,37 @@ with_state({
     expect_false(j$cancel_requested)
 })
 
+# --- Attached context is written beside the job, not into the task ---
+with_state({
+    id <- job_create("Summarise the attached article.",
+                     context = "ARTICLE BODY line one\nline two")
+    dir <- corteza:::job_dir(id)
+    expect_true("context.md" %in% list.files(dir))
+    expect_identical(readLines(file.path(dir, "context.md")),
+                     c("ARTICLE BODY line one", "line two"))
+    j <- job_read(id)
+    expect_true(grepl("Provided content", j$task, fixed = TRUE))
+    expect_true(grepl(file.path(dir, "context.md"), j$task, fixed = TRUE))
+    expect_identical(j$context_file, file.path(dir, "context.md"))
+    # The article text itself is not copied into the task.
+    expect_false(grepl("ARTICLE BODY", j$task, fixed = TRUE))
+})
+
+# --- No context: no file, task left as given ---
+with_state({
+    id <- job_create("plain task")
+    expect_false("context.md" %in% list.files(corteza:::job_dir(id)))
+    expect_identical(job_read(id)$task, "plain task")
+    expect_true(is.null(job_read(id)$context_file))
+})
+
+# Blank or whitespace context is ignored, not written.
+with_state({
+    id <- job_create("t", context = "   ")
+    expect_false("context.md" %in% list.files(corteza:::job_dir(id)))
+    expect_identical(job_read(id)$task, "t")
+})
+
 # A blank task is refused before anything is written.
 with_state({
     expect_error(job_create("  "), "non-empty")

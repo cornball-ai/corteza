@@ -739,7 +739,7 @@ job_state_move <- function(from, to) {
 # (R/job-review.R). Only a job that writes can be reviewed.
 job_submit <- function(session, task, role = "doer", requester = "local",
                        origin = list(), parent = NULL, limits = list(),
-                       review = FALSE) {
+                       review = FALSE, context = NULL) {
     origin$session_key <- job_worker_key(session)
     id <- job_create(task, role = role,
                      workspace = session$cwd %||% getwd(),
@@ -747,7 +747,8 @@ job_submit <- function(session, task, role = "doer", requester = "local",
                      parent = parent, limits = limits,
                      permissions = list(tools = job_worker_spec(session, role)$tools),
                      owner = job_worker_owner(session),
-                     review = isTRUE(review) && job_role_writes(role))
+                     review = isTRUE(review) && job_role_writes(role),
+                     context = context)
     # job_pump() drains any events already held, so what it returns is
     # the whole backlog; the next pump from the surface delivers it.
     session$.job_events <- job_pump(session)

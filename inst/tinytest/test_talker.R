@@ -330,6 +330,46 @@ expect_true(grepl("already ended", again$content[[1L]]$text))
 # Without a session the tools refuse rather than guessing one.
 expect_true(isTRUE(corteza:::tool_delegate("x")$isError))
 
+# --- attach_context stores the turn's message beside the job ---
+t2 <- corteza::new_session("matrix", provider = "anthropic")
+t2$cwd <- tempdir()
+t2$config <- list()
+t2$job_requester <- "@troy:ex"
+t2$job_origin <- list(room = "!room:ex", thread = NULL)
+t2$current_prompt <- paste("Please save this:", strrep("BODY ", 50))
+t2$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
+                           run_fn = function(task) list(reply = "ok"))
+ctx2 <- list(session = t2)
+res2 <- corteza:::tool_delegate("Save the article the user provided.",
+                                attach_context = TRUE, ctx = ctx2)
+expect_false(isTRUE(res2$isError))
+id2 <- regmatches(res2$content[[1L]]$text,
+                  regexpr("[0-9]{8}T[0-9]{6}-[0-9a-f]{8}",
+                          res2$content[[1L]]$text))
+j2 <- corteza:::job_read(id2)
+expect_true(grepl("Provided content", j2$task, fixed = TRUE))
+# The pasted body is not copied into the task; it is in the context file.
+expect_false(grepl("BODY BODY", j2$task, fixed = TRUE))
+expect_true(file.exists(j2$context_file))
+expect_true(any(grepl("BODY", readLines(j2$context_file), fixed = TRUE)))
+corteza:::job_worker_close(t2)
+
+# Without attach_context, no context file is written.
+t3 <- corteza::new_session("matrix", provider = "anthropic")
+t3$cwd <- tempdir()
+t3$config <- list()
+t3$job_requester <- "@troy:ex"
+t3$job_origin <- list(room = "!room:ex", thread = NULL)
+t3$current_prompt <- "a message"
+t3$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
+                           run_fn = function(task) list(reply = "ok"))
+res3 <- corteza:::tool_delegate("do the thing", ctx = list(session = t3))
+id3 <- regmatches(res3$content[[1L]]$text,
+                  regexpr("[0-9]{8}T[0-9]{6}-[0-9a-f]{8}",
+                          res3$content[[1L]]$text))
+expect_true(is.null(corteza:::job_read(id3)$context_file))
+corteza:::job_worker_close(t3)
+
 corteza:::job_worker_close(t)
 if (is.na(old_state)) {
     Sys.unsetenv("CORTEZA_STATE_DIR")
