@@ -1,3 +1,14 @@
+# corteza 0.7.1.62
+
+- **The talker can read a URL itself (`fetch_url`).** The talker's
+  toolset gains `fetch_url`, so a question about a page the user names
+  (a URL, a GitHub issue and its comments, a raw file) is answered by
+  reading it, not by handing off a whole job. Without it, a talker asked
+  to read an upstream issue had no way to fetch it and escalated to
+  cloning the repository through the doer, which then tripped the
+  write-outside-project gate. The guidance tells the talker to fetch and
+  answer, and never to clone a repository just to read something.
+
 # corteza 0.7.1.61
 
 - **Delegated work can carry pasted content by reference.** When the

@@ -276,6 +276,12 @@ tools <- corteza:::skills_as_api_tools(corteza:::TALKER_TOOLS)
 names_of <- function(ts) vapply(ts, function(t) t$name, "")
 expect_true(all(c("delegate", "job_status", "job_cancel") %in%
                 names_of(tools)))
+# The talker can read a named URL itself rather than delegating to do so.
+expect_true("fetch_url" %in% corteza:::TALKER_TOOLS)
+expect_true("fetch_url" %in% names_of(tools))
+# fetch_url survives the non-talker filter: it is an ordinary read tool,
+# not one of the job tools dropped outside talker mode.
+expect_true("fetch_url" %in% names_of(corteza:::.talker_filter_tools(tools, FALSE)))
 # The schema comes from the Rd: task is a required string.
 del <- tools[[which(names_of(tools) == "delegate")]]
 expect_identical(del$input_schema$properties$task$type, "string")
