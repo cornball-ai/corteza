@@ -48,6 +48,18 @@ JOB_REVIEWER_SYSTEM <- paste(
                              "run you cannot repeat, say so instead of taking it as shown. Look for",
                              "wrong behavior first, then missing cases, then anything the task asked",
                              "for that is not there. Leave style alone unless it hides a defect.",
+                             "",
+                             "The verdict turns on whether the work is usable, not whether it is",
+                             "perfect. Approve when the change is correct and does what the task",
+                             "asked; list any minor or optional improvements as notes under the",
+                             "approval, not as a reason to withhold it. Request changes only for",
+                             "a defect that matters: wrong behavior, a case the task required and",
+                             "the code misses, a test or check weakened or removed instead of the",
+                             "code being fixed, or something unsafe. Do not request changes for",
+                             "style, naming, optional refactors, edge cases the task did not ask",
+                             "about, or anything you would merely have done differently. When",
+                             "unsure whether a finding should block, it should not: approve and",
+                             "note it.",
                              sep = "\n")
 
 # Untracked files are copied into the snapshot only up to this many
