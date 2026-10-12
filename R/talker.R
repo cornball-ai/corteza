@@ -29,14 +29,20 @@ TALKER_DEFAULT_MODELS <- list(anthropic = "claude-haiku-4-5-20251001",
 # because a model that is not told answers "I don't have access" and
 # then searches.
 #
+# `fetch_url` is here so a question about a page the user names -- an
+# issue and its comments, a document, a raw file -- is a quick question
+# the talker answers by reading it, not a whole job it hands off. Its
+# absence is what made a talker asked to read an upstream issue try to
+# clone the repo through the doer instead.
+#
 # `read_handle` is here because any of these can return more than the
 # model is shown: the result is cut and the rest stored under a handle.
 # Without a tool to search that, a talker told "40 of 60 lines shown"
 # cannot tell what is absent from what it was not shown.
 TALKER_TOOLS <- c("read_file", "skill_instructions", "grep_files",
                   "list_files", "git_status", "git_diff", "git_log",
-                  "r_help", "read_handle", "delegate", "job_status",
-                  "job_cancel")
+                  "r_help", "read_handle", "fetch_url", "delegate",
+                  "job_status", "job_cancel")
 
 TALKER_GUIDANCE <- paste(
                          "## Talker mode",
@@ -46,6 +52,10 @@ TALKER_GUIDANCE <- paste(
                          "question about current facts (a score, news, a price) is a quick",
                          "question: search and answer with what you found. Do not open by",
                          "saying you lack access to something you are about to look up.",
+                         "To read a specific page the user names -- a URL, a GitHub issue",
+                         "and its comments, a raw file -- fetch it with `fetch_url` and",
+                         "answer from it. Do not hand off a whole job, and never try to",
+                         "clone a repository, just to read something on the web.",
                          "For anything that needs edits, commands,",
                          "tests, or a long investigation, hand the work to `delegate` with a",
                          "self-contained task: the work runs without seeing this chat, so the",
