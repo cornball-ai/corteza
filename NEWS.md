@@ -1,3 +1,13 @@
+# corteza 0.7.1.60
+
+- **Reviewer and talker prompt calibration.** The reviewer now approves
+  work that is correct and does what the task asked, listing minor points
+  as notes, and requests changes only for a defect that matters; it no
+  longer blocks usable work over nitpicks. The talker keeps its handoff
+  to the doer invisible to the user: it acknowledges in one natural line
+  and does not name the doer, the task it wrote, a reviewer, or that work
+  was delegated, and does not paste long content back into the chat.
+
 # corteza 0.7.1.59
 
 - **Matrix tool calls are supervised; `auto_approve_asks` no longer
