@@ -1,3 +1,14 @@
+# corteza 0.7.1.61
+
+- **Delegated work can carry pasted content by reference.** When the
+  talker hands off work about something the user just provided (an
+  article, a document, a log), it no longer has to copy that content into
+  the task, which ran through its own output budget and truncated the
+  reply once the content was large. `delegate` gains `attach_context`:
+  the message the turn is answering is written beside the job as
+  `context.md` and the task points the worker at it, so the content never
+  passes through the talker's tokens.
+
 # corteza 0.7.1.60
 
 - **Reviewer and talker prompt calibration.** The reviewer now approves
