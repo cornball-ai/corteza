@@ -129,6 +129,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_compact_pct` | integer | `90` | Auto-compaction threshold |
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
+| `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
 | `tool_output_caps` | object | `{}` | Per-tool result caps, e.g. `{"game_action": {"max_chars": 400000, "max_lines": 20000}}`; other tools keep the 50-line / 5000-char cap |
 | `context_include_soul` | boolean or null | null | Include `SOUL.md` (null = saber default) |
 | `context_include_user` | boolean or null | null | Include `USER.md` (null = saber default) |

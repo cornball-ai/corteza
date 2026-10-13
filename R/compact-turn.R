@@ -532,6 +532,12 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     if (is.function(session$on_compaction)) {
         session$on_compaction(event)
     }
+    # The session journal records the exact prefix and its replacement
+    # for every surface (R/journal.R). After the host hook, so a host
+    # that refuses leaves the journal untouched; before the rewrite, so
+    # its own failure costs the compaction and not the record.
+    journal_rewrite(session, history, rewritten, reason = reason,
+                    summary = summary)
     session$history <- rewritten
     session$last_compaction <- event
     session$compaction_count <- as.integer(session$compaction_count %||% 0L) +

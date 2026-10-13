@@ -1727,9 +1727,14 @@ bot_no_approver_notice <- function(call) {
 # inside one bot_run process.
 bot_new_session <- function(cfg, system = NULL, model = NULL,
                             provider = NULL, tools_filter = NULL,
-                            room_id = NULL) {
+                            room_id = NULL, journal_key = NULL) {
     if (is.null(room_id)) {
         room_id <- cfg$room_id
+    }
+    # What names the session's journal: the registry key for a room or a
+    # thread in it (bot_get_or_create_session), the room itself otherwise.
+    if (is.null(journal_key)) {
+        journal_key <- room_id
     }
     if (is.null(model)) {
         model <- cfg$model
@@ -1779,6 +1784,15 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
     s$handle_store <- new.env(parent = emptyenv())
+    # The session's journal (R/journal.R), named by a hash of its key as
+    # the archive state is: a bot's rooms share one process, and a room
+    # has no on-disk session id of its own.
+    if (!is.null(journal_key)) {
+        journal_install(s, dir = file.path(
+                sessions_dir("matrix"),
+                paste0(digest::digest(journal_key, algo = "sha256"), ".journal")
+            ))
+    }
     bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {
         s$context_manifest <- context_manifest
@@ -1865,7 +1879,7 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # take the key apart again.
     s <- bot_new_session(cfg, system = system, model = model,
                          provider = provider, tools_filter = tools_filter,
-                         room_id = room_id)
+                         room_id = room_id, journal_key = key)
     # The session key is the job key: a thread's jobs belong to the
     # thread's session, and their results come back to it.
     s$job_key <- key

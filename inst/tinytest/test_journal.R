@@ -1,0 +1,354 @@
+# Session journal (R/journal.R). Offline throughout: snapshots, segments,
+# the de-duplicated record, turn slices across mid-turn rewrites,
+# rollover of an earlier live snapshot, and the fail-closed rewrite
+# through maybe_compact_turn_session() and turn()'s checkpoint.
+
+journal_tmp <- function() {
+    d <- tempfile("corteza_journal_")
+    dir.create(d, recursive = TRUE)
+    d
+}
+
+journal_session <- function(dir = NULL, history = list(),
+                            provider = "anthropic") {
+    s <- corteza::new_session(channel = "cli", provider = provider,
+                              model_map = list(cloud = "claude-sonnet-4-6",
+                                               local = NULL))
+    s$history <- history
+    if (!is.null(dir)) {
+        corteza:::journal_install(s, dir = dir)
+    }
+    s
+}
+
+user_msg <- function(text) list(role = "user", content = text)
+
+summary_msg <- function(text, role = "user") {
+    list(role = role, content = paste0("[compacted history]\n\n", text))
+}
+
+anthropic_round <- function(i) {
+    list(
+        list(role = "assistant", content = list(list(
+            type = "tool_use", id = sprintf("t%d", i), name = "run_r",
+            input = list(code = sprintf("x <- %d", i))))),
+        list(role = "user", content = list(list(
+            type = "tool_result", tool_use_id = sprintf("t%d", i),
+            content = sprintf("[1] %d", i))))
+    )
+}
+
+openai_round <- function(i) {
+    list(
+        list(role = "assistant", content = "", tool_calls = list(list(
+            id = sprintf("c%d", i), type = "function",
+            `function` = list(name = "run_r", arguments = "{}")))),
+        list(role = "tool", tool_call_id = sprintf("c%d", i), name = "run_r",
+             content = sprintf("ok %d", i))
+    )
+}
+
+# A session with no directory has no journal, and nothing changes --------
+
+bare <- journal_session()
+expect_null(corteza:::journal_dir(bare))
+expect_false(corteza:::journal_snapshot(bare))
+expect_null(corteza:::journal_rewrite(bare, list(), list(), "threshold"))
+expect_null(corteza:::journal_mark(bare))
+expect_false(corteza:::journal_rewritten_since(bare, NULL))
+bare$history <- c(list(user_msg("a")), anthropic_round(1))
+expect_identical(corteza:::journal_turn_slice(bare, NULL, 1L),
+                 anthropic_round(1))
+
+# Snapshot: both provider shapes round-trip exactly --------
+
+h <- c(list(user_msg("find foo")), anthropic_round(1), openai_round(2),
+       list(list(role = "assistant", content = list(list(
+           type = "text", text = "pi is 3.14159265358979")))))
+dir <- journal_tmp()
+s <- journal_session(dir, h)
+expect_equal(corteza:::journal_dir(s), dir)
+expect_true(corteza:::journal_snapshot(s))
+live <- corteza:::journal_load(dir)$live
+expect_identical(live$history, h)
+expect_equal(live$inherited, 0L)
+expect_equal(live$seq, 0L)
+expect_identical(corteza:::journal_history(dir), h)
+
+# Rewrite: a compaction-shaped replacement leaves a segment, and the
+# record stays the original history, once, without the summary --------
+
+after1 <- c(list(summary_msg("one")), h[4:6])
+seg_path <- corteza:::journal_rewrite(s, h, after1, reason = "threshold",
+                                      summary = "one")
+expect_equal(basename(seg_path), "segment-0001.json")
+j <- corteza:::journal_load(dir)
+expect_equal(length(j$segments), 1L)
+seg <- j$segments[[1]]
+expect_equal(seg$seq, 1L)
+expect_equal(seg$reason, "threshold")
+expect_equal(seg$inherited, 0L)
+expect_equal(seg$kept, 4L)
+expect_equal(seg$summary, "one")
+expect_true(nzchar(seg$timestamp))
+expect_identical(seg$history, h)
+expect_identical(seg$after, after1)
+expect_identical(j$live$history, after1)
+expect_equal(j$live$inherited, 4L)
+expect_identical(corteza:::journal_history(dir), h)
+
+# The conversation goes on from the compacted history.
+s$history <- c(after1, anthropic_round(3), anthropic_round(4))
+expect_true(corteza:::journal_snapshot(s))
+expect_identical(corteza:::journal_history(dir),
+                 c(h, anthropic_round(3), anthropic_round(4)))
+
+# A second compaction keeps only the last round.
+before2 <- s$history
+after2 <- c(list(summary_msg("two")), anthropic_round(4))
+corteza:::journal_rewrite(s, before2, after2, reason = "checkpoint",
+                          summary = "two")
+j <- corteza:::journal_load(dir)
+expect_equal(length(j$segments), 2L)
+expect_equal(j$segments[[2]]$inherited, 4L)
+expect_equal(j$segments[[2]]$kept, 3L)
+expect_identical(corteza:::journal_history(dir),
+                 c(h, anthropic_round(3), anthropic_round(4)))
+
+# Turn slice: what a turn added, across zero, one, two rewrites --------
+
+dir <- journal_tmp()
+s <- journal_session(dir, c(list(user_msg("start")), anthropic_round(1)))
+corteza:::journal_snapshot(s)
+mark <- corteza:::journal_mark(s)
+expect_equal(mark$seq, 0L)
+expect_equal(mark$live_len, 3L)
+expect_false(corteza:::journal_rewritten_since(s, mark))
+
+s$history <- c(s$history, anthropic_round(2))
+corteza:::journal_snapshot(s)
+expect_identical(corteza:::journal_turn_slice(s, mark, 3L), anthropic_round(2))
+
+a <- s$history
+after_a <- c(list(summary_msg("s1")), anthropic_round(2))
+corteza:::journal_rewrite(s, a, after_a, "checkpoint", summary = "s1")
+s$history <- c(after_a, anthropic_round(3))
+corteza:::journal_snapshot(s)
+expect_true(corteza:::journal_rewritten_since(s, mark))
+expect_identical(corteza:::journal_entries_since(s, mark),
+                 c(anthropic_round(2), anthropic_round(3)))
+
+b <- s$history
+after_b <- c(list(summary_msg("s2")), anthropic_round(3))
+corteza:::journal_rewrite(s, b, after_b, "checkpoint", summary = "s2")
+s$history <- c(after_b, anthropic_round(4))
+corteza:::journal_snapshot(s)
+expect_identical(corteza:::journal_turn_slice(s, mark, 3L),
+                 c(anthropic_round(2), anthropic_round(3), anthropic_round(4)))
+# pre_len is ignored once a journal is present: the mark knows better.
+expect_identical(corteza:::journal_turn_slice(s, mark, 0L),
+                 c(anthropic_round(2), anthropic_round(3), anthropic_round(4)))
+
+# Rollover: an earlier live snapshot becomes the first segment --------
+
+dir <- journal_tmp()
+s1 <- journal_session(dir, h)
+corteza:::journal_snapshot(s1)
+resumed <- list(user_msg("resumed"),
+                list(role = "assistant", content = "welcome back"))
+s2 <- journal_session(dir, resumed)
+j <- corteza:::journal_load(dir)
+expect_equal(length(j$segments), 1L)
+expect_equal(j$segments[[1]]$reason, "rollover")
+expect_identical(j$segments[[1]]$history, h)
+expect_identical(j$segments[[1]]$after, resumed)
+expect_identical(j$live$history, resumed)
+expect_equal(j$live$inherited, 2L)
+expect_identical(corteza:::journal_history(dir), h)
+expect_equal(corteza:::journal_mark(s2)$seq, 1L)
+s2$history <- c(resumed, anthropic_round(9))
+corteza:::journal_snapshot(s2)
+expect_identical(corteza:::journal_history(dir), c(h, anthropic_round(9)))
+
+# apply_exit_marker leaves a snapshot that includes the repair --------
+
+dir <- journal_tmp()
+s <- journal_session(dir, list(user_msg("go"), anthropic_round(1)[[1]]))
+corteza:::apply_exit_marker(s, "go", 0L, "[interrupted]")
+expect_equal(length(s$history), 4L)
+expect_identical(corteza:::journal_load(dir)$live$history, s$history)
+
+# Atomic write replaces an existing file and leaves no temp behind --------
+
+p <- file.path(journal_tmp(), "x.json")
+corteza:::.journal_write_json(list(a = 1), p)
+corteza:::.journal_write_json(list(a = 2), p)
+expect_equal(jsonlite::fromJSON(p)$a, 2)
+expect_false(file.exists(paste0(p, ".tmp")))
+
+# Derived directory follows sessionId, and config turns it off --------
+
+run_derived_dir_test <- function() {
+    tmp_data <- tempfile("corteza_journal_data_")
+    dir.create(tmp_data, recursive = TRUE)
+    on.exit(unlink(tmp_data, recursive = TRUE), add = TRUE)
+    old <- Sys.getenv("R_USER_DATA_DIR", unset = NA)
+    Sys.setenv(R_USER_DATA_DIR = tmp_data)
+    on.exit({
+        if (is.na(old)) Sys.unsetenv("R_USER_DATA_DIR") else {
+            Sys.setenv(R_USER_DATA_DIR = old)
+        }
+    }, add = TRUE)
+    sessions <- file.path(tools::R_user_dir("corteza", "data"), "agents",
+                          "main", "sessions")
+
+    s <- journal_session(NULL, list(user_msg("hi")))
+    expect_null(corteza:::journal_install(s, agent_id = "main"))
+    s$sessionId <- "brave_turing"
+    first <- file.path(sessions, "brave_turing.journal")
+    expect_equal(corteza:::journal_dir(s), first)
+    expect_true(corteza:::journal_snapshot(s))
+    expect_true(file.exists(file.path(first, "live.json")))
+
+    # /clear gives the session a new id: a new journal, fresh state.
+    s$sessionId <- "calm_hopper"
+    s$history <- list(user_msg("fresh"))
+    expect_true(corteza:::journal_snapshot(s))
+    second <- file.path(sessions, "calm_hopper.journal")
+    expect_identical(corteza:::journal_load(second)$live$history,
+                     list(user_msg("fresh")))
+    expect_identical(corteza:::journal_load(first)$live$history,
+                     list(user_msg("hi")))
+    expect_equal(corteza:::journal_mark(s)$seq, 0L)
+
+    s$config <- list(journal_enabled = FALSE)
+    expect_null(corteza:::journal_dir(s))
+    expect_false(corteza:::journal_snapshot(s))
+}
+run_derived_dir_test()
+
+# maybe_compact_turn_session: the segment is written before the rewrite,
+# and a journal that cannot be written blocks the rewrite --------
+
+compact_journal_config <- list(
+    context_compact_pct = 0,
+    subagents = list(context_compaction = list(
+        mode = "inherit_strict", compact_pct = 0, keep_recent_turns = 1L,
+        keep_recent_tokens = 1L, min_messages = 2L, timeout_seconds = 1L
+    ))
+)
+
+run_compaction_journal_test <- function() {
+    original_summary <- get("compact_summarize_slice",
+                            envir = asNamespace("corteza"))
+    on.exit(assignInNamespace("compact_summarize_slice", original_summary,
+                              ns = "corteza"), add = TRUE)
+    assignInNamespace("compact_summarize_slice", function(...) {
+        x <- "earlier work"
+        attr(x, "usage") <- list()
+        x
+    }, ns = "corteza")
+    history <- list(user_msg("one"), list(role = "assistant", content = "a"),
+                    user_msg("two"), list(role = "assistant", content = "b"))
+
+    dir <- journal_tmp()
+    s <- journal_session(dir, history)
+    s$config <- compact_journal_config
+    s$context_window <- 1000L
+    seen <- NULL
+    s$on_compaction <- function(event) seen <<- event
+    expect_true(corteza:::maybe_compact_turn_session(
+        s, compact_journal_config, tools = list(), system = "sys",
+        reason = "checkpoint"))
+    expect_false(is.null(seen))
+    j <- corteza:::journal_load(dir)
+    expect_equal(length(j$segments), 1L)
+    expect_equal(j$segments[[1]]$reason, "checkpoint")
+    expect_equal(j$segments[[1]]$summary, "earlier work")
+    expect_identical(j$segments[[1]]$history, history)
+    expect_identical(j$live$history, s$history)
+    expect_equal(length(s$history), 3L)
+    expect_identical(corteza:::journal_history(dir), history)
+
+    # Fail closed. chmod means nothing to root, and Windows has no mode.
+    if (.Platform$OS.type != "windows" &&
+        !identical(Sys.info()[["effective_user"]], "root")) {
+        dir2 <- journal_tmp()
+        s2 <- journal_session(dir2, history)
+        s2$config <- compact_journal_config
+        s2$context_window <- 1000L
+        Sys.chmod(dir2, mode = "0500")
+        on.exit(Sys.chmod(dir2, mode = "0700"), add = TRUE)
+        expect_error(corteza:::maybe_compact_turn_session(
+            s2, compact_journal_config, tools = list(), system = "sys"),
+            "journal")
+        expect_identical(s2$history, history)
+        expect_equal(s2$compaction_count %||% 0L, 0L)
+        Sys.chmod(dir2, mode = "0700")
+        expect_equal(length(list.files(dir2, pattern = "^segment-")), 0L)
+    }
+}
+run_compaction_journal_test()
+
+# turn(): the history_callback snapshots, the checkpoint compaction
+# leaves a segment, and the record is the whole trajectory --------
+
+run_turn_journal_test <- function() {
+    original_agent <- get("agent", envir = asNamespace("llm.api"))
+    original_summary <- get("compact_summarize_slice",
+                            envir = asNamespace("corteza"))
+    on.exit(assignInNamespace("agent", original_agent, ns = "llm.api"),
+            add = TRUE)
+    on.exit(assignInNamespace("compact_summarize_slice", original_summary,
+                              ns = "corteza"), add = TRUE)
+    assignInNamespace("compact_summarize_slice", function(...) {
+        x <- "earlier work"
+        attr(x, "usage") <- list()
+        x
+    }, ns = "corteza")
+
+    snapshots <- 0L
+    stub_agent <- function(prompt, tools = list(), tool_handler = NULL,
+                           system = NULL, model = NULL,
+                           provider = "anthropic", max_turns = 20L,
+                           verbose = TRUE, history = NULL,
+                           history_callback = NULL,
+                           checkpoint_callback = NULL, ...) {
+        h <- c(history %||% list(), list(user_msg(prompt)),
+               anthropic_round(1))
+        history_callback(h)
+        h <- c(h, anthropic_round(2))
+        history_callback(h)
+        replacement <- checkpoint_callback(h, list(
+            agent_turn = 2L, provider = provider, model = model,
+            assistant_text = "", tool_call_count = 1L,
+            usage = list(input_tokens = 10, output_tokens = 2)
+        ))
+        if (!is.null(replacement)) h <- replacement$history
+        h <- c(h, list(list(role = "assistant", content = "done")))
+        history_callback(h)
+        list(content = "done", model = model, provider = provider,
+             turns = 3L, history = h,
+             usage = list(input_tokens = 10, output_tokens = 2))
+    }
+    assignInNamespace("agent", stub_agent, ns = "llm.api")
+
+    dir <- journal_tmp()
+    session <- journal_session(dir)
+    session$config <- compact_journal_config
+    session$context_window <- 1000L
+    mark <- corteza:::journal_mark(session)
+    result <- corteza::turn("play", session, tools = list())
+    expect_equal(result$reply, "done")
+
+    j <- corteza:::journal_load(dir)
+    expect_equal(length(j$segments), 1L)
+    expect_equal(j$segments[[1]]$reason, "checkpoint")
+    expect_identical(j$live$history, session$history)
+    whole <- c(list(user_msg("play")), anthropic_round(1), anthropic_round(2),
+               list(list(role = "assistant", content = "done")))
+    expect_identical(corteza:::journal_history(dir), whole)
+    expect_true(corteza:::journal_rewritten_since(session, mark))
+    expect_identical(corteza:::journal_turn_slice(session, mark, 0L), whole)
+}
+run_turn_journal_test()

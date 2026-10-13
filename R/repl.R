@@ -122,6 +122,9 @@
 # @noRd
 run_repl_loop <- function(ctx) {
     .repl_install_compaction_hook(ctx)
+    # The session journal (R/journal.R) follows ctx$session$sessionId,
+    # so a /clear moves it with the new on-disk session.
+    journal_install(ctx$session, agent_id = DEFAULT_AGENT_ID)
     .repl_jobs_setup(ctx)
     # Covers exits by error or interrupt; /quit and EOF call it directly
     # so its message comes before "Bye.". A second call is a no-op.
@@ -969,6 +972,7 @@ run_repl_loop <- function(ctx) {
                     "(provider default)",
                     ctx$palette$reset))
         pre_turn_len <- length(ctx$session$history %||% list())
+        turn_mark <- journal_mark(ctx$session)
         turn_start <- Sys.time()
         # Per-turn outcome, for drivers that need to tell "the turn
         # failed" from "the turn ran". An attended session can just look
@@ -1078,7 +1082,7 @@ run_repl_loop <- function(ctx) {
                            pre_turn_len = pre_turn_len, result = result, config = ctx$config,
                            parent_session_id = ctx$disk_session$session$sessionId,
                            max_turns_hit = isTRUE(grepl("Max turns", reply)),
-                           depth = 0L
+                           depth = 0L, mark = turn_mark
         )
 
         # Accumulate this turn's spend into the session tally (both

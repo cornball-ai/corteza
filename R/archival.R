@@ -661,21 +661,32 @@ archival_first_line <- function(text) {
 #' @param parent_session_id The on-disk session id (from disk_session).
 #' @param max_turns_hit Did this turn end with [Max turns reached]?
 #' @param depth Archival depth (0 at the parent).
+#' @param mark A journal_mark() taken before turn(), so the slice is what
+#'   the turn added whatever compaction ran inside it. NULL falls back
+#'   to slicing by pre_turn_len.
 #' @noRd
 maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
                                config, parent_session_id,
-                               max_turns_hit = FALSE, depth = 0L) {
+                               max_turns_hit = FALSE, depth = 0L, mark = NULL) {
     arc_cfg <- config$archival %||% list()
     if (!isTRUE(arc_cfg$enabled)) {
         return(invisible())
     }
 
     history <- turn_session$history %||% list()
-    post_turn_len <- length(history)
-    if (post_turn_len <= pre_turn_len) {
+    # A compaction inside the turn already compressed it and left
+    # pre_turn_len pointing nowhere in the live history. The journal
+    # holds the whole turn; a holder would be a second summary of the
+    # same work.
+    if (journal_rewritten_since(turn_session, mark)) {
+        log_event("archival_skipped", reason = "rewritten_mid_turn",
+                  level = "info")
         return(invisible())
     }
-    slice <- history[(pre_turn_len + 1L):post_turn_len]
+    slice <- journal_turn_slice(turn_session, mark, pre_turn_len)
+    if (length(slice) == 0L) {
+        return(invisible())
+    }
 
     if (!archival_should_trigger(arc_cfg, slice, depth = depth,
                                  max_turns_hit = max_turns_hit)) {
@@ -761,7 +772,23 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
                                content = sprintf("[archived turn]\nsubagent_id: %s\n\n%s",
             archived$subagent_id, archived$summary)
     )
-    turn_session$history <- c(keep, list(user_msg), list(archived_assistant))
+    collapsed <- c(keep, list(user_msg), list(archived_assistant))
+    # The journal records the slice and its replacement before the
+    # collapse (R/journal.R). A failed write leaves the turn intact,
+    # and the guard above releases the holder nothing references.
+    journaled <- tryCatch({
+        journal_rewrite(turn_session, history, collapsed,
+                        reason = "archival", summary = archived$summary)
+        TRUE
+    }, error = function(e) {
+        log_event("archival_failed", phase = "journal",
+                  error = conditionMessage(e), level = "warn")
+        FALSE
+    })
+    if (!journaled) {
+        return(invisible())
+    }
+    turn_session$history <- collapsed
     # Ownership transferred: parent history now references the holder.
     # The on.exit guard above sees this flag set and lets the holder
     # live.
