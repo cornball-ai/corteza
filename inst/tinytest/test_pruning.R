@@ -1,6 +1,7 @@
 # Context-aware tool pruning: schema_from_registry() drops tools whose
 # available() predicate returns FALSE.
 
+local({
 corteza::ensure_skills()
 
 orig_wd <- getwd()
@@ -77,8 +78,14 @@ expect_false(is.null(corteza:::get_skill("web_search")))
 reg <- corteza:::.skill_registry
 orig_skill <- reg[["run_r"]]
 boom_skill <- orig_skill
-boom_skill$available <- function() stop("boom")
+predicate_calls <- 0L
+boom_skill$available <- function() {
+    predicate_calls <<- predicate_calls + 1L
+    stop("boom")
+}
 assign("run_r", boom_skill, envir = reg)
 on.exit(assign("run_r", orig_skill, envir = reg), add = TRUE)
 names_boom <- tool_names_from_schema()
 expect_true("run_r" %in% names_boom)
+expect_equal(predicate_calls, 1L)
+})
