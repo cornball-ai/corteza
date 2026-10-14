@@ -139,7 +139,7 @@ journal_snapshot <- function(session) {
 #'
 #' @param before,after The history being replaced and its replacement.
 #' @param reason Short lifecycle marker (`"threshold"`, `"checkpoint"`,
-#'   `"context_overflow"`, `"archival"`, `"rollover"`, ...).
+#'   `"context_overflow"`, `"archival"`, `"scope"`, `"rollover"`, ...).
 #' @param summary Optional summary text the rewrite introduced.
 #' @return The segment path, invisibly; NULL when the session has no
 #'   journal.
@@ -228,8 +228,7 @@ journal_turn_slice <- function(session, mark, pre_len) {
 #' left out. Missing pieces are NULL / empty.
 #' @noRd
 journal_load <- function(dir) {
-    live_path <- file.path(dir, JOURNAL_LIVE)
-    live <- if (file.exists(live_path)) .journal_read_json(live_path)
+    live <- .journal_read_live(dir)
     if (is.null(live)) {
         committed <- 0L
     } else {
@@ -284,8 +283,7 @@ journal_history <- function(dir) {
     }
     # The committed count comes from the live snapshot, never from the
     # files on disk: a segment past it is a rewrite that never finished.
-    live_path <- file.path(dir, JOURNAL_LIVE)
-    previous <- if (file.exists(live_path)) .journal_read_json(live_path)
+    previous <- .journal_read_live(dir, repair = TRUE)
     state$seq <- as.integer(previous$seq %||% 0L)
     state$inherited <- 0L
     # A live snapshot already here belongs to an earlier process or an
@@ -354,12 +352,42 @@ journal_history <- function(dir) {
     .journal_write_json(envelope, file.path(state$dir, JOURNAL_LIVE))
 }
 
+# The live snapshot, allowing for a replacement cut off between parking
+# the old file and landing the new one (see .journal_write_json): the
+# parked copy stands in, and with `repair` it is moved back into place.
+# A parked copy beside a live file is left over from a replacement that
+# did land; `repair` removes it. Readers that must not write (journal_load)
+# leave both as they are.
+.journal_read_live <- function(dir, repair = FALSE) {
+    live_path <- file.path(dir, JOURNAL_LIVE)
+    prev_path <- paste0(live_path, ".prev")
+    if (repair && !file.exists(live_path) && file.exists(prev_path)) {
+        .journal_rename(prev_path, live_path)
+    }
+    path <- if (file.exists(live_path)) {
+        live_path
+    } else if (file.exists(prev_path)) {
+        prev_path
+    }
+    if (is.null(path)) {
+        return(NULL)
+    }
+    if (repair && identical(path, live_path) && file.exists(prev_path)) {
+        unlink(prev_path)
+    }
+    .journal_read_json(path)
+}
+
 # Atomic write: serialize to a sibling temp file, then rename over the
 # target. digits = NA keeps numbers exact; auto_unbox = TRUE and
 # null = "null" give the shape fromJSON(simplifyVector = FALSE) reads
 # back identically for the provider-native histories llm.api builds.
-# On Windows file.rename does not replace an existing target, so remove
-# it first and accept that one write is not atomic there.
+#
+# Where rename does not replace an existing target (Windows), the
+# current file is parked as <path>.prev before the rename is retried,
+# never deleted: it may be the only copy of the commit marker, and a
+# retry that fails or a process that stops here leaves it for
+# .journal_read_live to fall back to. A landed replacement removes it.
 .journal_write_json <- function(x, path) {
     json <- jsonlite::toJSON(x, auto_unbox = TRUE, null = "null",
                              na = "null", digits = NA)
@@ -371,16 +399,28 @@ journal_history <- function(dir) {
     if (!isTRUE(written)) {
         stop("journal: could not write ", path, ": ", written, call. = FALSE)
     }
-    ok <- suppressWarnings(file.rename(tmp, path))
-    if (!isTRUE(ok) && file.exists(path)) {
-        unlink(path)
-        ok <- suppressWarnings(file.rename(tmp, path))
+    ok <- .journal_rename(tmp, path)
+    if (!ok && file.exists(path)) {
+        prev <- paste0(path, ".prev")
+        unlink(prev)
+        if (.journal_rename(path, prev)) {
+            ok <- .journal_rename(tmp, path)
+            if (ok) {
+                unlink(prev)
+            }
+        }
     }
-    if (!isTRUE(ok)) {
+    if (!ok) {
         unlink(tmp)
         stop("journal: could not write ", path, call. = FALSE)
     }
     invisible(path)
+}
+
+# One place for the rename, so a test can make it fail the way a
+# platform does.
+.journal_rename <- function(from, to) {
+    isTRUE(suppressWarnings(file.rename(from, to)))
 }
 
 .journal_read_json <- function(path) {

@@ -485,3 +485,155 @@ run_job_worker_journal_test <- function() {
         list(user_msg("job one")))
 }
 run_job_worker_journal_test()
+
+# Replacing an existing file where rename does not replace: the old file
+# is parked, never deleted, and readers fall back to it --------
+
+run_rename_fallback_tests <- function() {
+    original <- get(".journal_rename", envir = asNamespace("corteza"))
+    on.exit(assignInNamespace(".journal_rename", original, ns = "corteza"),
+            add = TRUE)
+    h <- c(list(user_msg("one")), anthropic_round(1), anthropic_round(2))
+    after <- c(list(summary_msg("s")), anthropic_round(2))
+
+    # The platform refuses to rename over an existing target, once per
+    # target: the park-and-retry path lands the new file and clears the
+    # parked copy.
+    dir <- journal_tmp()
+    s <- journal_session(dir, h)
+    corteza:::journal_snapshot(s)
+    refused <- character()
+    assignInNamespace(".journal_rename", function(from, to) {
+        if (file.exists(to) && !to %in% refused) {
+            refused <<- c(refused, to)
+            return(FALSE)
+        }
+        original(from, to)
+    }, ns = "corteza")
+    s$history <- c(h, anthropic_round(3))
+    expect_true(corteza:::journal_snapshot(s))
+    expect_identical(corteza:::journal_load(dir)$live$history, s$history)
+    expect_false(file.exists(file.path(dir, "live.json.prev")))
+    expect_false(file.exists(file.path(dir, "live.json.tmp")))
+    assignInNamespace(".journal_rename", original, ns = "corteza")
+
+    # The retry fails too (or the process stops between the park and the
+    # retry): the parked copy still carries the commit marker, so the
+    # committed segment stays committed, and a restart repairs it.
+    dir <- journal_tmp()
+    s <- journal_session(dir, h)
+    corteza:::journal_snapshot(s)
+    corteza:::journal_rewrite(s, h, after, "threshold")
+    s$history <- c(after, anthropic_round(3))
+    corteza:::journal_snapshot(s)
+    assignInNamespace(".journal_rename", function(from, to) {
+        if (grepl("live[.]json$", to)) {
+            return(FALSE)
+        }
+        original(from, to)
+    }, ns = "corteza")
+    s$history <- c(s$history, anthropic_round(4))
+    expect_false(corteza:::journal_snapshot(s))
+    expect_false(file.exists(file.path(dir, "live.json")))
+    expect_true(file.exists(file.path(dir, "live.json.prev")))
+    j <- corteza:::journal_load(dir)
+    expect_equal(j$live$seq, 1L)
+    expect_equal(length(j$segments), 1L)
+    expect_identical(corteza:::journal_history(dir), c(h, anthropic_round(3)))
+    assignInNamespace(".journal_rename", original, ns = "corteza")
+    s2 <- journal_session(dir, s$history)
+    expect_true(file.exists(file.path(dir, "live.json")))
+    expect_false(file.exists(file.path(dir, "live.json.prev")))
+    expect_equal(corteza:::journal_mark(s2)$seq, 2L)
+    expect_identical(corteza:::journal_history(dir), c(h, anthropic_round(3)))
+
+    # A parked copy beside a live file is a leftover: the live file wins
+    # and the repair removes it.
+    dir <- journal_tmp()
+    s <- journal_session(dir, h)
+    corteza:::journal_snapshot(s)
+    file.copy(file.path(dir, "live.json"), file.path(dir, "live.json.prev"))
+    s$history <- c(h, anthropic_round(3))
+    corteza:::journal_snapshot(s)
+    s2 <- journal_session(dir, list())
+    expect_false(file.exists(file.path(dir, "live.json.prev")))
+    expect_identical(corteza:::journal_history(dir), c(h, anthropic_round(3)))
+}
+run_rename_fallback_tests()
+
+# A monitor's scope change is a rewrite: the previous job's conversation
+# is a segment, not an overwritten snapshot --------
+
+run_monitor_scope_journal_test <- function() {
+    old_wd <- getwd()
+    on.exit(setwd(old_wd), add = TRUE)
+    sub_state <- corteza:::.subagent_state
+    worker_state <- corteza:::.job_worker_state
+    old_session <- sub_state$session
+    old_scope <- worker_state$monitor_scope
+    old_run <- worker_state$monitor_run_fn
+    on.exit({
+        assign("session", old_session, envir = sub_state)
+        assign("monitor_scope", old_scope, envir = worker_state)
+        assign("monitor_run_fn", old_run, envir = worker_state)
+    }, add = TRUE)
+    cwd <- tempfile("corteza_monitor_cwd_")
+    dir.create(cwd, recursive = TRUE)
+    state_dir <- tempfile("corteza_monitor_state_")
+    # A stand-in for the monitor's model: one exchange per question,
+    # mirrored into the journal the way turn()'s history_callback does.
+    spec <- list(
+        role = "monitor",
+        init_fn = function(spec) {
+            corteza::subagent_turn_init(provider = "anthropic",
+                                        model = "claude-sonnet-4-6",
+                                        tools_filter = "read_file",
+                                        system = "monitor")
+        },
+        run_fn = function(prompt) {
+            s <- corteza:::.subagent_state$session
+            s$history <- c(s$history, list(user_msg(prompt),
+                                           list(role = "assistant",
+                                                content = "approve")))
+            corteza:::journal_snapshot(s)
+            list(reply = "approve", usage = list())
+        },
+        identity = list(owner = "@bot:x", key = "!r:x", workspace = cwd,
+                        role = "monitor")
+    )
+    corteza:::.job_worker_child_init(cwd, spec, state_dir)
+    jdir <- file.path(state_dir, "journal")
+
+    a1 <- corteza:::.job_monitor_child_ask("q1", "job-1")
+    expect_equal(a1$reply, "approve")
+    a2 <- corteza:::.job_monitor_child_ask("q2", "job-1")
+    expect_equal(length(sub_state$session$history), 4L)
+    expect_equal(length(corteza:::journal_load(jdir)$segments), 0L)
+
+    a3 <- corteza:::.job_monitor_child_ask("q3", "job-2")
+    expect_equal(a3$reply, "approve")
+    expect_equal(length(sub_state$session$history), 2L)
+    j <- corteza:::journal_load(jdir)
+    expect_equal(length(j$segments), 1L)
+    expect_equal(j$segments[[1]]$reason, "scope")
+    expect_equal(length(j$segments[[1]]$history), 4L)
+    expect_equal(j$segments[[1]]$kept, 0L)
+    record <- corteza:::journal_history(jdir)
+    expect_equal(length(record), 6L)
+    expect_equal(record[[1]]$content, "q1")
+    expect_equal(record[[5]]$content, "q3")
+
+    # A journal that cannot record the change keeps the old scope and
+    # its history, and the answer is an error for the parent to act on.
+    if (.Platform$OS.type != "windows" &&
+        !identical(Sys.info()[["effective_user"]], "root")) {
+        Sys.chmod(jdir, mode = "0500")
+        on.exit(Sys.chmod(jdir, mode = "0700"), add = TRUE)
+        a4 <- corteza:::.job_monitor_child_ask("q4", "job-3")
+        Sys.chmod(jdir, mode = "0700")
+        expect_true(grepl("journal", a4$error %||% ""))
+        expect_equal(worker_state$monitor_scope, "job-2")
+        expect_equal(length(sub_state$session$history), 2L)
+    }
+}
+run_monitor_scope_journal_test()
