@@ -678,7 +678,8 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     # pre_turn_len pointing nowhere in the live history. The journal
     # holds the whole turn; a holder would be a second summary of the
     # same work.
-    if (journal_rewritten_since(turn_session, mark)) {
+    if (journal_rewritten_since(turn_session, mark,
+                                ignore = c("context_index", "context_edit_rejected"))) {
         log_event("archival_skipped", reason = "rewritten_mid_turn",
                   level = "info")
         return(invisible())

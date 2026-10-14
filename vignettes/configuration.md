@@ -97,7 +97,13 @@ earlier assistant text (`[mN]`). The tool supports:
 - `replace`: summarize the selected entries in the first selected entry and
   remove the others. A retained tool result keeps its original call paired.
 - `note`: replace a working note containing task facts, decisions, and next
-  actions, placed just before the protected recent batch.
+  actions, placed before the latest human prompt so it cannot merge into the
+  current assistant message or split a tool call from its result.
+
+Visible IDs survive session resume and provider changes. Label-only updates
+and rejected edits do not suppress archival; applied edits and compaction
+still skip archival for that turn because its live message positions changed.
+Invalid `context_edit` configuration emits a warning and disables the feature.
 
 All human messages, including messages mixing text and tool results, are
 protected from this tool. Instructions and tool schemas are outside its edit

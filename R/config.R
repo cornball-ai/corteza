@@ -173,7 +173,11 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$journal_enabled)) {
         config$journal_enabled <- TRUE
     }
-    config$context_edit <- .context_edit_config(config)
+    config$context_edit <- tryCatch(.context_edit_config(config), error = function(e) {
+        warning(sprintf("Invalid context_edit configuration; disabling context editing: %s",
+                        conditionMessage(e)), call. = FALSE)
+        .context_edit_config()
+    })
 
     # Legacy memory tools (slash commands /remember /recall /flush)
     if (is.null(config$legacy_memory_tools_enabled)) {

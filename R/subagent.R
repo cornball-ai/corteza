@@ -515,7 +515,8 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
     # Not after a compaction inside the turn: it already compressed the
     # work, and pre_len no longer points into the live history.
     if (isTRUE(arc_cfg$enabled) && depth < cap &&
-        !journal_rewritten_since(.subagent_state$session, mark)) {
+        !journal_rewritten_since(.subagent_state$session, mark,
+                                  ignore = c("context_index", "context_edit_rejected"))) {
         slice <- journal_turn_slice(.subagent_state$session, mark, pre_len)
         if (length(slice) > 0L) {
             max_turns_hit <- isTRUE(grepl("Max turns",

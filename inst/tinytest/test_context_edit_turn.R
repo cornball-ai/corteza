@@ -213,4 +213,159 @@ local({
     expect_equal(corteza:::.context_edit_config(child_state$session$config,
         child_state$session$context_edit)$cadence, "always")
     expect_false(child_state$session$config$context_edit$enabled)
+
+    # File configuration errors warn and disable the feature. Explicit
+    # programmatic overrides remain strict (covered in test_context_edit.R).
+    for (bad in c('"typo"', '{"enabled":"yes"}', '{"cadence":"sometimes"}')) {
+        writeLines(paste0('{"context_edit":', bad, ',"port":1234}'),
+            file.path(project, ".corteza", "config.json"))
+        expect_warning(bad_cfg <- corteza:::load_config(project), "Invalid context_edit")
+        expect_identical(bad_cfg$context_edit, list(enabled = FALSE, cadence = "pressure"))
+        expect_equal(bad_cfg$port, 1234L)
+    }
+})
+
+# Use the real llm.api agent loop, replacing only its provider request and
+# credential lookup. This exercises dispatch indices, per-result callbacks,
+# same-name/same-argument calls, multiple edit receipts and the next request's
+# native history, including synthetic signed thinking blocks.
+local({
+    originals <- lapply(c(".agent_anthropic", ".agent_openai", ".get_provider_config"),
+        get, envir = asNamespace("llm.api"))
+    names(originals) <- c(".agent_anthropic", ".agent_openai", ".get_provider_config")
+    on.exit({
+        for (name in names(originals)) assignInNamespace(name, originals[[name]], "llm.api")
+    }, add = TRUE)
+    assignInNamespace(".get_provider_config", function(...) list(), "llm.api")
+    dirs <- character()
+    on.exit(unlink(dirs, recursive = TRUE), add = TRUE)
+    for (provider in c("anthropic", "openai")) {
+        round <- 0L
+        checked <- 0L
+        reads <- 0L
+        visible_ids <- character()
+        previous_assistant <- NULL
+        fake <- function(messages, tools, system, model, config, ...) {
+            round <<- round + 1L
+            if (provider == "anthropic") {
+                expect_equal(list(...)$thinking_budget_tokens, 1024L)
+            }
+            calls <- llm.api::history_tool_calls(messages)
+            if (round == 2L) {
+                expect_equal(length(calls), 2L)
+                results <- vapply(calls, `[[`, character(1), "result")
+                visible_ids <<- sub("^\\[([^]]+)\\].*", "\\1", results)
+                expect_equal(length(unique(visible_ids)), 2L)
+                expect_true(grepl("output 1", results[[1L]]))
+                expect_true(grepl("output 2", results[[2L]]))
+                requested <- list(
+                    list(id = "bad", name = "edit_context", arguments = list(op = "drop", ids = "unknown")),
+                    list(id = "drop-a", name = "edit_context", arguments = list(op = "drop", ids = visible_ids[[1L]])),
+                    list(id = "note", name = "edit_context", arguments = list(op = "note", text = "Two reads completed.")))
+            } else if (round == 3L) {
+                expect_identical(vapply(calls, `[[`, character(1), "id"), c("read-b", "bad", "drop-a", "note"))
+                expect_true(startsWith(calls[[1L]]$result, paste0("[", visible_ids[[2L]], "]\n")))
+                expect_true(grepl("rejected", calls[[2L]]$result))
+                expect_true(all(vapply(calls[3:4], function(call) grepl("applied", call$result), logical(1))))
+                boundary <- corteza:::.context_edit_boundary(messages)
+                expect_identical(messages[[boundary]], previous_assistant)
+                # After Anthropic's same-role merge, no added text can precede
+                # the current assistant's original leading thinking block.
+                expect_false(identical(messages[[boundary - 1L]]$role, "assistant"))
+                texts <- vapply(messages, corteza:::.compact_entry_body, character(1))
+                note_index <- which(startsWith(texts, "[context note]\n"))
+                expect_equal(length(note_index), 1L)
+                expect_identical(messages[[note_index + 1L]], list(role = "user", content = "Inspect both files."))
+                checked <<- checked + 1L
+                requested <- list(list(id = "drop-b", name = "edit_context",
+                    arguments = list(op = "drop", ids = visible_ids[[2L]])))
+            } else if (round == 1L) {
+                requested <- lapply(c("read-a", "read-b"), function(id) {
+                    list(id = id, name = "read_file", arguments = list(path = "same-file"))
+                })
+            } else {
+                expect_false(any(vapply(calls, function(call) call$id %in% c("read-a", "read-b"), logical(1))))
+                return(list(text = "done", assistant_message = list(role = "assistant", content = "done"), tool_calls = list()))
+            }
+            if (provider == "anthropic") {
+                assistant <- list(role = "assistant", content = c(list(
+                    list(type = "thinking", thinking = "synthetic fixture", signature = "fixture-signature"),
+                    list(type = "redacted_thinking", data = "fixture-data")),
+                    lapply(requested, function(call) list(type = "tool_use", id = call$id,
+                        name = call$name, input = call$arguments))))
+            } else {
+                assistant <- list(role = "assistant", content = "", tool_calls = lapply(requested, function(call) {
+                    list(id = call$id, type = "function", `function` = list(name = call$name,
+                        arguments = jsonlite::toJSON(call$arguments, auto_unbox = TRUE)))
+                }))
+            }
+            previous_assistant <<- assistant
+            list(text = "", assistant_message = assistant, tool_calls = requested)
+        }
+        assignInNamespace(if (provider == "anthropic") ".agent_anthropic" else ".agent_openai", fake, "llm.api")
+        s <- corteza::new_session(provider = provider, system = "instructions", web_search = FALSE,
+            thinking_budget_tokens = if (provider == "anthropic") 1024L else NULL,
+            context_edit = list(enabled = TRUE, cadence = "always"))
+        s$config <- list(context_compact_pct = 1000)
+        s$context_window <- 100000L
+        dir <- tempfile("context-edit-real-loop-")
+        dirs <- c(dirs, dir)
+        corteza:::journal_install(s, dir = dir)
+        s$approval_cb <- function(...) TRUE
+        result <- corteza::turn("Inspect both files.", s,
+            tools = list(list(name = "read_file", description = "Read", input_schema = list(type = "object"))),
+            tool_executor = function(name, args) {
+                stopifnot(name == "read_file")
+                reads <<- reads + 1L
+                list(content = list(list(type = "text", text = paste("output", reads))))
+            })
+        expect_equal(round, 4L)
+        expect_equal(checked, 1L)
+        expect_equal(reads, 2L)
+        expect_equal(result$reply, "done")
+        record <- llm.api::history_tool_calls(corteza:::journal_history(dir))
+        expect_identical(vapply(record[1:2], `[[`, character(1), "id"), c("read-a", "read-b"))
+        expect_true(all(vapply(record, `[[`, logical(1), "completed")))
+    }
+})
+
+# Indexing at turn start must not disable holders. Exercise the actual archival
+# collapse and journal with only holder creation replaced by an offline fake.
+local({
+    original <- corteza:::archival_archive_turn
+    on.exit(assignInNamespace("archival_archive_turn", original, "corteza"), add = TRUE)
+    created <- 0L
+    received <- NULL
+    assignInNamespace("archival_archive_turn", function(history_slice, ...) {
+        created <<- created + 1L
+        received <<- history_slice
+        list(subagent_id = "fixture-holder", summary = "Archived fixture.")
+    }, "corteza")
+    dir <- tempfile("context-edit-archival-")
+    on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+    before <- list(list(role = "user", content = "earlier prompt"),
+        list(role = "assistant", content = "earlier reply"))
+    s <- corteza::new_session(history = before, context_edit = list(enabled = TRUE, cadence = "always"))
+    corteza:::journal_install(s, dir = dir)
+    mark <- corteza:::journal_mark(s)
+    corteza:::.context_edit_prepare(s)
+    expect_true(corteza:::journal_rewritten_since(s, mark))
+    expect_false(corteza:::journal_rewritten_since(s, mark, ignore = "context_index"))
+    indexed <- s$history
+    added <- list(list(role = "user", content = "next prompt"), list(role = "assistant", content = "next reply"))
+    s$history <- c(s$history, added)
+    corteza:::journal_snapshot(s)
+    cfg <- list(archival = list(enabled = TRUE, trigger = list(token_threshold = 1L)))
+    corteza:::maybe_archive_turn(s, "next prompt", length(before), list(), cfg, "fixture-session", mark = mark)
+    expect_equal(created, 1L)
+    expect_identical(received, added)
+    expect_identical(s$history[seq_along(indexed)], indexed)
+    expect_true(startsWith(tail(s$history, 1)[[1]]$content, "[archived turn]"))
+    expect_identical(corteza:::journal_history(dir), c(before, added))
+    expect_true(corteza:::journal_rewritten_since(s, mark, ignore = "context_index"))
+
+    # A structural rewrite after an index segment still prevents a second
+    # collapse, because the old live offset no longer identifies the turn.
+    corteza:::maybe_archive_turn(s, "next prompt", length(before), list(), cfg, "fixture-session", mark = mark)
+    expect_equal(created, 1L)
 })

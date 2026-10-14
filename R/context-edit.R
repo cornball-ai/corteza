@@ -41,15 +41,14 @@
 }
 
 .context_edit_state <- function(session) {
-    key <- list(session$sessionId,
-                session$context_edit_provider %||% session$provider,
-                journal_dir(session))
+    # IDs belong to the conversation, not to the provider serving a request.
+    key <- list(session$sessionId, journal_dir(session))
     state <- session$.context_edit
     if (is.null(state) || !identical(state$key, key)) {
         state <- new.env(parent = emptyenv())
         state$key <- key
         # A restored window can still display IDs from its previous process.
-        # Allocate beyond those so a stale reference cannot select a new entry.
+        # Adopt those labels when indexing; allocate new labels beyond them.
         rendered <- vapply(session$history %||% list(), .compact_entry_body, character(1))
         labels <- unlist(regmatches(rendered, gregexpr("\\[[rm][0-9]+\\]", rendered)))
         numbers <- suppressWarnings(as.numeric(gsub("[^0-9]", "", labels)))
@@ -80,9 +79,48 @@
 .context_edit_call_id <- function(state, call) {
     key <- digest::digest(list(call$id, call$name, call$arguments))
     if (is.null(state$calls[[key]])) {
-        state$calls[[key]] <- .context_edit_id(state, "r")
+        label <- .context_edit_label(call$result, "r")
+        if (is.null(label) || label %in% unlist(state$calls, use.names = FALSE)) {
+            label <- .context_edit_id(state, "r")
+        }
+        state$calls[[key]] <- label
     }
     state$calls[[key]]
+}
+
+.context_edit_label <- function(text, prefix) {
+    pattern <- paste0("^\\[", prefix, "[0-9]+\\]\n")
+    if (!is.character(text) || length(text) != 1L || is.na(text) ||
+        !grepl(pattern, text)) {
+        return(NULL)
+    }
+    sub("^\\[([^]]+)\\].*", "\\1", text)
+}
+
+# llm.api supplies a dispatch index, not the provider's call ID. Resolve it
+# once against the complete assistant batch; never identify a call by name
+# alone when more than one invocation is pending. Moonshot's server-side
+# search does not occupy a dispatch index.
+.context_edit_active_call <- function(session, name, context = NULL) {
+    calls <- Filter(function(call) {
+        call$call_message_index == .context_edit_boundary(session$history)
+    }, llm.api::history_tool_calls(session$history))
+    if (identical(context$provider, "moonshot")) {
+        calls <- Filter(function(call) !identical(call$name, "$web_search"), calls)
+    }
+    if (!is.null(context$call_id)) {
+        calls <- Filter(function(call) identical(call$id, context$call_id), calls)
+    } else if (!is.null(context$call_index)) {
+        index <- context$call_index
+        if (!is.numeric(index) || length(index) != 1L || is.na(index) ||
+            index < 1L || index > length(calls) || index != floor(index)) {
+            return(NULL)
+        }
+        calls <- calls[index]
+    }
+    calls <- Filter(function(call) !isTRUE(call$completed) &&
+                    identical(unsanitize_tool_name(call$name), name), calls)
+    if (length(calls) == 1L) calls[[1L]] else NULL
 }
 
 .context_edit_boundary <- function(history) {
@@ -186,11 +224,14 @@
             any(vapply(state$messages, identical, logical(1), m))) {
             next
         }
-        id <- .context_edit_id(state, "m")
-        if (is.character(m$content)) {
-            m$content <- paste0("[", id, "]\n", m$content)
-        } else {
-            m$content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), m$content)
+        id <- .context_edit_label(.compact_entry_body(m), "m")
+        if (is.null(id) || id %in% names(state$messages)) {
+            id <- .context_edit_id(state, "m")
+            if (is.character(m$content)) {
+                m$content <- paste0("[", id, "]\n", m$content)
+            } else {
+                m$content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), m$content)
+            }
         }
         history[[i]] <- m
         state$messages[[id]] <- m
@@ -253,7 +294,7 @@
                         "\n# Conversation context management",
                         "Tool outputs have [rN] IDs; earlier assistant text has [mN] IDs.",
                         "Use edit_context to drop spent material or replace it with concise task-specific summaries.",
-                        "Use note for task facts, decisions, and next actions; it stays near the recent conversation.",
+                        "Use note for task facts, decisions, and next actions; it stays before the latest human prompt.",
                         "Keep useful evidence and unresolved constraints. Never target instructions or human messages.",
                         "The current assistant/tool batch is unavailable until a later batch.",
             if (.context_edit_config(session$config, session$context_edit)$cadence == "pressure") {
@@ -279,12 +320,9 @@
         return(text)
     }
     state <- .context_edit_state(session)
-    calls <- llm.api::history_tool_calls(session$history)
-    pending <- Filter(function(c) !isTRUE(c$completed) &&
-                      c$call_message_index == .context_edit_boundary(session$history) &&
-                      identical(unsanitize_tool_name(c$name), name), calls)
-    if (length(pending)) {
-        id <- .context_edit_call_id(state, pending[[1L]])
+    call <- .context_edit_active_call(session, name, context)
+    if (!is.null(call)) {
+        id <- .context_edit_call_id(state, call)
         text <- paste0("[", id, "]\n", text)
     }
     pct <- .context_edit_pct(session, text)
@@ -299,7 +337,7 @@
     text
 }
 
-.context_edit_queue <- function(session, args) {
+.context_edit_queue <- function(session, args, context = NULL) {
     if (!.context_edit_enabled(session)) {
         stop("Context editing is disabled", call. = FALSE)
     }
@@ -335,17 +373,10 @@
         stop("Unknown, stale, or protected context id", call. = FALSE)
     }
     # Queue immutable targets, not just IDs, so compaction cannot retarget an edit.
-    requests <- Filter(function(c) !isTRUE(c$completed) &&
-                       c$name == "edit_context" &&
-                       c$call_message_index == .context_edit_boundary(session$history),
-                       llm.api::history_tool_calls(session$history))
+    request <- .context_edit_active_call(session, "edit_context", context)
     session$pending_context_edits <- c(session$pending_context_edits,
                                        list(list(op = op, ids = ids, text = args$text, targets = targets[ids],
-                request_id = if (length(requests)) {
-                    requests[[1L]]$id
-                } else {
-                    NULL
-                })))
+                request_id = request$id)))
     "Context edit queued; the checkpoint will validate and apply it."
 }
 
@@ -396,10 +427,19 @@
             }
         }
     }
+    # Keep a human prompt between the note and the current assistant turn.
+    # Anthropic merges adjacent assistant messages, which would otherwise put
+    # the note before the current thinking block. Do not split tool-call/result
+    # pairs on OpenAI either. Human messages survive all operations above.
+    humans <- which(vapply(history, .context_edit_human, logical(1)))
+    humans <- humans[humans < boundary]
+    note_index <- if (length(humans)) tail(humans, 1L) else 0L
+    if (!is.null(note) && note_index == 0L) {
+        stop("A context note requires a preceding human prompt", call. = FALSE)
+    }
     out <- list()
     for (i in seq_along(history)) {
-        # Relocate only the harness-owned note, keeping it next to the tail.
-        if (i == boundary && !is.null(note)) {
+        if (i == note_index && !is.null(note)) {
             out <- c(out, list(note))
         }
         m <- history[[i]]
@@ -503,6 +543,8 @@
     tryCatch(journal_rewrite(session, before, after,
             if (!is.null(rewritten)) {
                 "context_edit"
+            } else if (length(pending)) {
+                "context_edit_rejected"
             } else {
                 "context_index"
             }, edits = ops),

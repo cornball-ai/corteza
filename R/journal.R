@@ -165,14 +165,25 @@ journal_rewrite <- function(session, before, after, reason, summary = NULL,
 
 #' Has the live history been rewritten since `mark`? FALSE without a
 #' journal or a mark, so a caller keeps its old behavior.
+#' `ignore` names rewrites that preserve message positions, which callers
+#' such as archival can allow without invalidating their pre-turn offset.
 #' @noRd
-journal_rewritten_since <- function(session, mark) {
+journal_rewritten_since <- function(session, mark, ignore = character()) {
     if (is.null(mark)) {
         return(FALSE)
     }
     state <- tryCatch(.journal_state(session), error = function(e) NULL)
-    !is.null(state) &&
-    !identical(as.integer(state$seq), as.integer(mark$seq))
+    if (is.null(state) || identical(as.integer(state$seq), as.integer(mark$seq))) {
+        return(FALSE)
+    }
+    if (!length(ignore)) {
+        return(TRUE)
+    }
+    seqs <- seq_len(state$seq)
+    any(vapply(seqs[seqs > as.integer(mark$seq)], function(seq) {
+        seg <- .journal_read_json(.journal_segment_path(state$dir, seq))
+        is.null(seg$reason) || !seg$reason %in% ignore
+    }, logical(1)))
 }
 
 #' A position in the journal, taken before a turn, so the entries the

@@ -583,7 +583,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # Session-local context operations never reach an external executor.
         # They only queue intent; the checkpoint enforces the protected set.
         if (identical(internal_name, "edit_context")) {
-            result <- tryCatch(.context_edit_queue(session, as.list(args)),
+            result <- tryCatch(.context_edit_queue(session, as.list(args), call$model_context),
                 error = function(e) paste("Context edit rejected:", conditionMessage(e)))
             return(nudge(result))
         }

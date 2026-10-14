@@ -135,7 +135,8 @@ run_context_edit_tests <- function() {
         expect_true(s$context_edit_events[[1]]$tokens_after < s$context_edit_events[[1]]$tokens_before)
 
         # Older assistant text has its own ID. A note is replaced and moved
-        # before the new protected batch, without accumulating old notes.
+        # before the latest human prompt, without accumulating old notes or
+        # joining the current assistant message on the Anthropic wire.
         s <- make(provider)
         corteza:::.context_edit_prepare(s)
         ce_queue(s, list(op = "drop", ids = "m3"))
@@ -147,8 +148,8 @@ run_context_edit_tests <- function() {
         expect_true(corteza:::.context_edit_checkpoint(s))
         texts <- vapply(s$history, corteza:::.compact_entry_body, character(1))
         expect_equal(sum(startsWith(texts, "[context note]")), 1L)
-        boundary <- corteza:::.context_edit_boundary(s$history)
-        expect_identical(s$history[[boundary - 1L]]$content, "[context note]\nTests passed.")
+        note_index <- which(startsWith(texts, "[context note]"))
+        expect_identical(s$history[[note_index + 1L]], tail(original, 1L)[[1L]])
 
         # Compaction after edits and rollover still reconstruct the original
         # record once. Compacting first invalidates queued IDs rather than
@@ -171,6 +172,63 @@ run_context_edit_tests <- function() {
         expect_true(corteza:::.context_edit_checkpoint(s))
         expect_false(tail(s$context_edit_events, 1)[[1]]$applied)
         expect_true(grepl("rejected", tail(llm.api::history_tool_calls(s$history), 1)[[1]]$result))
+        expect_equal(tail(corteza:::journal_load(s$journal_dir)$segments, 1)[[1]]$reason,
+            "context_edit_rejected")
+
+        # Resume must preserve the exact displayed IDs, including assistant
+        # text stored as blocks, and those IDs must still select their entries.
+        s <- make(provider)
+        reply <- length(s$history) - 1L
+        if (provider == "anthropic") {
+            s$history[[reply]]$content <- list(list(type = "text", text = "Both files exist."))
+        }
+        corteza:::.context_edit_prepare(s)
+        indexed <- s$history
+        restored <- make(provider, history = indexed)
+        corteza:::.context_edit_prepare(restored)
+        expect_identical(restored$history, indexed)
+        expect_true(all(c("r1", "r2", "m3") %in% names(
+            corteza:::.context_edit_targets(restored, restored$history, length(indexed) + 1L))))
+        ce_queue(restored, list(op = "drop", ids = c("r1", "m3")))
+        expect_true(corteza:::.context_edit_checkpoint(restored))
+        expect_identical(vapply(llm.api::history_tool_calls(restored$history), `[[`, character(1), "id"),
+            c("b", "edit"))
+
+        # Supported provider changes and fallback provider overrides must not
+        # change IDs or reset a pressure notice that has already been shown.
+        state <- corteza:::.context_edit_state(s)
+        state$pressure_open <- TRUE
+        s$provider <- if (provider == "anthropic") "anthropic_claude" else "openai_compatible"
+        corteza:::.context_edit_prepare(s)
+        expect_identical(s$history, indexed)
+        expect_true(corteza:::.context_edit_state(s)$pressure_open)
+        s$context_edit_provider <- provider
+        corteza:::.context_edit_prepare(s)
+        expect_identical(s$history, indexed)
+        s$context_edit_provider <- NULL
+        corteza:::.context_edit_prepare(s)
+        expect_identical(s$history, indexed)
+
+        # Both invocations are pending in the same batch. Dispatch order can
+        # differ from result arrival, so repeated names must use call identity.
+        s <- make(provider, history = ce_history(provider)[1:2])
+        corteza:::.context_edit_prepare(s)
+        text_b <- corteza:::.context_edit_result(s, "second output", "read_file",
+            list(agent_turn = 1L, call_index = 2L, call_count = 2L))
+        text_a <- corteza:::.context_edit_result(s, "first output", "read_file",
+            list(agent_turn = 1L, call_index = 1L, call_count = 2L))
+        expect_false(identical(sub("\n.*", "", text_a), sub("\n.*", "", text_b)))
+        s$history <- c(s$history, list(ce_result("a", provider, text_a), ce_result("b", provider, text_b),
+            list(role = "assistant", content = "Finished.")))
+        corteza:::.context_edit_prepare(s)
+        calls <- llm.api::history_tool_calls(s$history)
+        expect_identical(calls[[1]]$result, text_a)
+        expect_identical(calls[[2]]$result, text_b)
+        id_b <- sub("^\\[([^]]+)\\].*", "\\1", text_b)
+        ce_queue(s, list(op = "drop", ids = id_b))
+        expect_true(corteza:::.context_edit_checkpoint(s))
+        expect_identical(vapply(llm.api::history_tool_calls(s$history), `[[`, character(1), "id"),
+            c("a", "edit"))
     }
 
     # Human content sharing a result message is never labelled or editable.
@@ -179,6 +237,19 @@ run_context_edit_tests <- function() {
     corteza:::.context_edit_prepare(s)
     expect_identical(s$history[[3]], before)
     expect_error(ce_queue(s, list(op = "drop", ids = "r1")), "protected")
+
+    # Moonshot consumes its own search calls without invoking the handler;
+    # these do not occupy the dispatch indices supplied to corteza.
+    s <- make("openai", history = ce_history("openai")[1:2])
+    s$provider <- "moonshot"
+    server_call <- list(id = "server", type = "function", `function` =
+        list(name = "$web_search", arguments = '{"search_id":"fixture"}'))
+    s$history[[2]]$tool_calls <- c(list(server_call), s$history[[2]]$tool_calls)
+    expect_identical(corteza:::.context_edit_active_call(s, "read_file",
+        list(provider = "moonshot", call_index = 2L))$id, "b")
+    expect_null(corteza:::.context_edit_active_call(s, "read_file"))
+    expect_null(corteza:::.context_edit_active_call(s, "read_file", list(call_index = 10L)))
+    expect_identical(corteza:::.context_edit_active_call(s, "read_file", list(call_id = "a"))$id, "a")
 
     # An ID in the current assistant batch is untouchable even once its
     # result has arrived. Invalid or conflicting intents cannot partly apply.
@@ -253,8 +324,8 @@ run_context_edit_tests <- function() {
     expect_identical(corteza:::journal_history(s$journal_dir), whole)
     expect_equal(length(corteza:::journal_load(s$journal_dir)$segments), 2L)
 
-    # Restarted sessions allocate fresh IDs beyond visible old IDs, and adopt
-    # the previous working note so the next note replaces it.
+    # Restarted sessions retain visible IDs and adopt the previous working
+    # note so the next note replaces it.
     s <- make()
     corteza:::.context_edit_prepare(s)
     ce_queue(s, list(op = "note", text = "old facts"))
@@ -263,7 +334,7 @@ run_context_edit_tests <- function() {
     corteza:::.context_edit_prepare(restored)
     ids <- names(corteza:::.context_edit_targets(restored, restored$history,
         length(restored$history) + 1L))
-    expect_false("r1" %in% ids)
+    expect_true("r1" %in% ids)
     ce_queue(restored, list(op = "note", text = "new facts"), "note-next")
     corteza:::.context_edit_checkpoint(restored)
     texts <- vapply(restored$history, corteza:::.compact_entry_body, character(1))
