@@ -578,6 +578,24 @@ The session is an environment that carries history, the active provider/model, a
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
 
+## Room progress and images
+
+Room turns and delegated jobs show public commentary between expandable tool
+groups. Each group includes command or path previews, short result excerpts,
+and failed or refused outcomes. The final answer is a separate message. Progress
+stays in the originating room or thread and uses notices so bots do not answer
+the activity trail.
+
+Updates to the notice are coalesced by `activity_interval` in the bot config
+(15 seconds by default), with a final flush when the turn or job ends. Transports
+that cannot edit messages receive the completed trail once. Long trails show a
+bounded tail; full tool traffic remains in the session journal. Plain-text
+clients receive the same commentary and previews without the disclosure widgets.
+
+Image attachments are checked against the configured size ceiling after download.
+Their PNG, JPEG, GIF, or WebP signatures determine the format sent to the model,
+even when the uploader supplies the wrong MIME type or filename extension.
+
 ## systemd service
 
 `bot_run()` is designed for a systemd user unit.

@@ -3,8 +3,8 @@
 # A terminal shows tool calls as they happen; a room used to show
 # nothing between the typing indicator and a wall of prose, so a long
 # turn was indistinguishable from a hung one. This accumulates what the
-# agent did and renders it as a single collapsible line -- "Ran 3
-# commands, read 2 files" -- that a reader can open if they care.
+# agent did in one editable notice: public commentary between collapsible
+# groups of commands, paths, result previews, and outcomes.
 #
 # Two costs shape every decision here, and neither applies to a
 # terminal. A Matrix edit is an ordinary timeline event, so it is rate
@@ -79,13 +79,14 @@ rooms_activity_category <- function(tool) {
 rooms_activity_new <- function() {
     acc <- new.env(parent = emptyenv())
     acc$events <- list()
+    acc$items <- list()
     acc$message_id <- NULL
     acc$last_text <- NULL
     acc$last_at <- NULL
     acc
 }
 
-# Records completed tool calls onto `acc`, and pushes the trail to the
+# Records narration and completed tool calls onto `acc`, and pushes the trail to the
 # room when it is due. Registered with add_observer(), which fires this
 # for every tool call in the turn.
 #
@@ -96,23 +97,7 @@ rooms_activity_new <- function() {
 rooms_activity_observer <- function(acc, chat = NULL, channel = NULL,
                                     interval = .ROOMS_ACTIVITY_INTERVAL) {
     function(event) {
-        # "start" fires before the call runs and carries no result, so
-        # counting it would double every tool. The three terminal
-        # outcomes are what happened.
-        if (!(identical(event$outcome, "ran") ||
-                identical(event$outcome, "deny") ||
-                identical(event$outcome, "declined"))) {
-            return(invisible(NULL))
-        }
-        tool <- event$call$tool %||% event$tool %||% ""
-        acc$events[[length(acc$events) + 1L]] <- list(
-            tool = tool,
-            category = rooms_activity_category(tool),
-            success = isTRUE(event$success),
-            refused = identical(event$outcome, "deny") ||
-            identical(event$outcome, "declined"),
-            added = event$diff$added %||% 0L,
-            removed = event$diff$removed %||% 0L)
+        rooms_activity_add(acc, rooms_activity_record(event))
         if (!is.null(chat) && !is.null(channel) &&
             rooms_activity_due(acc, min_interval = interval)) {
             rooms_activity_flush(acc, chat, channel)
@@ -154,8 +139,10 @@ rooms_activity_live <- function(chat) {
 # that final one. A room that cannot be kept current gets one accurate
 # message instead of a stale one, which is the whole difference between
 # a summary and a lie.
-rooms_with_activity <- function(session, chat, channel, expr, cfg = NULL) {
+rooms_with_activity <- function(session, chat, channel, expr, cfg = NULL,
+                                thread = NULL) {
     acc <- rooms_activity_new()
+    acc$thread <- thread
     before <- session$on_tool
     live <- rooms_activity_live(chat)
     add_observer(session, rooms_activity_observer(acc,
@@ -164,7 +151,7 @@ rooms_with_activity <- function(session, chat, channel, expr, cfg = NULL) {
             interval = rooms_activity_interval(cfg)))
     on.exit({
         session$on_tool <- before
-        if (length(acc$events)) {
+        if (length(acc$items)) {
             rooms_activity_flush(acc, chat, channel)
         }
     }, add = TRUE)
@@ -247,14 +234,11 @@ rooms_activity_html <- function(events) {
                         head, s$added, s$removed)
     }
     items <- vapply(events, function(e) {
-        label <- rooms_escape_html(cli_tool_label(e$tool))
-        if (isTRUE(e$refused)) {
-            sprintf("<li>%s — refused</li>", label)
-        } else if (!isTRUE(e$success)) {
-            sprintf("<li>%s — failed</li>", label)
-        } else {
-            sprintf("<li>%s</li>", label)
-        }
+        label <- rooms_escape_html(rooms_activity_detail(e))
+        output <- e$output %||% ""
+        sprintf("<li>%s%s</li>", label,
+                if (nzchar(output)) paste0("<pre><code>", rooms_escape_html(output),
+                                           "</code></pre>") else "")
     }, character(1))
     sprintf("<details><summary>%s</summary><ul>%s</ul></details>", head,
             paste(items, collapse = ""))
@@ -278,7 +262,7 @@ rooms_escape_html <- function(x) {
 # twice in a second when two tools finish together.
 rooms_activity_due <- function(acc, now = Sys.time(),
                                min_interval = .ROOMS_ACTIVITY_INTERVAL) {
-    text <- rooms_activity_text(acc$events)
+    text <- rooms_activity_frame(acc)$text
     if (!nzchar(text) || identical(text, acc$last_text)) {
         return(FALSE)
     }
@@ -295,7 +279,8 @@ rooms_activity_due <- function(acc, now = Sys.time(),
 # differently depending on whether chat.api happens to be attached.
 rooms_activity_flush <- function(acc, chat, channel, now = Sys.time(),
                                  send = NULL, edit = NULL) {
-    text <- rooms_activity_text(acc$events)
+    frame <- rooms_activity_frame(acc)
+    text <- frame$text
     if (!nzchar(text)) {
         return(invisible(FALSE))
     }
@@ -307,21 +292,21 @@ rooms_activity_flush <- function(acc, chat, channel, now = Sys.time(),
     if (identical(text, acc$last_text)) {
         return(invisible(FALSE))
     }
-    html <- rooms_activity_html(acc$events)
+    html <- frame$html
     ok <- tryCatch({
-        # rich carries the collapsible block; text is the fallback and
-        # carries the same summary in one line, so a client that cannot
-        # render <details> -- and the push notification, which never
-        # can -- still says what the agent is doing.
+        # The plain fallback keeps the same commentary and previews for
+        # clients that cannot render the disclosure blocks.
         if (is.null(acc$message_id)) {
             send <- send %||% chat.api::chat_send
             id <- send(chat, channel, text, markup = "plain", rich = html,
-                       kind = "notice")
+                       kind = "notice", thread = acc$thread)
             acc$message_id <- bot_event_id(id)
+            if (is.null(acc$message_id)) return(invisible(FALSE))
         } else {
             edit <- edit %||% chat.api::chat_edit
-            edit(chat, channel, acc$message_id, text, markup = "plain",
-                 rich = html, kind = "notice")
+            id <- edit(chat, channel, acc$message_id, text, markup = "plain",
+                       rich = html, kind = "notice")
+            if (identical(id, FALSE) || is.null(id)) return(invisible(FALSE))
         }
         TRUE
     }, error = function(e) FALSE)

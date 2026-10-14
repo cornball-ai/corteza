@@ -234,7 +234,7 @@ local({
 # This is the end-to-end form of the regression above: the unit test
 # pins the number, this pins that the number is actually consulted.
 local({
-    big <- as.raw(rep(0L, 6L * 1024L * 1024L))
+    big <- c(png_bytes, as.raw(rep(0L, 6L * 1024L * 1024L)))
     cl <- fake_chat(on_download = function(a, dest) {
         writeBin(big, dest)
         dest
@@ -250,6 +250,27 @@ local({
                                                "anthropic"),
         "over the")
     expect_identical(small, "what is this")
+})
+
+# The downloaded signature wins over a misleading filename AND MIME field.
+local({
+    out <- corteza:::bot_message_content(fake_chat(),
+        msg(att(mime = "image/jpeg", name = "picture.jpg")), "look", "anthropic")
+    expect_identical(out[[2L]]$mime, "image/png")
+    expect_identical(jsonlite::base64_dec(out[[2L]]$data), png_bytes)
+    blocks <- get(".llm_content_blocks", asNamespace("llm.api"))(out, "anthropic")
+    expect_identical(blocks[[2L]]$source$media_type, "image/png")
+    expect_identical(corteza:::bot_image_mime(as.raw(c(255,216,255,224))), "image/jpeg")
+    expect_identical(corteza:::bot_image_mime(charToRaw("GIF89a")), "image/gif")
+    expect_identical(corteza:::bot_image_mime(charToRaw("GIF87a")), "image/gif")
+    expect_identical(corteza:::bot_image_mime(charToRaw("RIFF1234WEBP")), "image/webp")
+    cl <- fake_chat(on_download = function(a, dest) {
+        writeBin(charToRaw("not an image"), dest)
+        dest
+    })
+    expect_message(out <- corteza:::bot_message_content(cl, msg(att()), "look", "anthropic"),
+                   "unsupported or unreadable")
+    expect_identical(out, "look")
 })
 
 # One good picture and one bad one leaves the good one in place.

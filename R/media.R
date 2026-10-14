@@ -148,13 +148,28 @@ bot_fetch_image <- function(chat, attachment,
                 " byte limit)")
         return(NULL)
     }
-    tryCatch(llm.api::llm_image(path, mime = attachment$mime),
+    tryCatch(llm.api::llm_image(path, mime = bot_image_mime(readBin(path, "raw", 12L))),
              error = function(e) {
         message("corteza: could not encode ",
                 attachment$name %||% attachment$id, ": ",
                 conditionMessage(e))
         NULL
     })
+}
+
+# Upload metadata and filenames can describe a resized copy while the server
+# holds the original. The signature of the downloaded bytes is authoritative.
+bot_image_mime <- function(bytes) {
+    starts <- function(prefix) {
+        length(bytes) >= length(prefix) &&
+            identical(bytes[seq_along(prefix)], as.raw(prefix))
+    }
+    if (starts(c(137, 80, 78, 71, 13, 10, 26, 10))) return("image/png")
+    if (starts(c(255, 216, 255))) return("image/jpeg")
+    if (starts(charToRaw("GIF87a")) || starts(charToRaw("GIF89a"))) return("image/gif")
+    if (length(bytes) >= 12L && starts(charToRaw("RIFF")) &&
+        identical(bytes[9:12], charToRaw("WEBP"))) return("image/webp")
+    stop("unsupported or unreadable image format", call. = FALSE)
 }
 
 # The content for one incoming message: the text as before, or that
