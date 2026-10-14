@@ -64,10 +64,10 @@ rooms_activity_detail <- function(event) {
         label <- paste0(label, "(", command, ")")
     }
     if (isTRUE(event$refused)) {
-        label <- paste0(label, " — refused")
+        label <- paste0(label, " (refused)")
     } else
     if (!isTRUE(event$success)) {
-        label <- paste0(label, " — failed")
+        label <- paste0(label, " (failed)")
     }
     label
 }
