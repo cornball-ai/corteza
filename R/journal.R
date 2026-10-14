@@ -180,10 +180,12 @@ journal_rewritten_since <- function(session, mark, ignore = character()) {
         return(TRUE)
     }
     seqs <- seq_len(state$seq)
-    any(vapply(seqs[seqs > as.integer(mark$seq)], function(seq) {
+    # Missing or corrupt metadata cannot prove that message positions stayed
+    # stable. Conservatively skip archival while keeping this check no-throw.
+    tryCatch(any(vapply(seqs[seqs > as.integer(mark$seq)], function(seq) {
         seg <- .journal_read_json(.journal_segment_path(state$dir, seq))
         is.null(seg$reason) || !seg$reason %in% ignore
-    }, logical(1)))
+    }, logical(1))), error = function(e) TRUE)
 }
 
 #' A position in the journal, taken before a turn, so the entries the
