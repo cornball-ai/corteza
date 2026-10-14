@@ -332,6 +332,8 @@
 # leaves it at the real agent.
 .agent_with_fallback <- function(agent_args, session,
                                  .call = function(args) do.call(llm.api::agent, args)) {
+    previous_edit_provider <- session$context_edit_provider
+    on.exit(session$context_edit_provider <- previous_edit_provider, add = TRUE)
     primary <- list(model = agent_args$model, provider = agent_args$provider)
     chain <- c(list(primary), .session_fallback(session))
     resume <- FALSE
@@ -360,6 +362,13 @@
         }
         args$model <- cand$model
         args$provider <- cand$provider
+        session$context_edit_provider <- cand$provider
+        if ("tools" %in% names(args)) {
+            args$tools <- .context_edit_tools(args$tools, session)
+        }
+        if (identical(agent_args$system, session$context_edit_system)) {
+            args$system <- .context_edit_system(session$context_edit_base_system, session)
+        }
         if (!is.null(args$web_search) &&
             !.web_search_supported(cand$provider)) {
             args$web_search <- NULL
@@ -377,6 +386,13 @@
         # default.
         if (!identical(cand$model, primary$model)) {
             args[["thinking"]] <- NULL
+        }
+
+        # A provider bridge is a history rewrite too. Preserve completed
+        # native traffic before the next callback replaces the live snapshot.
+        if (!identical(history, args$history)) {
+            journal_rewrite(session, history, args$history, "provider_bridge")
+            session$history <- args$history
         }
 
         before <- length(session$history %||% list())

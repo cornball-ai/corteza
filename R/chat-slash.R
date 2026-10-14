@@ -270,6 +270,7 @@ chat_help_text <- function() {
           "  /model <name>                 Switch model",
           "  /provider <name>              Switch provider (anthropic, openai, moonshot, openai_codex, ollama, openai_compatible)",
           "  /context, /status             Session + context meter (model, dir, tokens by component)",
+          "  /context-edit on|off|status    Control conversation context editing",
           "  /spent, /cost                 Approximate USD spent this run (main-agent turns)",
           "  /doctor                       Diagnostics: provider/git/context health",
           "  /config                       Active runtime configuration",

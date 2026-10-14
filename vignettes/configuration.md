@@ -58,10 +58,66 @@ corteza [options]
 | `--resume` | Resume most recent session | `false` |
 | `--list` | List sessions and exit | `false` |
 | `--dry-run` | Preview tool calls without executing | `false` |
+| `--context-edit` | Enable conversation context editing for this session | `false` |
 | `--trace` | Print structured tool-call events to stderr | `false` |
 | `--help` | Show help and exit | - |
 
 Flags override config values for the current run.
+
+## Conversation context editing
+
+Context editing is experimental and off by default. Enable it in the global
+or project `config.json`:
+
+```json
+"context_edit": {
+  "enabled": true,
+  "cadence": "pressure"
+}
+```
+
+Project fields override global fields within this block. `cadence` is
+`"pressure"` (allow edits after the `context_warn_pct` notice, 75% by default)
+or `"always"` (allow edits after each complete tool batch). Existing threshold
+compaction remains the fallback at `context_compact_pct`, 90% by default.
+
+`/context-edit on|off|status` controls the current session in the CLI, `chat()`,
+and Matrix rooms. The CLI also accepts `--context-edit`. R callers can pass
+`context_edit = TRUE`, `FALSE`, or `list(enabled = TRUE, cadence = "always")`
+to `new_session()`. A NULL override inherits configuration. Spawned subagents
+inherit the parent's effective setting. `/status` reports the effective mode,
+including when an enabled setting is unavailable on an unsupported provider
+or because the journal is disabled.
+
+On Anthropic and OpenAI chat-completions history shapes, the model receives
+an `edit_context` tool and visible IDs on completed tool outputs (`[rN]`) and
+earlier assistant text (`[mN]`). The tool supports:
+
+- `drop`: remove the selected entries, keeping each tool call and result together.
+- `replace`: summarize the selected entries in the first selected entry and
+  remove the others. A retained tool result keeps its original call paired.
+- `note`: replace a working note containing task facts, decisions, and next
+  actions, placed just before the protected recent batch.
+
+All human messages, including messages mixing text and tool results, are
+protected from this tool. Instructions and tool schemas are outside its edit
+surface. The current assistant message and its results cannot be edited until
+a later batch. Older assistant messages containing non-text blocks are also
+excluded from message-level editing. Threshold compaction keeps its existing
+behavior and can still summarize human messages.
+
+Requests queue during tool execution, then apply atomically at the checkpoint
+after the batch completes and after the compaction check. Stale or overlapping
+requests are rejected as a batch. Edits require journaling: a failed journal
+write prevents the live-history replacement. Edit segments store operations,
+removed/replaced entries, and references to shared immutable entries under
+`<id>.journal/entries/`; `journal_load()` and `journal_history()` reconstruct
+the same full record as ordinary segments. CLI and room replies report the
+edit and estimated history tokens before and after it; structured
+`context_edit` events include operations, IDs, cadence, and application status.
+
+This feature does not support the OpenAI Responses/Codex history shape.
+It does not change instructions, publish data, or run an additional model call.
 
 ## OpenAI-compatible endpoints
 
@@ -130,6 +186,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
+| `context_edit` | object | `{"enabled": false, "cadence": "pressure"}` | Model-requested conversation edits; cadence is `pressure` or `always`, and journaling is required |
 | `tool_output_caps` | object | `{}` | Per-tool result caps, e.g. `{"game_action": {"max_chars": 400000, "max_lines": 20000}}`; other tools keep the 50-line / 5000-char cap |
 | `context_include_soul` | boolean or null | null | Include `SOUL.md` (null = saber default) |
 | `context_include_user` | boolean or null | null | Include `USER.md` (null = saber default) |

@@ -122,6 +122,15 @@
 # @noRd
 run_repl_loop <- function(ctx) {
     .repl_install_compaction_hook(ctx)
+    if (is.environment(ctx$session) && !isTRUE(ctx$session$.context_edit_display)) {
+        previous_edit <- ctx$session$on_context_edit
+        ctx$session$on_context_edit <- function(event) {
+            if (is.function(previous_edit)) previous_edit(event)
+            cat(sprintf("%s%s%s\n", ctx$palette$dim,
+                        .context_edit_event_text(event), ctx$palette$reset))
+        }
+        ctx$session$.context_edit_display <- TRUE
+    }
     # The session journal (R/journal.R) follows ctx$session$sessionId,
     # so a /clear moves it with the new on-disk session.
     journal_install(ctx$session, agent_id = DEFAULT_AGENT_ID)
@@ -573,14 +582,23 @@ run_repl_loop <- function(ctx) {
                 cat(format_spend(ctx$session, palette = ctx$palette), "\n", sep = "")
                 next
             }
+            if (cmd == "/context-edit") {
+                arg <- if (length(parts) == 1L) "status" else paste(parts[-1L], collapse = " ")
+                cat(.context_edit_command(ctx$session, arg), "\n")
+                ctx$config$context_edit <- ctx$session$config$context_edit
+                next
+            }
             if (cmd %in% c("/context", "/status")) {
+                cat(.context_edit_status(ctx$session), "\n")
                 files <- ctx$config$context_files %||% character(0)
                 sources <- ctx$session$context_manifest$sources %||% NULL
                 tools <- tryCatch(
                                   skills_as_api_tools(ctx$session$tools_filter),
                                   error = function(e) list()
                 )
-                sys_tok <- estimate_text_tokens(ctx$session$system %||% "")
+                tools <- .context_edit_tools(tools, ctx$session)
+                sys_tok <- estimate_text_tokens(
+                    .context_edit_system(ctx$session$system, ctx$session) %||% "")
                 tools_tok <- estimate_tool_tokens(tools)
                 hist_tok <- estimate_history_tokens(
                     ctx$session$history %||% list()
@@ -1095,10 +1113,12 @@ run_repl_loop <- function(ctx) {
         # *live* history (ctx$session$history), not session$messages,
         # then print a terse one-line indicator and auto-compact when we
         # cross the compaction threshold.
-        sys_tok <- estimate_text_tokens(ctx$session$system %||% "")
+        sys_tok <- estimate_text_tokens(
+            .context_edit_system(ctx$session$system, ctx$session) %||% "")
         compact_tools <- tryCatch(
                                   skills_as_api_tools(ctx$session$tools_filter),
                                   error = function(e) list())
+        compact_tools <- .context_edit_tools(compact_tools, ctx$session)
         tools_tok <- estimate_tool_tokens(compact_tools)
         hist_tok <- estimate_history_tokens(ctx$session$history %||% list())
         used <- as.integer(sys_tok + tools_tok + hist_tok)

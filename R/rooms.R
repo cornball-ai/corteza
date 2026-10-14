@@ -1865,6 +1865,7 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
     # be settled and its worker would run on unowned.
     if (is.environment(old)) {
         job_state_move(old, s)
+        s$context_edit <- old$context_edit
     }
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
@@ -2178,10 +2179,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_status_command(m$body)) {
-            ack <- sprintf("model: %s\nprovider: %s\ncwd: %s",
+            ack <- sprintf("model: %s\nprovider: %s\ncwd: %s\n%s",
                            bot_session_model(session) %||% "(unset)",
                            session$provider %||% "(unset)",
-                           session$cwd %||% getwd())
+                           session$cwd %||% getwd(), .context_edit_status(session))
             sent_id <- tryCatch(
                                 bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
@@ -2190,6 +2191,19 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        edit_cmd <- .context_edit_parse_command(m$body)
+        if (!is.null(edit_cmd)) {
+            ack <- .context_edit_command(session, edit_cmd)
+            sent_id <- tryCatch(bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                               error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
@@ -2337,6 +2351,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                       system = system, model = model, provider = provider,
                                       tools_filter = tools_filter, room_id = room_id)
         })
+        session$context_edit_events <- list()
         reply <- rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg)
@@ -2344,6 +2359,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"
+        }
+        if (length(session$context_edit_events)) {
+            reply <- paste(reply, paste(vapply(session$context_edit_events,
+                .context_edit_event_text, character(1)), collapse = "\n"), sep = "\n\n")
         }
         # Stamped after the turn by deterministic code, so no model can
         # forget or restyle its own badge.

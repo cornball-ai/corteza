@@ -15,6 +15,13 @@
 #
 #   <id>.journal/live.json           the live history as last mirrored
 #   <id>.journal/segment-NNNN.json   one per rewrite, in order
+#   <id>.journal/entries/<hash>.json shared immutable entries for context edits
+#
+# Context-edit segments store the operations, a reverse delta of changed
+# entries, and hashes of the replacement's shared entries. Those entries are
+# written before the segment; unused entries after a failed commit are harmless.
+# journal_load() expands these segments into the same history/after envelopes
+# as full compaction segments, independently of later live-snapshot changes.
 #
 # A rewrite replaces `before` with `after`. Each segment records
 # `inherited`, the number of head entries of `before` that the previous
@@ -141,16 +148,19 @@ journal_snapshot <- function(session) {
 #' @param reason Short lifecycle marker (`"threshold"`, `"checkpoint"`,
 #'   `"context_overflow"`, `"archival"`, `"scope"`, `"rollover"`, ...).
 #' @param summary Optional summary text the rewrite introduced.
+#' @param edits NULL for full segments; an operation list (possibly empty)
+#'   selects compact edit segments with shared immutable entries.
 #' @return The segment path, invisibly; NULL when the session has no
 #'   journal.
 #' @noRd
-journal_rewrite <- function(session, before, after, reason, summary = NULL) {
+journal_rewrite <- function(session, before, after, reason, summary = NULL,
+                            edits = NULL) {
     state <- .journal_state(session)
     if (is.null(state)) {
         return(invisible(NULL))
     }
     invisible(.journal_commit(state, before %||% list(), after %||% list(),
-                              reason, summary = summary))
+                              reason, summary = summary, edits = edits))
 }
 
 #' Has the live history been rewritten since `mark`? FALSE without a
@@ -194,8 +204,9 @@ journal_entries_since <- function(session, mark) {
     seqs <- seq_len(state$seq)
     seqs <- seqs[seqs > as.integer(mark$seq)]
     first <- TRUE
+    segments <- if (length(seqs)) journal_load(state$dir)$segments else list()
     for (s in seqs) {
-        seg <- .journal_read_json(.journal_segment_path(state$dir, s))
+        seg <- segments[[s]]
         skip <- if (first) {
             as.integer(mark$live_len)
         } else {
@@ -239,6 +250,25 @@ journal_load <- function(dir) {
     segments <- lapply(seqs, function(s) {
         .journal_read_json(.journal_segment_path(dir, s))
     })
+    # Edit segments retain replaced entries and references to immutable shared
+    # survivors. They never depend on a later live snapshot staying unchanged
+    # (a host may bridge providers or restore a checkpoint).
+    entries <- new.env(parent = emptyenv())
+    for (i in seq_along(segments)) {
+        seg <- segments[[i]]
+        if (!is.null(seg$reverse_delta)) {
+            seg$after <- lapply(seg$after_refs, function(id) {
+                if (!exists(id, entries, inherits = FALSE)) {
+                    assign(id, .journal_read_json(file.path(dir, "entries", paste0(id, ".json"))), entries)
+                }
+                get(id, entries, inherits = FALSE)
+            })
+            seg$history <- lapply(seg$reverse_delta, function(item) {
+                if (!is.null(item$from)) seg$after[[item$from]] else item$entry
+            })
+            segments[[i]] <- seg
+        }
+    }
     list(live = live, segments = segments)
 }
 
@@ -302,10 +332,11 @@ journal_history <- function(dir) {
 # The two-write commit described at the top of the file. The state
 # advances only once the live snapshot acknowledging the segment is on
 # disk; until then the segment is a stray the next rewrite overwrites.
-.journal_commit <- function(state, before, after, reason, summary = NULL) {
+.journal_commit <- function(state, before, after, reason, summary = NULL,
+                             edits = NULL) {
     seq <- state$seq + 1L
     path <- .journal_write_segment(state, seq, before, after, reason,
-                                   summary = summary)
+                                   summary = summary, edits = edits)
     .journal_write_live(state, after, inherited = length(after), seq = seq)
     state$seq <- seq
     state$inherited <- length(after)
@@ -327,7 +358,7 @@ journal_history <- function(dir) {
 }
 
 .journal_write_segment <- function(state, seq, before, after, reason,
-                                   summary = NULL) {
+                                   summary = NULL, edits = NULL) {
     envelope <- list(
                      seq = as.integer(seq),
                      reason = reason,
@@ -338,6 +369,25 @@ journal_history <- function(dir) {
                      history = before,
                      after = after
     )
+    if (!is.null(edits)) {
+        hashes <- vapply(after, digest::digest, character(1))
+        entry_dir <- file.path(state$dir, "entries")
+        dir.create(entry_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+        envelope$after_refs <- lapply(after, function(entry) {
+            id <- digest::digest(entry, algo = "sha256")
+            path <- file.path(entry_dir, paste0(id, ".json"))
+            if (!file.exists(path)) .journal_write_json(entry, path)
+            id
+        })
+        envelope$reverse_delta <- lapply(before, function(entry) {
+            candidates <- which(hashes == digest::digest(entry))
+            same <- candidates[vapply(after[candidates], identical, logical(1), entry)]
+            if (length(same)) list(from = same[[1L]]) else list(entry = entry)
+        })
+        envelope$edits <- edits
+        envelope$history <- NULL
+        envelope$after <- NULL
+    }
     .journal_write_json(envelope, .journal_segment_path(state$dir, seq))
 }
 
