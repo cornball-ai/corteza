@@ -131,7 +131,12 @@ rooms_activity_frame <- function(acc) {
     }
     repeat {
         frame <- render(items)
-        if (nchar(frame$text, type = "bytes") + nchar(frame$html, type = "bytes") < 40000L ||
+        # Matrix replacements carry the content twice (outer fallback and
+        # m.new_content). Count JSON escaping too, leaving room for that copy
+        # and the event envelope under the transport's 64 KiB ceiling.
+        encoded <- jsonlite::toJSON(list(body = frame$text, formatted_body = frame$html),
+                                    auto_unbox = TRUE)
+        if (nchar(encoded, type = "bytes") < 24000L ||
             length(items) <= 1L) {
             return(frame)
         }

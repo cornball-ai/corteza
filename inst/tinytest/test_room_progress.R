@@ -40,6 +40,9 @@ local({
     for (i in 5:100) obs(event(i, text = paste(rep("<&", 300L), collapse = "")))
     frame <- corteza:::rooms_activity_frame(acc)
     expect_true(nchar(frame$text, type = "bytes") + nchar(frame$html, type = "bytes") < 40000L)
+    content <- list(body = frame$text, formatted_body = frame$html)
+    replacement <- c(content, list(m.new_content = content))
+    expect_true(nchar(jsonlite::toJSON(replacement, auto_unbox = TRUE), type = "bytes") < 60000L)
     expect_true(grepl("Earlier activity omitted", frame$text, fixed = TRUE))
 
     # Same batch, new result: the detail changed even when the count summary did not.
