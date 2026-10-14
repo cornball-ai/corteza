@@ -49,7 +49,8 @@
         state$key <- key
         # A restored window can still display IDs from its previous process.
         # Adopt those labels when indexing; allocate new labels beyond them.
-        rendered <- vapply(session$history %||% list(), .compact_entry_body, character(1))
+        rendered <- vapply(session$history %||% list(), .compact_entry_body,
+                           character(1))
         labels <- unlist(regmatches(rendered, gregexpr("\\[[rm][0-9]+\\]", rendered)))
         numbers <- suppressWarnings(as.numeric(gsub("[^0-9]", "", labels)))
         state$next_id <- max(c(0, numbers[is.finite(numbers)]))
@@ -80,7 +81,8 @@
     key <- digest::digest(list(call$id, call$name, call$arguments))
     if (is.null(state$calls[[key]])) {
         label <- .context_edit_label(call$result, "r")
-        if (is.null(label) || label %in% unlist(state$calls, use.names = FALSE)) {
+        if (is.null(label) ||
+            label %in% unlist(state$calls, use.names = FALSE)) {
             label <- .context_edit_id(state, "r")
         }
         state$calls[[key]] <- label
@@ -106,7 +108,8 @@
         call$call_message_index == .context_edit_boundary(session$history)
     }, llm.api::history_tool_calls(session$history))
     if (identical(context$provider, "moonshot")) {
-        calls <- Filter(function(call) !identical(call$name, "$web_search"), calls)
+        calls <- Filter(function(call) !identical(call$name, "$web_search"),
+                        calls)
     }
     if (!is.null(context$call_id)) {
         calls <- Filter(function(call) identical(call$id, context$call_id), calls)
@@ -120,7 +123,11 @@
     }
     calls <- Filter(function(call) !isTRUE(call$completed) &&
                     identical(unsanitize_tool_name(call$name), name), calls)
-    if (length(calls) == 1L) calls[[1L]] else NULL
+    if (length(calls) == 1L) {
+        calls[[1L]]
+    } else {
+        NULL
+    }
 }
 
 .context_edit_boundary <- function(history) {
@@ -433,7 +440,11 @@
     # pairs on OpenAI either. Human messages survive all operations above.
     humans <- which(vapply(history, .context_edit_human, logical(1)))
     humans <- humans[humans < boundary]
-    note_index <- if (length(humans)) tail(humans, 1L) else 0L
+    if (length(humans)) {
+        note_index <- tail(humans, 1L)
+    } else {
+        note_index <- 0L
+    }
     if (!is.null(note) && note_index == 0L) {
         stop("A context note requires a preceding human prompt", call. = FALSE)
     }
