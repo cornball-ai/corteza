@@ -1169,6 +1169,10 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if ("history_callback" %in% names(formals(llm.api::agent))) {
         agent_args$history_callback <- function(history) {
             session$history <- history
+            # The journal's live snapshot follows the mirror, so what the
+            # model saw is on disk before the next request or any
+            # rewrite of it. Never throws (R/journal.R).
+            journal_snapshot(session)
         }
     }
     attempt_checkpoint_usage <- list()

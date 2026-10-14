@@ -63,7 +63,10 @@ voice_speech_system <- function(system, style = NULL) {
 voice_room_session <- function(state, room_id) {
     s <- state$rooms[[room_id]]
     if (is.null(s)) {
-        s <- bot_new_session(state$cfg_fn(), room_id = room_id)
+        # Its own journal: a text session for the same room may live in
+        # the same process.
+        s <- bot_new_session(state$cfg_fn(), room_id = room_id,
+                             journal_key = paste0("voice:", room_id))
         s$system <- voice_speech_system(s$system,
                                         state$cfg_fn()$voice$speech_style)
         .voice_backfill(state, s, room_id)

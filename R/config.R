@@ -164,6 +164,13 @@ load_config <- function(cwd = getwd()) {
         config$dry_run <- FALSE
     }
 
+    # Session journal: the durable provider-native record of a session's
+    # history, kept through every compaction (R/journal.R). Off only
+    # when a config says so.
+    if (is.null(config$journal_enabled)) {
+        config$journal_enabled <- TRUE
+    }
+
     # Legacy memory tools (slash commands /remember /recall /flush)
     if (is.null(config$legacy_memory_tools_enabled)) {
         config$legacy_memory_tools_enabled <- FALSE

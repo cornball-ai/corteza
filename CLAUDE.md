@@ -238,6 +238,23 @@ Subagents have three valid identifiers:
 
 `subagent_query` and `subagent_kill` accept any of the three.
 
+## Session journal (`R/journal.R`)
+
+The openclaw transcript (`<id>.jsonl`) records what people exchanged,
+as text; the trace (`<id>_trace.jsonl`) records tool calls cut to a
+preview. The journal is the full provider-native record:
+`<id>.journal/live.json` is the live history as last mirrored (written
+after every `history_callback`), and `segment-NNNN.json` holds the
+exact history a rewrite replaced, written before the rewrite so a
+failed write blocks it. `journal_rewrite()` is the one call every
+rewrite site makes (compaction in `compact-turn.R`, archival); nothing
+replaces `session$history` without it. `journal_turn_slice()` returns
+the entries a turn added even when a compaction inside the turn rewrote
+the live history; do not slice by before/after length. A session with
+no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
+has no journal, so bare sessions in tests see no change.
+`journal_enabled: false` turns it off.
+
 ## Test conventions and gotchas
 
 - `corteza:::env[[key]] <- value` doesn't parse the way you'd expect

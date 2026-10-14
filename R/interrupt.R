@@ -193,5 +193,9 @@ apply_exit_marker <- function(session, prompt, pre_turn_len, marker,
     session$history <- repair_interrupted_tool_history(history = history,
         provider = provider, marker = marker, prompt = prompt,
         pre_turn_len = pre_turn_len, placeholder = placeholder)
+    # The repair only adds (synthetic results, the marker), so the
+    # journal needs no segment, just a snapshot that includes them. It
+    # never throws, which matters inside a condition handler.
+    journal_snapshot(session)
     invisible(session)
 }

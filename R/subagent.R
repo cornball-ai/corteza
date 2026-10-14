@@ -246,7 +246,16 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
 #' @keywords internal
 #' @export
 subagent_turn_set_id <- function(id) {
-    .subagent_state$subagent_id <- as.character(id)
+    id <- as.character(id)
+    .subagent_state$subagent_id <- id
+    # The child's journal (R/journal.R) lives beside its transcript in
+    # its own agent bucket. Installed here because the id names it;
+    # seeding and turns come after.
+    if (!is.null(.subagent_state$session)) {
+        journal_install(.subagent_state$session,
+                        dir = file.path(sessions_dir(paste0("subagent-", id)),
+                                        paste0(id, ".journal")))
+    }
     invisible(TRUE)
 }
 
@@ -270,6 +279,7 @@ subagent_seed_history <- function(history) {
     # touch it.
     .subagent_state$kind <- "archive_holder"
     .subagent_state$protected_history_len <- length(history)
+    journal_snapshot(.subagent_state$session)
     invisible(TRUE)
 }
 
@@ -458,6 +468,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
         stop("Subagent turn session not initialized", call. = FALSE)
     }
     pre_len <- length(.subagent_state$session$history %||% list())
+    mark <- journal_mark(.subagent_state$session)
     query <- if (isTRUE(report)) {
         paste(prompt, .SUBAGENT_HANDOFF_INSTRUCTION, sep = "\n\n")
     } else {
@@ -466,19 +477,18 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
     result <- turn(query, .subagent_state$session)
     extracted <- .extract_subagent_report(result$reply, requested = report)
 
-    # Persist this turn's history slice to disk. The transcript is the
-    # durable record (disk space is cheap); the in-memory history will
-    # be compacted later. Each entry is appended as a separate line so
-    # tool calls and results stay distinguishable.
-    post_len_disk <- length(.subagent_state$session$history %||% list())
-    if (post_len_disk > pre_len && !is.null(.subagent_state$subagent_id)) {
+    # Append this turn's entries to the child's readable transcript, one
+    # line each so tool calls and results stay distinguishable. The
+    # journal (R/journal.R) is the durable record, and it knows what the
+    # turn added even when a compaction inside it rewrote the live
+    # history; before/after lengths do not.
+    disk_slice <- journal_turn_slice(.subagent_state$session, mark, pre_len)
+    if (length(disk_slice) > 0L && !is.null(.subagent_state$subagent_id)) {
         sub_id <- .subagent_state$subagent_id
         agent_id <- paste0("subagent-", sub_id)
         disk_sess <- list(sessionId = sub_id, cwd = getwd(),
                           provider = .subagent_state$session$provider,
                           model = .subagent_state$session$model_map$cloud)
-        disk_slice <- .subagent_state$session$history[
-            (pre_len + 1L):post_len_disk]
         for (entry in disk_slice) {
             role <- entry$role %||% "user"
             body <- archival_history_entry_to_text(entry)
@@ -499,10 +509,12 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
     arc_cfg <- cfg$archival %||% list()
     depth <- .subagent_state$depth %||% 0L
     cap <- arc_cfg$trigger$depth_cap %||% 3L
-    if (isTRUE(arc_cfg$enabled) && depth < cap) {
-        post_len <- length(.subagent_state$session$history %||% list())
-        if (post_len > pre_len) {
-            slice <- .subagent_state$session$history[(pre_len + 1L):post_len]
+    # Not after a compaction inside the turn: it already compressed the
+    # work, and pre_len no longer points into the live history.
+    if (isTRUE(arc_cfg$enabled) && depth < cap &&
+        !journal_rewritten_since(.subagent_state$session, mark)) {
+        slice <- journal_turn_slice(.subagent_state$session, mark, pre_len)
+        if (length(slice) > 0L) {
             max_turns_hit <- isTRUE(grepl("Max turns",
                     as.character(result$reply %||% "")))
             if (archival_should_trigger(arc_cfg, slice, depth = depth,
@@ -519,7 +531,8 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
                     config = cfg
                 )
                 if (!is.null(archived)) {
-                    keep <- .subagent_state$session$history[seq_len(pre_len)]
+                    live <- .subagent_state$session$history
+                    keep <- live[seq_len(pre_len)]
                     user_msg <- slice[[1]]
                     if (!identical(user_msg$role %||% "", "user")) {
                         user_msg <- list(role = "user", content = prompt)
@@ -531,9 +544,25 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
                             archived$subagent_id, archived$summary
                         )
                     )
-                    .subagent_state$session$history <- c(
-                        keep, list(user_msg), list(archived_assistant)
-                    )
+                    collapsed <- c(keep, list(user_msg),
+                                   list(archived_assistant))
+                    # Journal first (R/journal.R). A failed write keeps
+                    # the turn and releases the holder nothing would
+                    # reference.
+                    journaled <- tryCatch({
+                        journal_rewrite(.subagent_state$session, live,
+                                        collapsed, reason = "archival",
+                                        summary = archived$summary)
+                        TRUE
+                    }, error = function(e) {
+                        log_event("archival_failed", phase = "journal",
+                                  error = conditionMessage(e), level = "warn")
+                        try(subagent_kill(archived$subagent_id), silent = TRUE)
+                        FALSE
+                    })
+                    if (journaled) {
+                        .subagent_state$session$history <- collapsed
+                    }
                 }
             }
         }

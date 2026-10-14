@@ -1,3 +1,22 @@
+# corteza 0.7.1.63
+
+- **A session journal keeps the full history through every compaction.**
+  The transcript records what people exchanged as text and the trace cuts
+  tool calls to a preview, so compacting the live history used to destroy
+  the only complete copy of the tool traffic the model had seen.
+  `<id>.journal/` beside the transcript now holds `live.json`, the live
+  history as last mirrored after every assistant message and tool result,
+  and `segment-NNNN.json`, the exact history each compaction replaced,
+  written before the rewrite so a write failure blocks the compaction
+  rather than losing the prefix. The record is the segments past their
+  inherited heads plus the live tail: every entry once, no synthetic
+  summaries. The same record covers archival, subagents (whose per-turn
+  transcript slice now comes from the journal and is correct across a
+  compaction inside the turn), Matrix rooms and threads, and interrupted
+  turns. `journal_enabled: false` turns it off. This is the pattern a
+  downstream host already ran for long autonomous sessions, now built in
+  for every surface.
+
 # corteza 0.7.1.62
 
 - **The talker can read a URL itself (`fetch_url`).** The talker's

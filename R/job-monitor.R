@@ -230,6 +230,22 @@ job_monitor_ask_wait <- function(session, q,
 .job_monitor_child_ask <- function(prompt, scope) {
     session <- .subagent_state$session
     if (!identical(.job_worker_state$monitor_scope, scope)) {
+        if (!is.null(session) && length(session$history %||% list())) {
+            # Dropping the conversation is a rewrite, and the journal
+            # (R/journal.R) records it first. A failed write keeps the
+            # old scope and its history, and the error goes back as the
+            # answer, which the parent treats as the monitor failing to
+            # rule.
+            journaled <- tryCatch({
+                journal_rewrite(session, session$history, list(),
+                                reason = "scope")
+                TRUE
+            }, error = function(e) conditionMessage(e))
+            if (!isTRUE(journaled)) {
+                return(list(reply = NULL, usage = NULL,
+                            error = paste("monitor journal:", journaled)))
+            }
+        }
         if (!is.null(session)) {
             session$history <- list()
         }

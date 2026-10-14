@@ -1722,14 +1722,30 @@ bot_no_approver_notice <- function(call) {
             .sanitize_inline(call$tool %||% "", max_chars = 60L))
 }
 
+# Where a room or thread session's journal lives (R/journal.R). Two bots
+# can share one data directory and one room, so the bot's identity is
+# part of the name along with the session's registry key, the way the
+# job ledger names its owner. A digest, since both carry characters that
+# do not belong in a path.
+bot_journal_dir <- function(cfg, key) {
+    name <- digest::digest(paste(bot_job_owner(cfg), key, sep = "\n"),
+                           algo = "sha256", serialize = FALSE)
+    file.path(sessions_dir("matrix"), paste0(name, ".journal"))
+}
+
 # Build a fresh corteza session from a Matrix config. Does not fetch any
 # room history; in-memory history accumulates across turn() calls made
 # inside one bot_run process.
 bot_new_session <- function(cfg, system = NULL, model = NULL,
                             provider = NULL, tools_filter = NULL,
-                            room_id = NULL) {
+                            room_id = NULL, journal_key = NULL) {
     if (is.null(room_id)) {
         room_id <- cfg$room_id
+    }
+    # What names the session's journal: the registry key for a room or a
+    # thread in it (bot_get_or_create_session), the room itself otherwise.
+    if (is.null(journal_key)) {
+        journal_key <- room_id
     }
     if (is.null(model)) {
         model <- cfg$model
@@ -1779,6 +1795,11 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
     s$handle_store <- new.env(parent = emptyenv())
+    # The session's journal (R/journal.R): a bot's rooms share one
+    # process, and a room has no on-disk session id of its own.
+    if (!is.null(journal_key)) {
+        journal_install(s, dir = bot_journal_dir(cfg, journal_key))
+    }
     bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {
         s$context_manifest <- context_manifest
@@ -1865,7 +1886,7 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # take the key apart again.
     s <- bot_new_session(cfg, system = system, model = model,
                          provider = provider, tools_filter = tools_filter,
-                         room_id = room_id)
+                         room_id = room_id, journal_key = key)
     # The session key is the job key: a thread's jobs belong to the
     # thread's session, and their results come back to it.
     s$job_key <- key
