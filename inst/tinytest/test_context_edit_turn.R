@@ -249,6 +249,7 @@ local({
             round <<- round + 1L
             if (provider == "anthropic") {
                 expect_equal(list(...)$thinking_budget_tokens, 1024L)
+                expect_identical(messages[[1L]]$role, "user")
             }
             calls <- llm.api::history_tool_calls(messages)
             if (round == 2L) {
@@ -323,6 +324,8 @@ local({
         expect_equal(checked, 1L)
         expect_equal(reads, 2L)
         expect_equal(result$reply, "done")
+        bodies <- vapply(s$history, corteza:::.compact_entry_body, character(1))
+        expect_equal(sum(startsWith(bodies, "Context workspace:")), 1L)
         record <- llm.api::history_tool_calls(corteza:::journal_history(dir))
         expect_identical(vapply(record[1:2], `[[`, character(1), "id"), c("read-a", "read-b"))
         expect_true(all(vapply(record, `[[`, logical(1), "completed")))

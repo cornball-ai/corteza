@@ -98,7 +98,8 @@ earlier assistant text (`[mN]`). The tool supports:
   remove the others. A retained tool result keeps its original call paired.
 - `note`: replace a working note containing task facts, decisions, and next
   actions, placed before the latest human prompt so it cannot merge into the
-  current assistant message or split a tool call from its result.
+  current assistant message or split a tool call from its result. On the first
+  turn, a short context-workspace header keeps a user message at the start.
 
 Visible IDs survive session resume and provider changes. Label-only updates
 and rejected edits do not suppress archival; applied edits and compaction

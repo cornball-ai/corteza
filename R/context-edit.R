@@ -451,6 +451,13 @@
     out <- list()
     for (i in seq_along(history)) {
         if (i == note_index && !is.null(note)) {
+            # The first request must still start with a user message. Retain
+            # this small synthetic header as protected context on later turns;
+            # only the assistant note itself is replaced or relocated.
+            if (!length(out)) {
+                out <- c(out, list(list(role = "user",
+                    content = "Context workspace: the following assistant note records task state.")))
+            }
             out <- c(out, list(note))
         }
         m <- history[[i]]
