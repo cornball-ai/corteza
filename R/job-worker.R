@@ -95,6 +95,12 @@ job_worker_state_dir <- function(identity) {
                      1L, 24L))
 }
 
+# The worker's journal (R/journal.R) lives with its checkpoint, so it is
+# owned by the same identity and survives the same way.
+job_worker_journal_dir <- function(state_dir) {
+    file.path(state_dir, "journal")
+}
+
 job_identity_text <- function(identity) {
     paste(c(identity$owner, identity$key, identity$workspace, identity$role),
           collapse = "\n")
@@ -324,7 +330,14 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             })
         }
     }
-    .job_worker_child_restore(state_dir, spec$identity)
+    restored <- .job_worker_child_restore(state_dir, spec$identity)
+    # Installed after the restore, so a restored history is what an
+    # earlier live snapshot rolls over to rather than an empty one.
+    if (!is.null(.subagent_state$session)) {
+        journal_install(.subagent_state$session,
+                        dir = job_worker_journal_dir(state_dir))
+    }
+    restored
 }
 
 # The supervised worker's way of getting a call answered: the request

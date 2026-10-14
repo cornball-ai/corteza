@@ -25,6 +25,16 @@
 # never enter the record: it stays what the model and the tools
 # actually produced, with nothing counted twice.
 #
+# A rewrite commits in two writes. The segment goes first, under the
+# next number, and counts for nothing yet. The live snapshot goes
+# second, carrying that number as `seq`: a segment is part of the record
+# only once a live snapshot acknowledges it. A failure or a crash
+# between the two leaves the previous snapshot in charge, the
+# unacknowledged segment is ignored by every reader and overwritten by
+# the next rewrite, and the in-memory state advances only after both
+# writes, so a retry starts from where the record actually is. That is
+# what keeps "every entry once" true across a failed rewrite.
+#
 # A session without a resolvable directory has no journal, and every
 # function here is a no-op for it, so sessions built bare in tests and
 # direct turn() callers with their own persistence see no change.
@@ -65,18 +75,6 @@ journal_install <- function(session, dir = NULL, agent_id = NULL) {
         NULL
     })
     invisible(if (is.null(state)) NULL else state$dir)
-}
-
-#' Has the live history been rewritten since `mark`? FALSE without a
-#' journal or a mark, so a caller keeps its old behavior.
-#' @noRd
-journal_rewritten_since <- function(session, mark) {
-    if (is.null(mark)) {
-        return(FALSE)
-    }
-    state <- tryCatch(.journal_state(session), error = function(e) NULL)
-    !is.null(state) &&
-    !identical(as.integer(state$seq), as.integer(mark$seq))
 }
 
 #' Resolve a session's journal directory, or NULL for no journal.
@@ -135,9 +133,9 @@ journal_snapshot <- function(session) {
 #' Record a rewrite of the live history, before it happens.
 #'
 #' Writes the segment holding `before` and `after`, then the live
-#' snapshot of `after`, then advances the state. Errors propagate: the
-#' caller must not replace `session$history` when this throws, so a
-#' write failure costs the rewrite, never the record.
+#' snapshot of `after` that acknowledges it, then advances the state.
+#' Errors propagate: the caller must not replace `session$history` when
+#' this throws, so a write failure costs the rewrite, never the record.
 #'
 #' @param before,after The history being replaced and its replacement.
 #' @param reason Short lifecycle marker (`"threshold"`, `"checkpoint"`,
@@ -151,13 +149,20 @@ journal_rewrite <- function(session, before, after, reason, summary = NULL) {
     if (is.null(state)) {
         return(invisible(NULL))
     }
-    path <- .journal_write_segment(state, before %||% list(),
-                                   after %||% list(), reason,
-                                   summary = summary)
-    .journal_write_live(state, after %||% list(),
-                        inherited = length(after %||% list()))
-    state$inherited <- length(after %||% list())
-    invisible(path)
+    invisible(.journal_commit(state, before %||% list(), after %||% list(),
+                              reason, summary = summary))
+}
+
+#' Has the live history been rewritten since `mark`? FALSE without a
+#' journal or a mark, so a caller keeps its old behavior.
+#' @noRd
+journal_rewritten_since <- function(session, mark) {
+    if (is.null(mark)) {
+        return(FALSE)
+    }
+    state <- tryCatch(.journal_state(session), error = function(e) NULL)
+    !is.null(state) &&
+    !identical(as.integer(state$seq), as.integer(mark$seq))
 }
 
 #' A position in the journal, taken before a turn, so the entries the
@@ -174,7 +179,7 @@ journal_mark <- function(session) {
 
 #' The entries added to a session's history since `mark`.
 #'
-#' Segments written since the mark contribute their history past the
+#' Segments committed since the mark contribute their history past the
 #' mark (for the first) or past their inherited head (for later ones);
 #' the live history contributes what follows its inherited head. With
 #' no rewrite since the mark this is the tail of the live history.
@@ -217,13 +222,21 @@ journal_turn_slice <- function(session, mark, pre_len) {
     journal_entries_since(session, mark)
 }
 
-#' Read a journal directory: the live envelope and the segments in
-#' order. Missing pieces are NULL / empty.
+#' Read a journal directory: the live envelope and the committed
+#' segments in order. A segment the live snapshot has not acknowledged
+#' (a rewrite that failed or was cut off between its two writes) is
+#' left out. Missing pieces are NULL / empty.
 #' @noRd
 journal_load <- function(dir) {
     live_path <- file.path(dir, JOURNAL_LIVE)
     live <- if (file.exists(live_path)) .journal_read_json(live_path)
+    if (is.null(live)) {
+        committed <- 0L
+    } else {
+        committed <- as.integer(live$seq %||% 0L)
+    }
     seqs <- .journal_segment_seqs(dir)
+    seqs <- seqs[seqs <= committed]
     segments <- lapply(seqs, function(s) {
         .journal_read_json(.journal_segment_path(dir, s))
     })
@@ -251,10 +264,10 @@ journal_history <- function(dir) {
 # ---- State ----
 
 # The journal's state rides on the session as a small environment:
-# dir, seq (the last segment number on disk), inherited (head entries
-# of the live history already recorded). It is rebuilt whenever the
-# resolved directory changes, which is how /clear (a new sessionId)
-# moves to a new journal with fresh state.
+# dir, seq (the last segment the live snapshot acknowledges), inherited
+# (head entries of the live history already recorded). It is rebuilt
+# whenever the resolved directory changes, which is how /clear (a new
+# sessionId) moves to a new journal with fresh state.
 .journal_state <- function(session) {
     dir <- journal_dir(session)
     if (is.null(dir)) {
@@ -269,29 +282,36 @@ journal_history <- function(dir) {
     if (!dir.exists(dir)) {
         dir.create(dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     }
-    seqs <- .journal_segment_seqs(dir)
-    if (length(seqs)) {
-        state$seq <- max(seqs)
-    } else {
-        state$seq <- 0L
-    }
+    # The committed count comes from the live snapshot, never from the
+    # files on disk: a segment past it is a rewrite that never finished.
+    live_path <- file.path(dir, JOURNAL_LIVE)
+    previous <- if (file.exists(live_path)) .journal_read_json(live_path)
+    state$seq <- as.integer(previous$seq %||% 0L)
     state$inherited <- 0L
     # A live snapshot already here belongs to an earlier process or an
     # earlier life of a resumed session. Keep it as a segment rather
     # than overwrite it; the history this session starts with is then
     # the rollover's `after`, so it is recorded there and inherited.
-    live_path <- file.path(dir, JOURNAL_LIVE)
-    if (file.exists(live_path)) {
-        previous <- .journal_read_json(live_path)
-        current <- session$history %||% list()
+    if (!is.null(previous)) {
         state$inherited <- as.integer(previous$inherited %||% 0L)
-        .journal_write_segment(state, previous$history %||% list(), current,
-                               "rollover")
-        .journal_write_live(state, current, inherited = length(current))
-        state$inherited <- length(current)
+        .journal_commit(state, previous$history %||% list(),
+                        session$history %||% list(), "rollover")
     }
     session$.journal <- state
     state
+}
+
+# The two-write commit described at the top of the file. The state
+# advances only once the live snapshot acknowledging the segment is on
+# disk; until then the segment is a stray the next rewrite overwrites.
+.journal_commit <- function(state, before, after, reason, summary = NULL) {
+    seq <- state$seq + 1L
+    path <- .journal_write_segment(state, seq, before, after, reason,
+                                   summary = summary)
+    .journal_write_live(state, after, inherited = length(after), seq = seq)
+    state$seq <- seq
+    state$inherited <- length(after)
+    path
 }
 
 # ---- Files ----
@@ -308,14 +328,10 @@ journal_history <- function(dir) {
     sort(as.integer(sub("^segment-([0-9]{4})[.]json$", "\\1", files)))
 }
 
-# Write a segment and advance seq as soon as the file is in place, so a
-# failure later in the same rewrite cannot let the next one reuse the
-# number.
-.journal_write_segment <- function(state, before, after, reason,
+.journal_write_segment <- function(state, seq, before, after, reason,
                                    summary = NULL) {
-    seq <- state$seq + 1L
     envelope <- list(
-                     seq = seq,
+                     seq = as.integer(seq),
                      reason = reason,
                      timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
                      inherited = as.integer(state$inherited),
@@ -324,16 +340,14 @@ journal_history <- function(dir) {
                      history = before,
                      after = after
     )
-    path <- .journal_segment_path(state$dir, seq)
-    .journal_write_json(envelope, path)
-    state$seq <- seq
-    path
+    .journal_write_json(envelope, .journal_segment_path(state$dir, seq))
 }
 
-.journal_write_live <- function(state, history, inherited = state$inherited) {
+.journal_write_live <- function(state, history, inherited = state$inherited,
+                                seq = state$seq) {
     envelope <- list(
                      inherited = as.integer(inherited),
-                     seq = as.integer(state$seq),
+                     seq = as.integer(seq),
                      updated = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
                      history = history
     )

@@ -352,3 +352,136 @@ run_turn_journal_test <- function() {
     expect_identical(corteza:::journal_turn_slice(session, mark, 0L), whole)
 }
 run_turn_journal_test()
+
+# Commit protocol: a segment counts only once the live snapshot that
+# follows it acknowledges it, so a failure at either write leaves the
+# record and the turn slice exactly as they were --------
+
+run_commit_boundary_tests <- function() {
+    # chmod means nothing to root, and Windows has no mode.
+    if (.Platform$OS.type == "windows" ||
+        identical(Sys.info()[["effective_user"]], "root")) {
+        return(invisible())
+    }
+    h <- c(list(user_msg("one")), anthropic_round(1), anthropic_round(2))
+    after <- c(list(summary_msg("s")), anthropic_round(2))
+
+    # The segment write fails: nothing on disk or in state changes, and
+    # the retry is clean.
+    dir <- journal_tmp()
+    s <- journal_session(dir, h)
+    corteza:::journal_snapshot(s)
+    mark <- corteza:::journal_mark(s)
+    Sys.chmod(dir, mode = "0500")
+    on.exit(Sys.chmod(dir, mode = "0700"), add = TRUE)
+    expect_error(corteza:::journal_rewrite(s, h, after, "threshold"), "journal")
+    Sys.chmod(dir, mode = "0700")
+    expect_equal(corteza:::journal_mark(s)$seq, 0L)
+    expect_equal(length(list.files(dir, pattern = "^segment-")), 0L)
+    expect_identical(corteza:::journal_history(dir), h)
+    expect_identical(corteza:::journal_turn_slice(s, mark, 5L), list())
+    expect_false(corteza:::journal_rewritten_since(s, mark))
+    corteza:::journal_rewrite(s, h, after, "threshold")
+    expect_equal(corteza:::journal_mark(s)$seq, 1L)
+    expect_equal(length(corteza:::journal_load(dir)$segments), 1L)
+    expect_identical(corteza:::journal_history(dir), h)
+
+    # The live write fails after the segment is on disk: the segment is
+    # not part of the record, the state has not moved, and the retry
+    # overwrites it instead of adding a duplicate.
+    dir <- journal_tmp()
+    s <- journal_session(dir, h)
+    corteza:::journal_snapshot(s)
+    mark <- corteza:::journal_mark(s)
+    blocker <- file.path(dir, "live.json.tmp")
+    dir.create(blocker)
+    expect_error(corteza:::journal_rewrite(s, h, after, "threshold"), "journal")
+    expect_true(file.exists(file.path(dir, "segment-0001.json")))
+    expect_equal(corteza:::journal_mark(s)$seq, 0L)
+    expect_equal(length(corteza:::journal_load(dir)$segments), 0L)
+    expect_identical(corteza:::journal_history(dir), h)
+    expect_identical(corteza:::journal_turn_slice(s, mark, 5L), list())
+    expect_false(corteza:::journal_rewritten_since(s, mark))
+    expect_false(corteza:::journal_snapshot(s))
+    unlink(blocker, recursive = TRUE)
+    corteza:::journal_rewrite(s, h, after, "threshold")
+    s$history <- after # as the caller does once the rewrite is recorded
+    expect_equal(corteza:::journal_mark(s)$seq, 1L)
+    expect_equal(length(corteza:::journal_load(dir)$segments), 1L)
+    expect_identical(corteza:::journal_history(dir), h)
+    expect_identical(corteza:::journal_turn_slice(s, mark, 5L), list())
+    expect_true(corteza:::journal_rewritten_since(s, mark))
+
+    # A restart after such a failure: the committed count comes from the
+    # live snapshot, the stray segment is ignored and then overwritten by
+    # the rollover, and the record is intact throughout.
+    dir <- journal_tmp()
+    s <- journal_session(dir, h)
+    corteza:::journal_snapshot(s)
+    corteza:::journal_rewrite(s, h, after, "threshold")
+    s$history <- c(after, anthropic_round(3))
+    corteza:::journal_snapshot(s)
+    blocker <- file.path(dir, "live.json.tmp")
+    dir.create(blocker)
+    after2 <- c(list(summary_msg("t")), anthropic_round(3))
+    expect_error(corteza:::journal_rewrite(s, s$history, after2, "checkpoint"),
+                 "journal")
+    unlink(blocker, recursive = TRUE)
+    expect_true(file.exists(file.path(dir, "segment-0002.json")))
+    expect_equal(length(corteza:::journal_load(dir)$segments), 1L)
+    expect_identical(corteza:::journal_history(dir), c(h, anthropic_round(3)))
+    s2 <- journal_session(dir, s$history)
+    expect_equal(corteza:::journal_mark(s2)$seq, 2L)
+    j <- corteza:::journal_load(dir)
+    expect_equal(length(j$segments), 2L)
+    expect_equal(j$segments[[2]]$reason, "rollover")
+    expect_identical(corteza:::journal_history(dir), c(h, anthropic_round(3)))
+}
+run_commit_boundary_tests()
+
+# Room journals are owned by the bot as well as the room --------
+
+cfg_a <- list(user_id = "@cornelius:cornball.ai")
+cfg_b <- list(user_id = "@padre:cornball.ai")
+room <- "!abc:cornball.ai"
+expect_false(identical(corteza:::bot_journal_dir(cfg_a, room),
+                       corteza:::bot_journal_dir(cfg_b, room)))
+expect_identical(corteza:::bot_journal_dir(cfg_a, room),
+                 corteza:::bot_journal_dir(cfg_a, room))
+expect_false(identical(corteza:::bot_journal_dir(cfg_a, room),
+                       corteza:::bot_journal_dir(cfg_a, paste0(room, "|thread"))))
+expect_true(grepl("[.]journal$", corteza:::bot_journal_dir(cfg_a, room)))
+
+# A job worker gets a journal beside its checkpoint --------
+
+run_job_worker_journal_test <- function() {
+    old_wd <- getwd()
+    on.exit(setwd(old_wd), add = TRUE)
+    state <- corteza:::.subagent_state
+    old_session <- state$session
+    on.exit(assign("session", old_session, envir = state), add = TRUE)
+    cwd <- tempfile("corteza_worker_cwd_")
+    dir.create(cwd, recursive = TRUE)
+    state_dir <- tempfile("corteza_worker_state_")
+    spec <- list(
+        init_fn = function(spec) {
+            corteza::subagent_turn_init(provider = "anthropic",
+                                        model = "claude-sonnet-4-6",
+                                        tools_filter = "read_file",
+                                        system = "worker")
+        },
+        identity = list(owner = "@bot:x", key = "!r:x", workspace = cwd,
+                        role = "doer")
+    )
+    restored <- corteza:::.job_worker_child_init(cwd, spec, state_dir)
+    expect_false(isTRUE(restored$restored))
+    expect_equal(corteza:::journal_dir(state$session),
+                 file.path(state_dir, "journal"))
+    expect_true(dir.exists(file.path(state_dir, "journal")))
+    state$session$history <- list(user_msg("job one"))
+    expect_true(corteza:::journal_snapshot(state$session))
+    expect_identical(
+        corteza:::journal_load(file.path(state_dir, "journal"))$live$history,
+        list(user_msg("job one")))
+}
+run_job_worker_journal_test()
