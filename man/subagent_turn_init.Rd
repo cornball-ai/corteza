@@ -16,7 +16,8 @@ subagent_turn_init(
   channel = "console",
   reasoning_effort = NULL,
   thinking_budget_tokens = NULL,
-  thinking = NULL
+  thinking = NULL,
+  context_edit = NULL
 )
 }
 \arguments{
@@ -61,6 +62,8 @@ the looser console one.}
 \item{thinking}{Character or NULL. The Anthropic `thinking.type` the
 child's requests carry, such as `"adaptive"` or `"between_tools"`.
 NULL (default) sends no `thinking` field.}
+
+\item{context_edit}{Context editing override, as in [new_session()].}
 
 \item{reasoning_effort,thinking_budget_tokens}{Reasoning settings for
 the child's session, as in [new_session()]. NULL (default) leaves

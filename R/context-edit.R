@@ -11,7 +11,8 @@
     }
     if (!is.null(override)) {
         if (!is.list(override)) {
-            stop("context_edit override must be a list or logical", call. = FALSE)
+            stop("context_edit override must be a list or logical",
+                 call. = FALSE)
         }
         value <- utils::modifyList(value, override)
     }
@@ -29,18 +30,19 @@
 .context_edit_supported <- function(session) {
     provider <- session$context_edit_provider %||% session$provider
     provider %in% c("anthropic", "anthropic_claude", "openai",
-                            "openai_compatible", "moonshot", "ollama") &&
-        !identical(.history_shape(session$history), "responses")
+                    "openai_compatible", "moonshot", "ollama") &&
+    !identical(.history_shape(session$history), "responses")
 }
 
 .context_edit_enabled <- function(session) {
     is.environment(session) &&
-        isTRUE(.context_edit_config(session$config, session$context_edit)$enabled) &&
-        .context_edit_supported(session) && journal_enabled(session)
+    isTRUE(.context_edit_config(session$config, session$context_edit)$enabled) &&
+    .context_edit_supported(session) && journal_enabled(session)
 }
 
 .context_edit_state <- function(session) {
-    key <- list(session$sessionId, session$context_edit_provider %||% session$provider,
+    key <- list(session$sessionId,
+                session$context_edit_provider %||% session$provider,
                 journal_dir(session))
     state <- session$.context_edit
     if (is.null(state) || !identical(state$key, key)) {
@@ -55,9 +57,13 @@
         state$calls <- list()
         state$messages <- list()
         notes <- Filter(function(m) .context_edit_plain(m) &&
-            startsWith(.compact_entry_body(m), "[context note]\n"),
-            session$history %||% list())
-        state$note <- if (length(notes)) tail(notes, 1L)[[1L]] else NULL
+                        startsWith(.compact_entry_body(m), "[context note]\n"),
+                        session$history %||% list())
+        if (length(notes)) {
+            state$note <- tail(notes, 1L)[[1L]]
+        } else {
+            state$note <- NULL
+        }
         state$pressure_open <- FALSE
         state$notice_pending <- FALSE
         session$.context_edit <- state
@@ -83,25 +89,29 @@
     which_assistant <- which(vapply(history, function(m) {
         identical(m$role, "assistant")
     }, logical(1)))
-    if (length(which_assistant)) tail(which_assistant, 1L) else 1L
+    if (length(which_assistant)) {
+        tail(which_assistant, 1L)
+    } else {
+        1L
+    }
 }
 
 # A mixed human/tool-result message is protected as a whole. Never infer that
 # human text is synthetic merely because it starts with a harness marker.
 .context_edit_human <- function(message) {
     identical(message$role, "user") &&
-        !(is.list(message$content) && length(message$content) > 0L &&
-          all(vapply(message$content, function(b) {
-              identical(b$type, "tool_result")
-          }, logical(1))))
+    !(is.list(message$content) && length(message$content) > 0L &&
+        all(vapply(message$content, function(b) {
+        identical(b$type, "tool_result")
+    }, logical(1))))
 }
 
 .context_edit_plain <- function(message) {
     identical(message$role, "assistant") && !length(message$tool_calls) &&
-        (is.character(message$content) ||
-         (is.list(message$content) && length(message$content) > 0L &&
-          all(vapply(message$content, function(b) identical(b$type, "text"),
-                     logical(1)))))
+    (is.character(message$content) ||
+        (is.list(message$content) && length(message$content) > 0L &&
+            all(vapply(message$content, function(b) identical(b$type, "text"),
+                       logical(1)))))
 }
 
 .context_edit_targets <- function(session, history, boundary) {
@@ -110,12 +120,15 @@
     for (call in llm.api::history_tool_calls(history)) {
         if (!isTRUE(call$completed) || call$call_message_index >= boundary ||
             call$result_message_index >= boundary ||
-            .context_edit_human(history[[call$result_message_index]])) next
+            .context_edit_human(history[[call$result_message_index]])) {
+            next
+        }
         id <- .context_edit_call_id(state, call)
         targets[[id]] <- list(kind = "call", call = call)
     }
     for (id in names(state$messages)) {
-        found <- which(vapply(history, identical, logical(1), state$messages[[id]]))
+        found <- which(vapply(history, identical, logical(1),
+                              state$messages[[id]]))
         if (length(found) == 1L && found < boundary) {
             targets[[id]] <- list(kind = "message", index = found)
         }
@@ -144,7 +157,9 @@
     state <- .context_edit_state(session)
     for (call in llm.api::history_tool_calls(history)) {
         if (!isTRUE(call$completed) || call$result_message_index >= boundary ||
-            .context_edit_human(history[[call$result_message_index]])) next
+            .context_edit_human(history[[call$result_message_index]])) {
+            next
+        }
         id <- .context_edit_call_id(state, call)
         if (!startsWith(call$result, paste0("[", id, "]\n"))) {
             # Keep non-text output blocks intact when adding a label.
@@ -168,7 +183,9 @@
         m <- history[[i]]
         if (!.context_edit_plain(m) || identical(m, state$note) ||
             startsWith(.compact_entry_body(m), "[context note]\n") ||
-            any(vapply(state$messages, identical, logical(1), m))) next
+            any(vapply(state$messages, identical, logical(1), m))) {
+            next
+        }
         id <- .context_edit_id(state, "m")
         if (is.character(m$content)) {
             m$content <- paste0("[", id, "]\n", m$content)
@@ -184,12 +201,14 @@
 .context_edit_prepare <- function(session) {
     session$pending_context_edits <- list()
     session$context_edit_events <- list()
-    if (!.context_edit_enabled(session)) return(invisible(NULL))
+    if (!.context_edit_enabled(session)) {
+        return(invisible(NULL))
+    }
     if (is.null(journal_dir(session))) {
         # Embedded new_session()/turn() callers may have no transcript ID.
         # Give them a unique durable journal without touching the transcript.
         journal_install(session, dir = tempfile("context-",
-            tmpdir = sessions_dir(DEFAULT_AGENT_ID), fileext = ".journal"))
+                tmpdir = sessions_dir(DEFAULT_AGENT_ID), fileext = ".journal"))
     }
     state <- .context_edit_state(session)
     state$notice_batch <- NULL
@@ -205,41 +224,50 @@
 .context_edit_schema <- function() {
     list(name = "edit_context",
          description = paste("Manage completed conversation entries by visible ID.",
-             "drop removes entries (tool calls and results together).",
-             "replace summarizes entries, keeping the first ID and its tool call if any.",
-             "note replaces the working note with concise task facts, decisions, and next actions.",
-             "Instructions, human messages, and the current tool batch are protected.",
-             "Edits are queued and validated after the complete tool batch."),
+                             "drop removes entries (tool calls and results together).",
+                             "replace summarizes entries, keeping the first ID and its tool call if any.",
+                             "note replaces the working note with concise task facts, decisions, and next actions.",
+                             "Instructions, human messages, and the current tool batch are protected.",
+                             "Edits are queued and validated after the complete tool batch."),
          input_schema = list(type = "object", properties = list(
-             op = list(type = "string", enum = c("drop", "replace", "note")),
-             ids = list(type = "array", items = list(type = "string")),
-             text = list(type = "string")), required = "op",
-             additionalProperties = FALSE))
+                op = list(type = "string", enum = c("drop", "replace", "note")),
+                ids = list(type = "array", items = list(type = "string")),
+                text = list(type = "string")), required = "op",
+                             additionalProperties = FALSE))
 }
 
 .context_edit_tools <- function(tools, session) {
     tools <- Filter(function(t) !identical(t$name, "edit_context"), tools)
-    if (.context_edit_enabled(session)) c(tools, list(.context_edit_schema())) else tools
+    if (.context_edit_enabled(session)) {
+        c(tools, list(.context_edit_schema()))
+    } else {
+        tools
+    }
 }
 
 .context_edit_system <- function(system, session) {
-    if (!.context_edit_enabled(session)) return(system)
+    if (!.context_edit_enabled(session)) {
+        return(system)
+    }
     paste(system, paste(
-        "\n# Conversation context management",
-        "Tool outputs have [rN] IDs; earlier assistant text has [mN] IDs.",
-        "Use edit_context to drop spent material or replace it with concise task-specific summaries.",
-        "Use note for task facts, decisions, and next actions; it stays near the recent conversation.",
-        "Keep useful evidence and unresolved constraints. Never target instructions or human messages.",
-        "The current assistant/tool batch is unavailable until a later batch.",
-        if (.context_edit_config(session$config, session$context_edit)$cadence == "pressure") {
-            "Edit only after a context-pressure notice. Threshold compaction remains the fallback."
-        } else "Edits are allowed at each checkpoint.", sep = "\n"), sep = "\n")
+                        "\n# Conversation context management",
+                        "Tool outputs have [rN] IDs; earlier assistant text has [mN] IDs.",
+                        "Use edit_context to drop spent material or replace it with concise task-specific summaries.",
+                        "Use note for task facts, decisions, and next actions; it stays near the recent conversation.",
+                        "Keep useful evidence and unresolved constraints. Never target instructions or human messages.",
+                        "The current assistant/tool batch is unavailable until a later batch.",
+            if (.context_edit_config(session$config, session$context_edit)$cadence == "pressure") {
+                "Edit only after a context-pressure notice. Threshold compaction remains the fallback."
+            } else "Edits are allowed at each checkpoint.", sep = "\n"), sep = "\n")
 }
 
 .context_edit_pct <- function(session, extra = "") {
     limit <- session$context_window %||% session$config$context_window %||%
-        context_limit_for_model(.resolve_model(session), provider = session$provider)
-    if (is.null(limit) || !is.finite(limit) || limit <= 0) return(0)
+    context_limit_for_model(.resolve_model(session),
+                            provider = session$provider)
+    if (is.null(limit) || !is.finite(limit) || limit <= 0) {
+        return(0)
+    }
     used <- estimate_live_context_tokens(list(history = session$history),
         system_prompt = session$context_edit_system %||% session$system,
         tools = session$context_edit_tools %||% list())
@@ -247,12 +275,14 @@
 }
 
 .context_edit_result <- function(session, text, name, context) {
-    if (!.context_edit_enabled(session)) return(text)
+    if (!.context_edit_enabled(session)) {
+        return(text)
+    }
     state <- .context_edit_state(session)
     calls <- llm.api::history_tool_calls(session$history)
     pending <- Filter(function(c) !isTRUE(c$completed) &&
-        c$call_message_index == .context_edit_boundary(session$history) &&
-        identical(unsanitize_tool_name(c$name), name), calls)
+                      c$call_message_index == .context_edit_boundary(session$history) &&
+                      identical(unsanitize_tool_name(c$name), name), calls)
     if (length(pending)) {
         id <- .context_edit_call_id(state, pending[[1L]])
         text <- paste0("[", id, "]\n", text)
@@ -262,7 +292,7 @@
     if (pct >= (session$config$context_warn_pct %||% 75) &&
         !identical(state$notice_batch, batch)) {
         text <- paste0(text, sprintf(
-            "\n[context pressure: %.0f%%; use edit_context on older [rN]/[mN] entries before threshold compaction]", pct))
+                                     "\n[context pressure: %.0f%%; use edit_context on older [rN]/[mN] entries before threshold compaction]", pct))
         state$notice_pending <- TRUE
         state$notice_batch <- batch
     }
@@ -270,37 +300,52 @@
 }
 
 .context_edit_queue <- function(session, args) {
-    if (!.context_edit_enabled(session)) stop("Context editing is disabled", call. = FALSE)
+    if (!.context_edit_enabled(session)) {
+        stop("Context editing is disabled", call. = FALSE)
+    }
     if (isTRUE(session$dry_run) || isTRUE(session$config$dry_run)) {
         return("[dry run: context edit not queued]")
     }
     state <- .context_edit_state(session)
     cfg <- .context_edit_config(session$config, session$context_edit)
     if (cfg$cadence == "pressure" && !isTRUE(state$pressure_open)) {
-        stop("Context edits require a context-pressure notice first", call. = FALSE)
+        stop("Context edits require a context-pressure notice first",
+             call. = FALSE)
     }
     op <- args$op
-    if (!is.character(op) || length(op) != 1L || !op %in% c("drop", "replace", "note")) {
+    if (!is.character(op) || length(op) != 1L ||
+        !op %in% c("drop", "replace", "note")) {
         stop("op must be drop, replace, or note", call. = FALSE)
     }
     ids <- unlist(args$ids, use.names = FALSE)
     if (op != "note" && (!is.character(ids) || !length(ids) ||
-        anyNA(ids) || anyDuplicated(ids))) stop("Supply distinct editable ids", call. = FALSE)
-    if (op == "note" && length(ids)) stop("note takes text, not ids", call. = FALSE)
+            anyNA(ids) || anyDuplicated(ids))) {
+        stop("Supply distinct editable ids", call. = FALSE)
+    }
+    if (op == "note" && length(ids)) {
+        stop("note takes text, not ids", call. = FALSE)
+    }
     if (op != "drop" && (!is.character(args$text) || length(args$text) != 1L ||
-        is.na(args$text) || !nzchar(trimws(args$text)))) stop("Supply non-empty text", call. = FALSE)
+            is.na(args$text) || !nzchar(trimws(args$text)))) {
+        stop("Supply non-empty text", call. = FALSE)
+    }
     targets <- .context_edit_targets(session, session$history,
-                                      .context_edit_boundary(session$history))
+                                     .context_edit_boundary(session$history))
     if (length(ids) && !all(ids %in% names(targets))) {
         stop("Unknown, stale, or protected context id", call. = FALSE)
     }
     # Queue immutable targets, not just IDs, so compaction cannot retarget an edit.
-    requests <- Filter(function(c) !isTRUE(c$completed) && c$name == "edit_context" &&
-        c$call_message_index == .context_edit_boundary(session$history),
-        llm.api::history_tool_calls(session$history))
+    requests <- Filter(function(c) !isTRUE(c$completed) &&
+                       c$name == "edit_context" &&
+                       c$call_message_index == .context_edit_boundary(session$history),
+                       llm.api::history_tool_calls(session$history))
     session$pending_context_edits <- c(session$pending_context_edits,
-        list(list(op = op, ids = ids, text = args$text, targets = targets[ids],
-                  request_id = if (length(requests)) requests[[1L]]$id else NULL)))
+                                       list(list(op = op, ids = ids, text = args$text, targets = targets[ids],
+                request_id = if (length(requests)) {
+                    requests[[1L]]$id
+                } else {
+                    NULL
+                })))
     "Context edit queued; the checkpoint will validate and apply it."
 }
 
@@ -308,7 +353,9 @@
     boundary <- .context_edit_boundary(history)
     targets <- .context_edit_targets(session, history, boundary)
     ids <- unlist(lapply(pending, `[[`, "ids"), use.names = FALSE)
-    if (anyDuplicated(ids)) stop("Overlapping context edits in one batch", call. = FALSE)
+    if (anyDuplicated(ids)) {
+        stop("Overlapping context edits in one batch", call. = FALSE)
+    }
     for (edit in pending) {
         if (!all(edit$ids %in% names(targets)) ||
             !identical(targets[edit$ids], edit$targets)) {
@@ -322,7 +369,8 @@
     messages <- state$messages
     for (edit in pending) {
         if (edit$op == "note") {
-            note <- list(role = "assistant", content = paste0("[context note]\n", edit$text))
+            note <- list(role = "assistant",
+                         content = paste0("[context note]\n", edit$text))
             next
         }
         remove <- edit$ids
@@ -351,28 +399,46 @@
     out <- list()
     for (i in seq_along(history)) {
         # Relocate only the harness-owned note, keeping it next to the tail.
-        if (i == boundary && !is.null(note)) out <- c(out, list(note))
+        if (i == boundary && !is.null(note)) {
+            out <- c(out, list(note))
+        }
         m <- history[[i]]
-        if (i < boundary && !is.null(state$note) && identical(m, state$note)) next
-        if (i %in% drop_messages) next
-        if (i < boundary && identical(m$role, "tool") && m$tool_call_id %in% drop_calls) next
+        if (i < boundary && !is.null(state$note) && identical(m, state$note)) {
+            next
+        }
+        if (i %in% drop_messages) {
+            next
+        }
+        if (i < boundary && identical(m$role, "tool") &&
+            m$tool_call_id %in% drop_calls) {
+            next
+        }
         if (i < boundary && identical(m$role, "assistant")) {
             if (length(m$tool_calls)) {
                 m$tool_calls <- Filter(function(c) !c$id %in% drop_calls, m$tool_calls)
-                if (!length(m$tool_calls)) m$tool_calls <- NULL
+                if (!length(m$tool_calls)) {
+                    m$tool_calls <- NULL
+                }
             }
             if (is.list(m$content)) {
                 m$content <- Filter(function(b) !(identical(b$type, "tool_use") &&
-                    b$id %in% drop_calls), m$content)
+                                    b$id %in% drop_calls), m$content)
                 substantive <- vapply(m$content, function(b) {
                     !b$type %in% c("thinking", "redacted_thinking")
                 }, logical(1))
-                if (!any(substantive) && !length(m$tool_calls)) next
-            } else if (!nzchar(m$content %||% "") && !length(m$tool_calls)) next
+                if (!any(substantive) && !length(m$tool_calls)) {
+                    next
+                }
+            } else if (!nzchar(m$content %||% "") && !length(m$tool_calls)) {
+                next
+            }
         }
-        if (i < boundary && identical(m$role, "user") && !.context_edit_human(m)) {
+        if (i < boundary && identical(m$role, "user") &&
+            !.context_edit_human(m)) {
             m$content <- Filter(function(b) !b$tool_use_id %in% drop_calls, m$content)
-            if (!length(m$content)) next
+            if (!length(m$content)) {
+                next
+            }
         }
         out <- c(out, list(m))
     }
@@ -382,9 +448,11 @@
 .context_edit_receipt <- function(session, history, text, request_ids) {
     boundary <- .context_edit_boundary(history)
     for (call in llm.api::history_tool_calls(history)) {
-        if (call$call_message_index == boundary && call$id %in% request_ids && call$completed) {
+        if (call$call_message_index == boundary && call$id %in% request_ids &&
+            call$completed) {
             id <- .context_edit_call_id(.context_edit_state(session), call)
-            history <- .context_edit_result_content(history, call, paste0("[", id, "]\n", text))
+            history <- .context_edit_result_content(history, call,
+                paste0("[", id, "]\n", text))
         }
     }
     history
@@ -393,7 +461,9 @@
 .context_edit_checkpoint <- function(session) {
     pending <- session$pending_context_edits %||% list()
     session$pending_context_edits <- list()
-    if (!.context_edit_enabled(session)) return(FALSE)
+    if (!.context_edit_enabled(session)) {
+        return(FALSE)
+    }
     state <- .context_edit_state(session)
     previous_messages <- state$messages
     committed <- FALSE
@@ -405,10 +475,11 @@
     after <- before
     rewritten <- NULL
     rejected <- NULL
-    request_ids <- unlist(lapply(pending, `[[`, "request_id"), use.names = FALSE)
+    request_ids <- unlist(lapply(pending, `[[`, "request_id"),
+                          use.names = FALSE)
     if (length(pending)) {
         rewritten <- tryCatch(.context_edit_rewrite(session, before, pending),
-            error = function(e) { rejected <<- conditionMessage(e); NULL })
+                              error = function(e) { rejected <<- conditionMessage(e) ; NULL })
         if (is.null(rewritten)) {
             after <- .context_edit_receipt(session, before,
                 paste("Context edit rejected:", rejected), request_ids)
@@ -417,27 +488,35 @@
                 "Context edit applied.", request_ids)
         }
     }
-    if (!is.null(rewritten)) state$messages <- rewritten$messages
+    if (!is.null(rewritten)) {
+        state$messages <- rewritten$messages
+    }
     after <- .context_edit_index(session, after, .context_edit_boundary(after))
-    if (identical(before, after)) return(FALSE)
+    if (identical(before, after)) {
+        return(FALSE)
+    }
     ops <- lapply(pending, function(e) e[c("op", "ids", "text")])
     # An I/O error propagates from the checkpoint. The old history stays live.
     if (is.null(journal_dir(session))) {
         stop("Context editing requires a session journal", call. = FALSE)
     }
     tryCatch(journal_rewrite(session, before, after,
-        if (!is.null(rewritten)) "context_edit" else "context_index", edits = ops),
-        error = function(e) {
-            if (length(pending)) {
-                .context_edit_publish(session, list(ops = ops,
+            if (!is.null(rewritten)) {
+                "context_edit"
+            } else {
+                "context_index"
+            }, edits = ops),
+             error = function(e) {
+        if (length(pending)) {
+            .context_edit_publish(session, list(ops = ops,
                     ids = unlist(lapply(ops, `[[`, "ids"), use.names = FALSE),
                     tokens_before = estimate_history_tokens(before),
                     tokens_after = estimate_history_tokens(before), applied = FALSE,
                     error = conditionMessage(e),
                     cadence = .context_edit_config(session$config, session$context_edit)$cadence))
-            }
-            stop(e)
-        })
+        }
+        stop(e)
+    })
     session$history <- after
     committed <- TRUE
     if (!is.null(rewritten)) {
@@ -446,10 +525,10 @@
     }
     if (length(pending)) {
         event <- list(ops = ops, ids = unlist(lapply(ops, `[[`, "ids"), use.names = FALSE),
-            tokens_before = estimate_live_context_tokens(list(history = before)),
-            tokens_after = estimate_live_context_tokens(list(history = after)),
-            applied = !is.null(rewritten), error = rejected,
-            cadence = .context_edit_config(session$config, session$context_edit)$cadence)
+                      tokens_before = estimate_live_context_tokens(list(history = before)),
+                      tokens_after = estimate_live_context_tokens(list(history = after)),
+                      applied = !is.null(rewritten), error = rejected,
+                      cadence = .context_edit_config(session$config, session$context_edit)$cadence)
         .context_edit_publish(session, event)
     }
     TRUE
@@ -460,22 +539,29 @@
     session$context_edit_events <- c(session$context_edit_events, list(event))
     if (is.function(session$on_context_edit)) {
         tryCatch(session$on_context_edit(event), error = function(e) {
-            log_event("context_edit_notification_failed", error = conditionMessage(e), level = "warn")
+            log_event("context_edit_notification_failed",
+                      error = conditionMessage(e), level = "warn")
         })
     }
     invisible(NULL)
 }
 
 .context_edit_event_text <- function(event) {
-    if (!isTRUE(event$applied)) return(paste("Context edit rejected:", event$error))
+    if (!isTRUE(event$applied)) {
+        return(paste("Context edit rejected:", event$error))
+    }
     sprintf("Context edited: %s; history %.0f -> %.0f tokens.",
-        paste(vapply(event$ops, `[[`, character(1), "op"), collapse = ", "),
-        event$tokens_before, event$tokens_after)
+            paste(vapply(event$ops, `[[`, character(1), "op"), collapse = ", "),
+            event$tokens_before, event$tokens_after)
 }
 
 .context_edit_status <- function(session) {
     cfg <- .context_edit_config(session$config, session$context_edit)
-    status <- if (cfg$enabled) "on" else "off"
+    if (cfg$enabled) {
+        status <- "on"
+    } else {
+        status <- "off"
+    }
     if (cfg$enabled && !.context_edit_supported(session)) {
         status <- "unavailable for this provider history shape"
     } else if (cfg$enabled && !journal_enabled(session)) {
@@ -500,6 +586,8 @@
 
 .context_edit_parse_command <- function(body) {
     command <- tolower(sub("^/+", "", bot_command_text(body)))
-    if (!grepl("^context-edit($|[[:space:]])", command)) return(NULL)
+    if (!grepl("^context-edit($|[[:space:]])", command)) {
+        return(NULL)
+    }
     trimws(sub("^context-edit", "", command))
 }

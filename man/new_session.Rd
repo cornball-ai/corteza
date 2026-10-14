@@ -20,7 +20,8 @@ new_session(
   reasoning_effort = NULL,
   thinking_budget_tokens = NULL,
   cache = NULL,
-  compaction_prompt = NULL
+  compaction_prompt = NULL,
+  context_edit = NULL
 )
 }
 \arguments{
@@ -115,6 +116,10 @@ written.}
 instructions for summarizing older history during context compaction.
 NULL uses corteza's general coding-agent summary brief. The prompt
 affects only the summarizer; the main agent system prompt is unchanged.}
+
+\item{context_edit}{NULL to inherit configuration, a logical enable switch,
+or a list with `enabled` and `cadence` (`"pressure"` or `"always"`).
+Context editing requires the session journal and a supported history shape.}
 }
 \value{
 An environment holding the session state.
