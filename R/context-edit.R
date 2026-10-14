@@ -456,7 +456,7 @@
             # only the assistant note itself is replaced or relocated.
             if (!length(out)) {
                 out <- c(out, list(list(role = "user",
-                    content = "Context workspace: the following assistant note records task state.")))
+                                        content = "Context workspace: the following assistant note records task state.")))
             }
             out <- c(out, list(note))
         }
