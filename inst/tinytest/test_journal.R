@@ -60,6 +60,24 @@ bare$history <- c(list(user_msg("a")), anthropic_round(1))
 expect_identical(corteza:::journal_turn_slice(bare, NULL, 1L),
                  anthropic_round(1))
 
+# Archival can ignore label-only segments, but unreadable metadata must
+# conservatively count as a rewrite without making this predicate throw.
+local({
+    dir <- journal_tmp()
+    on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+    s <- journal_session(dir, list(user_msg("fixture prompt")))
+    mark <- corteza:::journal_mark(s)
+    path <- corteza:::journal_rewrite(s, s$history, s$history, "context_index")
+    rewritten <- function() tryCatch(
+        corteza:::journal_rewritten_since(s, mark, ignore = "context_index"),
+        error = function(e) conditionMessage(e))
+    expect_identical(rewritten(), FALSE)
+    unlink(path)
+    expect_identical(rewritten(), TRUE)
+    writeLines("{not json", path)
+    expect_identical(rewritten(), TRUE)
+})
+
 # Snapshot: both provider shapes round-trip exactly --------
 
 h <- c(list(user_msg("find foo")), anthropic_round(1), openai_round(2),

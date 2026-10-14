@@ -141,6 +141,9 @@ default_local_model <- function() {
 #'   instructions for summarizing older history during context compaction.
 #'   NULL uses corteza's general coding-agent summary brief. The prompt
 #'   affects only the summarizer; the main agent system prompt is unchanged.
+#' @param context_edit NULL to inherit configuration, a logical enable switch,
+#'   or a list with `enabled` and `cadence` (`"pressure"` or `"always"`).
+#'   Context editing requires the session journal and a supported history shape.
 #'
 #' @return An environment holding the session state.
 #' @examples
@@ -159,7 +162,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         web_search = NULL, base_url = NULL,
                         max_tokens = NULL, reasoning_effort = NULL,
                         thinking_budget_tokens = NULL, cache = NULL,
-                        compaction_prompt = NULL) {
+                        compaction_prompt = NULL, context_edit = NULL) {
     channel <- match.arg(channel)
     if (is.null(model_map)) {
         model_map <- getOption(
@@ -202,6 +205,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
              call. = FALSE)
     }
     s$compaction_prompt <- compaction_prompt
+    if (!is.null(context_edit)) .context_edit_config(override = context_edit)
+    s$context_edit <- context_edit
     # A supervised run_r worker is created lazily and belongs to this session.
     # Its R6 finalizer is a fallback; closing here also covers a session env
     # being collected before the process exits.
@@ -571,7 +576,16 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # this, so a silent batch is nudged and the streak reset no matter
         # which outcome its final call takes -- not only the executed path.
         nudge <- function(text) {
-            .maybe_append_narration_nudge(text, session, call$model_context)
+            text <- .maybe_append_narration_nudge(text, session, call$model_context)
+            .context_edit_result(session, text, internal_name, call$model_context)
+        }
+
+        # Session-local context operations never reach an external executor.
+        # They only queue intent; the checkpoint enforces the protected set.
+        if (identical(internal_name, "edit_context")) {
+            result <- tryCatch(.context_edit_queue(session, as.list(args), call$model_context),
+                error = function(e) paste("Context edit rejected:", conditionMessage(e)))
+            return(nudge(result))
         }
 
         # Task-tracker intercept. task_create / task_update mutate
@@ -1097,6 +1111,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     tools <- .task_filter_tools(tools, session$channel)
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
+    tools <- .context_edit_tools(tools, session)
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api
@@ -1115,6 +1130,10 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     system <- task_compose_system(system, session$tasks %||% list(),
                                   channel = session$channel,
                                   auto = !is.null(session$auto_run_id))
+    session$context_edit_base_system <- system
+    system <- .context_edit_system(system, session)
+    session$context_edit_system <- system
+    session$context_edit_tools <- tools
     tool_handler <- .make_tool_handler(session, tool_executor = tool_executor)
 
     # Compaction belongs to the shared agent lifecycle, not to a particular
@@ -1141,6 +1160,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         }
         isTRUE(do.call(maybe_compact_turn_session, args))
     }
+    .context_edit_prepare(session)
     compact_session_history(session$history %||% list(), reason = "preflight")
 
     # Pass a history_callback to llm.api so session$history mirrors
@@ -1185,7 +1205,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             attempt_checkpoint_turns <<- max(
                 attempt_checkpoint_turns,
                 as.integer(context$agent_turn %||% 0L))
-            if (compact_session_history(history, reason = "checkpoint")) {
+            compacted <- compact_session_history(history, reason = "checkpoint")
+            edited <- .context_edit_checkpoint(session)
+            if (compacted || edited) {
                 return(list(history = session$history))
             }
             NULL

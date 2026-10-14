@@ -1,3 +1,18 @@
+# corteza 0.7.1.64
+
+- Add experimental conversation context editing, off by default. The
+  `edit_context` tool drops or summarizes completed entries and maintains a
+  task note while protecting instructions, human messages, and the current
+  tool batch. Edits commit through the session journal at a checkpoint;
+  compact edit segments share immutable entries, and failed writes prevent
+  the live rewrite. `context_edit.enabled` / `cadence`, session overrides,
+  `/context-edit on|off|status`, and `--context-edit` control the feature.
+  Anthropic and OpenAI chat-completions shapes are supported; threshold
+  compaction remains the fallback. Subagents inherit the effective setting,
+  and CLI/room reports and structured events show each applied edit.
+- Journal provider-history bridges before fallback replaces the native
+  window, preserving completed tool traffic across provider changes.
+
 # corteza 0.7.1.63
 
 - **A session journal keeps the full history through every compaction.**

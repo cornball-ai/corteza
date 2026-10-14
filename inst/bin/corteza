@@ -44,6 +44,7 @@ parse_args <- function() {
     resume = FALSE,  # Resume latest session
     list = FALSE,
     dry_run = config$dry_run,  # Dry-run mode
+    context_edit = NULL,
     trace = isTRUE(config$trace) || isTRUE(getOption("corteza.trace", FALSE)),
     web_search = config$web_search  # Provider-native search (NULL = default on)
   )
@@ -78,6 +79,9 @@ parse_args <- function() {
     } else if (arg == "--dry-run") {
       opts$dry_run <- TRUE
       i <- i + 1
+    } else if (arg == "--context-edit") {
+      opts$context_edit <- TRUE
+      i <- i + 1
     } else if (arg == "--trace") {
       opts$trace <- TRUE
       i <- i + 1
@@ -102,6 +106,7 @@ Options:
   --tools         Tool filter: core, file, code, git, r, data, web, chat (default: all)
                   Example: --tools core or --tools file,git,code
   --dry-run       Preview tool calls without executing
+  --context-edit  Enable conversation context editing for this session
   --trace         Print structured tool-call events to stderr
   --web-search    Provider-native web search, on by default for hosted providers
   --no-web-search Disable provider-native web search (e.g. to rely on the Tavily tool)
@@ -113,6 +118,7 @@ Options:
 Commands (in chat):
   /quit, /exit   Exit corteza
   /context, /status  Session header + context meter (model, dir, tokens by component)
+  /context-edit on|off|status  Control conversation context editing
   /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
   /diff [ref]    Show git diff against HEAD or a ref
@@ -193,6 +199,7 @@ Commands:
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions for this directory
   /context       Show live context usage and loaded context files
+  /context-edit on|off|status  Control conversation context editing
   /spent, /cost  Approximate USD spent this run (main-agent turns)
   /model <name>  Switch model
   /provider <p>  Switch provider (anthropic, openai, moonshot, openai_codex, ollama, openai_compatible)
@@ -747,6 +754,7 @@ run_agent <- function(opts) {
     web_search = opts$web_search
   )
   turn_session$config <- config
+  turn_session$context_edit <- opts$context_edit
   turn_session$cwd <- cwd
   turn_session$sessionId <- session$sessionId
   turn_session$disk_session <- session

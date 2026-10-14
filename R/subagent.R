@@ -190,6 +190,7 @@ resolve_subagent_id <- function(input) {
 #' @param thinking Character or NULL. The Anthropic `thinking.type` the
 #'   child's requests carry, such as `"adaptive"` or `"between_tools"`.
 #'   NULL (default) sends no `thinking` field.
+#' @param context_edit Context editing override, as in [new_session()].
 #' @return Invisible TRUE.
 #' @keywords internal
 #' @export
@@ -199,7 +200,8 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                plan_mode = FALSE, web_search = NULL,
                                allowed_paths = NULL, channel = "console",
                                reasoning_effort = NULL,
-                               thinking_budget_tokens = NULL, thinking = NULL) {
+                               thinking_budget_tokens = NULL, thinking = NULL,
+                               context_edit = NULL) {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
@@ -221,7 +223,8 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                            plan_mode = isTRUE(plan_mode),
                            web_search = web_search,
                            reasoning_effort = reasoning_effort,
-                           thinking_budget_tokens = thinking_budget_tokens)
+                           thinking_budget_tokens = thinking_budget_tokens,
+                           context_edit = context_edit)
     session$thinking <- .check_thinking(thinking,
                                         "subagent_turn_init(thinking=)")
     session$is_subagent <- TRUE
@@ -512,7 +515,8 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
     # Not after a compaction inside the turn: it already compressed the
     # work, and pre_len no longer points into the live history.
     if (isTRUE(arc_cfg$enabled) && depth < cap &&
-        !journal_rewritten_since(.subagent_state$session, mark)) {
+        !journal_rewritten_since(.subagent_state$session, mark,
+                                  ignore = c("context_index", "context_edit_rejected"))) {
         slice <- journal_turn_slice(.subagent_state$session, mark, pre_len)
         if (length(slice) > 0L) {
             max_turns_hit <- isTRUE(grepl("Max turns",
@@ -868,7 +872,8 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
     tryCatch(
              session$run(
                          function(cwd, provider, model, tools_filter, system, max_turns,
-                                  depth, id, plan_mode, web_search, allowed_paths) {
+                                  depth, id, plan_mode, web_search, allowed_paths,
+                                  context_edit) {
         library(corteza)
         corteza::worker_init(cwd = cwd)
         corteza::subagent_turn_init(
@@ -880,7 +885,8 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                     depth = depth,
                                     plan_mode = plan_mode,
                                     web_search = web_search,
-                                    allowed_paths = allowed_paths
+                                    allowed_paths = allowed_paths,
+                                    context_edit = context_edit
         )
         corteza::subagent_turn_set_id(id)
     },
@@ -889,7 +895,9 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                               max_turns = 10L, depth = child_depth, id = id,
                               plan_mode = child_plan_mode,
                               web_search = child_web_search,
-                              allowed_paths = child_allowed_paths)
+                              allowed_paths = child_allowed_paths,
+                              context_edit = .context_edit_config(config,
+                                  parent_session$context_edit %||% parent_session$config$context_edit))
         ),
              error = function(e) {
         try(session$close(), silent = TRUE)

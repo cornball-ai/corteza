@@ -61,6 +61,9 @@ load_config <- function(cwd = getwd()) {
     for (name in names(project)) {
         config[[name]] <- project[[name]]
     }
+    if (is.list(global$context_edit) && is.list(project$context_edit)) {
+        config$context_edit <- utils::modifyList(global$context_edit, project$context_edit)
+    }
 
     # Apply defaults
     if (is.null(config$context_files)) {
@@ -170,6 +173,11 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$journal_enabled)) {
         config$journal_enabled <- TRUE
     }
+    config$context_edit <- tryCatch(.context_edit_config(config), error = function(e) {
+        warning(sprintf("Invalid context_edit configuration; disabling context editing: %s",
+                        conditionMessage(e)), call. = FALSE)
+        .context_edit_config()
+    })
 
     # Legacy memory tools (slash commands /remember /recall /flush)
     if (is.null(config$legacy_memory_tools_enabled)) {
