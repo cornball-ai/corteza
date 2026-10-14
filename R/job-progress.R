@@ -8,7 +8,9 @@ job_progress_observer <- function(id) {
     function(event) {
         record <- rooms_activity_record(event)
         if (is.null(record) || (is.null(record$tool) &&
-            !nzchar(record$narration %||% ""))) return(invisible(NULL))
+                !nzchar(record$narration %||% ""))) {
+            return(invisible(NULL))
+        }
         next_seq <- seq + 1L
         job_write_file(file.path(dir, sprintf("%08d.json", next_seq)), record)
         seq <<- next_seq
@@ -18,7 +20,9 @@ job_progress_observer <- function(id) {
 
 job_progress_read <- function(session, id) {
     j <- job_read(id)
-    if (!job_in_session(j, session)) return(list())
+    if (!job_in_session(j, session)) {
+        return(list())
+    }
     cursor <- session$.job_progress_cursor %||% list()
     last <- cursor[[id]] %||% 0L
     dir <- file.path(job_dir(id), "progress")
@@ -26,30 +30,41 @@ job_progress_read <- function(session, id) {
     repeat {
         path <- file.path(dir, sprintf("%08d.json", last + 1L))
         record <- tryCatch(job_read_file(path), error = function(e) NULL)
-        if (is.null(record)) break
+        if (is.null(record)) {
+            break
+        }
         records[[length(records) + 1L]] <- record
         last <- last + 1L
     }
-    if (!length(records)) return(list())
+    if (!length(records)) {
+        return(list())
+    }
     cursor[[id]] <- last
     session$.job_progress_cursor <- cursor
     list(list(type = "progress", job = j, records = records))
 }
 
 bot_job_progress <- function(chat, cfg, session, job, records = list(),
-                              final = FALSE) {
+                             final = FALSE) {
     acc <- session$.job_activity[[job$id]]
     if (is.null(acc)) {
-        if (!length(records)) return(invisible(NULL))
+        if (!length(records)) {
+            return(invisible(NULL))
+        }
         acc <- rooms_activity_new()
         acc$thread <- job$origin$thread
         session$.job_activity[[job$id]] <- acc
     }
-    for (record in records) rooms_activity_add(acc, record)
+    for (record in records) {
+        rooms_activity_add(acc, record)
+    }
     if (final || (rooms_activity_live(chat) &&
-        rooms_activity_due(acc, min_interval = rooms_activity_interval(cfg)))) {
+            rooms_activity_due(acc,
+                               min_interval = rooms_activity_interval(cfg)))) {
         rooms_activity_flush(acc, chat, job$origin$room %||% session$room_id)
     }
-    if (final) session$.job_activity[[job$id]] <- NULL
+    if (final) {
+        session$.job_activity[[job$id]] <- NULL
+    }
     invisible(NULL)
 }

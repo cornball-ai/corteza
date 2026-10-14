@@ -162,13 +162,21 @@ bot_fetch_image <- function(chat, attachment,
 bot_image_mime <- function(bytes) {
     starts <- function(prefix) {
         length(bytes) >= length(prefix) &&
-            identical(bytes[seq_along(prefix)], as.raw(prefix))
+        identical(bytes[seq_along(prefix)], as.raw(prefix))
     }
-    if (starts(c(137, 80, 78, 71, 13, 10, 26, 10))) return("image/png")
-    if (starts(c(255, 216, 255))) return("image/jpeg")
-    if (starts(charToRaw("GIF87a")) || starts(charToRaw("GIF89a"))) return("image/gif")
+    if (starts(c(137, 80, 78, 71, 13, 10, 26, 10))) {
+        return("image/png")
+    }
+    if (starts(c(255, 216, 255))) {
+        return("image/jpeg")
+    }
+    if (starts(charToRaw("GIF87a")) || starts(charToRaw("GIF89a"))) {
+        return("image/gif")
+    }
     if (length(bytes) >= 12L && starts(charToRaw("RIFF")) &&
-        identical(bytes[9:12], charToRaw("WEBP"))) return("image/webp")
+        identical(bytes[9:12], charToRaw("WEBP"))) {
+        return("image/webp")
+    }
     stop("unsupported or unreadable image format", call. = FALSE)
 }
 

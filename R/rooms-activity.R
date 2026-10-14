@@ -237,8 +237,9 @@ rooms_activity_html <- function(events) {
         label <- rooms_escape_html(rooms_activity_detail(e))
         output <- e$output %||% ""
         sprintf("<li>%s%s</li>", label,
-                if (nzchar(output)) paste0("<pre><code>", rooms_escape_html(output),
-                                           "</code></pre>") else "")
+            if (nzchar(output)) paste0("<pre><code>",
+                                       rooms_escape_html(output),
+                                       "</code></pre>") else "")
     }, character(1))
     sprintf("<details><summary>%s</summary><ul>%s</ul></details>", head,
             paste(items, collapse = ""))
