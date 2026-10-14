@@ -384,7 +384,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        tools = NULL, system = NULL,
                                        threshold, byte_limit, min_messages,
                                        reason = "threshold") {
-    if (identical(kind, "archive_holder")) {
+    if (identical(kind, "archive_holder") || .context_edit_pure(session)) {
         return(invisible(FALSE))
     }
     cc <- config$subagents$context_compaction %||% list()

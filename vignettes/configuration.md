@@ -106,8 +106,70 @@ and rejected edits do not suppress archival; applied edits and compaction
 still skip archival for that turn because its live message positions changed.
 Invalid `context_edit` configuration emits a warning and disables the feature.
 
-All human messages, including messages mixing text and tool results, are
-protected from this tool. Instructions and tool schemas are outside its edit
+For an opt-in trial without automatic summaries, add `"strategy": "clm"`
+and use `"cadence": "always"`. This disables threshold compaction, forced
+summary recovery on context overflow, and holder archival. The model must
+manage the window before it fills; exhaustion reports an error and retains
+the journal. Unsupported providers are skipped in a pure CLM fallback chain.
+The package default remains the existing threshold-compaction behavior.
+
+Doers can select this policy independently of their conversation session:
+
+```json
+"jobs": {
+  "doer": {
+    "context_edit": {"enabled": true, "cadence": "always", "strategy": "clm"}
+  }
+}
+```
+
+A doer inherits the conversation's effective editing settings, with
+`jobs.doer.context_edit` taking precedence. Reviewers and approval monitors
+retain their existing configuration. Doers preserve their complete record
+in the session journal; they do not file context into a vault.
+
+For a Matrix talker, configure the policy and an explicit vault in the
+Matrix account's `talker` block:
+
+```json
+"talker": {
+  "enabled": true,
+  "context_edit": {"enabled": true, "cadence": "always", "strategy": "clm"},
+  "context_vault": "/path/to/this-bots/vault"
+}
+```
+
+For an unsplit Matrix bot, put `context_edit` and `context_vault` at the
+account config's top level instead. Its existing model and tools stay in
+place; the combined conversation/work session owns filing. In split mode,
+the `talker` block overrides those account settings. Workers inherit only
+the editing policy, never the vault or conversation-owner role.
+
+Only a conversation owner with a configured vault may retire older human turns, labeled
+`[uN]`. It can drop them, but cannot replace them with model-written words.
+The latest human turn, instructions, and current tool batch stay protected.
+On `drop` or `replace`, the checkpoint first files the original entries and
+the edit's optional `text` note into immutable Markdown and provider-native
+JSON under `raw/chats/`. Paired tool messages are included as evidence.
+Replacing a working note also preserves the previous note. Filing uses no
+extra model call and does not commit or push the vault. It updates the vault
+index through pensar; it does not generate a wiki synthesis or post a recap.
+
+The journal commits the context change only after filing succeeds. A failed
+vault write leaves the active history intact; a failed journal commit can
+leave an unused archive, which a retry reuses. The conversation's edited history,
+consumed Matrix event IDs, and transcript ledger restart together from the
+journal, so backfill skips already-consumed events. Rooms and threads retain
+separate journals. `/clear` explicitly clears that saved working window.
+
+Topic retirement is a choice in the conversation owner's normal turn. It can retain open
+topics and commitments in its working note while filing completed topics,
+then use the archive path in the tool receipt to read an earlier topic when
+needed. This does not create or move Matrix rooms.
+
+Outside the vault-backed conversation policy, all human messages are protected.
+Messages mixing human text and tool results remain protected in every mode.
+Instructions and tool schemas are outside the edit
 surface. The current assistant message and its results cannot be edited until
 a later batch. Older assistant messages containing non-text blocks are also
 excluded from message-level editing. Threshold compaction keeps its existing

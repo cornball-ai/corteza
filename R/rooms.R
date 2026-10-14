@@ -711,6 +711,7 @@ bot_archive_session <- function(session, room_id, chat = NULL) {
         # entry outlive its id in the bounded persisted tail and come
         # back as fresh later.
         session$transcript <- list()
+        .context_room_snapshot(session)
         return(invisible(NULL))
     }
 
@@ -738,6 +739,7 @@ bot_archive_session <- function(session, room_id, chat = NULL) {
         # to age out of the tail, which is how one got archived twice.
         # Draining on every pass is what rules that out.
         session$transcript <- list()
+        .context_room_snapshot(session)
     } else {
         # Ingest failed. Keep only what still needs archiving so a retry
         # does not resend events already in persisted state.
@@ -1795,10 +1797,13 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
     s$handle_store <- new.env(parent = emptyenv())
+    s$seen_event_ids <- character()
     # The session's journal (R/journal.R): a bot's rooms share one
     # process, and a room has no on-disk session id of its own.
     if (!is.null(journal_key)) {
-        journal_install(s, dir = bot_journal_dir(cfg, journal_key))
+        dir <- bot_journal_dir(cfg, journal_key)
+        .context_room_restore(s, dir, cfg)
+        journal_install(s, dir = dir)
     }
     bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {
@@ -1823,7 +1828,6 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # turn(). Lets us tell apart "echo of our own reply" (skip) from
     # "out-of-band send by another process" (append as assistant turn) when
     # mx_sync echoes self events back. Trimmed in bot_poll to bound memory.
-    s$seen_event_ids <- character()
     s
 }
 
@@ -1852,6 +1856,7 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
     old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
         old <- get(key, envir = registry)
+        .context_room_clear(old)
         rm(list = key, envir = registry)
     }
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
@@ -1871,6 +1876,7 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
     }
+    .context_room_snapshot(s)
     invisible(s)
 }
 
@@ -1894,6 +1900,8 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
+    context <- .context_room_config(cfg)
+    .context_conversation_enable(s, context$editing, context$vault)
     talker <- talker_config(cfg)
     if (!is.null(talker)) {
         talker_enable(s, talker)
@@ -2096,6 +2104,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(
                     session$seen_event_ids, m$id
                 )
+                .context_room_snapshot(session)
             }
             next
         }
@@ -2168,6 +2177,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                  session$history %||% list(),
                                  list(list(role = "user", content = ingest_content))
             )
+            .context_room_snapshot(session)
             next
         }
         # Passing the gate is an exchange: open or refresh this human's
@@ -2381,6 +2391,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             )
             bot_transcript_add(session, sent_id, "assistant", reply)
         }
+        .context_room_snapshot(session)
         replied <- replied + 1L
     }
     invisible(replied)
@@ -2481,6 +2492,7 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                 provider = provider, tools_filter = tools_filter,
                 room_id = rid
             )
+            if (m$id %in% session$seen_event_ids) next
             # A thread's archive is older context than this window, so
             # it goes in before the window does. Once per session: the
             # flag is what stops the second backfilled message in a
@@ -2506,6 +2518,7 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             session$seen_event_ids <- bot_remember_event(
                 session$seen_event_ids, m$id
             )
+            .context_room_snapshot(session)
             added <- added + 1L
         }
         if (added > 0L) {

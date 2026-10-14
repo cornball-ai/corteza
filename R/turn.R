@@ -1189,6 +1189,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if ("history_callback" %in% names(formals(llm.api::agent))) {
         agent_args$history_callback <- function(history) {
             session$history <- history
+            .context_room_record(session)
             # The journal's live snapshot follows the mirror, so what the
             # model saw is on disk before the next request or any
             # rewrite of it. Never throws (R/journal.R).
@@ -1348,6 +1349,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (context_overflow) {
         overflow_response <- response
         session$history <- response$history %||% session$history
+        if (.context_edit_pure(session)) {
+            .context_room_snapshot(session)
+            stop("Pure CLM exhausted the context window; automatic summary recovery is disabled. The journal retains the history.",
+                 call. = FALSE)
+        }
         if (compact_session_history(session$history, force = TRUE,
                                     reason = "context_overflow")) {
             retry_args <- agent_args
@@ -1384,6 +1390,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(response$history)) {
         session$history <- response$history
     }
+    .context_room_snapshot(session)
 
     list(
          reply = .fallback_reply(response),

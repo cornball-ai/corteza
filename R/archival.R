@@ -668,6 +668,7 @@ archival_first_line <- function(text) {
 maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
                                config, parent_session_id,
                                max_turns_hit = FALSE, depth = 0L, mark = NULL) {
+    if (.context_edit_pure(turn_session)) return(invisible())
     arc_cfg <- config$archival %||% list()
     if (!isTRUE(arc_cfg$enabled)) {
         return(invisible())

@@ -189,6 +189,12 @@ job_worker_spec <- function(session, role = "doer") {
                  reasoning_effort = effort,
                  thinking_budget_tokens = budget,
                  thinking = thinking,
+                 # Conversation settings follow the doer only. A reviewer
+                 # or monitor retains its own cwd configuration and role.
+                 context_edit = if (!read_only) {
+            utils::modifyList(.context_edit_config(session$config, session$context_edit),
+                              cfg$doer$context_edit %||% list())
+        },
                  tools = tools,
                  # Read-only has to mean no network and no files outside
                  # the checkout: a tool list alone grants neither limit
@@ -303,7 +309,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                            allowed_paths = spec$allowed_paths,
                            reasoning_effort = spec$reasoning_effort,
                            thinking_budget_tokens = spec$thinking_budget_tokens,
-                           thinking = spec[["thinking"]])
+                           thinking = spec[["thinking"]],
+                           context_edit = spec$context_edit)
     }
     init(spec)
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600
