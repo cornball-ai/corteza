@@ -110,7 +110,9 @@ For an opt-in trial without automatic summaries, add `"strategy": "clm"`
 and use `"cadence": "always"`. This disables threshold compaction, forced
 summary recovery on context overflow, and holder archival. The model must
 manage the window before it fills; exhaustion reports an error and retains
-the journal. Unsupported providers are skipped in a pure CLM fallback chain.
+the journal. In a room, later messages can also overflow the same full window.
+Use `/clear` to start a fresh working window; the journal retains the previous
+record. Unsupported providers are skipped in a pure CLM fallback chain.
 The package default remains the existing threshold-compaction behavior.
 
 Doers can select this policy independently of their conversation session:
@@ -143,7 +145,9 @@ For an unsplit Matrix bot, put `context_edit` and `context_vault` at the
 account config's top level instead. Its existing model and tools stay in
 place; the combined conversation/work session owns filing. In split mode,
 the `talker` block overrides those account settings. Workers inherit only
-the editing policy, never the vault or conversation-owner role.
+the editing policy, never the vault or conversation-owner role. Invalid
+conversation policies or vault configuration warn and disable context editing
+for that session. Vaults must have `schema.md` and must not be adopted read-only.
 
 Only a conversation owner with a configured vault may retire older human turns, labeled
 `[uN]`. It can drop them, but cannot replace them with model-written words.
@@ -156,7 +160,8 @@ extra model call and does not commit or push the vault. It updates the vault
 index through pensar; it does not generate a wiki synthesis or post a recap.
 
 The journal commits the context change only after filing succeeds. A failed
-vault write leaves the active history intact; a failed journal commit can
+vault write rejects the edit with a tool receipt and continues the turn with
+the original entries intact; a failed journal commit can
 leave an unused archive, which a retry reuses. The conversation's edited history,
 consumed Matrix event IDs, and transcript ledger restart together from the
 journal, so backfill skips already-consumed events. Rooms and threads retain

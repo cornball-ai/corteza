@@ -82,7 +82,9 @@ local({
     expect_false(f(".context_edit_config")(parent$config, parent$context_edit)$enabled)
     expect_null(f("job_worker_spec")(parent, "reviewer")$context_edit)
     expect_null(f("job_worker_spec")(parent, "monitor")$context_edit)
-    expect_error(f("talker_enable")(parent, list(context_edit = pure)), "explicit context_vault")
+    expect_warning(f("talker_enable")(parent, list(context_edit = pure)), "explicit context_vault")
+    expect_false(f(".context_edit_enabled")(parent))
+    expect_false(f(".context_edit_pure")(parent))
     # Actual child process, isolated library/config/cwd, with no model call.
     child <- callr::r(function(spec, root) {
         library(corteza)
@@ -161,6 +163,7 @@ local({
             list(content = "done", history = args$history)
         })
     expect_identical(calls, c("anthropic", "openai"))
+    f(".fallback_reset")()
 
     if (requireNamespace("pensar", quietly = TRUE)) {
         vault <- file.path(root, "vault")
@@ -229,25 +232,81 @@ local({
         adopted <- file.path(root, "adopted")
         pensar::init_vault(adopted, adopt = TRUE)
         s <- make(vault = adopted)
+        expect_warning(f(".context_conversation_enable")(s, pure, adopted), "read-only")
+        expect_false(f(".context_edit_enabled")(s))
+        expect_false(f(".context_edit_archives")(s))
+        s <- make(vault = adopted)
         queue(s, names(f(".context_edit_state")(s)$messages)[1L])
         before <- s$history
-        expect_error(f(".context_edit_checkpoint")(s), "read-only")
-        expect_identical(s$history, before)
+        expect_true(f(".context_edit_checkpoint")(s))
+        expect_identical(head(s$history, -1L), head(before, -1L))
+        expect_true(grepl("read-only", rendered(s), fixed = TRUE))
         expect_false(dir.exists(file.path(adopted, "raw")))
 
-        # A vault write failure prevents both the journal commit and removal.
+        # A vault write failure commits a rejection receipt, preserving every
+        # original entry. A later checkpoint can retry the same edit.
         bad <- file.path(root, "blocked-vault")
         dir.create(bad)
         writeLines("schema", file.path(bad, "schema.md"))
-        writeLines("not a directory", file.path(bad, "raw"))
-        s <- make(vault = bad)
-        uid <- names(f(".context_edit_state")(s)$messages)[1L]
-        queue(s, uid)
-        before <- s$history
-        seq <- f("journal_mark")(s)$seq
-        expect_error(suppressWarnings(f(".context_edit_checkpoint")(s)))
-        expect_identical(s$history, before)
-        expect_identical(f("journal_mark")(s)$seq, seq)
+        for (provider in c("anthropic", "openai")) {
+            unlink(file.path(bad, "raw"), recursive = TRUE)
+            writeLines("not a directory", file.path(bad, "raw"))
+            s <- make(provider, bad)
+            id <- names(f(".context_edit_state")(s)$messages)[1L]
+            queue(s, id)
+            before <- s$history
+            mark <- f("journal_mark")(s)
+            expect_true(suppressWarnings(f(".context_edit_checkpoint")(s)))
+            expect_identical(head(s$history, -1L), head(before, -1L))
+            expect_true(grepl("Context edit rejected:", rendered(s), fixed = TRUE))
+            expect_false(tail(s$context_edit_events, 1L)[[1L]]$applied)
+            expect_false(f("journal_rewritten_since")(s, mark,
+                ignore = "context_edit_rejected"))
+            expect_identical(s$pending_context_edits, list())
+            unlink(file.path(bad, "raw"))
+            queue(s, id)
+            expect_true(f(".context_edit_checkpoint")(s))
+            expect_true(tail(s$context_edit_events, 1L)[[1L]]$applied)
+            expect_true(grepl("Filed:", rendered(s), fixed = TRUE))
+        }
+
+        # Drive turn() through a real dispatch/checkpoint with a failed filing.
+        # The model's next step receives the rejection and can finish its reply.
+        local({
+            unlink(file.path(bad, "raw"), recursive = TRUE)
+            writeLines("not a directory", file.path(bad, "raw"))
+            s <- make(vault = bad)
+            ids <- names(f(".context_edit_state")(s)$messages)
+            args <- list(op = "drop", ids = ids[startsWith(ids, "m")])
+            original_agent <- llm.api::agent
+            on.exit(utils::assignInNamespace("agent", original_agent, "llm.api"), add = TRUE)
+            continued <- FALSE
+            utils::assignInNamespace("agent", function(prompt, history, tool_handler,
+                history_callback, checkpoint_callback, ...) {
+                h <- c(history, list(list(role = "user", content = prompt),
+                    list(role = "assistant", content = list(list(type = "tool_use",
+                        id = "failed-filing", name = "edit_context", input = args)))))
+                history_callback(h)
+                value <- tool_handler("edit_context", args, context = list(
+                    provider = "anthropic", call_index = 1L, call_count = 1L, agent_turn = 1L))
+                h <- c(h, list(list(role = "user", content = list(list(
+                    type = "tool_result", tool_use_id = "failed-filing", content = value)))))
+                history_callback(h)
+                change <- checkpoint_callback(h, list(agent_turn = 1L, usage = list()))
+                h <- change$history
+                calls <- llm.api::history_tool_calls(h)
+                continued <<- grepl("Context edit rejected:", tail(calls, 1L)[[1L]]$result,
+                                   fixed = TRUE)
+                h <- c(h, list(list(role = "assistant", content = "The conversation continues.")))
+                history_callback(h)
+                list(content = "The conversation continues.", history = h, usage = list(), turns = 2L)
+            }, "llm.api")
+            result <- suppressWarnings(corteza::turn("Continue after filing.", s, tools = list()))
+            expect_true(continued)
+            expect_equal(result$reply, "The conversation continues.")
+            expect_true(grepl("Earlier answer.", rendered(s), fixed = TRUE))
+            expect_false(tail(s$context_edit_events, 1L)[[1L]]$applied)
+        })
 
         # A failed journal write leaves an idempotent archive, but keeps the
         # live window. Retrying that edit never creates a second raw record.
@@ -356,6 +415,39 @@ local({
             expect_null(f("job_worker_spec")(unified)$context_vault)
             expect_null(f("job_worker_spec")(unified, "reviewer")$context_edit)
             expect_null(f("job_worker_spec")(unified, "monitor")$context_edit)
+
+            # Invalid conversation configuration must not escape the real
+            # room factory and terminate the bot's poll loop.
+            no_schema <- file.path(root, "no-schema")
+            dir.create(no_schema)
+            for (split in c(FALSE, TRUE)) {
+                for (invalid in list(NULL, no_schema, adopted, 42)) {
+                    broken <- cfg
+                    broken$context_vault <- invalid
+                    if (split) broken$talker <- list(enabled = TRUE, model = "fixture")
+                    registry <- f("bot_new_session_registry")()
+                    expect_warning(room_session <- f("bot_get_or_create_session")(
+                        registry, room, broken, system = "Pinned"),
+                        "Conversation context editing disabled")
+                    expect_false(f(".context_edit_enabled")(room_session))
+                    expect_false(f(".context_edit_pure")(room_session))
+                    expect_false(f(".context_edit_archives")(room_session))
+                    expect_identical(get(room, registry), room_session)
+                    expect_identical(f("bot_get_or_create_session")(
+                        registry, room, broken, system = "Pinned"), room_session)
+                }
+                broken <- cfg
+                if (split) {
+                    broken$talker <- list(enabled = TRUE, model = "fixture",
+                                         context_edit = "typo")
+                } else {
+                    broken$context_edit <- "typo"
+                }
+                expect_warning(room_session <- f("bot_get_or_create_session")(
+                    f("bot_new_session_registry")(), room, broken, system = "Pinned"),
+                    "Conversation context editing disabled")
+                expect_false(f(".context_edit_enabled")(room_session))
+            }
         }
     }
 })

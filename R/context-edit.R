@@ -585,13 +585,16 @@
     request_ids <- unlist(lapply(pending, `[[`, "request_id"),
                           use.names = FALSE)
     if (length(pending)) {
-        rewritten <- tryCatch(.context_edit_rewrite(session, before, pending),
-                              error = function(e) { rejected <<- conditionMessage(e) ; NULL })
+        archived <- NULL
+        rewritten <- tryCatch({
+            proposal <- .context_edit_rewrite(session, before, pending)
+            archived <- .context_archive_write(session, before, pending)
+            proposal
+        }, error = function(e) { rejected <<- conditionMessage(e) ; NULL })
         if (is.null(rewritten)) {
             after <- .context_edit_receipt(session, before,
                 paste("Context edit rejected:", rejected), request_ids)
         } else {
-            archived <- .context_archive_write(session, before, pending)
             after <- .context_edit_receipt(session, rewritten$history,
                 paste("Context edit applied.", if (!is.null(archived)) paste("Filed:", archived)), request_ids)
         }

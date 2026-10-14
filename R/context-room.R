@@ -2,9 +2,15 @@
 # restart together. Both travel in the journal's atomic live envelope.
 .context_room_config <- function(cfg) {
     talker <- talker_config(cfg)
-    list(editing = utils::modifyList(cfg$context_edit %||% list(),
-                                     talker$context_edit %||% list()),
-         vault = talker$context_vault %||% cfg$context_vault)
+    tryCatch(list(editing = utils::modifyList(cfg$context_edit %||% list(),
+                                             talker$context_edit %||% list()),
+                  vault = talker$context_vault %||% cfg$context_vault),
+             error = function(e) {
+        warning("Conversation context editing disabled: ", conditionMessage(e),
+                call. = FALSE)
+        list(editing = list(enabled = FALSE, cadence = "pressure", strategy = "hybrid"),
+             vault = NULL)
+    })
 }
 
 .context_room_record <- function(session) {

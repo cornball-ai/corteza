@@ -14,19 +14,45 @@
 # initialization never calls this, so vault filing cannot follow inheritance.
 .context_conversation_enable <- function(session, editing = NULL,
     vault = NULL) {
-    base <- .context_edit_config(session$config, session$context_edit)
-    effective <- .context_edit_config(list(context_edit = base), editing)
-    if ((!is.null(vault) && (!is.character(vault) || length(vault) != 1L ||
-                is.na(vault) || !nzchar(vault))) ||
-        (isTRUE(effective$enabled) && identical(effective$strategy, "clm") &&
-            is.null(vault))) {
-        stop("A pure CLM conversation needs an explicit context_vault",
-             call. = FALSE)
-    }
-    session$context_edit <- effective
-    session$context_archive_vault <- vault
+    settings <- tryCatch({
+        base <- .context_edit_config(session$config, session$context_edit)
+        effective <- .context_edit_config(list(context_edit = base), editing)
+        if (isTRUE(effective$enabled) && identical(effective$strategy, "clm") &&
+            is.null(vault)) {
+            stop("A pure CLM conversation needs an explicit context_vault",
+                 call. = FALSE)
+        }
+        list(editing = effective,
+             vault = if (!is.null(vault)) .context_archive_validate(vault))
+    }, error = function(e) {
+        warning("Conversation context editing disabled: ", conditionMessage(e),
+                call. = FALSE)
+        list(editing = list(enabled = FALSE, cadence = "pressure", strategy = "hybrid"),
+             vault = NULL)
+    })
+    session$context_edit <- settings$editing
+    session$context_archive_vault <- settings$vault
     session$context_conversation <- TRUE
     invisible(session)
+}
+
+.context_archive_validate <- function(vault) {
+    if (!is.character(vault) || length(vault) != 1L || is.na(vault) ||
+        !nzchar(vault)) {
+        stop("context_vault must be a non-empty path", call. = FALSE)
+    }
+    if (!requireNamespace("pensar", quietly = TRUE)) {
+        stop("Conversation context filing requires pensar", call. = FALSE)
+    }
+    vault <- normalizePath(path.expand(vault), mustWork = TRUE)
+    if (!file.exists(file.path(vault, "schema.md"))) {
+        stop("Conversation context vault has no schema.md: ", vault,
+             call. = FALSE)
+    }
+    if (isTRUE(pensar::status(vault)$adopted)) {
+        stop("Conversation context vault is adopted read-only: ", vault, call. = FALSE)
+    }
+    vault
 }
 
 .context_edit_last_human <- function(history) {
@@ -81,17 +107,7 @@
     if (!length(records)) {
         return(NULL)
     }
-    if (!requireNamespace("pensar", quietly = TRUE)) {
-        stop("Conversation context filing requires pensar", call. = FALSE)
-    }
-    vault <- normalizePath(path.expand(session$context_archive_vault),
-                           mustWork = TRUE)
-    if (!file.exists(file.path(vault, "schema.md"))) {
-        stop("Conversation context vault has no schema.md: ", vault, call. = FALSE)
-    }
-    if (isTRUE(pensar::status(vault)$adopted)) {
-        stop("Conversation context vault is adopted read-only: ", vault, call. = FALSE)
-    }
+    vault <- .context_archive_validate(session$context_archive_vault)
     record <- list(owner = session$job_owner, session = session$job_key,
                    room = session$room_id,
                    edits = lapply(pending, function(e) e[c("op", "ids", "text")]),
