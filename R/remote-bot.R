@@ -20,9 +20,9 @@
         s <- if (!is.null(sessions) &&
                        exists(room, sessions, inherits = FALSE)) get(room, sessions)
         if ((is.environment(s) &&
-             (!is.null(s$.job_current) || length(s$.job_events))) ||
-            length(job_list(status = JOB_STATUSES_OPEN, origin_key = room,
-                            owner = request$owner))) {
+                       (!is.null(s$.job_current) || length(s$.job_events))) ||
+                       length(job_list(status = JOB_STATUSES_OPEN, origin_key = room,
+                                       owner = request$owner))) {
             stop("The room has delegated work in flight; finish it before attaching.")
         }
         list(room = room, controllers = as.list(operators))
@@ -148,10 +148,20 @@
 # Reuse the room ledger's event IDs so sync redelivery and outgoing echoes do
 # not add a second copy. The CLI alone owns the provider working history.
 .remote_bot_record <- function(session, m) {
-    if (m$id %in% session$seen_event_ids) return(invisible(NULL))
-    role <- if (isTRUE(m$is_self)) "assistant" else "user"
-    body <- if (isTRUE(m$is_self)) m$body else
-        bot_ingest_body(m$sender, m$body, attribute_sender = TRUE)
+    if (m$id %in% session$seen_event_ids) {
+        return(invisible(NULL))
+    }
+    if (isTRUE(m$is_self)) {
+        role <- "assistant"
+    } else {
+        role <- "user"
+    }
+    if (isTRUE(m$is_self)) {
+        body <- m$body
+    } else {
+        body <- bot_ingest_body(m$sender, m$body, attribute_sender = TRUE)
+    }
+
     bot_transcript_add(session, m$id, role, body)
     session$seen_event_ids <- bot_remember_event(session$seen_event_ids, m$id)
     .context_room_snapshot(session)
