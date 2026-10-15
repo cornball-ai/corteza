@@ -546,6 +546,11 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     executor_wants_context <- "context" %in% executor_formals ||
     "..." %in% executor_formals
     execute <- function(name, args, context) {
+        if (identical(name, "delegate_to")) {
+            if (session_dry_run()) return(ok("Dry run: would delegate this task."))
+            if (!is.function(session$delegate_to)) return(err("No remote delegates configured"))
+            return(do.call(session$delegate_to, args))
+        }
         if (executor_wants_context) {
             tool_executor(name, args, context = context)
         } else {
@@ -555,6 +560,10 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     function(name, args, context = NULL) {
         .remote_check_stop(session)
         internal_name <- unsanitize_tool_name(name)
+        if (!is.null(session$job_allowed_tools) &&
+            !internal_name %in% session$job_allowed_tools) {
+            return("[job policy denied: tool is outside this delegator's allowed tools]")
+        }
         call <- list(
                      tool = internal_name,
                      args = as.list(args),
@@ -1117,6 +1126,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .task_filter_tools(tools, session$channel)
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .context_edit_tools(tools, session)
+    tools <- .delegation_tools(tools, session)
     tools <- .auto_filter_tools(tools, session$auto_config)
 
     # Provider-native (server-side) web search: enable it when the session

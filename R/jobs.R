@@ -121,7 +121,11 @@ job_create <- function(task, role = "doer", workspace = getwd(),
         stop("job task must be one non-empty string", call. = FALSE)
     }
     limits <- utils::modifyList(JOB_DEFAULT_LIMITS, limits)
-    hop <- 0L
+    hop <- origin$delegation$hop %||% 0L
+    if (!is.numeric(hop) || length(hop) != 1L || is.na(hop) ||
+        hop < 0 || hop != trunc(hop) || hop > limits$hops) {
+        stop("job hop limit exceeded", call. = FALSE)
+    }
     if (!is.null(parent)) {
         up <- job_read(parent)
         if (is.null(up)) {
@@ -316,7 +320,7 @@ job_list <- function(status = NULL, origin_key = NULL, owner = NULL) {
 # not this process's to declare lost.
 job_recover <- function(live = character(), owner = "local") {
     open <- job_list(status = JOB_STATUSES_OPEN, owner = owner)
-    open <- Filter(function(j) !j$id %in% live, open)
+    open <- Filter(function(j) !j$id %in% live && !identical(j$backend, "remote"), open)
     verdicts <- vapply(open, function(j) {
         if (identical(j$status, "queued")) {
             return("retryable")

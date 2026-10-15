@@ -266,6 +266,13 @@ bot_present_job_event <- function(chat, cfg, s, ev, sessions = NULL) {
 }
 
 bot_job_settled <- function(chat, s, job, sessions = NULL) {
+    if (!is.null(job$origin$delegation)) {
+        .delegation_worker_reply(chat, job)
+        s$history <- c(s$history %||% list(), list(list(role = "assistant",
+            content = bot_job_result_text(job))))
+        .context_room_snapshot(s)
+        return(invisible(NULL))
+    }
     result <- bot_job_result_text(job)
     from <- job$origin$from
     text <- if (is.null(from$room)) {
@@ -728,6 +735,10 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
     members <- tryCatch(chat.api::chat_members(chat, room),
                         error = function(e) NULL)
     approvers <- bot_approvers(cfg, members, bot_known_bots(cfg, self_id))
+    if (!is.null(job$origin$delegation)) {
+        approvers <- setdiff(approvers, c(job$origin$delegation$peer,
+            bot_known_bots(cfg, self_id)))
+    }
     call <- list(tool = req$tool, args = req$args)
     if (!length(approvers)) {
         job_answer(s, job$id, req$id, FALSE, by = "no approver")
@@ -737,6 +748,7 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
     text <- paste0(sprintf("Job %s: ", job$id),
                    bot_approval_prompt(call, list(reason = req$reason),
                                        timeout_sec = bot_job_request_remaining(s, req)))
+    text <- paste0(text, "\nReply `approve ", req$id, "` or `deny ", req$id, "` to answer without a reaction.")
     eid <- bot_job_send(chat, s, job, text)
     if (is.null(eid)) {
         # Nobody can see a prompt that was never posted.
