@@ -553,6 +553,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         }
     }
     function(name, args, context = NULL) {
+        .remote_check_stop(session)
         internal_name <- unsanitize_tool_name(name)
         call <- list(
                      tool = internal_name,
@@ -1093,6 +1094,7 @@ observer_progress <- function() {
 #' }
 #' @export
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
+    .remote_check_stop(session)
     stopifnot(is.environment(session))
 
     # The message this turn is answering, where a tool can reach it: the
@@ -1204,6 +1206,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     attempt_checkpoint_turns <- 0L
     if ("checkpoint_callback" %in% names(formals(llm.api::agent))) {
         agent_args$checkpoint_callback <- function(history, context) {
+            .remote_check_stop(session)
             session$last_checkpoint_context <- context
             attempt_checkpoint_usage <<- .turn_add_usage(
                 attempt_checkpoint_usage, context$usage %||% list())

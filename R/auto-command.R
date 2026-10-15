@@ -26,6 +26,7 @@
 .auto_command <- function(ctx, text) {
     spec <- parse_auto_flags(text)
     if (identical(spec$goal, "status")) {
+        .remote_emit(ctx, .auto_status(ctx))
         cat(.auto_status(ctx), "\n")
         return(invisible(NULL))
     }

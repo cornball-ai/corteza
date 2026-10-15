@@ -82,6 +82,54 @@ credential, policy, and monitor checks still apply to every dispatched call.
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
 
+## Matrix remote control
+
+`/remote-control [--bot @bot:server] [room]` hands the current CLI or `chat()`
+session to a Matrix room. The model, history, working directory, and approval
+policy stay in the CLI process. Keep that process running. The existing bot
+loop carries messages and replies; the CLI does not log in to Matrix or share
+the bot's sync cursor or encryption store.
+
+`/rc` is an alias for `/remote-control`, with the same arguments. In the
+attached room, `/rc status` reports the connection and `/rc off` disconnects.
+
+Both processes must run a version with remote control, on the same machine
+under the same user. The bot must have an explicit `operators` list. With one
+available bot it is selected automatically; otherwise specify `--bot`. The
+default room name is `~/<working-directory-name>`. Set `remote_control.bot_id`
+and `remote_control.room` in Corteza config to choose other defaults. The room
+must already exist and be accessible to the bot. Rooms with delegated work in
+flight or another attached CLI are refused.
+
+In the room, send text tasks, `/auto [--exec] [goal]`, `/auto status`,
+`/auto resume`, or `/max-tokens [N|default]`. The bot relays model replies,
+tool previews, and errors. Approval prompts require `/approve <request-id>`
+or `/deny <request-id>` from a configured operator. Each answer applies only
+to that pending request; ordinary conversation cannot approve a tool.
+Attachments and other slash commands are currently unsupported.
+
+`/stop` interrupts at the next tool or completed-batch boundary. It does not
+kill a running shell command or an in-flight model request. Send
+`/remote-control off` to stop at that boundary and return control to the
+terminal. Ctrl+C at the terminal also disconnects; a stopped turn retains the
+completed tool history. Only the room's main timeline is attached; threads
+keep their own bot sessions. Other senders cannot control the CLI, but room
+members can see its public output.
+
+Remote operators act with the CLI's channel policy. A Matrix session's
+supervisor gate is not added to the CLI; `/auto` still uses its own monitor.
+Approval prompts include full tool arguments, including file bodies. Treat
+the configured operators as people authorized to control this CLI session.
+Room prompts and replies also enter the bot's normal conversation archive.
+
+The local mailbox lives under Corteza's user data directory, in
+`remote-control`. `CORTEZA_REMOTE_DIR` can relocate it, with the same setting
+in both processes. Records remain available for diagnosing failed delivery;
+the bot retries unsent output without resubmitting model work. An ambiguous
+send failure or crash before recording its event ID can duplicate a post.
+If the courier disappears, the CLI returns to its local prompt when it next
+waits for input or an approval.
+
 ## Response output limits
 
 `max_tokens` is the per-response output budget. `/max-tokens` shows the active

@@ -542,6 +542,7 @@ bot_room_name <- function(chat, room_id) {
 # colon.
 bot_msg_record <- function(m, addressed = FALSE) {
     list(channel = m$channel, id = m$id, sender = m$sender, body = m$body,
+         ts = m$ts,
          is_self = isTRUE(m$self), mentions = m$mentions,
          encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
          addressed = isTRUE(addressed),
@@ -2002,6 +2003,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
              "reports it.", call. = FALSE)
     }
     first_run <- res$first_run
+    .remote_bot_safe(cfg, chat, sessions)
     # `chat` is the one client for this poll, and it stays current on its
     # own: a relogin inside chat_poll() or chat_set_identity() leaves the
     # refreshed credentials on it. corteza used to take the post-sync
@@ -2074,6 +2076,16 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     replied <- joined_calls
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
+        if (tryCatch(.remote_bot_route(m, cfg), error = function(e) {
+            message("remote control input: ", conditionMessage(e))
+            TRUE
+        })) {
+            session <- bot_get_or_create_session(sessions, m$channel, cfg,
+                system = system, model = model, provider = provider,
+                tools_filter = tools_filter, room_id = m$channel)
+            .remote_bot_record(session, m)
+            next
+        }
         # A thread is its own conversation, so it gets its own session.
         # Without a thread the key is the room id and nothing about this
         # loop changes.
@@ -2211,7 +2223,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(edit_cmd)) {
             ack <- .context_edit_command(session, edit_cmd)
             sent_id <- tryCatch(bot_reply_send(chat, m$channel, ack, thread = m$thread),
-                               error = function(e) NULL)
+                                error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
@@ -2372,7 +2384,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
         if (length(session$context_edit_events)) {
             reply <- paste(reply, paste(vapply(session$context_edit_events,
-                .context_edit_event_text, character(1)), collapse = "\n"), sep = "\n\n")
+                        .context_edit_event_text, character(1)), collapse = "\n"), sep = "\n\n")
         }
         # Stamped after the turn by deterministic code, so no model can
         # forget or restyle its own badge.
@@ -2492,7 +2504,9 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                 provider = provider, tools_filter = tools_filter,
                 room_id = rid
             )
-            if (m$id %in% session$seen_event_ids) next
+            if (m$id %in% session$seen_event_ids) {
+                next
+            }
             # A thread's archive is older context than this window, so
             # it goes in before the window does. Once per session: the
             # flag is what stops the second backfilled message in a
@@ -2676,6 +2690,9 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 bot_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
+    if (length(.remote_sessions())) {
+        timeout <- min(timeout, 1000L)
+    }
     # With work in flight, poll briefly so a finished job or an approval
     # prompt is not held behind a 30-second long-poll.
     if (bot_jobs_active(state$sessions)) {

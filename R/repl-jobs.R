@@ -120,9 +120,13 @@
                     ctx$session$config$jobs$approval_timeout_sec %||%
                     600)),
                 ctx$palette$reset %||% ""))
-    answer <- ctx$read_input("Approve? [y/N] ")
-    approved <- length(answer) == 1L &&
-    tolower(trimws(answer)) %in% c("y", "yes")
+    if (!is.null(ctx$remote_dir)) {
+        approved <- .remote_approve(ctx, call, list(reason = req$reason))
+    } else {
+        answer <- ctx$read_input("Approve? [y/N] ")
+        approved <- length(answer) == 1L &&
+        tolower(trimws(answer)) %in% c("y", "yes")
+    }
     recorded <- tryCatch(job_answer(ctx$session, ev$job$id, req$id,
                                     approved, by = "local"),
                          error = function(e) FALSE)

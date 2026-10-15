@@ -503,6 +503,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     cwd <- ctx$cwd %||% getwd()
     palette <- ctx$palette %||% list()
     say <- function(fmt, ...) {
+        .remote_emit(ctx, paste0("[auto] ", sprintf(fmt, ...)))
         cat(sprintf("%s[auto] %s%s\n", palette$dim %||% "",
                     sprintf(fmt, ...), palette$reset %||% ""))
     }

@@ -120,7 +120,7 @@
 }
 
 # @noRd
-run_repl_loop <- function(ctx) {
+run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     .repl_install_compaction_hook(ctx)
     if (is.environment(ctx$session) &&
         !isTRUE(ctx$session$.context_edit_display)) {
@@ -140,7 +140,7 @@ run_repl_loop <- function(ctx) {
     .repl_jobs_setup(ctx)
     # Covers exits by error or interrupt; /quit and EOF call it directly
     # so its message comes before "Bye.". A second call is a no-op.
-    on.exit(.repl_jobs_shutdown(ctx), add = TRUE)
+    on.exit(if (!keep_jobs) .repl_jobs_shutdown(ctx), add = TRUE)
     while (TRUE) {
         # Delegated jobs surface here, between commands: the input read
         # below blocks, and nothing can print while it waits.
@@ -151,7 +151,9 @@ run_repl_loop <- function(ctx) {
             # right; a driver that ends the loop by returning EOF (see
             # run_auto_loop) sets its own message, since the run did not
             # end because anyone said goodbye.
-            .repl_jobs_shutdown(ctx)
+            if (!keep_jobs) {
+                .repl_jobs_shutdown(ctx)
+            }
             cat(ctx$eof_message %||% "\nBye.\n")
             break
         }
@@ -166,8 +168,8 @@ run_repl_loop <- function(ctx) {
         # `from_paste` blocks the slash-command dispatcher below from
         # reinterpreting a paste that happens to start with `/`
         # (filenames, code snippets, etc.) as a corteza command.
-        from_paste <- FALSE
-        if (!startsWith(sp, "/")) {
+        from_paste <- !is.null(ctx$remote_dir)
+        if (!from_paste && !startsWith(sp, "/")) {
             cont_seed <- backslash_continuation_seed(prompt)
             if (!is.null(cont_seed)) {
                 joined <- read_paste_block(seed = cont_seed, heredoc = TRUE)
@@ -184,7 +186,9 @@ run_repl_loop <- function(ctx) {
             cmd <- tolower(parts[1])
 
             if (cmd %in% c("/quit", "/exit", "/q")) {
-                .repl_jobs_shutdown(ctx)
+                if (!keep_jobs) {
+                    .repl_jobs_shutdown(ctx)
+                }
                 if (ctx$ws_enabled) {
                     ws_prune()
                     tryCatch(ws_save(ctx$disk_session$sessionId),
@@ -528,6 +532,12 @@ run_repl_loop <- function(ctx) {
                         paste(parts[-1], collapse = " ")),
                                  error = function(e) conditionMessage(e))
                 cat(text, "\n")
+                next
+            }
+            if (cmd %in% c("/remote-control", "/rc")) {
+                tryCatch(.remote_run(ctx, paste(parts[-1], collapse = " ")),
+                         error = function(e) cat("Remote control: ", conditionMessage(e), "\n", sep = ""),
+                         interrupt = function(e) cat("Remote control cancelled.\n"))
                 next
             }
             if (cmd == "/dryrun") {
@@ -1077,6 +1087,7 @@ run_repl_loop <- function(ctx) {
         }
 
         if (is.null(result)) {
+            .remote_emit(ctx, paste("Turn stopped:", ctx$last_turn_error %||% ctx$last_turn_status))
             # Interrupt or error path. Still print the timing footer
             # so the user sees how long the aborted turn ran.
             cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")

@@ -364,6 +364,8 @@ task_tool_intercept <- function(session, name, args) {
                 format_task_list_display(proposed, palette = palette),
                 "\n\n",
                 sep = "")
+            session$task_proposal <- proposed
+            on.exit(session$task_proposal <- NULL, add = TRUE)
             if (!.task_read_approval(session)) {
                 cat(palette$dim, "Plan rejected.",
                     palette$reset, "\n", sep = "")
