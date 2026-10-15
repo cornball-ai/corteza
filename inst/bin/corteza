@@ -129,6 +129,7 @@ Commands (in chat):
   /auto [--exec] [goal]  Continue the current task unattended, or start a goal
   /auto status|resume   Inspect or resume the last unattended run
   /max-tokens [N|default]  Show or change the response output budget
+  /remote-control [--bot ID] [room]  Continue this live session from Matrix
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /paste [text]  Multi-line. Collects every line verbatim until /end.
