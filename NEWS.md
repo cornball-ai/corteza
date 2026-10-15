@@ -1,3 +1,14 @@
+# corteza 0.7.1.74
+
+- Add opt-in bot-to-bot delegation over the existing chat transport, using
+  explicit outgoing destinations and incoming delegator permissions. Keep
+  remote jobs in the durable ledger, correlate authenticated results, and
+  handle duplicate delivery, cancellation, review addenda, and restart probes.
+- Run accepted work through the existing supervised doer/reviewer lifecycle.
+  Per-delegator tool restrictions apply to each worker run, including native
+  web search. Bot requesters cannot approve tool calls; human approvers can
+  answer by message where reactions are unavailable.
+
 # corteza 0.7.1.73
 
 - Add `context_edit.retain_turns` for conversation owners: protect the recent
