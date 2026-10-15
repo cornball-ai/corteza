@@ -273,7 +273,10 @@ local({
         body = "Ask Beta what we decided", thread = "origin-thread", ts = Sys.time())
     patch("bot_load_config", function(...) cfg)
     patch("bot_chat_client", function(...) chat)
-    patch("chat_whoami.chat_loopback", function(...) chat.api::chat_identity("bot"), "chat.api")
+    # Mock the contract generic, not its S3 method. Earlier media fixtures
+    # register methods by function, which makes R 4.6's assignInNamespace()
+    # method-table update fail when replacing a registered method by name.
+    patch("chat_whoami", function(...) chat.api::chat_identity("bot"), "chat.api")
     patch("chat_poll", function(...) list(first_run = FALSE, messages = list(incoming),
         reactions = list(), invites = list()), "chat.api")
     patch("bot_should_respond", function(...) TRUE)

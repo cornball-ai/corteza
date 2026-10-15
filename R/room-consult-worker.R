@@ -65,8 +65,8 @@
         paste0("**Answer from ", o$label, "** (", job$id, ", ", job$status, ")\n\n",
             if (job$status == "done") job$outcome$result else
                job$outcome$error %||% job$outcome$reason %||% job$status)
-    } else paste0("**Question from ", o$from$label, "** (", job$id, ")\n\n", job$task,
-                  "\n\nThe answer uses this conversation's text context at the time of the request and returns to both conversations.")
+    } else paste0("**Question for ", o$label, " from ", o$from$label, "** (", job$id, ")\n\n", job$task,
+        "\n\nThe answer uses ", o$label, "'s text context at the time of the request and returns to both conversations.")
     destinations <- list(target = list(room = o$room, key = o$session_key,
                                        thread = o$thread),
                          source = list(room = o$from$room, key = o$from$session_key, thread = o$from$thread))
