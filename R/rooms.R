@@ -542,6 +542,7 @@ bot_room_name <- function(chat, room_id) {
 # colon.
 bot_msg_record <- function(m, addressed = FALSE) {
     list(channel = m$channel, id = m$id, sender = m$sender, body = m$body,
+         ts = m$ts,
          is_self = isTRUE(m$self), mentions = m$mentions,
          encrypted = isTRUE(m$encrypted), sender_verified = m$sender_verified,
          addressed = isTRUE(addressed),
@@ -2002,6 +2003,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
              "reports it.", call. = FALSE)
     }
     first_run <- res$first_run
+    .remote_bot_safe(cfg, chat, sessions)
     # `chat` is the one client for this poll, and it stays current on its
     # own: a relogin inside chat_poll() or chat_set_identity() leaves the
     # refreshed credentials on it. corteza used to take the post-sync
@@ -2074,6 +2076,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     replied <- joined_calls
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
+        if (tryCatch(.remote_bot_route(m, cfg), error = function(e) {
+            message("remote control input: ", conditionMessage(e))
+            TRUE
+        })) next
         # A thread is its own conversation, so it gets its own session.
         # Without a thread the key is the room id and nothing about this
         # loop changes.
@@ -2676,6 +2682,7 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 bot_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
+    if (length(.remote_sessions())) timeout <- min(timeout, 1000L)
     # With work in flight, poll briefly so a finished job or an approval
     # prompt is not held behind a 30-second long-poll.
     if (bot_jobs_active(state$sessions)) {
