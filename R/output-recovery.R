@@ -22,29 +22,37 @@
     config <- session$config %||% list()
     retries <- config$output_retries %||% 3L
     if (!is.numeric(retries) || length(retries) != 1L || is.na(retries) ||
-        !is.finite(retries) || retries < 0 || retries > 10 || retries != trunc(retries)) {
-        stop("output_retries must be a whole number from 0 to 10", call. = FALSE)
+        !is.finite(retries) || retries < 0 || retries > 10 ||
+        retries != trunc(retries)) {
+        stop("output_retries must be a whole number from 0 to 10",
+             call. = FALSE)
     }
     explicit <- .session_max_tokens(session)
     ceiling <- .check_max_tokens(config$output_retry_max_tokens %||%
-        explicit %||% 32768L, "output_retry_max_tokens")
+                                 explicit %||% 32768L, "output_retry_max_tokens")
     budget <- args$max_tokens
-    if (is.null(budget) && args$provider %in% c("anthropic", "anthropic_claude")) {
+    if (is.null(budget) &&
+        args$provider %in% c("anthropic", "anthropic_claude")) {
         budget <- 4096L
     }
     usage <- list()
     turns <- 0L
     attempts <- 0L
     citations <- searches <- list()
-    while (.output_cutoff(response) && !identical(args$provider, "openai_codex") &&
+    while (.output_cutoff(response) &&
+        !identical(args$provider, "openai_codex") &&
         !is.function(session$on_delta) && attempts < retries &&
         !is.null(budget) && budget < ceiling &&
         identical(response$provider %||% args$provider, args$provider) &&
         identical(response$model %||% args$model, args$model)) {
         used_turns <- as.integer(response$turns %||% 1L)
-        if (turns + used_turns >= args$max_turns) break
+        if (turns + used_turns >= args$max_turns) {
+            break
+        }
         history <- response$history
-        if (is.null(history)) break
+        if (is.null(history)) {
+            break
+        }
         usage <- .turn_add_usage(usage, response$usage)
         turns <- turns + used_turns
         citations <- c(citations, response$citations %||% list())
@@ -70,20 +78,20 @@
         response$searches <- c(searches, response$searches %||% list())
         response$corteza_output_retries <- attempts
         response$corteza_output_recovered <- !isTRUE(response$truncated) &&
-            !isTRUE(response$cancelled)
+        !isTRUE(response$cancelled)
         if (isTRUE(response$corteza_output_recovered) && is.null(explicit) &&
             identical(response$provider %||% args$provider, args$provider) &&
             identical(response$model %||% args$model, args$model)) {
             session$output_recovery <- list(key = .output_recovery_key(args),
-                                           max_tokens = budget)
+                max_tokens = budget)
         }
     }
     if (.output_cutoff(response)) {
         response$content <- paste0(response$content %||% "", "\n\n",
-            "Stopped at the response output limit. Completed tools are saved; ",
-            "tool calls in the unfinished response were not executed. Increase max_tokens ",
-            "or output_retry_max_tokens in .corteza/config.json, then resume. ",
-            "In this CLI session, /max-tokens 32768 sets the next response budget.")
+                                   "Stopped at the response output limit. Completed tools are saved; ",
+                                   "tool calls in the unfinished response were not executed. Increase max_tokens ",
+                                   "or output_retry_max_tokens in .corteza/config.json, then resume. ",
+                                   "In this CLI session, /max-tokens 32768 sets the next response budget.")
     }
     response
 }
@@ -91,7 +99,8 @@
 .output_budget_command <- function(session, text) {
     text <- trimws(text)
     if (!nzchar(text) || identical(text, "status")) {
-        args <- list(provider = session$provider, model = .resolve_model(session),
+        args <- list(provider = session$provider,
+                     model = .resolve_model(session),
                      max_tokens = .session_max_tokens(session))
         value <- .output_recovery_args(args, session)$max_tokens
         return(paste("Output budget:", value %||% "provider default"))

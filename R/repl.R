@@ -122,10 +122,13 @@
 # @noRd
 run_repl_loop <- function(ctx) {
     .repl_install_compaction_hook(ctx)
-    if (is.environment(ctx$session) && !isTRUE(ctx$session$.context_edit_display)) {
+    if (is.environment(ctx$session) &&
+        !isTRUE(ctx$session$.context_edit_display)) {
         previous_edit <- ctx$session$on_context_edit
         ctx$session$on_context_edit <- function(event) {
-            if (is.function(previous_edit)) previous_edit(event)
+            if (is.function(previous_edit)) {
+                previous_edit(event)
+            }
             cat(sprintf("%s%s%s\n", ctx$palette$dim,
                         .context_edit_event_text(event), ctx$palette$reset))
         }
@@ -522,8 +525,8 @@ run_repl_loop <- function(ctx) {
             }
             if (cmd == "/max-tokens") {
                 text <- tryCatch(.output_budget_command(ctx$session,
-                    paste(parts[-1], collapse = " ")),
-                    error = function(e) conditionMessage(e))
+                        paste(parts[-1], collapse = " ")),
+                                 error = function(e) conditionMessage(e))
                 cat(text, "\n")
                 next
             }
@@ -577,7 +580,11 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/context-edit") {
-                arg <- if (length(parts) == 1L) "status" else paste(parts[-1L], collapse = " ")
+                if (length(parts) == 1L) {
+                    arg <- "status"
+                } else {
+                    arg <- paste(parts[-1L], collapse = " ")
+                }
                 cat(.context_edit_command(ctx$session, arg), "\n")
                 ctx$config$context_edit <- ctx$session$config$context_edit
                 next
@@ -1112,7 +1119,7 @@ run_repl_loop <- function(ctx) {
         # then print a terse one-line indicator and auto-compact when we
         # cross the compaction threshold.
         sys_tok <- estimate_text_tokens(
-            .context_edit_system(ctx$session$system, ctx$session) %||% "")
+                                        .context_edit_system(ctx$session$system, ctx$session) %||% "")
         compact_tools <- tryCatch(
                                   skills_as_api_tools(ctx$session$tools_filter),
                                   error = function(e) list())

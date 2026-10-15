@@ -1,19 +1,24 @@
 .auto_filter_tools <- function(tools, config = NULL) {
-    if (is.null(config)) return(tools)
+    if (is.null(config)) {
+        return(tools)
+    }
     auto <- get_auto_config(config)
     Filter(function(tool) {
         name <- unsanitize_tool_name(tool$name %||% "")
         if (name %in% auto$never_broker) return(FALSE)
-        if (name %in% c("edit_context", "task_create", "task_update", "exit_plan_mode")) return(TRUE)
+        if (name %in% c("edit_context", "task_create", "task_update",
+                        "exit_plan_mode")) return(TRUE)
         op <- classify_op(name)
         op %in% c("read", "write") ||
-            (identical(op, "exec") && isTRUE(auto$allow_exec))
+        (identical(op, "exec") && isTRUE(auto$allow_exec))
     }, tools)
 }
 
 .auto_status <- function(ctx) {
     last <- ctx$last_auto_state
-    if (is.null(last)) return("Auto is off. /auto continues the current task; /auto <goal> starts a new run.")
+    if (is.null(last)) {
+        return("Auto is off. /auto continues the current task; /auto <goal> starts a new run.")
+    }
     paste0("Auto is off. Last run: ", last$stop_reason, "\n",
            "Use /auto resume to continue. /auto --exec resume also permits monitored shell/R execution.")
 }
@@ -45,6 +50,7 @@
     }
     ctx$last_auto_request <- spec
     run_auto_loop(ctx, spec$goal, max_loops = spec$loops,
-                  allow_exec = spec$allow_exec, continuous = is.null(spec$loops))
+                  allow_exec = spec$allow_exec,
+                  continuous = is.null(spec$loops))
     invisible(NULL)
 }

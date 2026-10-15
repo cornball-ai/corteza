@@ -206,7 +206,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
              call. = FALSE)
     }
     s$compaction_prompt <- compaction_prompt
-    if (!is.null(context_edit)) .context_edit_config(override = context_edit)
+    if (!is.null(context_edit)) {
+        .context_edit_config(override = context_edit)
+    }
     s$context_edit <- context_edit
     # A supervised run_r worker is created lazily and belongs to this session.
     # Its R6 finalizer is a fallback; closing here also covers a session env
@@ -585,7 +587,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # They only queue intent; the checkpoint enforces the protected set.
         if (identical(internal_name, "edit_context")) {
             result <- tryCatch(.context_edit_queue(session, as.list(args), call$model_context),
-                error = function(e) paste("Context edit rejected:", conditionMessage(e)))
+                               error = function(e) paste("Context edit rejected:", conditionMessage(e)))
             return(nudge(result))
         }
 
