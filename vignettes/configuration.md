@@ -64,6 +64,47 @@ corteza [options]
 
 Flags override config values for the current run.
 
+## Unattended work
+
+`/auto` continues the current task using the conversation and its approved
+plan. `/auto <goal>` supplies a new goal; an empty session needs one. Runs
+continue until completion, a blocker, or a resource limit. `--loops N` sets
+an iteration limit. `/auto status` reports the last stop, and `/auto resume`
+restarts that goal in the same conversation.
+
+The startup display names the working-directory scope and whether shell/R
+execution is enabled. `/auto --exec` explicitly permits the monitor to assess
+shell/R calls; a project restriction can still veto it. Without that grant,
+those tools are omitted. Unclassified package tools are also omitted rather
+than offered to the model and then stopping the run when selected. Path,
+credential, policy, and monitor checks still apply to every dispatched call.
+
+When a run stops, auto mode is off. Ordinary messages do not restart it.
+`/permissions` controls ordinary tool approvals separately from `/auto`.
+
+## Response output limits
+
+`max_tokens` is the per-response output budget. `/max-tokens` shows the active
+budget; `/max-tokens 32768` changes it for the current CLI or `chat()` session.
+`/max-tokens default` clears that session override and any learned budget.
+
+When Anthropic's unset default of 4,096 tokens cuts a response short, Corteza
+retries the unfinished response with 8,192, 16,384, then 32,768 tokens. Completed
+tool calls stay in history and are not replayed. Partial calls are not executed.
+A successful larger budget is reused for that provider/model in the session.
+
+`output_retries` defaults to 3 (0 disables recovery; maximum 10).
+`output_retry_max_tokens` sets the ceiling. An explicit `max_tokens` is also
+the ceiling unless `output_retry_max_tokens` explicitly permits a larger one.
+For providers with no known default, recovery requires an explicit starting
+budget and ceiling. Codex does not support this output-budget setting.
+Streaming consumers do not retry text they may already have delivered.
+
+Exhausting recovery prints a clear stop and the budget command. An unattended
+run stops rather than treating the incomplete response as progress; change
+the budget and use `/auto resume`. Output cutoffs are separate from context
+window exhaustion and do not trigger summary compaction.
+
 ## Conversation context editing
 
 Context editing is experimental and off by default. Enable it in the global

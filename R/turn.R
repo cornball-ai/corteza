@@ -100,9 +100,10 @@ default_local_model <- function() {
 #'   \code{config$max_tokens}, then llm.api's provider default (4096
 #'   on Anthropic). Agent turns that write long tool calls -- big
 #'   \code{run_r} bodies especially -- need more than that default:
-#'   a response the budget cuts off ends the whole turn with
-#'   \code{[Output truncated: max_tokens]} instead of the model's
-#'   answer.
+#'   an unset Anthropic budget can grow through bounded output retries.
+#'   An explicit budget stays a ceiling unless
+#'   \code{config$output_retry_max_tokens} permits a larger one.
+#'   Exhausted recovery reports \code{[Output truncated: max_tokens]}.
 #' @param reasoning_effort Character or NULL. How hard a reasoning
 #'   model should think before answering, e.g. \code{"low"},
 #'   \code{"medium"}, \code{"high"}. One setting, routed to whichever
@@ -1112,6 +1113,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .task_filter_tools(tools, session$channel)
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .context_edit_tools(tools, session)
+    tools <- .auto_filter_tools(tools, session$auto_config)
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api
@@ -1235,6 +1237,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(mt)) {
         agent_args$max_tokens <- mt
     }
+    agent_args <- .output_recovery_args(agent_args, session)
 
     # Reasoning depth. Both settings mean "how hard to think", but they
     # reach the provider differently: reasoning_effort rides `...` into
@@ -1338,7 +1341,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         }
         response
     }
-    response <- call_agent_request_safe(agent_args)
+    call_agent_output_safe <- function(args) {
+        .recover_output(call_agent_request_safe(args), args, session,
+                        call_agent_request_safe)
+    }
+    response <- call_agent_output_safe(agent_args)
 
     # Pi pairs proactive threshold compaction with one compact-and-retry on an
     # actual context overflow. llm.api deliberately excludes the incomplete
@@ -1365,7 +1372,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             retry_args$max_turns <- max(
                                         1L, as.integer(agent_args$max_turns) -
                                         as.integer(overflow_response$turns %||% 0L))
-            response <- call_agent_request_safe(retry_args)
+            response <- call_agent_output_safe(retry_args)
             response$usage <- .turn_add_usage(overflow_response$usage,
                 response$usage)
             response$turns <- as.integer(overflow_response$turns %||% 0L) +
