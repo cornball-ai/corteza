@@ -252,7 +252,11 @@ bot_monitor_waiting <- function(sessions) {
 # room that handed this job over (bot_job_report_back()).
 bot_present_job_event <- function(chat, cfg, s, ev, sessions = NULL) {
     switch(ev$type,
-           settled = bot_job_settled(chat, s, ev$job, sessions = sessions),
+           progress = bot_job_progress(chat, cfg, s, ev$job, ev$records),
+           settled = {
+        bot_job_progress(chat, cfg, s, ev$job, final = TRUE)
+        bot_job_settled(chat, s, ev$job, sessions = sessions)
+    },
            restored = bot_job_send(chat, s, ev$job,
                                    bot_job_restored_text(ev$restore)),
            approval = bot_job_approval(chat, cfg, s, ev),

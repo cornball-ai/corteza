@@ -1,3 +1,12 @@
+# corteza 0.7.1.69
+
+- Detect downloaded image formats from their bytes rather than trusting upload
+  MIME metadata, preventing rejected requests when PNG images are labeled JPEG.
+- Show public commentary between expandable tool groups in room progress, with
+  commands or paths, bounded result previews, and failed or refused outcomes.
+  Delegated workers forward the same progress to their room or thread before
+  posting the final result. Updates remain coalesced, with a plain-text fallback.
+
 # corteza 0.7.1.68
 
 - Serialize the `edit_context` schema's required fields as a JSON array.

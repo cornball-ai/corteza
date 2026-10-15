@@ -2354,7 +2354,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         session$context_edit_events <- list()
         reply <- rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
-        }, cfg = cfg)
+        }, cfg = cfg, thread = m$thread)
         session$job_handoff <- NULL
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
