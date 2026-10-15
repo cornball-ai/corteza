@@ -19,8 +19,8 @@
     value <- utils::modifyList(list(enabled = FALSE, cadence = "pressure"), value)
     keep <- value$retain_turns
     if (!is.null(keep) && (!is.numeric(keep) || length(keep) != 1L ||
-        is.na(keep) || !is.finite(keep) || keep < 0 ||
-        keep > .Machine$integer.max || keep != trunc(keep))) {
+            is.na(keep) || !is.finite(keep) || keep < 0 ||
+            keep > .Machine$integer.max || keep != trunc(keep))) {
         stop("context_edit retain_turns must be a non-negative whole number",
              call. = FALSE)
     }
