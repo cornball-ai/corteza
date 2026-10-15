@@ -366,11 +366,11 @@ local({
         }, "corteza")
         registry <- new.env(parent = emptyenv())
         corteza:::.delegation_route(corteza:::bot_msg_record(msg, addressed = TRUE), cfg, chat, registry)
-        reply <- tail(chat$env$log, 1)[[1]]
+        reply <- utils::tail(chat$env$log, 1)[[1]]
         id <- corteza:::.delegation_parse(reply$body)$fields$job
         corteza:::job_settle(id, "done", result = "Fresh worker result")
         corteza:::.delegation_worker_reply(chat, corteza:::job_read(id))
-        list(id = id, result = tail(chat$env$log, 1)[[1]])
+        list(id = id, result = utils::tail(chat$env$log, 1)[[1]])
     }
     fresh <- callr::r(worker_process, list(root = root, cfg = cfg_b, msg = restart_request))
     again <- callr::r(worker_process, list(root = root, cfg = cfg_b, msg = restart_request))
