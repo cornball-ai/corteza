@@ -47,6 +47,9 @@ bot_jobs_active <- function(sessions) {
     if (length(bot_job_sessions(sessions))) {
         return(TRUE)
     }
+    owners <- vapply(bot_sessions_list(sessions), job_worker_owner, "")
+    if (any(vapply(ls(.room_consult_workers), function(id)
+        get(id, .room_consult_workers)$owner %in% owners, TRUE))) return(TRUE)
     any(vapply(bot_sessions_list(sessions),
                function(s) length(s$.job_prompts) > 0L, logical(1)))
 }

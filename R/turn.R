@@ -546,6 +546,11 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     executor_wants_context <- "context" %in% executor_formals ||
     "..." %in% executor_formals
     execute <- function(name, args, context) {
+        if (identical(name, "ask_room")) {
+            if (session_dry_run()) return(ok("Dry run: would ask another room."))
+            if (!is.function(session$ask_room)) return(err("Room consultation is unavailable"))
+            return(do.call(session$ask_room, args))
+        }
         if (identical(name, "delegate_to")) {
             if (session_dry_run()) return(ok("Dry run: would delegate this task."))
             if (!is.function(session$delegate_to)) return(err("No remote delegates configured"))
@@ -1127,6 +1132,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .context_edit_tools(tools, session)
     tools <- .delegation_tools(tools, session)
+    tools <- .room_consult_tools(tools, session)
     tools <- .auto_filter_tools(tools, session$auto_config)
 
     # Provider-native (server-side) web search: enable it when the session

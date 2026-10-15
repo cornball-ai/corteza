@@ -747,6 +747,36 @@ The session is an environment that carries history, the active provider/model, a
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
 
+## Consulting another room
+
+Set `"room_consultation": true` in a bot's account config to expose
+`ask_room(room, question, thread)` when it answers a configured operator.
+This asks another conversation owned by the same bot. No shared room, second
+bot, Matrix self-mention, or additional listener is needed. The default is off.
+Use a room name, ID, or project directory, and optionally a destination thread
+root ID. Ambiguous names require an ID. `delegate(room=...)` still hands work
+to the destination's doer; `ask_room` asks about its conversation instead.
+
+The destination's current text context, including human messages, assistant
+replies, and completed tool text, is captured when the question is submitted.
+Its conversational model answers in a separate process while both rooms and
+any doer remain available. The snapshot excludes images and hidden reasoning;
+it does not retrieve material retired into a vault. Missing context must be
+reported as missing. The consultation has no tools, web search, CLM edits, or
+ability to start another consultation. Its snapshot and outcome stay in the
+durable job ledger. Neither live conversation is replaced with the snapshot.
+
+Questions and answers appear in both rooms and their conversation histories,
+including the originating thread. Enabling this setting allows operators to
+share information between the bot's joined rooms, whose members may differ.
+Non-operators cannot request it. Plan mode and rooms attached to a remote CLI
+refuse consultations. `job_status` and `job_cancel` work from either conversation.
+Repeated pending questions reuse the same job. Consultations have a 120 second
+limit, one active query per destination, and at most 4 active queries per bot.
+Turning the setting off cancels pending queries. A restart leaves undispatched
+queries queued and marks interrupted queries indeterminate, without retrying
+the model call. Ordinary failed-message retries deliver results after an outage.
+
 ## Delegation between bots
 
 Conversation sessions can ask another configured bot to run a job using

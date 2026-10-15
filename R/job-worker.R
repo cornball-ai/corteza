@@ -976,7 +976,7 @@ job_dispatch_next <- function(session) {
     key <- job_worker_key(session)
     queued <- job_list(status = "queued", origin_key = key,
                        owner = job_worker_owner(session))
-    queued <- Filter(function(j) !identical(j$backend, "remote"), queued)
+    queued <- Filter(function(j) !j$backend %in% c("remote", "consultation"), queued)
     events <- list()
     checkouts <- list()
     for (j in queued) {

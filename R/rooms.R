@@ -2026,6 +2026,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     self_id <- chat.api::chat_whoami(chat)$id
 
     if (!is.null(sessions)) {
+        tryCatch(.room_consult_pump(chat, cfg, sessions), error = function(e) {
+            message("room consultation pump: ", conditionMessage(e))
+        })
         tryCatch(.delegation_pump(chat, cfg, sessions), error = function(e) {
             message("delegation pump: ", conditionMessage(e))
         })
@@ -2389,11 +2392,21 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                       system = system, model = model, provider = provider,
                                       tools_filter = tools_filter, room_id = room_id)
         })
+        .room_consult_bind(session, cfg, chat_now(), sender, session$job_origin,
+            new_session = function(room_id, thread) {
+                s <- bot_get_or_create_session(sessions, bot_session_key(room_id, thread), cfg,
+                    system = system, model = model, provider = provider,
+                    tools_filter = tools_filter, room_id = room_id)
+                bot_maybe_rehydrate(s, chat_now(), room_id, thread)
+                s
+            })
         session$context_edit_events <- list()
-        reply <- rooms_with_activity(session, chat, m$channel, function() {
+        reply <- tryCatch(rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
-        }, cfg = cfg, thread = m$thread)
-        session$job_handoff <- NULL
+        }, cfg = cfg, thread = m$thread), finally = {
+            session$job_handoff <- NULL
+            session$ask_room <- NULL
+        })
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"

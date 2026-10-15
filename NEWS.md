@@ -1,5 +1,10 @@
 # corteza 0.7.1.74
 
+- Add opt-in `ask_room(room, question, thread)` for one bot to consult its own
+  conversation in another room. Answer asynchronously with the destination's
+  conversational model and a snapshot of its current text context, with no
+  tools, recursive requests, or rewrites of its live window. Record the
+  question and answer in both conversations; retain cancellation and recovery.
 - Add opt-in bot-to-bot delegation over the existing chat transport, using
   explicit outgoing destinations and incoming delegator permissions. Keep
   remote jobs in the durable ledger, correlate authenticated results, and
