@@ -1,3 +1,14 @@
+# corteza 0.7.1.71
+
+- Bare `/auto` continues the current conversation. Add auto status and resume,
+  expose the execution setting, and hide tools unavailable to the auto monitor.
+- Classify `read_handle` as a read operation for approval policy on every
+  channel. Auto runs omit tools whose read/write/exec operation is unknown,
+  including unclassified package and MCP tools.
+- Recover output-token cutoffs with bounded larger requests from completed
+  history, without replaying completed tools or executing partial calls.
+  Add `/max-tokens` and report an unrecovered cutoff as a stopped auto run.
+
 # corteza 0.7.1.70
 
 - Add opt-in pure CLM context management for bot conversations and doers.

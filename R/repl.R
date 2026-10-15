@@ -122,10 +122,13 @@
 # @noRd
 run_repl_loop <- function(ctx) {
     .repl_install_compaction_hook(ctx)
-    if (is.environment(ctx$session) && !isTRUE(ctx$session$.context_edit_display)) {
+    if (is.environment(ctx$session) &&
+        !isTRUE(ctx$session$.context_edit_display)) {
         previous_edit <- ctx$session$on_context_edit
         ctx$session$on_context_edit <- function(event) {
-            if (is.function(previous_edit)) previous_edit(event)
+            if (is.function(previous_edit)) {
+                previous_edit(event)
+            }
             cat(sprintf("%s%s%s\n", ctx$palette$dim,
                         .context_edit_event_text(event), ctx$palette$reset))
         }
@@ -517,20 +520,14 @@ run_repl_loop <- function(ctx) {
                 # and unwind back to the user's prompt when the run ends.
                 # Its on.exit restores read_input, the gate, and the EOF
                 # message, so the outer loop resumes unchanged.
-                spec <- parse_auto_flags(paste(parts[-1], collapse = " "))
-                if (!nzchar(spec$goal)) {
-                    cat(paste0(
-                               "Usage: /auto [--loops N] [--exec|--no-exec] <goal>\n",
-                               "  Runs unattended iterations toward <goal>, supervised\n",
-                               "  by a read-only monitor subagent. With --loops N the\n",
-                               "  run stops after N iterations; without it the run is\n",
-                               "  continuous, governed by the monitor and the resource\n",
-                               "  caps (tool calls, tokens, time, cost, stall).\n"))
-                    next
-                }
-                run_auto_loop(ctx, spec$goal, max_loops = spec$loops,
-                              allow_exec = spec$allow_exec,
-                              continuous = is.null(spec$loops))
+                .auto_command(ctx, paste(parts[-1], collapse = " "))
+                next
+            }
+            if (cmd == "/max-tokens") {
+                text <- tryCatch(.output_budget_command(ctx$session,
+                        paste(parts[-1], collapse = " ")),
+                                 error = function(e) conditionMessage(e))
+                cat(text, "\n")
                 next
             }
             if (cmd == "/dryrun") {
@@ -583,7 +580,11 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/context-edit") {
-                arg <- if (length(parts) == 1L) "status" else paste(parts[-1L], collapse = " ")
+                if (length(parts) == 1L) {
+                    arg <- "status"
+                } else {
+                    arg <- paste(parts[-1L], collapse = " ")
+                }
                 cat(.context_edit_command(ctx$session, arg), "\n")
                 ctx$config$context_edit <- ctx$session$config$context_edit
                 next
@@ -1083,6 +1084,10 @@ run_repl_loop <- function(ctx) {
         }
 
         reply <- result$reply %||% ""
+        if (isTRUE(result$raw$truncated)) {
+            ctx$last_turn_status <- "truncated"
+            ctx$last_turn_error <- result$raw$truncation_reason %||% "incomplete response"
+        }
         if (nchar(reply) == 0) {
             cat(sprintf("%s[No response text]%s\n\n", ctx$palette$dim, ctx$palette$reset))
         } else {
@@ -1114,7 +1119,7 @@ run_repl_loop <- function(ctx) {
         # then print a terse one-line indicator and auto-compact when we
         # cross the compaction threshold.
         sys_tok <- estimate_text_tokens(
-            .context_edit_system(ctx$session$system, ctx$session) %||% "")
+                                        .context_edit_system(ctx$session$system, ctx$session) %||% "")
         compact_tools <- tryCatch(
                                   skills_as_api_tools(ctx$session$tools_filter),
                                   error = function(e) list())
