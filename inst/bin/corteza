@@ -182,6 +182,9 @@ cli_read_line <- function(prompt_str = "> ") {
 cli_help_text <- function() {
   "
 Commands:
+  /auto [--exec] [goal]  Continue the current task unattended, or start a goal
+  /auto status|resume   Inspect or resume the last unattended run
+  /max-tokens [N|default]  Show or change the response output budget
   /quit, /exit   Exit corteza
   /status        Alias for /context
   /doctor        Check provider, git, MCP, and context health
