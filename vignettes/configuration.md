@@ -113,6 +113,12 @@ completed tool history. Only the room's main timeline is attached; threads
 keep their own bot sessions. Other senders cannot control the CLI, but room
 members can see its public output.
 
+Remote operators act with the CLI's channel policy. A Matrix session's
+supervisor gate is not added to the CLI; `/auto` still uses its own monitor.
+Approval prompts include full tool arguments, including file bodies. Treat
+the configured operators as people authorized to control this CLI session.
+Room prompts and replies also enter the bot's normal conversation archive.
+
 The local mailbox lives under Corteza's user data directory, in
 `remote-control`. `CORTEZA_REMOTE_DIR` can relocate it, with the same setting
 in both processes. Records remain available for diagnosing failed delivery;

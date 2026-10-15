@@ -6,6 +6,8 @@
   approvals. Relay bounded progress and replies without a second sync client.
 - Support remote `/auto`, `/max-tokens`, `/stop`, and disconnect, with queued
   output delivery and callback restoration when control returns locally.
+- Include remote room prompts and replies in the normal conversation archive,
+  deduplicated by Matrix event ID.
 
 # corteza 0.7.1.71
 

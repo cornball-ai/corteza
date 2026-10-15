@@ -143,3 +143,17 @@
         message("remote control: ", conditionMessage(e))
     })
 }
+
+# Remote control changes who answers, not what belongs in the room archive.
+# Reuse the room ledger's event IDs so sync redelivery and outgoing echoes do
+# not add a second copy. The CLI alone owns the provider working history.
+.remote_bot_record <- function(session, m) {
+    if (m$id %in% session$seen_event_ids) return(invisible(NULL))
+    role <- if (isTRUE(m$is_self)) "assistant" else "user"
+    body <- if (isTRUE(m$is_self)) m$body else
+        bot_ingest_body(m$sender, m$body, attribute_sender = TRUE)
+    bot_transcript_add(session, m$id, role, body)
+    session$seen_event_ids <- bot_remember_event(session$seen_event_ids, m$id)
+    .context_room_snapshot(session)
+    invisible(NULL)
+}

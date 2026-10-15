@@ -175,6 +175,23 @@ local({
     expect_true(any(grepl("disconnected", bodies, fixed = TRUE)))
     expect_true(any(grepl("Verify the fixture", bodies, fixed = TRUE)))
 
+    # A newly attached room gets the complete public conversation for archive,
+    # while the bot never acquires a second provider conversation for it.
+    room_session <- get("next-room", sessions)
+    entries <- room_session$transcript
+    prompt_entries <- Filter(function(x) identical(x$role, "user") &&
+        grepl("Continue the fixture", x$content, fixed = TRUE), entries)
+    expect_identical(length(prompt_entries), 1L)
+    expect_true(grepl("@owner:example", prompt_entries[[1L]]$content, fixed = TRUE))
+    archive <- corteza:::bot_session_to_markdown(room_session, "next-room")
+    expect_true(grepl("Continue the fixture", archive, fixed = TRUE))
+    expect_true(grepl("Finished the fixture", archive, fixed = TRUE))
+    prompt_message <- Filter(function(m) identical(m$body, "Continue the fixture"), messages)[[1L]]
+    corteza:::.remote_bot_record(room_session, corteza:::bot_msg_record(prompt_message))
+    expect_identical(room_session$transcript, entries)
+    expect_false(any(vapply(room_session$history %||% list(), function(x)
+        is.character(x$content) && any(grepl("Continue the fixture", x$content, fixed = TRUE)), TRUE)))
+
     # The real stop check prevents tool dispatch, with the request already
     # mirrored in history available to the REPL's normal interruption repair.
     stop_dir <- corteza:::.remote_request(cfg$user_id, "stop-room", cfg$operators)

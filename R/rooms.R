@@ -2080,6 +2080,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             message("remote control input: ", conditionMessage(e))
             TRUE
         })) {
+            session <- bot_get_or_create_session(sessions, m$channel, cfg,
+                system = system, model = model, provider = provider,
+                tools_filter = tools_filter, room_id = m$channel)
+            .remote_bot_record(session, m)
             next
         }
         # A thread is its own conversation, so it gets its own session.
