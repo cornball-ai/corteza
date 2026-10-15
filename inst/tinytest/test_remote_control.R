@@ -43,6 +43,13 @@ local({
     corteza:::.remote_bot_pump(cfg, cl, sessions)
     expect_true(grepl("already controls", corteza:::.remote_read_file(
         file.path(duplicate, "accepted.json"))$error))
+    # A restarted bot may not have rebuilt this room's in-memory session yet.
+    corteza:::job_create("queued fixture", workspace = root, owner = cfg$user_id,
+                         origin = list(room = "busy-room", session_key = "busy-room"))
+    busy <- corteza:::.remote_request(cfg$user_id, "busy-room", cfg$operators)
+    corteza:::.remote_bot_pump(cfg, cl, sessions)
+    expect_true(grepl("work in flight", corteza:::.remote_read_file(
+        file.path(busy, "accepted.json"))$error))
     # Replies survive a failed send and are not sent again on another pump.
     ctx <- new.env(parent = emptyenv())
     ctx$remote_dir <- dir

@@ -19,9 +19,10 @@
         if (occupied) stop("This room already controls another CLI session.")
         s <- if (!is.null(sessions) &&
                        exists(room, sessions, inherits = FALSE)) get(room, sessions)
-        if (is.environment(s) &&
-                       (!is.null(s$.job_current) || length(s$.job_events) ||
-                       length(job_list(status = "queued", origin_key = room, owner = request$owner)))) {
+        if ((is.environment(s) &&
+             (!is.null(s$.job_current) || length(s$.job_events))) ||
+            length(job_list(status = JOB_STATUSES_OPEN, origin_key = room,
+                            owner = request$owner))) {
             stop("The room has delegated work in flight; finish it before attaching.")
         }
         list(room = room, controllers = as.list(operators))
