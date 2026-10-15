@@ -10,21 +10,23 @@ local({
         stop("captured serialized request", call. = FALSE)
     }, "llm.api")
     for (provider in c("anthropic", "anthropic_claude", "openai")) {
-        payload <- NULL
-        schema <- corteza:::.context_edit_schema()
-        tools <- get(".convert_tools", ns)(list(schema), provider)
-        config <- list(base_url = "https://example.invalid", chat_path = "/chat",
-                       api_key = "fixture", provider = provider)
-        if (provider == "anthropic_claude") {
-            config$credentials <- function() c(Authorization = "Bearer fixture")
+        for (archive in c(FALSE, TRUE)) {
+            payload <- NULL
+            schema <- corteza:::.context_edit_schema(archive)
+            tools <- get(".convert_tools", ns)(list(schema), provider)
+            config <- list(base_url = "https://example.invalid", chat_path = "/chat",
+                           api_key = "fixture", provider = provider)
+            if (provider == "anthropic_claude") {
+                config$credentials <- function() c(Authorization = "Bearer fixture")
+            }
+            request <- get(if (provider == "openai") ".agent_openai" else ".agent_anthropic", ns)
+            expect_error(request(list(list(role = "user", content = "Fixture")),
+                tools, "Fixture system", "fixture", config), "captured serialized request")
+            expect_true(is.character(payload) && nzchar(payload))
+            wire <- jsonlite::fromJSON(payload, simplifyVector = FALSE)$tools[[1L]]
+            input <- if (provider == "openai") wire$`function`$parameters else wire$input_schema
+            expect_identical(input$required, list("op"))
+            expect_identical(input$properties$op$enum, list("drop", "replace", "note"))
         }
-        request <- get(if (provider == "openai") ".agent_openai" else ".agent_anthropic", ns)
-        expect_error(request(list(list(role = "user", content = "Fixture")),
-            tools, "Fixture system", "fixture", config), "captured serialized request")
-        expect_true(is.character(payload) && nzchar(payload))
-        wire <- jsonlite::fromJSON(payload, simplifyVector = FALSE)$tools[[1L]]
-        input <- if (provider == "openai") wire$`function`$parameters else wire$input_schema
-        expect_identical(input$required, list("op"))
-        expect_identical(input$properties$op$enum, list("drop", "replace", "note"))
     }
 })

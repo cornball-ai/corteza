@@ -284,6 +284,7 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     # user the work is in progress.
     s$history <- c(s$history %||% list(),
                    list(list(role = "assistant", content = text)))
+    .context_room_snapshot(s)
     if (!is.null(from$room)) {
         bot_job_report_back(chat, sessions, job, result)
     }
@@ -310,6 +311,7 @@ bot_job_report_back <- function(chat, sessions, job, result) {
     if (is.environment(asker)) {
         asker$history <- c(asker$history %||% list(),
                            list(list(role = "assistant", content = text)))
+        .context_room_snapshot(asker)
     }
     invisible(sent)
 }
@@ -546,6 +548,7 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
     # out: asked what its doer is busy with, it has to be able to say.
     target$history <- c(target$history %||% list(),
                         list(list(role = "assistant", content = notice)))
+    .context_room_snapshot(target)
     # What the talker is told about the notice is what happened to it.
     # Either way the job is accepted, and saying so plainly is what keeps
     # a talker from delegating it a second time.
