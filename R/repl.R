@@ -151,7 +151,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             # right; a driver that ends the loop by returning EOF (see
             # run_auto_loop) sets its own message, since the run did not
             # end because anyone said goodbye.
-            if (!keep_jobs) .repl_jobs_shutdown(ctx)
+            if (!keep_jobs) {
+                .repl_jobs_shutdown(ctx)
+            }
             cat(ctx$eof_message %||% "\nBye.\n")
             break
         }
@@ -184,7 +186,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             cmd <- tolower(parts[1])
 
             if (cmd %in% c("/quit", "/exit", "/q")) {
-                if (!keep_jobs) .repl_jobs_shutdown(ctx)
+                if (!keep_jobs) {
+                    .repl_jobs_shutdown(ctx)
+                }
                 if (ctx$ws_enabled) {
                     ws_prune()
                     tryCatch(ws_save(ctx$disk_session$sessionId),

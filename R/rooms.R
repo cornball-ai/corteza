@@ -2079,7 +2079,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (tryCatch(.remote_bot_route(m, cfg), error = function(e) {
             message("remote control input: ", conditionMessage(e))
             TRUE
-        })) next
+        })) {
+            next
+        }
         # A thread is its own conversation, so it gets its own session.
         # Without a thread the key is the room id and nothing about this
         # loop changes.
@@ -2217,7 +2219,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(edit_cmd)) {
             ack <- .context_edit_command(session, edit_cmd)
             sent_id <- tryCatch(bot_reply_send(chat, m$channel, ack, thread = m$thread),
-                               error = function(e) NULL)
+                                error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
@@ -2378,7 +2380,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
         if (length(session$context_edit_events)) {
             reply <- paste(reply, paste(vapply(session$context_edit_events,
-                .context_edit_event_text, character(1)), collapse = "\n"), sep = "\n\n")
+                        .context_edit_event_text, character(1)), collapse = "\n"), sep = "\n\n")
         }
         # Stamped after the turn by deterministic code, so no model can
         # forget or restyle its own badge.
@@ -2498,7 +2500,9 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                 provider = provider, tools_filter = tools_filter,
                 room_id = rid
             )
-            if (m$id %in% session$seen_event_ids) next
+            if (m$id %in% session$seen_event_ids) {
+                next
+            }
             # A thread's archive is older context than this window, so
             # it goes in before the window does. Once per session: the
             # flag is what stops the second backfilled message in a
@@ -2682,7 +2686,9 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
 #' @export
 bot_run_step <- function(state, timeout = 30000L) {
     o <- state$opts
-    if (length(.remote_sessions())) timeout <- min(timeout, 1000L)
+    if (length(.remote_sessions())) {
+        timeout <- min(timeout, 1000L)
+    }
     # With work in flight, poll briefly so a finished job or an approval
     # prompt is not held behind a 30-second long-poll.
     if (bot_jobs_active(state$sessions)) {
