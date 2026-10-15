@@ -69,14 +69,14 @@
             next
         }
         text <- record$text
-        if (identical(text, "/remote-control off")) {
+        if (text %in% c("/remote-control off", "/rc off")) {
             return(character())
         }
         if (isTRUE(record$media)) {
             .remote_emit(ctx, "Remote control currently accepts text. Describe the attachment in a message.")
             next
         }
-        if (identical(text, "/remote-control status")) {
+        if (text %in% c("/remote-control status", "/rc status")) {
             .remote_emit(ctx, paste("Connected to the live CLI in", ctx$cwd))
             next
         }

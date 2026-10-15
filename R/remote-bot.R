@@ -109,8 +109,7 @@
             return(TRUE)
         }
         text <- trimws(m$body %||% "")
-        if (identical(text, "/stop") ||
-            identical(text, "/remote-control off")) {
+        if (text %in% c("/stop", "/remote-control off", "/rc off")) {
             .remote_write(file.path(request$dir, "stop.json"), list(id = m$id))
         }
         parts <- strsplit(text, "\\s+")[[1L]]

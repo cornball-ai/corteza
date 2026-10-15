@@ -90,6 +90,9 @@ policy stay in the CLI process. Keep that process running. The existing bot
 loop carries messages and replies; the CLI does not log in to Matrix or share
 the bot's sync cursor or encryption store.
 
+`/rc` is an alias for `/remote-control`, with the same arguments. In the
+attached room, `/rc status` reports the connection and `/rc off` disconnects.
+
 Both processes must run a version with remote control, on the same machine
 under the same user. The bot must have an explicit `operators` list. With one
 available bot it is selected automatically; otherwise specify `--bot`. The

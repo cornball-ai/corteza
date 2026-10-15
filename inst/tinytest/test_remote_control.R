@@ -91,6 +91,18 @@ local({
     expect_identical(length(corteza:::.remote_records(dir, "in")), 1L)
     cfg$operators <- "@owner:example"
     corteza:::.remote_advertise(cfg)
+    # Each spelling stops a running turn immediately and is also understood
+    # by the idle CLI reader; status stays a control command, not model input.
+    ctx$cwd <- root
+    for (command in c("/remote-control", "/rc")) {
+        ctx$remote_consumed <- vapply(corteza:::.remote_records(dir, "in"), function(x) x$id, "")
+        route(paste(command, "status"), paste0(command, "-status"))
+        route(paste(command, "off"), paste0(command, "-off"))
+        expect_true(tryCatch({corteza:::.remote_check_stop(ctx$session); FALSE}, interrupt = function(e) TRUE))
+        expect_identical(corteza:::.remote_input(ctx, "You: "), character())
+        output <- tail(corteza:::.remote_records(dir, "out"), 1L)[[1L]]
+        expect_identical(output$text, paste("Connected to the live CLI in", root))
+    }
     corteza:::.remote_write(file.path(dir, "closed.json"), list(closed = TRUE))
     expect_false(route("back to bot", "after-close"))
 
@@ -141,11 +153,17 @@ local({
     ctx$session$history <- list(list(role = "user", content = "Existing task"))
     same_session <- ctx$session
     ctx$palette <- setNames(as.list(rep("", 10)), c("dim", "reset", "cyan", "bold", "yellow", "green", "bright_magenta", "red", "magenta", "blue"))
-    ctx$read_input <- function(...) character()
+    local_inputs <- c("/rc --bot @courier:example next-room")
+    ctx$read_input <- function(...) {
+        if (!length(local_inputs)) return(character())
+        input <- local_inputs[[1L]]
+        local_inputs <<- local_inputs[-1L]
+        input
+    }
     saved_input <- ctx$read_input
     saved_approval <- ctx$session$approval_cb
     ctx$render_reply <- function(text) {
-        send_human("/remote-control off")
+        send_human("/rc off")
         corteza::bot_poll(sessions = sessions, system = "fixture")
     }
     disk <- corteza:::session_new("ollama", "fixture", root)
@@ -162,7 +180,7 @@ local({
             call = list(tool = "read_file", args = list(path = "fixture")), result = "found it"))
         list(reply = "Finished the fixture", usage = list())
     }
-    out <- capture.output(corteza:::.remote_run(ctx, "--bot @courier:example next-room"))
+    out <- capture.output(corteza:::run_repl_loop(ctx))
     expect_identical(ctx$read_input, saved_input)
     expect_identical(ctx$session$approval_cb, saved_approval)
     expect_null(ctx$remote_dir)

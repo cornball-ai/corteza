@@ -286,6 +286,7 @@ chat_help_text <- function() {
           "  /auto status|resume           Inspect or resume a stopped unattended run",
           "  /max-tokens [N|default]        Show or change the response output budget",
           "  /remote-control [--bot ID] [room]  Control this CLI session from Matrix",
+          "  /rc [--bot ID] [room]         Alias for /remote-control",
           "  /dryrun                       Toggle dry-run mode (preview tools)",
           "  /plan [task]                  Toggle plan mode (reads only, LLM proposes plan)",
           "  /compact                      Summarize conversation to free context",

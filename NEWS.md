@@ -1,7 +1,7 @@
 # corteza 0.7.1.72
 
-- Add `/remote-control` to continue the live CLI or `chat()` session from a
-  Matrix room through a running local bot. Keep the same model, history,
+- Add `/remote-control` (alias `/rc`) to continue the live CLI or `chat()`
+  session from a Matrix room through a running local bot. Keep the same model, history,
   workspace, and tool policy, with operator-only input and request-specific
   approvals. Relay bounded progress and replies without a second sync client.
 - Support remote `/auto`, `/max-tokens`, `/stop`, and disconnect, with queued

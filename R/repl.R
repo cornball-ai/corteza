@@ -534,7 +534,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 cat(text, "\n")
                 next
             }
-            if (cmd == "/remote-control") {
+            if (cmd %in% c("/remote-control", "/rc")) {
                 tryCatch(.remote_run(ctx, paste(parts[-1], collapse = " ")),
                          error = function(e) cat("Remote control: ", conditionMessage(e), "\n", sep = ""),
                          interrupt = function(e) cat("Remote control cancelled.\n"))
