@@ -341,6 +341,10 @@
 
     for (i in seq_along(chain)) {
         cand <- chain[[i]]
+        if (.context_edit_pure(session) &&
+            !.context_edit_provider_supported(cand$provider)) {
+            next
+        }
         if (.fallback_limited(cand$provider)) {
             next
         }

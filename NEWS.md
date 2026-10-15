@@ -1,3 +1,35 @@
+# corteza 0.7.1.70
+
+- Add opt-in pure CLM context management for bot conversations and doers.
+  `context_edit.strategy = "clm"` disables automatic summary compaction and
+  holder archival. Doers inherit the editing policy; reviewers and monitors
+  keep their existing configuration.
+- Conversation owners, either split talkers or combined conversation/work
+  sessions, can file retired context into an explicit `context_vault` before
+  removal. Original entries are preserved as Markdown and provider-native
+  JSON. Older human turns may be filed and dropped, never rewritten; the
+  latest human turn remains protected. Workers never inherit vault filing.
+- Restore configured conversation windows and consumed event IDs together
+  from the journal so Matrix backfill does not revive retired context.
+- Invalid conversation or vault settings warn and disable context editing.
+  Failed vault writes reject the edit while the turn continues with the
+  original entries intact. An exhausted pure-CLM room window requires `/clear`.
+
+# corteza 0.7.1.69
+
+- Detect downloaded image formats from their bytes rather than trusting upload
+  MIME metadata, preventing rejected requests when PNG images are labeled JPEG.
+- Show public commentary between expandable tool groups in room progress, with
+  commands or paths, bounded result previews, and failed or refused outcomes.
+  Delegated workers forward the same progress to their room or thread before
+  posting the final result. Updates remain coalesced, with a plain-text fallback.
+
+# corteza 0.7.1.68
+
+- Serialize the `edit_context` schema's required fields as a JSON array.
+  The single required field previously became a string, causing providers
+  to reject requests with context editing enabled before generating a reply.
+
 # corteza 0.7.1.64
 
 - Add experimental conversation context editing, off by default. The

@@ -17,6 +17,11 @@
         value <- utils::modifyList(value, override)
     }
     value <- utils::modifyList(list(enabled = FALSE, cadence = "pressure"), value)
+    if (!is.null(value$strategy) && (!is.character(value$strategy) ||
+        length(value$strategy) != 1L || is.na(value$strategy) ||
+        !value$strategy %in% c("hybrid", "clm"))) {
+        stop("context_edit strategy must be hybrid or clm", call. = FALSE)
+    }
     if (!is.logical(value$enabled) || length(value$enabled) != 1L ||
         is.na(value$enabled) || !is.character(value$cadence) ||
         length(value$cadence) != 1L || is.na(value$cadence) ||
@@ -27,10 +32,14 @@
     value
 }
 
+.context_edit_provider_supported <- function(provider) {
+    provider %in% c("anthropic", "anthropic_claude", "openai",
+                    "openai_compatible", "moonshot", "ollama")
+}
+
 .context_edit_supported <- function(session) {
     provider <- session$context_edit_provider %||% session$provider
-    provider %in% c("anthropic", "anthropic_claude", "openai",
-                    "openai_compatible", "moonshot", "ollama") &&
+    .context_edit_provider_supported(provider) &&
     !identical(.history_shape(session$history), "responses")
 }
 
@@ -51,7 +60,7 @@
         # Adopt those labels when indexing; allocate new labels beyond them.
         rendered <- vapply(session$history %||% list(), .compact_entry_body,
                            character(1))
-        labels <- unlist(regmatches(rendered, gregexpr("\\[[rm][0-9]+\\]", rendered)))
+        labels <- unlist(regmatches(rendered, gregexpr("\\[[rmu][0-9]+\\]", rendered)))
         numbers <- suppressWarnings(as.numeric(gsub("[^0-9]", "", labels)))
         state$next_id <- max(c(0, numbers[is.finite(numbers)]))
         state$calls <- list()
@@ -174,7 +183,11 @@
     for (id in names(state$messages)) {
         found <- which(vapply(history, identical, logical(1),
                               state$messages[[id]]))
-        if (length(found) == 1L && found < boundary) {
+        if (length(found) == 1L && found < boundary &&
+            (!.context_edit_human(history[[found]]) ||
+             (.context_edit_archives(session) &&
+              .context_edit_archivable_human(history[[found]]) &&
+              found < .context_edit_last_human(history)))) {
             targets[[id]] <- list(kind = "message", index = found)
         }
     }
@@ -226,14 +239,17 @@
     }
     for (i in seq_len(max(0L, boundary - 1L))) {
         m <- history[[i]]
-        if (!.context_edit_plain(m) || identical(m, state$note) ||
+        human <- .context_edit_archives(session) &&
+            .context_edit_archivable_human(m) && i < .context_edit_last_human(history)
+        if ((!human && !.context_edit_plain(m)) || identical(m, state$note) ||
             startsWith(.compact_entry_body(m), "[context note]\n") ||
             any(vapply(state$messages, identical, logical(1), m))) {
             next
         }
-        id <- .context_edit_label(.compact_entry_body(m), "m")
+        prefix <- if (human) "u" else "m"
+        id <- .context_edit_label(.compact_entry_body(m), prefix)
         if (is.null(id) || id %in% names(state$messages)) {
-            id <- .context_edit_id(state, "m")
+            id <- .context_edit_id(state, prefix)
             if (is.character(m$content)) {
                 m$content <- paste0("[", id, "]\n", m$content)
             } else {
@@ -247,6 +263,7 @@
 }
 
 .context_edit_prepare <- function(session) {
+    .context_edit_require(session)
     session$pending_context_edits <- list()
     session$context_edit_events <- list()
     if (!.context_edit_enabled(session)) {
@@ -269,25 +286,28 @@
     }
 }
 
-.context_edit_schema <- function() {
+.context_edit_schema <- function(archive = FALSE) {
     list(name = "edit_context",
          description = paste("Manage completed conversation entries by visible ID.",
                              "drop removes entries (tool calls and results together).",
                              "replace summarizes entries, keeping the first ID and its tool call if any.",
                              "note replaces the working note with concise task facts, decisions, and next actions.",
-                             "Instructions, human messages, and the current tool batch are protected.",
+                             if (archive) {
+                                 "Older human turns [uN] may be dropped after vault filing; never replace them. The latest human turn is protected."
+                             } else "Human messages are protected.",
+                             "Instructions and the current tool batch are protected.",
                              "Edits are queued and validated after the complete tool batch."),
          input_schema = list(type = "object", properties = list(
                 op = list(type = "string", enum = c("drop", "replace", "note")),
                 ids = list(type = "array", items = list(type = "string")),
-                text = list(type = "string")), required = "op",
+                text = list(type = "string")), required = list("op"),
                              additionalProperties = FALSE))
 }
 
 .context_edit_tools <- function(tools, session) {
     tools <- Filter(function(t) !identical(t$name, "edit_context"), tools)
     if (.context_edit_enabled(session)) {
-        c(tools, list(.context_edit_schema()))
+        c(tools, list(.context_edit_schema(.context_edit_archives(session))))
     } else {
         tools
     }
@@ -302,10 +322,23 @@
                         "Tool outputs have [rN] IDs; earlier assistant text has [mN] IDs.",
                         "Use edit_context to drop spent material or replace it with concise task-specific summaries.",
                         "Use note for task facts, decisions, and next actions; it stays before the latest human prompt.",
-                        "Keep useful evidence and unresolved constraints. Never target instructions or human messages.",
+                        "Keep useful evidence and unresolved constraints. Never target instructions.",
+            if (.context_edit_archives(session)) {
+                paste("When a topic is complete or stale, retire its older entries with drop.",
+                      "Older human turns have [uN] IDs; they can be dropped, never rewritten.",
+                      "The latest human turn stays protected. Filing is automatic before drop/replace.",
+                      "Use text on drop to record the topic and a concise filing note.",
+                      "Keep open tasks and commitments in your working note; topics can overlap.",
+                      "The receipt names the vault source to read if the topic returns.",
+                      "Search earlier filed topics under:",
+                      file.path(session$context_archive_vault, "raw", "chats"))
+            } else "Human messages stay protected.",
+            if (.context_edit_pure(session)) {
+                "You manage the window: automatic summary compaction and holder archival are disabled. Edit proactively before it fills."
+            },
                         "The current assistant/tool batch is unavailable until a later batch.",
             if (.context_edit_config(session$config, session$context_edit)$cadence == "pressure") {
-                "Edit only after a context-pressure notice. Threshold compaction remains the fallback."
+                "Edit only after a context-pressure notice."
             } else "Edits are allowed at each checkpoint.", sep = "\n"), sep = "\n")
 }
 
@@ -379,6 +412,14 @@
     if (length(ids) && !all(ids %in% names(targets))) {
         stop("Unknown, stale, or protected context id", call. = FALSE)
     }
+    if (!is.null(args$text) && (!is.character(args$text) || length(args$text) != 1L || is.na(args$text))) {
+        stop("text must be a single string", call. = FALSE)
+    }
+    if (op == "replace" && any(vapply(targets[ids], function(target) {
+        target$kind == "message" && .context_edit_human(session$history[[target$index]])
+    }, logical(1)))) {
+        stop("Human turns may be filed and dropped, never replaced", call. = FALSE)
+    }
     # Queue immutable targets, not just IDs, so compaction cannot retarget an edit.
     request <- .context_edit_active_call(session, "edit_context", context)
     session$pending_context_edits <- c(session$pending_context_edits,
@@ -399,6 +440,11 @@
             !identical(targets[edit$ids], edit$targets)) {
             stop("Context edit became stale after compaction", call. = FALSE)
         }
+    }
+    for (edit in pending) {
+        if (edit$op == "replace" && any(vapply(edit$targets, function(target) {
+            target$kind == "message" && .context_edit_human(history[[target$index]])
+        }, logical(1)))) stop("Human turns cannot be replaced", call. = FALSE)
     }
     state <- .context_edit_state(session)
     drop_calls <- character()
@@ -500,6 +546,9 @@
         }
         out <- c(out, list(m))
     }
+    if (length(out) && !identical(out[[1L]]$role, "user")) {
+        out <- c(list(list(role = "user", content = "Earlier conversation context follows.")), out)
+    }
     list(history = out, note = note, messages = messages)
 }
 
@@ -536,14 +585,18 @@
     request_ids <- unlist(lapply(pending, `[[`, "request_id"),
                           use.names = FALSE)
     if (length(pending)) {
-        rewritten <- tryCatch(.context_edit_rewrite(session, before, pending),
-                              error = function(e) { rejected <<- conditionMessage(e) ; NULL })
+        archived <- NULL
+        rewritten <- tryCatch({
+            proposal <- .context_edit_rewrite(session, before, pending)
+            archived <- .context_archive_write(session, before, pending)
+            proposal
+        }, error = function(e) { rejected <<- conditionMessage(e) ; NULL })
         if (is.null(rewritten)) {
             after <- .context_edit_receipt(session, before,
                 paste("Context edit rejected:", rejected), request_ids)
         } else {
             after <- .context_edit_receipt(session, rewritten$history,
-                "Context edit applied.", request_ids)
+                paste("Context edit applied.", if (!is.null(archived)) paste("Filed:", archived)), request_ids)
         }
     }
     if (!is.null(rewritten)) {
@@ -627,7 +680,8 @@
     } else if (cfg$enabled && !journal_enabled(session)) {
         status <- "unavailable: journal_enabled is false"
     }
-    sprintf("Context editing: %s (cadence: %s).", status, cfg$cadence)
+    sprintf("Context editing: %s (cadence: %s)%s.", status, cfg$cadence,
+            if (identical(cfg$strategy, "clm")) "; pure CLM, automatic summaries off" else "")
 }
 
 .context_edit_command <- function(session, arg = "status") {

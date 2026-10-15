@@ -252,7 +252,11 @@ bot_monitor_waiting <- function(sessions) {
 # room that handed this job over (bot_job_report_back()).
 bot_present_job_event <- function(chat, cfg, s, ev, sessions = NULL) {
     switch(ev$type,
-           settled = bot_job_settled(chat, s, ev$job, sessions = sessions),
+           progress = bot_job_progress(chat, cfg, s, ev$job, ev$records),
+           settled = {
+        bot_job_progress(chat, cfg, s, ev$job, final = TRUE)
+        bot_job_settled(chat, s, ev$job, sessions = sessions)
+    },
            restored = bot_job_send(chat, s, ev$job,
                                    bot_job_restored_text(ev$restore)),
            approval = bot_job_approval(chat, cfg, s, ev),
@@ -280,6 +284,7 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     # user the work is in progress.
     s$history <- c(s$history %||% list(),
                    list(list(role = "assistant", content = text)))
+    .context_room_snapshot(s)
     if (!is.null(from$room)) {
         bot_job_report_back(chat, sessions, job, result)
     }
@@ -306,6 +311,7 @@ bot_job_report_back <- function(chat, sessions, job, result) {
     if (is.environment(asker)) {
         asker$history <- c(asker$history %||% list(),
                            list(list(role = "assistant", content = text)))
+        .context_room_snapshot(asker)
     }
     invisible(sent)
 }
@@ -542,6 +548,7 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
     # out: asked what its doer is busy with, it has to be able to say.
     target$history <- c(target$history %||% list(),
                         list(list(role = "assistant", content = notice)))
+    .context_room_snapshot(target)
     # What the talker is told about the notice is what happened to it.
     # Either way the job is accepted, and saying so plainly is what keeps
     # a talker from delegating it a second time.

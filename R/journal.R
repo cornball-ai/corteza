@@ -321,6 +321,7 @@ journal_history <- function(dir) {
     }
     state <- new.env(parent = emptyenv())
     state$dir <- dir
+    state$session <- session
     if (!dir.exists(dir)) {
         dir.create(dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     }
@@ -412,6 +413,9 @@ journal_history <- function(dir) {
                      updated = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
                      history = history
     )
+    if (!is.null(state$session$context_checkpoint)) {
+        envelope$context <- state$session$context_checkpoint
+    }
     .journal_write_json(envelope, file.path(state$dir, JOURNAL_LIVE))
 }
 

@@ -102,6 +102,8 @@ talker_config <- function(cfg) {
 # provider become the doer's; the talker model is the config's, else the
 # provider's default fast model.
 talker_enable <- function(session, talker = list()) {
+    .context_conversation_enable(session, talker$context_edit,
+                                 talker$context_vault %||% session$context_archive_vault)
     provider <- talker$provider %||% session$provider %||% "anthropic"
     model <- talker$model %||% TALKER_DEFAULT_MODELS[[provider]]
     if (is.null(model)) {

@@ -189,6 +189,12 @@ job_worker_spec <- function(session, role = "doer") {
                  reasoning_effort = effort,
                  thinking_budget_tokens = budget,
                  thinking = thinking,
+                 # Conversation settings follow the doer only. A reviewer
+                 # or monitor retains its own cwd configuration and role.
+                 context_edit = if (!read_only) {
+            utils::modifyList(.context_edit_config(session$config, session$context_edit),
+                              cfg$doer$context_edit %||% list())
+        },
                  tools = tools,
                  # Read-only has to mean no network and no files outside
                  # the checkout: a tool list alone grants neither limit
@@ -303,7 +309,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                            allowed_paths = spec$allowed_paths,
                            reasoning_effort = spec$reasoning_effort,
                            thinking_budget_tokens = spec$thinking_budget_tokens,
-                           thinking = spec[["thinking"]])
+                           thinking = spec[["thinking"]],
+                           context_edit = spec$context_edit)
     }
     init(spec)
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600
@@ -433,6 +440,12 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 .job_worker_child_run <- function(job_id, task, spec, state_dir) {
     .job_worker_state$job_id <- job_id
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
+    session <- .subagent_state$session
+    if (is.environment(session)) {
+        before <- session$on_tool
+        add_observer(session, job_progress_observer(job_id))
+        on.exit(session$on_tool <- before, add = TRUE)
+    }
     run <- spec$run_fn %||% function(task) subagent_turn_prompt(task)
     res <- tryCatch(run(task), error = function(e) {
         list(error = conditionMessage(e))
@@ -724,6 +737,7 @@ job_worker_limit <- function(x, default) {
 JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
                        ".job_workers_parked", ".job_worker_notes",
                        ".job_current", ".job_events", ".job_asked",
+                       ".job_progress_cursor", ".job_activity",
                        ".job_blocked", ".job_prompts", ".job_monitor",
                        ".job_monitor_pending")
 
@@ -800,8 +814,12 @@ job_pump <- function(session) {
     current <- session$.job_current
     if (!is.null(current)) {
         ev <- job_pump_current(session, current)
+        # Read after polling completion: the worker may have written its last
+        # record just before returning. Progress must precede the result post.
+        events <- c(events, job_progress_read(session, current))
         if (!is.null(ev)) {
             events[[length(events) + 1L]] <- ev
+            session$.job_progress_cursor[[current]] <- NULL
         }
     }
     if (is.null(session$.job_current)) {
