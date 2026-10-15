@@ -2393,13 +2393,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                       tools_filter = tools_filter, room_id = room_id)
         })
         .room_consult_bind(session, cfg, chat_now(), sender, session$job_origin,
-            new_session = function(room_id, thread) {
-                s <- bot_get_or_create_session(sessions, bot_session_key(room_id, thread), cfg,
-                    system = system, model = model, provider = provider,
-                    tools_filter = tools_filter, room_id = room_id)
-                bot_maybe_rehydrate(s, chat_now(), room_id, thread)
-                s
-            })
+                           new_session = function(room_id, thread) {
+            s <- bot_get_or_create_session(sessions, bot_session_key(room_id, thread), cfg,
+                system = system, model = model, provider = provider,
+                tools_filter = tools_filter, room_id = room_id)
+            bot_maybe_rehydrate(s, chat_now(), room_id, thread)
+            s
+        })
         session$context_edit_events <- list()
         reply <- tryCatch(rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)

@@ -547,8 +547,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     "..." %in% executor_formals
     execute <- function(name, args, context) {
         if (identical(name, "ask_room")) {
-            if (session_dry_run()) return(ok("Dry run: would ask another room."))
-            if (!is.function(session$ask_room)) return(err("Room consultation is unavailable"))
+            if (session_dry_run()) {
+                return(ok("Dry run: would ask another room."))
+            }
+            if (!is.function(session$ask_room)) {
+                return(err("Room consultation is unavailable"))
+            }
             return(do.call(session$ask_room, args))
         }
         if (identical(name, "delegate_to")) {

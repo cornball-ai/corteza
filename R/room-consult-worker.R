@@ -8,10 +8,13 @@
     answer <- do.call(.chat, snapshot$args)
     text <- answer$content %||% ""
     if (identical(answer$finish_reason, "length")) {
-        return(list(error = paste("The consultation reached its output limit; this answer is incomplete:", text, sep = "\n\n"), usage = answer$usage))
+        return(list(error = paste("The consultation reached its output limit; this answer is incomplete:",
+                                  text, sep = "\n\n"),
+                    usage = answer$usage))
     }
     if (!is.character(text) || length(text) != 1L || !nzchar(trimws(text))) {
-        return(list(error = "The consultation returned no answer", usage = answer$usage))
+        return(list(error = "The consultation returned no answer",
+                    usage = answer$usage))
     }
     list(reply = text, usage = answer$usage)
 }
@@ -23,10 +26,11 @@
 
 .room_consult_start <- function(id) {
     callr::r_bg(function(id) {
-        get(".room_consult_child", envir = asNamespace("corteza"), inherits = FALSE)(id)
+        get(".room_consult_child", envir = asNamespace("corteza"),
+            inherits = FALSE)(id)
     }, args = list(id = id), libpath = .libPaths(), supervise = TRUE,
-    stdout = file.path(job_dir(id), "consultation.stdout"),
-    stderr = file.path(job_dir(id), "consultation.stderr"))
+                stdout = file.path(job_dir(id), "consultation.stdout"),
+                stderr = file.path(job_dir(id), "consultation.stderr"))
 }
 
 .room_consult_close <- function(id) {
@@ -39,7 +43,8 @@
 }
 
 .room_consult_record <- function(chat, sessions, job, text, room, key, thread) {
-    s <- if (!is.null(key) && exists(key, sessions, inherits = FALSE)) get(key, sessions)
+    s <- if (!is.null(key) &&
+        exists(key, sessions, inherits = FALSE)) get(key, sessions)
     bot_post_or_queue(chat, job$owner, room, text, thread = thread,
                       session = s, session_key = key, job = job$id)
     if (is.environment(s)) {
@@ -50,19 +55,26 @@
 }
 
 .room_consult_notice <- function(chat, sessions, job, final = FALSE) {
-    stage <- if (final) "answer" else "question"
+    if (final) {
+        stage <- "answer"
+    } else {
+        stage <- "question"
+    }
     o <- job$origin
     text <- if (final) {
         paste0("**Answer from ", o$label, "** (", job$id, ", ", job$status, ")\n\n",
             if (job$status == "done") job$outcome$result else
-                job$outcome$error %||% job$outcome$reason %||% job$status)
+               job$outcome$error %||% job$outcome$reason %||% job$status)
     } else paste0("**Question from ", o$from$label, "** (", job$id, ")\n\n", job$task,
-        "\n\nThe answer uses this conversation's text context at the time of the request and returns to both conversations.")
-    destinations <- list(target = list(room = o$room, key = o$session_key, thread = o$thread),
+                  "\n\nThe answer uses this conversation's text context at the time of the request and returns to both conversations.")
+    destinations <- list(target = list(room = o$room, key = o$session_key,
+                                       thread = o$thread),
                          source = list(room = o$from$room, key = o$from$session_key, thread = o$from$thread))
     for (name in names(destinations)) {
         path <- file.path(job_dir(job$id), paste0("consultation-", stage, "-", name, ".json"))
-        if (file.exists(path)) next
+        if (file.exists(path)) {
+            next
+        }
         d <- destinations[[name]]
         .room_consult_record(chat, sessions, job, text, d$room, d$key, d$thread)
         # A send failure is already durable in the ordinary notice queue.
@@ -71,14 +83,17 @@
     invisible(NULL)
 }
 
-.room_consult_pump <- function(chat, cfg, sessions, now = as.numeric(Sys.time()),
-                                .start = .room_consult_start) {
+.room_consult_pump <- function(chat, cfg, sessions,
+                               now = as.numeric(Sys.time()),
+                               .start = .room_consult_start) {
     jobs <- Filter(function(j) identical(j$backend, "consultation"),
                    job_list(owner = bot_job_owner(cfg)))
     for (j in jobs) {
         w <- if (exists(j$id, .room_consult_workers, inherits = FALSE)) get(j$id, .room_consult_workers)
         if (j$status %in% JOB_STATUSES_OPEN &&
-            (!isTRUE(cfg$room_consultation) || !j$requester %in% bot_operators(cfg) || isTRUE(j$cancel_requested))) {
+            (!isTRUE(cfg$room_consultation) ||
+                !j$requester %in% bot_operators(cfg) ||
+                isTRUE(j$cancel_requested))) {
             .room_consult_close(j$id)
             job_settle(j$id, "cancelled", reason = "Consultation cancelled or permission withdrawn")
         } else if (j$status == "queued") {
@@ -87,14 +102,16 @@
             active <- lapply(ls(.room_consult_workers), function(id) get(id, .room_consult_workers))
             active <- Filter(function(x) identical(x$owner, j$owner), active)
             if (length(active) >= 4L || any(vapply(active, function(x)
-                identical(x$key, j$origin$session_key), TRUE))) next
+                        identical(x$key, j$origin$session_key), TRUE))) {
+                next
+            }
             tryCatch({
                 if (!file.exists(file.path(job_dir(j$id), "consultation.rds"))) stop("Conversation snapshot is missing")
                 .room_consult_notice(chat, sessions, j)
                 job_mark_dispatched(j$id)
                 process <- .start(j$id)
                 assign(j$id, list(process = process, owner = j$owner,
-                    key = j$origin$session_key, started = now), .room_consult_workers)
+                                  key = j$origin$session_key, started = now), .room_consult_workers)
             }, error = function(e) job_settle(j$id, "failed", error = conditionMessage(e)))
         } else if (j$status == "running") {
             if (is.null(w)) {
@@ -107,7 +124,9 @@
                 .room_consult_close(j$id)
                 if (!is.null(answer$error)) {
                     job_settle(j$id, "failed", error = answer$error, usage = answer$usage)
-                } else job_settle(j$id, "done", result = answer$reply, usage = answer$usage)
+                } else {
+                    job_settle(j$id, "done", result = answer$reply, usage = answer$usage)
+                }
             }
         }
         j <- job_read(j$id)
