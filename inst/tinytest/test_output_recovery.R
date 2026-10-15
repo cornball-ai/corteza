@@ -173,3 +173,55 @@ local({
     expect_equal(out$reply, "Finished")
     expect_equal(out$usage$total_tokens, 21L)
 })
+
+# Exhausted recovery still preserves the actual reply shown to the user.
+# Exercise both native agent loops and inspect the next request, not a mock
+# response history assembled by Corteza. Partial calls never become executable.
+local({
+    root <- tempfile("cutoff-history-")
+    dir.create(root)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    keys <- c("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+    old <- Sys.getenv(keys, unset = NA)
+    on.exit(for (key in keys) {
+        if (is.na(old[[key]])) Sys.unsetenv(key) else
+            do.call(Sys.setenv, setNames(list(old[[key]]), key))
+    }, add = TRUE)
+    Sys.setenv(ANTHROPIC_API_KEY = "offline-fixture", OPENAI_API_KEY = "offline-fixture")
+    for (provider in c("anthropic", "openai")) local({
+        backend <- if (provider == "anthropic") ".agent_anthropic" else ".agent_openai"
+        original <- get(backend, asNamespace("llm.api"))
+        on.exit(utils::assignInNamespace(backend, original, "llm.api"), add = TRUE)
+        requests <- list()
+        partial <- "The useful advice the user saw before the cutoff."
+        utils::assignInNamespace(backend, function(messages, ...) {
+            requests[[length(requests) + 1L]] <<- messages
+            first <- length(requests) == 1L
+            list(text = if (first) partial else "I remember that advice.",
+                 tool_calls = if (first) list(list(id = "partial", name = "write_file",
+                     arguments = list(path = "must-not-run"))) else list(),
+                 assistant_message = list(role = "assistant", content = "I remember that advice."),
+                 truncated = first, truncation_reason = if (first) "max_tokens",
+                 usage = list(input_tokens = 2L, output_tokens = 5L))
+        }, "llm.api")
+        s <- corteza::new_session(provider = provider, web_search = FALSE,
+            model_map = list(cloud = "fixture-model"))
+        s$config <- list(output_retries = 0L, context_compact_pct = 1000,
+                         context_edit = list(enabled = FALSE))
+        corteza:::journal_install(s, tempfile("journal-", tmpdir = root))
+        out <- suppressWarnings(suppressMessages(corteza::turn("Give advice", s,
+            tools = list(), tool_executor = function(...) stop("partial call executed"))))
+        expect_equal(length(requests), 1L)
+        expect_true(startsWith(out$reply, partial))
+        expect_identical(tail(s$history, 1)[[1]]$content, out$reply)
+        expect_identical(out$raw$history, s$history)
+        expect_identical(corteza:::journal_load(s$journal_dir)$live$history, s$history)
+        expect_length(llm.api::history_tool_calls(s$history), 0L)
+        expect_false(corteza:::.output_keep_reply(s, out$raw, out$reply))
+        second <- suppressMessages(corteza::turn("You just said that. Explain?", s, tools = list()))
+        expect_equal(length(requests), 2L)
+        text <- vapply(requests[[2]], corteza:::.compact_entry_body, "")
+        expect_equal(sum(text == out$reply), 1L)
+        expect_identical(second$reply, "I remember that advice.")
+    })
+})

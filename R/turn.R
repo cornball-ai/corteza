@@ -1402,10 +1402,14 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(response$history)) {
         session$history <- response$history
     }
+    reply <- .fallback_reply(response)
+    if (.output_keep_reply(session, response, reply)) {
+        response$history <- session$history
+    }
     .context_room_snapshot(session)
 
     list(
-         reply = .fallback_reply(response),
+         reply = reply,
          session = session,
          usage = response$usage,
          route = response$corteza_route,
