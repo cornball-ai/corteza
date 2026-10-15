@@ -1,3 +1,11 @@
+# corteza 0.7.1.71
+
+- Bare `/auto` continues the current conversation. Add auto status and resume,
+  expose the execution setting, and hide tools unavailable to the auto monitor.
+- Recover output-token cutoffs with bounded larger requests from completed
+  history, without replaying completed tools or executing partial calls.
+  Add `/max-tokens` and report an unrecovered cutoff as a stopped auto run.
+
 # corteza 0.7.1.70
 
 - Add opt-in pure CLM context management for bot conversations and doers.
