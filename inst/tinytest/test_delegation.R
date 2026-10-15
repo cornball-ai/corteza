@@ -338,6 +338,53 @@ local({
     expect_equal(length(f("job_list")(owner = "requester")), before + 1L)
     source$dry_run <- FALSE
 
+    # Fresh processes on both sides recover solely from the durable ledger.
+    # Repeat the worker delivery in another process to exercise restart dedup.
+    restart_id <- f(".delegation_submit")(source, cfg_a, "worker", "Fresh-process fixture")
+    pump_a()
+    restart_request <- Filter(function(m) identical(decode(m)$fields$id, restart_id) &&
+        identical(decode(m)$kind, "request"), bus$env$log)[[1]]
+    worker_process <- function(root, cfg, msg) {
+        library(corteza)
+        chat <- chat.api::chat_loopback()
+        send <- get("chat_send.chat_loopback", asNamespace("chat.api"))
+        utils::assignInNamespace("chat_send.chat_loopback", function(client, channel, text, ..., mentions = NULL) {
+            id <- send(client, channel, text, ..., identity = list(name = "worker"))
+            i <- length(client$env$log)
+            client$env$log[[i]]$mentions <- mentions
+            id
+        }, "chat.api")
+        utils::assignInNamespace("bot_get_or_create_session", function(registry, key, cfg, ..., room_id = key) {
+            s <- new_session(provider = "anthropic", system = "fixture")
+            s$cwd <- root
+            s$job_key <- key
+            s$job_owner <- cfg$user_id
+            s$room_id <- room_id
+            s$config <- list()
+            assign(key, s, registry)
+            s
+        }, "corteza")
+        registry <- new.env(parent = emptyenv())
+        corteza:::.delegation_route(corteza:::bot_msg_record(msg, addressed = TRUE), cfg, chat, registry)
+        reply <- tail(chat$env$log, 1)[[1]]
+        id <- corteza:::.delegation_parse(reply$body)$fields$job
+        corteza:::job_settle(id, "done", result = "Fresh worker result")
+        corteza:::.delegation_worker_reply(chat, corteza:::job_read(id))
+        list(id = id, result = tail(chat$env$log, 1)[[1]])
+    }
+    fresh <- callr::r(worker_process, list(root = root, cfg = cfg_b, msg = restart_request))
+    again <- callr::r(worker_process, list(root = root, cfg = cfg_b, msg = restart_request))
+    expect_identical(again$id, fresh$id)
+    settled <- callr::r(function(cfg, msg, id) {
+        library(corteza)
+        corteza:::.delegation_route(corteza:::bot_msg_record(msg, addressed = TRUE),
+            cfg, chat.api::chat_loopback(), new.env(parent = emptyenv()))
+        corteza:::job_read(id)
+    }, list(cfg = cfg_a, msg = fresh$result, id = restart_id))
+    expect_identical(settled$status, "done")
+    expect_true(grepl("Fresh worker result", settled$outcome$result))
+    expect_identical(f(".delegation_state")(restart_id)$job, fresh$id)
+
     # bot_poll's actual message loop intercepts protocol notices before the
     # conversation gate and never starts a model turn for them. Re-delivery
     # through a second poll still creates exactly one worker job.
