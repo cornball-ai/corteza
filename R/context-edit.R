@@ -280,7 +280,7 @@
          input_schema = list(type = "object", properties = list(
                 op = list(type = "string", enum = c("drop", "replace", "note")),
                 ids = list(type = "array", items = list(type = "string")),
-                text = list(type = "string")), required = "op",
+                text = list(type = "string")), required = list("op"),
                              additionalProperties = FALSE))
 }
 

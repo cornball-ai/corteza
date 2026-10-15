@@ -1,3 +1,9 @@
+# corteza 0.7.1.68
+
+- Serialize the `edit_context` schema's required fields as a JSON array.
+  The single required field previously became a string, causing providers
+  to reject requests with context editing enabled before generating a reply.
+
 # corteza 0.7.1.64
 
 - Add experimental conversation context editing, off by default. The
