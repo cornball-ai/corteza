@@ -980,7 +980,8 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
     }
     if (grepl("^[0-9]+$", cmd$model)) {
         if (is.null(available)) {
-            available <- session$model_menu %||% .model_menu_entries(session, cfg)
+            available <- session$model_menu %||% .model_menu_entries(session,
+                cfg)
         }
         idx <- suppressWarnings(as.integer(cmd$model))
         if (is.na(idx) || idx < 1L || idx > length(available)) {
@@ -2227,8 +2228,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (!is.null(effort_cmd)) {
             ack <- .effort_command(session, effort_cmd, cfg = cfg)
             sent_id <- tryCatch(
-                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
-                error = function(e) NULL)
+                                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                                error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
