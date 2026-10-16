@@ -359,9 +359,14 @@
             history <- args$history
         }
         request <- list(provider = cand$provider, model = cand$model,
-            web_search = if ("web_search" %in% names(args)) args$web_search else FALSE)
+                        web_search = if ("web_search" %in% names(args)) {
+                args$web_search
+            } else {
+                FALSE
+            })
         if (.context_edit_pure(session) &&
-            .context_edit_responses(cand$provider, cand$model, request$web_search, history)) {
+            .context_edit_responses(cand$provider, cand$model,
+                                    request$web_search, history)) {
             next
         }
         shape <- .history_shape(history)
