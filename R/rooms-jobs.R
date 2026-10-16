@@ -60,8 +60,11 @@ bot_job_owner <- function(cfg) {
 # Send into a job's originating room or thread and record the message as
 # the bot's own, the same way every other bot reply is recorded.
 bot_job_send <- function(chat, s, job, text) {
-    destination <- tryCatch(bot_job_delivery_check(chat, job), error = function(e) NULL)
-    if (is.null(destination)) return(NULL)
+    destination <- tryCatch(bot_job_delivery_check(chat, job),
+                            error = function(e) NULL)
+    if (is.null(destination)) {
+        return(NULL)
+    }
     room <- destination$room %||% s$room_id
     sent <- tryCatch(bot_reply_send(chat, room, text, markdown = TRUE,
                                     thread = destination$thread),
@@ -102,12 +105,18 @@ bot_notice_send <- function(chat, n, session = NULL) {
     if (!is.null(n$job)) {
         job <- job_read(n$job)
         if (!is.null(job)) {
-            destination <- tryCatch(bot_job_delivery_check(chat, job), error = function(e) NULL)
-            if (is.null(destination)) return(NULL)
+            destination <- tryCatch(bot_job_delivery_check(chat, job),
+                                    error = function(e) NULL)
+            if (is.null(destination)) {
+                return(NULL)
+            }
             if (!is.null(destination$sender)) {
                 n$room <- destination$room
                 n$thread <- destination$thread
-                if (is.environment(session) && !identical(session$room_id, n$room)) session <- NULL
+                if (is.environment(session) &&
+                    !identical(session$room_id, n$room)) {
+                    session <- NULL
+                }
             }
         }
     }
@@ -283,7 +292,8 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     destination <- bot_job_delivery(job)
     recipient <- s
     if (!is.null(destination$sender)) {
-        recipient <- if (!is.null(sessions) && exists(destination$room, sessions, inherits = FALSE)) {
+        recipient <- if (!is.null(sessions) &&
+            exists(destination$room, sessions, inherits = FALSE)) {
             get(destination$room, sessions, inherits = FALSE)
         } else NULL
     }
@@ -303,9 +313,10 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     # Into the talker's history either way. The post can fail; the
     # talker still has to know the job ended, or it will keep telling the
     # user the work is in progress.
-    if (is.environment(recipient) && (is.null(destination$sender) || !is.null(sent))) {
+    if (is.environment(recipient) &&
+        (is.null(destination$sender) || !is.null(sent))) {
         recipient$history <- c(recipient$history %||% list(),
-                       list(list(role = "assistant", content = text)))
+                               list(list(role = "assistant", content = text)))
         .context_room_snapshot(recipient)
     }
     if (!is.null(from$room) && is.null(destination$sender)) {
@@ -665,7 +676,9 @@ bot_job_restored_text <- function(restore) {
 bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
-    if (bot_job_auto_answer(chat, cfg, s, job, req)) return(invisible(NULL))
+    if (bot_job_auto_answer(chat, cfg, s, job, req)) {
+        return(invisible(NULL))
+    }
     if (identical(req$route, "monitor") && isTRUE(cfg$auto_approve_asks)) {
         asked <- tryCatch({
             job_monitor_ask(s, bot_monitor_question(job, req))
@@ -746,7 +759,8 @@ bot_job_request_remaining <- function(s, req) {
 # both reactions seeded, and the prompt is remembered on the session
 # until a reaction answers it.
 bot_job_ask_person <- function(chat, cfg, s, job, req) {
-    destination <- tryCatch(bot_job_delivery_check(chat, job), error = function(e) NULL)
+    destination <- tryCatch(bot_job_delivery_check(chat, job),
+                            error = function(e) NULL)
     if (is.null(destination)) {
         job_answer(s, job$id, req$id, FALSE, by = "privacy check",
                    reason = "Could not verify the private approval destination.")

@@ -198,7 +198,9 @@ tool_delegate <- function(task, review = NULL, room = NULL,
     }
     context <- if (isTRUE(attach_context)) {
         p <- session$current_prompt
-        if (is.character(p) && length(p) == 1L && nzchar(trimws(p))) p
+        if (is.character(p) && length(p) == 1L && nzchar(trimws(p))) {
+            p
+        }
     }
     tryCatch({
         id <- job_submit(session, task,

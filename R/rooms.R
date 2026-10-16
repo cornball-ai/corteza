@@ -1212,7 +1212,7 @@ bot_should_respond <- function(msg, self_id, members, bots = character(),
         return(isTRUE(msg$addressed))
     }
     if (sender %in% operators && grepl("^/(sidebar|approve-all|auto)(\\s|$)",
-                                      bot_command_text(msg$body), perl = TRUE)) {
+                                       bot_command_text(msg$body), perl = TRUE)) {
         return(TRUE)
     }
     # The sender demonstrably posts in this room, so count them even when
@@ -2234,11 +2234,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             ack <- tryCatch({
                 if (inherits(sidebar, "error")) stop(sidebar)
                 bot_sidebar(chat_now(), cfg, sessions, session, sender, m$id,
-                    sidebar$turns, new_session = function(room) {
-                        bot_get_or_create_session(sessions, room, cfg, system = system,
-                            model = model, provider = provider, tools_filter = tools_filter,
-                            room_id = room)
-                    })
+                            sidebar$turns, new_session = function(room) {
+                    bot_get_or_create_session(sessions, room, cfg, system = system,
+                        model = model, provider = provider, tools_filter = tools_filter,
+                        room_id = room)
+                })
             }, error = function(e) paste("Sidebar not completed:", conditionMessage(e)))
             sent_id <- bot_reply_send(chat_now(), m$channel, ack, markdown = TRUE, thread = m$thread)
             if (!is.null(sent_id)) {

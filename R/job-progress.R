@@ -46,8 +46,11 @@ job_progress_read <- function(session, id) {
 
 bot_job_progress <- function(chat, cfg, session, job, records = list(),
                              final = FALSE) {
-    destination <- tryCatch(bot_job_delivery_check(chat, job), error = function(e) NULL)
-    if (is.null(destination)) return(invisible(FALSE))
+    destination <- tryCatch(bot_job_delivery_check(chat, job),
+                            error = function(e) NULL)
+    if (is.null(destination)) {
+        return(invisible(FALSE))
+    }
     acc <- session$.job_activity[[job$id]]
     if (is.null(acc)) {
         if (!length(records)) {
