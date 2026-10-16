@@ -2207,6 +2207,19 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             session$engaged <- engaged
         }
 
+        approval_mode <- bot_parse_approval_mode(m$body)
+        if (!is.null(approval_mode)) {
+            ack <- tryCatch(bot_approval_mode_command(chat_now(), cfg, session,
+                              approval_mode, sender), error = function(e) conditionMessage(e))
+            sent_id <- bot_reply_send(chat_now(), m$channel, ack, thread = m$thread)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
         if (bot_is_status_command(m$body)) {
             ack <- sprintf("model: %s\nprovider: %s\ncwd: %s\n%s",
                            bot_session_model(session) %||% "(unset)",

@@ -10,6 +10,15 @@ title: Configuration
 
 # Configuration
 
+In a Matrix room, `/approve-all [job-id]` (or `/auto on [job-id]`) authorizes
+the remaining approval requests for one active job. Bare `/auto` has the same
+meaning in rooms. `/auto status [job-id]` shows the grant; `/auto off [job-id]`
+revokes it. With multiple active jobs an ID is required. Only a configured
+operator who is still in the room can authorize requests. The authorization
+includes requests normally escalated by the supervisor, is recorded against
+that operator, and expires when the job ends. It does not override a policy
+denial, authorize other jobs, or change CLI `/auto` semantics.
+
 Tool output masks labelled credentials (including R `str()` output, JSON,
 environment assignments and bearer tokens) and known secrets from configuration
 and credential environment variables. Masking happens before output caps, handle

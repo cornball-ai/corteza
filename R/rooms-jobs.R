@@ -642,6 +642,7 @@ bot_job_restored_text <- function(restore) {
 bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
+    if (bot_job_auto_answer(chat, cfg, s, job, req)) return(invisible(NULL))
     if (identical(req$route, "monitor") && isTRUE(cfg$auto_approve_asks)) {
         asked <- tryCatch({
             job_monitor_ask(s, bot_monitor_question(job, req))
@@ -737,6 +738,9 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
     text <- paste0(sprintf("Job %s: ", job$id),
                    bot_approval_prompt(call, list(reason = req$reason),
                                        timeout_sec = bot_job_request_remaining(s, req)))
+    text <- paste0(text, "\nOperator shortcut: /approve-all ", job$id,
+                   " authorizes the remaining requests for this job; /auto off ", job$id,
+                   " restores per-call approvals.")
     eid <- bot_job_send(chat, s, job, text)
     if (is.null(eid)) {
         # Nobody can see a prompt that was never posted.
