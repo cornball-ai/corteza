@@ -644,7 +644,12 @@ The corresponding llm.api routing update selects Responses with web search
 off as well as on. Older OpenAI models keep their Chat Completions route
 when search is off, and `openai_codex` always uses Responses. Corteza's
 context-editing tool currently excludes Responses histories, so CLM edits
-remain unavailable on that wire.
+remain unavailable on that wire. With llm.api's `agent_uses_responses()`
+export, Corteza checks the selected model and search setting before the first
+request, including fallback candidates. Pure CLM rejects unsupported routes
+before generation; hybrid mode keeps automatic compaction and omits the
+editing tool. With older llm.api versions, the preflight follows their
+search-only OpenAI routing rule.
 
 ## Instruction skills
 
