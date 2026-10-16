@@ -97,6 +97,9 @@
 }
 
 .chat_secrets <- function(chat) {
+    if (!is.list(chat) && !is.environment(chat)) {
+        return(character())
+    }
     .secret_values(chat$env$mx %||% list())
 }
 
