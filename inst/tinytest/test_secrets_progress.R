@@ -22,6 +22,18 @@ local({
     expect_identical(masked$usage, obj$usage)
     expect_identical(masked$signature, "signed")
     expect_identical(masked$content[[1]]$text, "[REDACTED]")
+    thought <- list(type = "thinking", thinking = secret, signature = "signed")
+    expect_identical(ns$.redact_object(thought), thought)
+    ns$.redact_text('token = "none"')
+    expect_identical(ns$.redact_text("none of the checks failed"), "none of the checks failed")
+    chunks <- character()
+    stream <- ns$.redact_stream(function(text) { chunks <<- c(chunks, text); TRUE })
+    stream$push('password = "fixture-')
+    expect_length(chunks, 0L)
+    stream$push('credential-12345"\nDone')
+    expect_false(any(grepl(secret, chunks, fixed = TRUE)))
+    stream$flush()
+    expect_identical(tail(chunks, 1L), "Done")
     expect_identical(jsonlite::fromJSON(ns$.redact_text(shapes[[2]]))$access_token,
                      "[REDACTED]")
     event <- list(outcome = "ran", success = TRUE,

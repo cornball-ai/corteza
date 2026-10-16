@@ -415,7 +415,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 # (and the previous workspace it names) or none, never a marker pointing
 # at a half-written save.
 .job_worker_child_checkpoint <- function(state_dir, identity, job_id) {
-    dir.create(state_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(state_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+    Sys.chmod(state_dir, "0700")
     objects <- .workspace_checkpoint_write(globalenv(),
         file.path(state_dir, "workspace.RData"))
     history <- .subagent_state$session$history
@@ -431,6 +432,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     job_write_file(file.path(state_dir, "checkpoint.json"),
                    list(identity = identity, job = job_id, at = job_now(),
                         objects = objects, packages = attached))
+    Sys.chmod(file.path(state_dir, c("workspace.RData", "history.rds",
+                                   "checkpoint.json")), "0600")
     objects
 }
 

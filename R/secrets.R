@@ -11,7 +11,7 @@
 }
 
 .secret_remember <- function(values) {
-    values <- values[!is.na(values) & nchar(values) >= 4L &
+    values <- values[!is.na(values) & nchar(values) >= 8L &
         !grepl("REDACTED", values, fixed = TRUE)]
     .secret_state$values <- unique(c(.secret_state$values, values))
     invisible(NULL)
@@ -84,6 +84,13 @@
     if (!is.list(x)) {
         return(x)
     }
+    # Provider-signed thinking is opaque protocol state. Rewriting its text
+    # invalidates the signature; it is never an output preview. Journals that
+    # contain it remain private, just like worker workspace snapshots.
+    if (isTRUE(x$type %in% c("thinking", "redacted_thinking")) &&
+        (!is.null(x$signature) || !is.null(x$data))) {
+        return(x)
+    }
     .secret_register(x)
     for (i in seq_along(x)) {
         key <- names(x)[i] %||% ""
@@ -94,4 +101,22 @@
         }
     }
     x
+}
+
+# Buffer incomplete lines so a credential split across provider deltas cannot
+# escape the normal output filter. Flush the final line only on completion.
+.redact_stream <- function(send) {
+    pending <- ""
+    push <- function(text = "", final = FALSE) {
+        pending <<- paste0(pending, text)
+        cuts <- gregexpr("\n", pending, fixed = TRUE)[[1L]]
+        end <- if (isTRUE(final)) nchar(pending) else max(0L, cuts)
+        if (!isTRUE(final) && grepl("-----BEGIN .*PRIVATE KEY-----", pending) &&
+            !grepl("-----END .*PRIVATE KEY-----", pending)) end <- 0L
+        if (end == 0L) return(invisible(TRUE))
+        out <- substr(pending, 1L, end)
+        pending <<- substring(pending, end + 1L)
+        send(.redact_text(out))
+    }
+    list(push = function(text) push(text), flush = function() push(final = TRUE))
 }
