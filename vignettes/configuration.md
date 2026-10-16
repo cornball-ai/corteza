@@ -11,6 +11,9 @@ title: Configuration
 # Configuration
 
 In a shared Matrix room, say `Let's take this offline` or use `/sidebar [N]`.
+The selected conversation enters the private context as one user-role quotation,
+with original speaker roles and source-event links retained. It is background
+for the continuation, not new instructions or the private assistant's own reply.
 The bot copies the last N human exchanges (default 5, maximum 20) into your
 existing private room with source-event links, and redirects active jobs'
 progress, approvals and results there. Their worker and workspace stay the same.

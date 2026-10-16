@@ -1210,7 +1210,7 @@ bot_should_respond <- function(msg, self_id, members, bots = character(),
     if (sender %in% bots) {
         return(isTRUE(msg$addressed))
     }
-    if (sender %in% operators && grepl("^/(sidebar|approve-all|auto)(\\s|$)",
+    if (sender %in% operators && grepl("^/(sidebar|approve-all)(\\s|$)",
                                        bot_command_text(msg$body), perl = TRUE)) {
         return(TRUE)
     }
