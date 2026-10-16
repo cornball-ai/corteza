@@ -63,7 +63,8 @@ job_requested_by <- function(j, session) {
 # May this session ask about job `j` or cancel it? The session that runs
 # it and the session that asked for it both may.
 job_visible_to <- function(j, session) {
-    job_in_session(j, session) || job_requested_by(j, session)
+    job_in_session(j, session) || job_requested_by(j, session) ||
+        bot_sidebar_job_visible(j, session)
 }
 
 # Whose saved workspace a worker may restore. All four parts count:
@@ -80,7 +81,7 @@ job_visible_to <- function(j, session) {
 # the same conversation).
 job_worker_identity <- function(session, role = "doer") {
     list(owner = session$job_checkpoint_owner %||% job_worker_owner(session),
-         key = session$job_checkpoint_key %||% job_worker_key(session),
+         key = bot_sidebar_worker_key(session, session$job_checkpoint_key %||% job_worker_key(session)),
          workspace = normalizePath(session$cwd %||% getwd(), mustWork = FALSE),
          role = role)
 }
@@ -865,6 +866,7 @@ job_pump_current <- function(session, id) {
     finish <- function(status, ...) {
         job_settle(id, status, ...)
         session$.job_current <- NULL
+        bot_sidebar_worker_retire(session, j)
         # Idle from now, as far as retiring the worker goes.
         job_worker_note(session, j$role)
         if (job_role_locks(j$role)) {

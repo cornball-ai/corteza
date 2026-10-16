@@ -2209,12 +2209,36 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         approval_mode <- bot_parse_approval_mode(m$body)
         if (!is.null(approval_mode)) {
-            ack <- tryCatch(bot_approval_mode_command(chat_now(), cfg, session,
-                              approval_mode, sender), error = function(e) conditionMessage(e))
+            ack <- tryCatch({
+                approval_session <- bot_sidebar_job_session(sessions, session, approval_mode)
+                bot_approval_mode_command(chat_now(), cfg, approval_session, approval_mode, sender)
+            }, error = function(e) conditionMessage(e))
             sent_id <- bot_reply_send(chat_now(), m$channel, ack, thread = m$thread)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        sidebar <- tryCatch(bot_parse_sidebar(m$body), error = function(e) e)
+        if (!is.null(sidebar)) {
+            ack <- tryCatch({
+                if (inherits(sidebar, "error")) stop(sidebar)
+                bot_sidebar(chat_now(), cfg, sessions, session, sender, m$id,
+                    sidebar$turns, new_session = function(room) {
+                        bot_get_or_create_session(sessions, room, cfg, system = system,
+                            model = model, provider = provider, tools_filter = tools_filter,
+                            room_id = room)
+                    })
+            }, error = function(e) paste("Sidebar not completed:", conditionMessage(e)))
+            sent_id <- bot_reply_send(chat_now(), m$channel, ack, markdown = TRUE, thread = m$thread)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", ack)
+                session$history <- c(session$history %||% list(), list(list(role = "assistant", content = ack)))
+                .context_room_snapshot(session)
             }
             replied <- replied + 1L
             next

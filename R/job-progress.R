@@ -46,13 +46,15 @@ job_progress_read <- function(session, id) {
 
 bot_job_progress <- function(chat, cfg, session, job, records = list(),
                              final = FALSE) {
+    destination <- tryCatch(bot_job_delivery_check(chat, job), error = function(e) NULL)
+    if (is.null(destination)) return(invisible(FALSE))
     acc <- session$.job_activity[[job$id]]
     if (is.null(acc)) {
         if (!length(records)) {
             return(invisible(NULL))
         }
         acc <- rooms_activity_new()
-        acc$thread <- job$origin$thread
+        acc$thread <- destination$thread
         session$.job_activity[[job$id]] <- acc
     }
     for (record in records) {
@@ -61,7 +63,7 @@ bot_job_progress <- function(chat, cfg, session, job, records = list(),
     if (final || (rooms_activity_live(chat) &&
             rooms_activity_due(acc,
                                min_interval = rooms_activity_interval(cfg)))) {
-        rooms_activity_flush(acc, chat, job$origin$room %||% session$room_id)
+        rooms_activity_flush(acc, chat, destination$room %||% session$room_id)
     }
     if (final) {
         session$.job_activity[[job$id]] <- NULL

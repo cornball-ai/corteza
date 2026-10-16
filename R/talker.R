@@ -233,7 +233,7 @@ tool_job_status <- function(id = NULL, ctx = list()) {
         if (!job_visible_to(j, session)) {
             return(err(sprintf("No job %s in this session.", id)))
         }
-        return(ok(format_job(j, detail = TRUE)))
+        return(ok(bot_sidebar_job_status(j, session, detail = TRUE)))
     }
     # This session's own jobs, and the ones it handed to another room:
     # the user who asked for those asks about them here.
@@ -243,7 +243,7 @@ tool_job_status <- function(id = NULL, ctx = list()) {
     if (!length(jobs)) {
         return(ok("No jobs in this session."))
     }
-    ok(paste(vapply(jobs, format_job, ""), collapse = "\n"))
+    ok(paste(vapply(jobs, function(j) bot_sidebar_job_status(j, session), ""), collapse = "\n"))
 }
 
 #' Cancel one of this session's jobs.
