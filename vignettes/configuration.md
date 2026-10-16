@@ -10,6 +10,20 @@ title: Configuration
 
 # Configuration
 
+Tool output masks labelled credentials (including R `str()` output, JSON,
+environment assignments and bearer tokens) and known secrets from configuration
+and credential environment variables. Masking happens before output caps, handle
+storage, observers, traces and journal serialization. Room previews and sends
+also mask credentials. Tools still receive their original arguments. This reduces
+accidental disclosure; arbitrary encodings or unlabelled unknown secrets cannot
+be reliably recognized. Avoid printing credential objects. Masking does not
+revoke a credential or remove messages sent by an older build.
+
+The CLI shows five-line result previews and separates commentary from tool logs.
+After 60 seconds without commentary, the next completed tool emits a factual
+progress update. A blocking request or tool must return before that update can
+run. Reaching the tool-turn limit reports the last update and how to continue.
+
 How to configure corteza for your workflow.
 
 ## Config files

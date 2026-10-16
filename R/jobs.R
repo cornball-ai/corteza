@@ -428,6 +428,7 @@ job_approval_path <- function(id, req, kind) {
 # whole file's contents. The surface renders from this, and a prompt
 # does not need more than the start of each value.
 job_approval_args <- function(args, max_chars = 2000L) {
+    args <- .redact_object(args)
     lapply(args %||% list(), function(v) {
         v <- paste(format(v), collapse = " ")
         if (nchar(v) > max_chars) {

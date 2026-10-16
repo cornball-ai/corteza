@@ -1,6 +1,7 @@
 # Bounded public progress records shared by direct turns and child workers.
 # Keep only rendered previews here; full arguments/results stay in the journal.
 rooms_activity_preview <- function(text, lines = 5L, width = 160L) {
+    text <- .redact_text(text)
     if (!is.character(text) || !length(text)) {
         return("")
     }
@@ -15,7 +16,11 @@ rooms_activity_preview <- function(text, lines = 5L, width = 160L) {
 }
 
 rooms_activity_record <- function(event) {
+    event <- .redact_object(event)
     kind <- event$outcome
+    if (identical(kind, "progress")) {
+        return(list(narration = event$result, batch = event$result))
+    }
     if (length(kind) != 1L ||
         !kind %in% c("start", "ran", "deny", "declined")) {
         return(NULL)

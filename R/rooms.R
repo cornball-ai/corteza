@@ -130,6 +130,7 @@ bot_legacy_config_path <- function() {
 # that only read fields do not need it, and the loop reassigns cfg in
 # places where a class would have to be maintained by hand.
 bot_plain_cfg <- function(cfg) {
+    .secret_register(cfg)
     cfg <- unclass(cfg)
     attr(cfg, "path") <- NULL
     attr(cfg, "app") <- NULL
@@ -333,6 +334,7 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
 # is what every caller tests for.
 bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
                            thread = NULL) {
+    text <- .redact_text(text)
     # A reply to a threaded message goes back into its thread, and only
     # where the transport can carry one: chat_send() refuses a threaded
     # send it cannot route, so asking first is what keeps a reply in an

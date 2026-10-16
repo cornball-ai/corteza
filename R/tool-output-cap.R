@@ -107,6 +107,7 @@
 #' this session can get at it, which depends on the tools it has.
 #' @noRd
 .admit_tool_result_for <- function(session, text, tool) {
+    text <- .redact_text(text)
     caps <- .tool_output_caps_for(session$config, tool)
     own <- .tool_output_session_store(session)
     args <- list(text, tool = tool, how = function(handle, shown) {
