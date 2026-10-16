@@ -57,6 +57,7 @@ bot_job_progress <- function(chat, cfg, session, job, records = list(),
             return(invisible(NULL))
         }
         acc <- rooms_activity_new()
+        acc$detail <- isTRUE(cfg$activity_detail)
         acc$thread <- destination$thread
         session$.job_activity[[job$id]] <- acc
     }

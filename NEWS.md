@@ -5,16 +5,19 @@
   approvals and results there, with private-destination checks and worker
   retirement to keep subsequent shared-room work separate.
 
-# corteza 0.7.1.75
+# corteza 0.7.1.78
 
-- Let room operators use `/approve-all [job-id]` or `/auto on [job-id]`
+- Let room operators use the explicit `/approve-all [job-id]` command
   to authorize remaining requests for one active job. Add status and revoke
-  commands; preserve policy denials and verify operator membership on use.
+  commands; preserve policy denials and per-call credential approvals, and
+  verify operator membership on use. Ordinary words and `/auto` do not grant it.
 
-# corteza 0.7.1.74
+# corteza 0.7.1.77
 
-- Mask credentials before tool results reach the model, output handles,
-  progress, traces and journals; mask outgoing room replies as well.
+- Mask credentials only at display boundaries using a session-local registry.
+  Preserve exact tool data and journals, immediate voice delivery, and complete
+  approval arguments. Credential-bearing remote requests require local review.
+- Default room progress to summaries; `activity_detail: true` enables previews.
 - Show CLI result previews and visible commentary. Emit factual updates at
   tool boundaries after 60 seconds of silence and explain tool-turn limits.
 

@@ -1,139 +1,154 @@
-# Mask credentials at output boundaries, before truncation or serialization.
-# This is an accidental-disclosure guard, not a sandbox: arbitrary encoded
-# secrets or credentials with no recognizable label cannot be inferred.
-.secret_state <- new.env(parent = emptyenv())
-.secret_state$values <- character()
-
+# Display-only filtering. Native history, tool data and journals remain exact.
 .secret_key <- function(key) {
     key <- tolower(gsub("[^[:alnum:]]", "", key))
+    !key %in% c("synctoken", "nextbatch", "paginationtoken") &
     grepl("(password|passwd|passphrase|apikey|accesstoken|refreshtoken|clientsecret|authorization|secret|token)$",
           key)
 }
 
-.secret_remember <- function(values) {
-    values <- values[!is.na(values) & nchar(values) >= 8L &
-        !grepl("REDACTED", values, fixed = TRUE)]
-    .secret_state$values <- unique(c(.secret_state$values, values))
-    invisible(NULL)
-}
-
-.secret_register <- function(x) {
+.secret_values <- function(x) {
     if (!is.list(x)) {
-        return(invisible(NULL))
+        return(character())
     }
+    out <- character()
     for (i in seq_along(x)) {
-        key <- names(x)[i] %||% ""
-        if (is.character(x[[i]]) && isTRUE(.secret_key(key))) {
-            .secret_remember(x[[i]])
+        if (is.character(x[[i]]) && isTRUE(.secret_key(names(x)[i] %||% ""))) {
+            out <- c(out, x[[i]])
         } else if (is.list(x[[i]])) {
-            .secret_register(x[[i]])
+            out <- c(out, .secret_values(x[[i]]))
         }
     }
-    invisible(NULL)
+    unique(out[!is.na(out) & nzchar(out)])
 }
 
-.secret_environment <- function() {
+.secret_environment <- function(session) {
     env <- Sys.getenv()
-    .secret_remember(unname(env[.secret_key(names(env))]))
-    # Child workers do not inherit the parent's in-memory registry. The
-    # bot config named by their environment supplies known credentials for
-    # masking even when a tool prints one without a label.
+    values <- unname(env[.secret_key(names(env))])
     path <- Sys.getenv("CORTEZA_MATRIX_CONFIG")
     if (nzchar(path) && file.exists(path)) {
         cfg <- tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE),
                         error = function(e) NULL)
-        .secret_register(cfg)
+        values <- c(values, .secret_values(cfg))
     }
+    session$secret_config <- unique(c(values, .secret_values(session$config)))
+    session$secret_values <- unique(c(session$secret_config, session$secret_literals %||% character()))
     invisible(NULL)
 }
 
-.redact_text <- function(text) {
+# Only quoted, credential-shaped literals. Calls, identifiers, placeholders
+# and shell substitutions are not values. Never learn from arbitrary code.
+.secret_literals <- function(text) {
+    if (!is.character(text)) {
+        return(character())
+    }
+    pattern <- paste0("(?i)\\b(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|",
+                      "refresh[_-]?token|client[_-]?secret|authorization|secret|token)[\"']?",
+                      "\\s*[:=]\\s*(?:chr\\s+)?([\"'])([A-Za-z0-9_./+=~-]{12,4096})\\1")
+    hits <- unlist(regmatches(text, gregexpr(pattern, text, perl = TRUE)),
+                   use.names = FALSE)
+    values <- sub(pattern, "\\2", hits, perl = TRUE)
+    unique(values[grepl("[A-Za-z]", values) & grepl("[0-9]", values) &
+            !grepl("REDACTED", values, fixed = TRUE)])
+}
+
+.secret_observe <- function(session, text) {
+    session$secret_literals <- tail(unique(c(session$secret_literals %||% character(),
+                .secret_literals(text))), 128L)
+    session$secret_values <- unique(c(session$secret_config %||% character(),
+                                      session$secret_literals))
+    invisible(NULL)
+}
+
+.redact_text <- function(text, values = character()) {
     if (!is.character(text) || !length(text)) {
         return(text)
     }
-    # Learn labelled values before masking, so a later unlabelled echo of
-    # the same value is masked too. Includes JSON, shell env, and R str().
-    key <- "\\b(?:[[:alnum:]_]*_)?(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)"
-    prefix <- paste0("(?i)(", key, "[\"']?\\s*(?:=|:)\\s*(?:chr\\s+)?)")
-    patterns <- c(paste0(prefix, "\"([^\"\\r\\n]+)\""),
-                  paste0(prefix, "'([^'\\r\\n]+)'"),
-                  paste0(prefix, "([^\\s\"',;{}<>]+)"),
-                  "(?i)(Bearer\\s+)([A-Za-z0-9._~+/-]{8,}=*)")
-    for (i in seq_along(patterns)) {
-        pattern <- patterns[[i]]
-        hits <- regmatches(text, gregexpr(pattern, text, perl = TRUE))
-        for (hit in unlist(hits, use.names = FALSE)) {
-            value <- sub(pattern, "\\2", hit, perl = TRUE)
-            if (!grepl("^[0-9]+$", value)) {
-                .secret_remember(value)
-            }
-        }
-        replacement <- c('\\1"[REDACTED]"', "\\1'[REDACTED]'",
-                         "\\1[REDACTED]", "\\1[REDACTED]")[[i]]
-        text <- gsub(pattern, replacement, text, perl = TRUE)
-    }
-    text <- gsub("(?s)-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----",
-                 "[REDACTED PRIVATE KEY]", text, perl = TRUE)
-    text <- gsub("\\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\\b",
-                 "[REDACTED]", text, perl = TRUE)
-    values <- .secret_state$values
+    values <- unique(c(values, .secret_literals(text)))
+    values <- values[!is.na(values) & nzchar(values)]
     for (value in values[order(nchar(values), decreasing = TRUE)]) {
         text <- gsub(value, "[REDACTED]", text, fixed = TRUE)
         escaped <- as.character(jsonlite::toJSON(value, auto_unbox = TRUE))
         escaped <- substr(escaped, 2L, nchar(escaped) - 1L)
-        text <- gsub(escaped, "[REDACTED]", text, fixed = TRUE)
+        if (!identical(escaped, value)) {
+            text <- gsub(escaped, "[REDACTED]", text, fixed = TRUE)
+        }
     }
-    text
+    text <- gsub("(?s)-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----",
+                 "[REDACTED PRIVATE KEY]", text, perl = TRUE)
+    gsub("\\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\\b",
+         "[REDACTED]", text, perl = TRUE)
 }
 
-.redact_object <- function(x) {
+.redact_object <- function(x, values = character()) {
     if (is.character(x)) {
-        return(.redact_text(x))
+        return(.redact_text(x, values))
     }
     if (!is.list(x)) {
         return(x)
     }
-    # Provider-signed thinking is opaque protocol state. Rewriting its text
-    # invalidates the signature; it is never an output preview. Journals that
-    # contain it remain private, just like worker workspace snapshots.
-    if (isTRUE(x$type %in% c("thinking", "redacted_thinking")) &&
-        (!is.null(x$signature) || !is.null(x$data))) {
-        return(x)
-    }
-    .secret_register(x)
     for (i in seq_along(x)) {
-        key <- names(x)[i] %||% ""
-        if (is.character(x[[i]]) && isTRUE(.secret_key(key))) {
+        if (is.character(x[[i]]) && isTRUE(.secret_key(names(x)[i] %||% ""))) {
             x[[i]][] <- "[REDACTED]"
         } else {
-            x[i] <- list(.redact_object(x[[i]]))
+            x[i] <- list(.redact_object(x[[i]], values))
         }
     }
     x
 }
 
-# Buffer incomplete lines so a credential split across provider deltas cannot
-# escape the normal output filter. Flush the final line only on completion.
-.redact_stream <- function(send) {
+.chat_secrets <- function(chat) {
+    .secret_values(chat$env$mx %||% list())
+}
+
+# Approval displays are executable input, never redacted previews.
+.approval_remote_problem <- function(call, decision = list(),
+                                     values = character()) {
+    body <- as.character(jsonlite::toJSON(list(args = call$args,
+                reason = decision$reason),
+            auto_unbox = TRUE, null = "null"))
+    labelled <- grepl("(?i)\\b(password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)\\s*[:=]",
+                      paste(unlist(call$args), collapse = "\n"), perl = TRUE)
+    if (length(.secret_values(call$args)) || labelled ||
+        !identical(body, .redact_text(body, values))) {
+        return("Credential-bearing calls must be reviewed in a local CLI; nothing was approved remotely.")
+    }
+    if (nchar(body, type = "bytes") > 16000L) {
+        return("The complete call is too large for a room approval. Review it in a local CLI.")
+    }
+    NULL
+}
+
+# Hold only a suffix that could begin a known credential. Ordinary voice
+# deltas are delivered immediately; cancellation remains synchronous.
+.redact_stream <- function(send, values = function() character()) {
     pending <- ""
+    cancelled <- FALSE
     push <- function(text = "", final = FALSE) {
+        if (cancelled) {
+            return(FALSE)
+        }
         pending <<- paste0(pending, text)
-        cuts <- gregexpr("\n", pending, fixed = TRUE)[[1L]]
-        if (isTRUE(final)) {
-            end <- nchar(pending)
-        } else {
-            end <- max(0L, cuts)
+        keys <- unique(values())
+        keys <- keys[!is.na(keys) & nzchar(keys)]
+        for (key in keys[order(nchar(keys), decreasing = TRUE)]) {
+            pending <<- gsub(key, "[REDACTED]", pending, fixed = TRUE)
         }
-        if (!isTRUE(final) && grepl("-----BEGIN .*PRIVATE KEY-----", pending) &&
-            !grepl("-----END .*PRIVATE KEY-----", pending)) {
-            end <- 0L
+        keep <- 0L
+        if (!final && nzchar(pending)) for (key in keys) {
+            n <- min(nchar(pending), nchar(key) - 1L)
+            if (n > 0L) for (i in seq.int(n, 1L)) {
+                if (endsWith(pending, substr(key, 1L, i))) { keep <- max(keep, i) ; break }
+            }
         }
-        if (end == 0L) {
-            return(invisible(TRUE))
+        end <- nchar(pending) - keep
+        if (end <= 0L) {
+            return(TRUE)
         }
         out <- substr(pending, 1L, end)
         pending <<- substring(pending, end + 1L)
-        send(.redact_text(out))
+        answer <- send(out)
+        cancelled <<- identical(answer, FALSE)
+        answer
     }
     list(push = function(text) push(text),
          flush = function() push(final = TRUE))

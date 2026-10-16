@@ -28,7 +28,6 @@ load_config_file <- function(path) {
         # working.
         cfg <- jsonlite::fromJSON(path, simplifyVector = TRUE,
                                   simplifyDataFrame = FALSE)
-        .secret_register(cfg)
         # Ensure context_files is a character vector
         if (!is.null(cfg$context_files) && is.list(cfg$context_files)) {
             cfg$context_files <- unlist(cfg$context_files)

@@ -676,6 +676,14 @@ bot_job_restored_text <- function(restore) {
 bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
+    local_reason <- req$local_approval %||% .approval_remote_problem(
+        list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg))
+    if (!is.null(local_reason)) {
+        job_answer(s, job$id, req$id, FALSE,
+                   by = "local approval required", reason = local_reason)
+        bot_job_send(chat, s, job, local_reason)
+        return(invisible(NULL))
+    }
     if (bot_job_auto_answer(chat, cfg, s, job, req)) {
         return(invisible(NULL))
     }
@@ -782,7 +790,7 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
                    bot_approval_prompt(call, list(reason = req$reason),
                                        timeout_sec = bot_job_request_remaining(s, req)))
     text <- paste0(text, "\nOperator shortcut: /approve-all ", job$id,
-                   " authorizes the remaining requests for this job; /auto off ", job$id,
+                   " authorizes eligible remaining requests for this job; /approve-all off ", job$id,
                    " restores per-call approvals.")
     eid <- bot_job_send(chat, s, job, text)
     if (is.null(eid)) {

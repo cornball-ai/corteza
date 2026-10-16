@@ -34,6 +34,18 @@ bot_job_auto_grant <- function(chat, cfg, s, job) {
 }
 
 bot_job_auto_answer <- function(chat, cfg, s, job, req) {
+    if (!is.null(req$local_approval) || !is.null(.approval_remote_problem(
+                list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg)))) {
+        return(FALSE)
+    }
+    call <- list(tool = req$tool, args = req$args)
+    check <- tryCatch(supervisor_route(call, list(approval = "ask",
+                reason = req$reason),
+                                       cwd = job$workspace %||% getwd(), mode = "human"),
+                      error = function(e) list(flags = "credential check failed"))
+    if (any(grepl("credential|secret|hard safety", c(check$flags, req$reason), ignore.case = TRUE))) {
+        return(FALSE)
+    }
     g <- bot_job_auto_grant(chat, cfg, s, job)
     if (is.null(g)) {
         return(FALSE)
@@ -45,7 +57,7 @@ bot_job_auto_answer <- function(chat, cfg, s, job, req) {
 bot_parse_approval_mode <- function(body) {
     cmd <- bot_command_text(body)
     m <- regmatches(cmd, regexec(
-                                 "^/*(approve-all|auto)(?:\\s+(on|off|status))?(?:\\s+([0-9]{8}T[0-9]{6}-[0-9a-f]{8}))?\\s*$",
+                                 "^/(approve-all)(?:\\s+(on|off|status))?(?:\\s+([0-9]{8}T[0-9]{6}-[0-9a-f]{8}))?\\s*$",
                                  cmd, perl = TRUE, ignore.case = TRUE))[[1L]]
     if (!length(m)) {
         return(NULL)
@@ -83,16 +95,19 @@ bot_approval_mode_command <- function(chat, cfg, session, command, sender) {
     }
     job_approval_grant(session, job, sender, enabled)
     if (enabled) {
+        answered <- character()
         for (req in job_approval_pending(job$id)) {
-            bot_job_auto_answer(chat, cfg, session, job, req)
+            if (bot_job_auto_answer(chat, cfg, session, job, req)) {
+                answered <- c(answered, req$id)
+            }
         }
         prompts <- session$.job_prompts %||% list()
-        session$.job_prompts <- Filter(function(p) !identical(p$job, job$id), prompts)
+        session$.job_prompts <- Filter(function(p) !(identical(p$job, job$id) && p$req %in% answered), prompts)
     }
     log_event("job_approval_mode", job = job$id, by = sender, enabled = enabled)
     if (!enabled) {
         return(sprintf("Job %s: per-call approvals restored.", job$id))
     }
     sprintf(paste0("Job %s: remaining approval requests authorized by %s until this job ends. ",
-                   "Policy denials still apply. Use /auto off %s to revoke."), job$id, sender, job$id)
+                   "Policy denials and per-call credential approval still apply. Use /approve-all off %s to revoke."), job$id, sender, job$id)
 }

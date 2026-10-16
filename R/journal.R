@@ -456,7 +456,6 @@ journal_history <- function(dir) {
 # retry that fails or a process that stops here leaves it for
 # .journal_read_live to fall back to. A landed replacement removes it.
 .journal_write_json <- function(x, path) {
-    x <- .redact_object(x)
     json <- jsonlite::toJSON(x, auto_unbox = TRUE, null = "null",
                              na = "null", digits = NA)
     tmp <- paste0(path, ".tmp")

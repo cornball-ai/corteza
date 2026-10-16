@@ -130,7 +130,6 @@ bot_legacy_config_path <- function() {
 # that only read fields do not need it, and the loop reassigns cfg in
 # places where a class would have to be maintained by hand.
 bot_plain_cfg <- function(cfg) {
-    .secret_register(cfg)
     cfg <- unclass(cfg)
     attr(cfg, "path") <- NULL
     attr(cfg, "app") <- NULL
@@ -312,7 +311,7 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
         kind <- msgtype
     }
     bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id,
-                                     .redact_text(text),
+                                     .redact_text(text, .secret_values(cfg)),
                                      markup = bot_markup(markdown),
                                      kind = kind))
 }
@@ -335,7 +334,7 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
 # is what every caller tests for.
 bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
                            thread = NULL) {
-    text <- .redact_text(text)
+    text <- .redact_text(text, .chat_secrets(chat))
     # A reply to a threaded message goes back into its thread, and only
     # where the transport can carry one: chat_send() refuses a threaded
     # send it cannot route, so asking first is what keeps a reply in an
@@ -1610,6 +1609,12 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
         return(FALSE)
     }
 
+    local_reason <- .approval_remote_problem(call, decision, .secret_values(cfg))
+    if (!is.null(local_reason)) {
+        bot_reply_send(chat, room_id, local_reason)
+        return(FALSE)
+    }
+
     # Membership is read fresh rather than from the session's 10-minute
     # cache: this decides who may authorize a tool call, and someone who
     # joined since would otherwise leave a stale "one human" answer.
@@ -1692,27 +1697,11 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
 
 # Render a short readable approval prompt.
 bot_approval_prompt <- function(call, decision, timeout_sec) {
-    call <- .redact_object(call)
-    decision <- .redact_object(decision)
     args <- call$args %||% list()
-    args_str <- if (length(args)) {
-        paste(
-              mapply(function(k, v) {
-            # Model-controlled name AND value: sanitize both (strip ANSI/
-            # control chars incl. newlines) and bound, so neither can forge a
-            # line in the prompt. A command or code body gets more room
-            # than a path: it is the thing being approved, and a person
-            # cannot rule on its first 60 characters.
-            wide <- isTRUE(k %in% c("command", "cmd", "code", "script"))
-            s <- .sanitize_inline(as.character(v)[1L],
-                                  max_chars = if (wide) 400L else 60L)
-            sprintf("%s=%s", .sanitize_inline(k, max_chars = 40L), s)
-        }, names(args), args, USE.NAMES = FALSE),
-              collapse = ", "
-        )
-    } else {
-        ""
-    }
+    # Full JSON preserves executable text while escaping control characters.
+    # The send gate refuses credentials and oversized calls before this point.
+    args_str <- as.character(jsonlite::toJSON(args, auto_unbox = TRUE,
+            pretty = TRUE))
     expl <- cli_tool_explanation(call)
     if (!is.null(expl) && nzchar(expl)) {
         expl_line <- paste0(expl, "\n")
@@ -1720,7 +1709,7 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
         expl_line <- ""
     }
     sprintf(
-            "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
+            "Approval needed: %s\nArguments (complete JSON):\n%s\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
             .sanitize_inline(call$tool %||% "", max_chars = 60L), args_str,
             expl_line, .sanitize_inline(decision$reason %||% "ask",
                                         max_chars = 300L),
@@ -2458,7 +2447,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            bot_reply_send(chat, m$channel, reply,
+                            bot_reply_send(chat, m$channel, .redact_text(reply, session$secret_values),
                 markdown = TRUE, thread = m$thread),
                             error = function(e) NULL
         )

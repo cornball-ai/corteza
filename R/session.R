@@ -429,7 +429,6 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
                               agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL) {
-    content <- .redact_text(content)
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -628,8 +627,6 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                       approved_by = NULL, turn = NULL,
                       agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL,
                       call_id = NULL) {
-    args <- .redact_object(args)
-    result <- .redact_text(result)
     path <- trace_path(session_id, agent_id)
 
     dir <- dirname(path)
