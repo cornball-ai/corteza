@@ -626,7 +626,12 @@ run_agent <- function(opts) {
   # trace recording are handled by the separate observers registered
   # below (tool_buffer_observer + chat_trace_observer), matching chat().
   cli_progress_observer <- function(event) {
+    event <- event$display %||% event
     outcome <- event$outcome %||% ""
+    if (identical(outcome, "progress")) {
+      cat("\n", event$result, "\n\n", sep = "")
+      return(invisible(NULL))
+    }
     name <- event$call$tool %||% ""
     args <- event$call$args %||% list()
 
@@ -638,7 +643,7 @@ run_agent <- function(opts) {
     # fires no "start"). "ran" is excluded so an approved call narrates once.
     if (outcome %in% c("start", "task", "deny", "declined")) {
       for (line in corteza:::cli_commentary_lines(event)) {
-        cat(sprintf("%s%s%s\n", color$dim, line, color$reset))
+        cat(sprintf("\n%s\n", line))
       }
     }
 
@@ -671,6 +676,7 @@ run_agent <- function(opts) {
     if (!identical(outcome, "ran")) {
       return(invisible())
     }
+    for (line in corteza:::cli_result_lines(event)) cat("  ", line, "\n", sep = "")
 
     if (!isTRUE(event$success)) {
       cat(sprintf("  %s⎿ failed: %s%s\n", color$bright_magenta,

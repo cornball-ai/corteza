@@ -36,6 +36,11 @@
 }
 
 .remote_approve <- function(ctx, call, decision, timeout = 600) {
+    local_reason <- .approval_remote_problem(call, decision, ctx$session$secret_values)
+    if (!is.null(local_reason)) {
+        .remote_emit(ctx, local_reason)
+        return(FALSE)
+    }
     id <- job_new_id()
     path <- file.path(ctx$remote_dir, "approvals", id)
     .remote_write(paste0(path, ".request"),

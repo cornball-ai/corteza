@@ -1,3 +1,12 @@
+# corteza 0.7.1.74
+
+- Mask credentials only at display boundaries using a session-local registry.
+  Preserve exact tool data and journals, immediate voice delivery, and complete
+  approval arguments. Credential-bearing remote requests require local review.
+- Default room progress to summaries; `activity_detail: true` enables previews.
+- Show CLI result previews and visible commentary. Emit factual updates at
+  tool boundaries after 60 seconds of silence and explain tool-turn limits.
+
 # corteza 0.7.1.73
 
 * `/model` now lists current and configured models plus the active provider's
