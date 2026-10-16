@@ -172,7 +172,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
             result = "Permission required"))
         expect_identical(length(chat.api::chat_history(cl, "room")$messages), 0L)
         stop("provider failed")
-    }), "provider failed")
+    }, cfg = list(activity_detail = TRUE)), "provider failed")
     messages <- chat.api::chat_history(cl, "room")$messages
     expect_identical(length(messages), 1L)
     expect_true(grepl("Checking permission.", messages[[1L]]$body, fixed = TRUE))
