@@ -1,3 +1,9 @@
+# corteza 0.7.1.75
+
+- Let room operators use `/approve-all [job-id]` or `/auto on [job-id]`
+  to authorize remaining requests for one active job. Add status and revoke
+  commands; preserve policy denials and verify operator membership on use.
+
 # corteza 0.7.1.74
 
 - Mask credentials before tool results reach the model, output handles,
