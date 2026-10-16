@@ -10,19 +10,20 @@ title: Configuration
 
 # Configuration
 
-Tool output masks labelled credentials (including R `str()` output, JSON,
-environment assignments and bearer tokens) and known secrets from configuration
-and credential environment variables. Masking happens before output caps, handle
-storage, observers, traces and journal serialization. Room previews and sends
-also mask credentials. Tools still receive their original arguments. This reduces
-accidental disclosure; arbitrary encodings or unlabelled unknown secrets cannot
-be reliably recognized. Avoid printing credential objects. Masking does not
-revoke a credential or remove messages sent by an older build.
-Streamed replies are released on complete lines so split credentials are masked;
-the final unfinished line is released when the reply completes. Signed provider
-thinking blocks remain intact to preserve their signatures and are not displayed
-as previews. Worker checkpoints can contain private runtime objects and are saved
-in owner-only directories with owner-only files.
+Display output masks known credentials from configuration and environment, plus
+quoted credential-shaped literals. The registry belongs to one session; source
+expressions and unquoted words are never learned as values. Tool inputs/results,
+handles, native history, transcripts and journals remain unchanged. These private
+records can contain secrets. Worker checkpoints and approval request files use
+owner-only permissions. A Matrix `sync_token` is a cursor, not a credential.
+
+Room activity defaults to counts only. Set `activity_detail: true` in the bot
+configuration to include commands, paths, result previews and model narration.
+Masking cannot identify arbitrary encodings or unknown unlabelled secrets; it
+does not replace the summary setting. Approval displays are never masked or
+truncated: calls containing credentials or too large to display in full require
+review in a local CLI. Voice deltas are delivered immediately except for a partial
+match to a known credential, which is held until it can be masked safely.
 
 The CLI shows five-line result previews and separates commentary from tool logs.
 After 60 seconds without commentary, the next completed tool emits a factual

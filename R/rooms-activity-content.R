@@ -16,7 +16,7 @@ rooms_activity_preview <- function(text, lines = 5L, width = 160L) {
 }
 
 rooms_activity_record <- function(event) {
-    event <- .redact_object(event)
+    event <- event$display %||% .redact_object(event)
     kind <- event$outcome
     if (identical(kind, "progress")) {
         return(list(narration = event$result, batch = event$result))
@@ -48,6 +48,13 @@ rooms_activity_record <- function(event) {
 rooms_activity_add <- function(acc, record) {
     if (is.null(record)) {
         return(invisible(NULL))
+    }
+    if (identical(acc$detail, FALSE)) {
+        record$narration <- ""
+        if (!is.null(record$tool)) {
+            record$tool$command <- NULL
+            record$tool$output <- NULL
+        }
     }
     if (nzchar(record$narration %||% "") &&
         !identical(record$batch, acc$narration_key)) {

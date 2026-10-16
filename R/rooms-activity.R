@@ -142,6 +142,7 @@ rooms_activity_live <- function(chat) {
 rooms_with_activity <- function(session, chat, channel, expr, cfg = NULL,
                                 thread = NULL) {
     acc <- rooms_activity_new()
+    acc$detail <- isTRUE(cfg$activity_detail)
     acc$thread <- thread
     before <- session$on_tool
     live <- rooms_activity_live(chat)
@@ -280,8 +281,6 @@ rooms_activity_due <- function(acc, now = Sys.time(),
 # differently depending on whether chat.api happens to be attached.
 rooms_activity_flush <- function(acc, chat, channel, now = Sys.time(),
                                  send = NULL, edit = NULL) {
-    acc$items <- .redact_object(acc$items)
-    acc$events <- .redact_object(acc$events)
     frame <- rooms_activity_frame(acc)
     text <- frame$text
     if (!nzchar(text)) {

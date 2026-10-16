@@ -1093,7 +1093,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         if (nchar(reply) == 0) {
             cat(sprintf("%s[No response text]%s\n\n", ctx$palette$dim, ctx$palette$reset))
         } else {
-            ctx$render_reply(reply)
+            ctx$render_reply(.redact_text(reply, ctx$session$secret_values))
             ctx$last_assistant_response <- reply
         }
         cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")

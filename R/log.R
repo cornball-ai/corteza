@@ -95,7 +95,7 @@ log_event <- function(event, ..., level = "info") {
 
     # Write JSON to stderr
     json <- tryCatch(
-                     jsonlite::toJSON(.redact_object(entry), auto_unbox = TRUE, null = "null"),
+                     jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null"),
                      error = function(e) {
         # Fallback if JSON serialization fails
         sprintf('{"event":"%s","error":"json_serialization_failed"}', event)
