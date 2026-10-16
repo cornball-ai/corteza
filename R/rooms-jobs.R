@@ -746,7 +746,7 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
                    bot_approval_prompt(call, list(reason = req$reason),
                                        timeout_sec = bot_job_request_remaining(s, req)))
     text <- paste0(text, "\nOperator shortcut: /approve-all ", job$id,
-                   " authorizes the remaining requests for this job; /auto off ", job$id,
+                   " authorizes eligible remaining requests for this job; /approve-all off ", job$id,
                    " restores per-call approvals.")
     eid <- bot_job_send(chat, s, job, text)
     if (is.null(eid)) {

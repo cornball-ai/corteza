@@ -10,14 +10,17 @@ title: Configuration
 
 # Configuration
 
-In a Matrix room, `/approve-all [job-id]` (or `/auto on [job-id]`) authorizes
-the remaining approval requests for one active job. Bare `/auto` has the same
-meaning in rooms. `/auto status [job-id]` shows the grant; `/auto off [job-id]`
+In a Matrix room, `/approve-all [job-id]` authorizes eligible remaining approval
+requests for one active job. `/approve-all status [job-id]` shows the grant;
+`/approve-all off [job-id]`
 revokes it. With multiple active jobs an ID is required. Only a configured
 operator who is still in the room can authorize requests. The authorization
 includes requests normally escalated by the supervisor, is recorded against
 that operator, and expires when the job ends. It does not override a policy
-denial, authorize other jobs, or change CLI `/auto` semantics.
+denial, authorize other jobs, or cover credential-path requests: those still
+require individual human approval. Credential-bearing calls require local review.
+Only the explicit slash command grants approval; ordinary words and `/auto`
+do not. CLI `/auto`, including through remote control, is unchanged.
 
 Display output masks known credentials from configuration and environment, plus
 quoted credential-shaped literals. The registry belongs to one session; source
