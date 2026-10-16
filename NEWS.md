@@ -1,3 +1,10 @@
+# corteza 0.7.1.74
+
+- Mask credentials before tool results reach the model, output handles,
+  progress, traces and journals; mask outgoing room replies as well.
+- Show CLI result previews and visible commentary. Emit factual updates at
+  tool boundaries after 60 seconds of silence and explain tool-turn limits.
+
 # corteza 0.7.1.73
 
 * `/model` now lists current and configured models plus the active provider's
