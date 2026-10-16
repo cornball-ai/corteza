@@ -41,7 +41,7 @@
     path <- Sys.getenv("CORTEZA_MATRIX_CONFIG")
     if (nzchar(path) && file.exists(path)) {
         cfg <- tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE),
-                         error = function(e) NULL)
+                        error = function(e) NULL)
         .secret_register(cfg)
     }
     invisible(NULL)
