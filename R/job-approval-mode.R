@@ -35,12 +35,17 @@ bot_job_auto_grant <- function(chat, cfg, s, job) {
 
 bot_job_auto_answer <- function(chat, cfg, s, job, req) {
     if (!is.null(req$local_approval) || !is.null(.approval_remote_problem(
-        list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg)))) return(FALSE)
+                list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg)))) {
+        return(FALSE)
+    }
     call <- list(tool = req$tool, args = req$args)
-    check <- tryCatch(supervisor_route(call, list(approval = "ask", reason = req$reason),
-        cwd = job$workspace %||% getwd(), mode = "human"),
-        error = function(e) list(flags = "credential check failed"))
-    if (any(grepl("credential|secret|hard safety", c(check$flags, req$reason), ignore.case = TRUE))) return(FALSE)
+    check <- tryCatch(supervisor_route(call, list(approval = "ask",
+                reason = req$reason),
+                                       cwd = job$workspace %||% getwd(), mode = "human"),
+                      error = function(e) list(flags = "credential check failed"))
+    if (any(grepl("credential|secret|hard safety", c(check$flags, req$reason), ignore.case = TRUE))) {
+        return(FALSE)
+    }
     g <- bot_job_auto_grant(chat, cfg, s, job)
     if (is.null(g)) {
         return(FALSE)
@@ -92,7 +97,9 @@ bot_approval_mode_command <- function(chat, cfg, session, command, sender) {
     if (enabled) {
         answered <- character()
         for (req in job_approval_pending(job$id)) {
-            if (bot_job_auto_answer(chat, cfg, session, job, req)) answered <- c(answered, req$id)
+            if (bot_job_auto_answer(chat, cfg, session, job, req)) {
+                answered <- c(answered, req$id)
+            }
         }
         prompts <- session$.job_prompts %||% list()
         session$.job_prompts <- Filter(function(p) !(identical(p$job, job$id) && p$req %in% answered), prompts)
