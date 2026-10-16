@@ -18,6 +18,11 @@ also mask credentials. Tools still receive their original arguments. This reduce
 accidental disclosure; arbitrary encodings or unlabelled unknown secrets cannot
 be reliably recognized. Avoid printing credential objects. Masking does not
 revoke a credential or remove messages sent by an older build.
+Streamed replies are released on complete lines so split credentials are masked;
+the final unfinished line is released when the reply completes. Signed provider
+thinking blocks remain intact to preserve their signatures and are not displayed
+as previews. Worker checkpoints can contain private runtime objects and are saved
+in owner-only directories with owner-only files.
 
 The CLI shows five-line result previews and separates commentary from tool logs.
 After 60 seconds without commentary, the next completed tool emits a factual
