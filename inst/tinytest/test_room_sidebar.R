@@ -95,7 +95,18 @@ local({
     expect_identical(source$transcript, before)
     members <- c(members, "@outsider:ex")
     expect_null(ns$bot_job_send(chat, source, ns$job_read(job), "Should stay private"))
-    ns$job_settle(job, "done", result = "Private final result")
+    closed <- 0L
+    source$.job_current <- job
+    source$.job_worker_role <- "doer"
+    source$.job_worker <- list(is_alive = function() TRUE,
+        poll_process = function(...) "ready",
+        read = function() list(result = list(reply = "Private final result", checkpoint = list(ok = TRUE))),
+        close = function() { closed <<- closed + 1L })
+    end <- ns$job_pump_current(source, job)
+    expect_identical(end$type, "settled")
+    expect_identical(closed, 1L)
+    expect_null(source$.job_worker)
+    expect_false(identical(ns$job_worker_identity(source), identity_before))
     ns$bot_job_settled(chat, source, ns$job_read(job), sessions)
     expect_false(any(vapply(source$history, function(x) grepl("Private final", x$content, fixed = TRUE), TRUE)))
     expect_true(ns$bot_notices_pending())
