@@ -434,7 +434,7 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                    list(identity = identity, job = job_id, at = job_now(),
                         objects = objects, packages = attached))
     Sys.chmod(file.path(state_dir, c("workspace.RData", "history.rds",
-                                   "checkpoint.json")), "0600")
+                                     "checkpoint.json")), "0600")
     objects
 }
 

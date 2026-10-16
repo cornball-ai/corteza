@@ -55,6 +55,9 @@ local({
     result <- handler("read_file", list(path = file.path(tempdir(), "fixture")))
     expect_false(grepl(secret, result, fixed = TRUE))
     expect_true(grepl("[REDACTED]", result, fixed = TRUE))
+    prompt <- ns$bot_approval_prompt(list(tool = "run_r", args = list(code = shapes[[1]])),
+        list(reason = secret), 60L)
+    expect_false(grepl(secret, prompt, fixed = TRUE))
 
     now <- as.POSIXct("2026-01-01", tz = "UTC")
     ns$.progress_reset(s, now)

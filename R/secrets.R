@@ -110,13 +110,22 @@
     push <- function(text = "", final = FALSE) {
         pending <<- paste0(pending, text)
         cuts <- gregexpr("\n", pending, fixed = TRUE)[[1L]]
-        end <- if (isTRUE(final)) nchar(pending) else max(0L, cuts)
+        if (isTRUE(final)) {
+            end <- nchar(pending)
+        } else {
+            end <- max(0L, cuts)
+        }
         if (!isTRUE(final) && grepl("-----BEGIN .*PRIVATE KEY-----", pending) &&
-            !grepl("-----END .*PRIVATE KEY-----", pending)) end <- 0L
-        if (end == 0L) return(invisible(TRUE))
+            !grepl("-----END .*PRIVATE KEY-----", pending)) {
+            end <- 0L
+        }
+        if (end == 0L) {
+            return(invisible(TRUE))
+        }
         out <- substr(pending, 1L, end)
         pending <<- substring(pending, end + 1L)
         send(.redact_text(out))
     }
-    list(push = function(text) push(text), flush = function() push(final = TRUE))
+    list(push = function(text) push(text),
+         flush = function() push(final = TRUE))
 }
