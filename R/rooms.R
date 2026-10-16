@@ -1702,6 +1702,9 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
     # The send gate refuses credentials and oversized calls before this point.
     args_str <- as.character(jsonlite::toJSON(args, auto_unbox = TRUE,
             pretty = TRUE))
+    # JSON escapes embedded newlines, so an argument cannot close this fence.
+    # Worker notices use Markdown; executable text must remain literal there.
+    args_str <- paste0("```json\n", args_str, "\n```")
     expl <- cli_tool_explanation(call)
     if (!is.null(expl) && nzchar(expl)) {
         expl_line <- paste0(expl, "\n")
