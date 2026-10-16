@@ -71,7 +71,8 @@
 
 .context_edit_require <- function(session) {
     if (.context_edit_pure(session) && !.context_edit_enabled(session)) {
-        stop("Pure CLM requires a supported provider and an enabled journal",
+        stop(paste("Pure CLM requires a supported provider/history format and an enabled journal.",
+                   "Responses cannot edit context; use a supported route or hybrid context management."),
              call. = FALSE)
     }
 }

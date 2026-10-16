@@ -41,7 +41,7 @@ ce_result <- function(id = "edit", provider = "anthropic", text = "queued") {
 }
 
 ce_session <- function(provider = "anthropic", history = ce_history(provider)) {
-    s <- corteza::new_session(provider = provider, system = "PINNED INSTRUCTIONS",
+    s <- corteza::new_session(provider = provider, system = "PINNED INSTRUCTIONS", web_search = FALSE,
         context_edit = list(enabled = TRUE, cadence = "always"))
     s$config <- list(context_compact_pct = 1000, context_warn_pct = 75)
     s$context_window <- 100000L

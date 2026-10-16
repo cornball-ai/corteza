@@ -19,7 +19,7 @@ local({
     pure <- list(enabled = TRUE, cadence = "always", strategy = "clm")
     expect_error(f(".context_edit_config")(override = list(strategy = "unknown")), "strategy")
     make <- function(provider = "anthropic", vault = NULL) {
-        s <- corteza::new_session(provider = provider, system = "Pinned instructions",
+        s <- corteza::new_session(provider = provider, system = "Pinned instructions", web_search = FALSE,
                                   context_edit = pure)
         s$config <- list(context_compact_pct = 1, archival = list(enabled = TRUE))
         s$model_map$cloud <- "fixture"

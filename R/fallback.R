@@ -333,7 +333,11 @@
 .agent_with_fallback <- function(agent_args, session,
                                  .call = function(args) do.call(llm.api::agent, args)) {
     previous_edit_provider <- session$context_edit_provider
-    on.exit(session$context_edit_provider <- previous_edit_provider, add = TRUE)
+    previous_edit_request <- session$context_edit_request
+    on.exit({
+        session$context_edit_provider <- previous_edit_provider
+        session$context_edit_request <- previous_edit_request
+    }, add = TRUE)
     primary <- list(model = agent_args$model, provider = agent_args$provider)
     chain <- c(list(primary), .session_fallback(session))
     resume <- FALSE
@@ -354,6 +358,17 @@
         } else {
             history <- args$history
         }
+        request <- list(provider = cand$provider, model = cand$model,
+                        web_search = if ("web_search" %in% names(args)) {
+                args$web_search
+            } else {
+                FALSE
+            })
+        if (.context_edit_pure(session) &&
+            .context_edit_responses(cand$provider, cand$model,
+                                    request$web_search, history)) {
+            next
+        }
         shape <- .history_shape(history)
         if (resume) {
             args <- .fallback_resume_args(args, history)
@@ -367,6 +382,7 @@
         args$model <- cand$model
         args$provider <- cand$provider
         session$context_edit_provider <- cand$provider
+        session$context_edit_request <- request
         if ("tools" %in% names(args)) {
             args$tools <- .context_edit_tools(args$tools, session)
         }

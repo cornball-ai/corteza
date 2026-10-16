@@ -599,7 +599,9 @@ In-chat commands prefixed with `/`.
 | `/compact` | Summarize conversation to free context |
 | `/sessions` | List sessions |
 | `/context` | Live context usage and loaded files |
-| `/model <name>` | Switch model |
+| `/model` | List current/configured models and the active provider's catalog |
+| `/model <name> [provider]` or `/model <number>` | Switch model, optionally provider; numbers select from the last displayed list |
+| `/effort [level \| default]` | Show or change reasoning effort for this conversation; `default` restores the configured/provider default |
 | `/provider <p>` | Switch provider |
 | `/dryrun` | Toggle dry-run mode |
 | `/trace [N]` | Last N tool executions |
@@ -619,6 +621,35 @@ In-chat commands prefixed with `/`.
 | `/last [N]` | Show Nth most recent tool output |
 | `/outputs` | List recent tool outputs |
 | `/help` | Show help |
+
+The model menu is shared by the CLI, `chat()`, and Matrix rooms. With a
+version of llm.api that exports `list_models()`, it queries the active
+provider's catalog (OpenAI, Anthropic API, Moonshot, Ollama, or a compatible
+gateway). Codex subscription entries come from its local `models_cache.json`
+and are identified as cached. Catalog membership is not a tool-support check.
+If discovery fails or is unavailable, the current and configured `models`
+entries remain selectable. Refresh the list with `/model`; numeric selection
+uses the last displayed list.
+
+`/effort` reports the current reasoning setting and `/effort high` changes it
+for the current conversation. `/effort default` removes the session override
+and uses configuration, or the provider default when none is configured.
+The provider validates which levels its model accepts. In a split bot this
+changes the talker, leaving the doer's effort unchanged. These overrides are
+not global configuration changes; use `reasoning_effort` (or
+`talker.reasoning_effort` for a split bot) for a startup default.
+
+GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
+The corresponding llm.api routing update selects Responses with web search
+off as well as on. Older OpenAI models keep their Chat Completions route
+when search is off, and `openai_codex` always uses Responses. Corteza's
+context-editing tool currently excludes Responses histories, so CLM edits
+remain unavailable on that wire. With llm.api's `agent_uses_responses()`
+export, Corteza checks the selected model and search setting before the first
+request, including fallback candidates. Pure CLM rejects unsupported routes
+before generation; hybrid mode keeps automatic compaction and omits the
+editing tool. With older llm.api versions, the preflight follows their
+search-only OpenAI routing rule.
 
 ## Instruction skills
 

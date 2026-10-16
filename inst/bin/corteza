@@ -141,7 +141,8 @@ Commands (in chat):
   /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
   /sessions      List sessions
-  /model <name>  Switch model
+  /model [name]  List models or switch by name/number
+  /effort [level | default]  Show or set reasoning effort
   /provider <p>  Switch provider
 
 Keys:
@@ -211,7 +212,8 @@ Commands:
   /context       Show live context usage and loaded context files
   /context-edit on|off|status  Control conversation context editing
   /spent, /cost  Approximate USD spent this run (main-agent turns)
-  /model <name>  Switch model
+  /model [name]  List models or switch by name/number
+  /effort [level | default]  Show or set reasoning effort
   /provider <p>  Switch provider (anthropic, openai, moonshot, openai_codex, ollama, openai_compatible)
   /dryrun        Toggle dry-run mode (preview tools without executing)
   /trace [N]     Show last N tool executions (default: 20)

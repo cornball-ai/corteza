@@ -38,9 +38,31 @@
 }
 
 .context_edit_supported <- function(session) {
-    provider <- session$context_edit_provider %||% session$provider
+    request <- session$context_edit_request
+    provider <- request$provider %||% session$context_edit_provider %||% session$provider
     .context_edit_provider_supported(provider) &&
-    !identical(.history_shape(session$history), "responses")
+    !identical(.history_shape(session$history), "responses") &&
+    !.context_edit_responses(provider, request$model %||% .resolve_model(session),
+        if (is.null(request)) {
+            .session_web_search(session)
+        } else {
+            request$web_search
+        },
+                             session$history)
+}
+
+.context_edit_responses <- function(provider, model, web_search,
+                                    history = NULL) {
+    if ("agent_uses_responses" %in% getNamespaceExports("llm.api")) {
+        # Enabling CLM necessarily adds a tool, even to a tool-free caller.
+        return(getExportedValue("llm.api", "agent_uses_responses")(
+                provider, model, tools = list(list(name = "edit_context")),
+                web_search = web_search, history = history))
+    }
+    # Before the routing export, OpenAI selected Responses only for search.
+    # Do not duplicate llm.api's model-family rules in the host.
+    identical(provider, "openai_codex") ||
+    (identical(provider, "openai") && !isFALSE(web_search))
 }
 
 .context_edit_enabled <- function(session) {

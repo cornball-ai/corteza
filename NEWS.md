@@ -1,3 +1,17 @@
+# corteza 0.7.1.73
+
+* `/model` now lists current and configured models plus the active provider's
+  catalog, with numeric selection tied to the last displayed list. The CLI,
+  `chat()`, and Matrix rooms share the menu. Live discovery uses llm.api's
+  optional `list_models()` API; discovery failures keep configured choices.
+* Add `/effort` to show or change a conversation's reasoning effort.
+  `/effort default` restores its configuration/provider default. Split
+  talkers change independently of their doers.
+* Keep gateway URL overrides scoped to `openai_compatible` during model
+  discovery. Check Responses routing before offering context editing;
+  reject unsupported pure-CLM requests before generation and skip incompatible
+  fallback models.
+
 # corteza 0.7.1.72
 
 - Add `/remote-control` (alias `/rc`) to continue the live CLI or `chat()`
