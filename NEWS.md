@@ -1,11 +1,11 @@
-# corteza 0.7.1.78
+# corteza 0.7.1.75
 
 - Let room operators use the explicit `/approve-all [job-id]` command
   to authorize remaining requests for one active job. Add status and revoke
   commands; preserve policy denials and per-call credential approvals, and
   verify operator membership on use. Ordinary words and `/auto` do not grant it.
 
-# corteza 0.7.1.77
+# corteza 0.7.1.74
 
 - Mask credentials only at display boundaries using a session-local registry.
   Preserve exact tool data and journals, immediate voice delivery, and complete
