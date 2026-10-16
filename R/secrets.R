@@ -35,6 +35,15 @@
 .secret_environment <- function() {
     env <- Sys.getenv()
     .secret_remember(unname(env[.secret_key(names(env))]))
+    # Child workers do not inherit the parent's in-memory registry. The
+    # bot config named by their environment supplies known credentials for
+    # masking even when a tool prints one without a label.
+    path <- Sys.getenv("CORTEZA_MATRIX_CONFIG")
+    if (nzchar(path) && file.exists(path)) {
+        cfg <- tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE),
+                        error = function(e) NULL)
+        .secret_register(cfg)
+    }
     invisible(NULL)
 }
 

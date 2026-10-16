@@ -58,6 +58,18 @@ local({
     prompt <- ns$bot_approval_prompt(list(tool = "run_r", args = list(code = shapes[[1]])),
         list(reason = secret), 60L)
     expect_false(grepl(secret, prompt, fixed = TRUE))
+    cfg_path <- tempfile()
+    saved_path <- Sys.getenv("CORTEZA_MATRIX_CONFIG", unset = NA)
+    on.exit({
+        unlink(cfg_path)
+        if (is.na(saved_path)) Sys.unsetenv("CORTEZA_MATRIX_CONFIG") else
+            Sys.setenv(CORTEZA_MATRIX_CONFIG = saved_path)
+    }, add = TRUE)
+    ns$job_write_file(cfg_path, list(password = "fixture-child-secret"))
+    Sys.setenv(CORTEZA_MATRIX_CONFIG = cfg_path)
+    ns$.secret_environment()
+    expect_identical(ns$.redact_text("fixture-child-secret"), "[REDACTED]")
+    if (.Platform$OS.type != "windows") expect_identical(file.mode(cfg_path), as.octmode("0600"))
 
     now <- as.POSIXct("2026-01-01", tz = "UTC")
     ns$.progress_reset(s, now)
