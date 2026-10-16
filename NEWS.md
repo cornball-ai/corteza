@@ -1,8 +1,9 @@
-# corteza 0.7.1.75
+# corteza 0.7.1.78
 
-- Let room operators use `/approve-all [job-id]` or `/auto on [job-id]`
+- Let room operators use the explicit `/approve-all [job-id]` command
   to authorize remaining requests for one active job. Add status and revoke
-  commands; preserve policy denials and verify operator membership on use.
+  commands; preserve policy denials and per-call credential approvals, and
+  verify operator membership on use. Ordinary words and `/auto` do not grant it.
 
 # corteza 0.7.1.77
 
