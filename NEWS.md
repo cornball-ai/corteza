@@ -1,7 +1,9 @@
-# corteza 0.7.1.74
+# corteza 0.7.1.77
 
-- Mask credentials before tool results reach the model, output handles,
-  progress, traces and journals; mask outgoing room replies as well.
+- Mask credentials only at display boundaries using a session-local registry.
+  Preserve exact tool data and journals, immediate voice delivery, and complete
+  approval arguments. Credential-bearing remote requests require local review.
+- Default room progress to summaries; `activity_detail: true` enables previews.
 - Show CLI result previews and visible commentary. Emit factual updates at
   tool boundaries after 60 seconds of silence and explain tool-turn limits.
 
