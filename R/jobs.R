@@ -66,6 +66,10 @@ job_check_id <- function(id) {
 # result is checked; reporting success on a failed rename would lose the
 # record silently.
 job_write_file <- function(path, x) {
+    # Requests retain executable arguments, which can contain credentials.
+    # Set the mode before writing any bytes, including for temporary files.
+    previous_umask <- Sys.umask("0077")
+    on.exit(Sys.umask(previous_umask), add = TRUE)
     tmp <- tempfile(paste0(basename(path), "."), tmpdir = dirname(path))
     on.exit(unlink(tmp), add = TRUE)
     writeLines(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null",
