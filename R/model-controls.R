@@ -23,7 +23,7 @@
     }
     note <- NULL
     catalog <- tryCatch(.model_discover(provider,
-                                        base_url = session$base_url %||% cfg$base_url), error = function(e) {
+                                        base_url = if (identical(provider, "openai_compatible")) session$base_url %||% cfg$base_url), error = function(e) {
         note <<- paste("Catalog unavailable; showing current/configured models.",
                        .sanitize_inline(conditionMessage(e), max_chars = 180L))
         character()

@@ -95,6 +95,43 @@ local({
     }
 })
 
+# Exercise the real discovery path, replacing only the HTTP transport.
+# A gateway URL retained after switching provider must not redirect a cloud
+# catalog request (including its Authorization header) to that gateway.
+if ("list_models" %in% getNamespaceExports("llm.api")) local({
+    original <- get(".models_get", asNamespace("llm.api"))
+    opts <- options(llm.api_base = NULL, llm.api.api_base = NULL,
+                    llm.api_key = "fixture-key")
+    on.exit({
+        options(opts)
+        assignInNamespace(".models_get", original, "llm.api")
+    }, add = TRUE)
+    seen <- list()
+    assignInNamespace(".models_get", function(url, headers, timeout) {
+        seen[[length(seen) + 1L]] <<- list(url = url, headers = headers)
+        list(data = list(list(id = "catalog-model")),
+             models = list(list(name = "catalog-model")))
+    }, "llm.api")
+    endpoints <- c(openai = "https://api.openai.com/v1/models",
+                   anthropic = "https://api.anthropic.com/v1/models?limit=1000",
+                   moonshot = "https://api.moonshot.ai/v1/models",
+                   ollama = "http://localhost:11434/api/tags",
+                   openai_compatible = "https://session-gateway.invalid/v1/models")
+    s <- corteza::new_session(provider = "openai", system = "fixture",
+        model_map = list(cloud = "fixture"), base_url = "https://session-gateway.invalid/v1")
+    cfg <- list(base_url = "https://config-gateway.invalid/v1")
+    for (provider in names(endpoints)) {
+        s$provider <- provider
+        menu <- corteza:::.model_menu_entries(s, cfg)
+        expect_true("catalog-model" %in% vapply(menu, function(x) x$model, character(1)))
+        expect_equal(tail(seen, 1)[[1]]$url, endpoints[[provider]])
+    }
+    s$base_url <- NULL
+    corteza:::.model_menu_entries(s, cfg)
+    expect_equal(tail(seen, 1)[[1]]$url, "https://config-gateway.invalid/v1/models")
+    expect_equal(length(seen), 6L)
+})
+
 # A room command is dispatched without an LLM turn, and its receipt is
 # recorded in the room transcript. No Matrix connection is opened.
 local({
