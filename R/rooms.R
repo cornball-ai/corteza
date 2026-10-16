@@ -1210,6 +1210,10 @@ bot_should_respond <- function(msg, self_id, members, bots = character(),
     if (sender %in% bots) {
         return(isTRUE(msg$addressed))
     }
+    if (sender %in% operators && grepl("^/(sidebar|approve-all|auto)(\\s|$)",
+                                      bot_command_text(msg$body), perl = TRUE)) {
+        return(TRUE)
+    }
     # The sender demonstrably posts in this room, so count them even when
     # the cached member list hasn't caught up or the fetch failed. Unknown
     # membership degrades to "assume this is the only human", not silence.

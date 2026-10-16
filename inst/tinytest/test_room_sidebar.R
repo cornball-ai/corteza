@@ -49,6 +49,10 @@ local({
     }
     expect_identical(ns$bot_parse_sidebar("Let's take this offline")$turns, 5L)
     expect_identical(ns$bot_parse_sidebar("/sidebar 3")$turns, 3L)
+    expect_true(ns$bot_should_respond(list(sender = "@operator:ex", body = "/sidebar"),
+        "@bot:ex", c("@operator:ex", "@other:ex"), operators = "@operator:ex"))
+    expect_false(ns$bot_should_respond(list(sender = "@other:ex", body = "/sidebar"),
+        "@bot:ex", c("@operator:ex", "@other:ex"), operators = "@operator:ex"))
     expect_error(ns$bot_parse_sidebar("/sidebar 99"), "1 to 20")
     expect_error(go(sender = "@stranger:ex"), "operator")
     members <- c(members, "@outsider:ex")
