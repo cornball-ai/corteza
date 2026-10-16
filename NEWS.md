@@ -1,4 +1,4 @@
-# corteza 0.7.1.77
+# corteza 0.7.1.74
 
 - Mask credentials only at display boundaries using a session-local registry.
   Preserve exact tool data and journals, immediate voice delivery, and complete
