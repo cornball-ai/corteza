@@ -14,31 +14,42 @@ job_approval_grant <- function(session, job, by, enabled = TRUE) {
 bot_job_auto_grant <- function(chat, cfg, s, job) {
     current <- job_read(job$id)
     if (is.null(current) || !current$status %in% JOB_STATUSES_OPEN ||
-        !job_in_session(current, s)) return(NULL)
+        !job_in_session(current, s)) {
+        return(NULL)
+    }
     g <- job_read_file(file.path(job_dir(job$id), "approval-mode.json"))
     if (!isTRUE(g$enabled) || !identical(g$job, job$id) ||
         !identical(g$owner, job_worker_owner(s)) ||
         !identical(g$session_key, job_worker_key(s)) ||
-        !g$by %in% bot_operators(cfg)) return(NULL)
-    members <- tryCatch(chat.api::chat_members(chat, job$origin$room %||% s$room_id),
+        !g$by %in% bot_operators(cfg)) {
+        return(NULL)
+    }
+    members <- tryCatch(chat.api::chat_members(chat,
+            job$origin$room %||% s$room_id),
                         error = function(e) character())
-    if (!g$by %in% members) return(NULL)
+    if (!g$by %in% members) {
+        return(NULL)
+    }
     g
 }
 
 bot_job_auto_answer <- function(chat, cfg, s, job, req) {
     g <- bot_job_auto_grant(chat, cfg, s, job)
-    if (is.null(g)) return(FALSE)
+    if (is.null(g)) {
+        return(FALSE)
+    }
     isTRUE(job_answer(s, job$id, req$id, TRUE, by = g$by,
-        reason = "Operator approved the remaining requests for this job."))
+                      reason = "Operator approved the remaining requests for this job."))
 }
 
 bot_parse_approval_mode <- function(body) {
     cmd <- bot_command_text(body)
     m <- regmatches(cmd, regexec(
-        "^/*(approve-all|auto)(?:\\s+(on|off|status))?(?:\\s+([0-9]{8}T[0-9]{6}-[0-9a-f]{8}))?\\s*$",
-        cmd, perl = TRUE, ignore.case = TRUE))[[1L]]
-    if (!length(m)) return(NULL)
+                                 "^/*(approve-all|auto)(?:\\s+(on|off|status))?(?:\\s+([0-9]{8}T[0-9]{6}-[0-9a-f]{8}))?\\s*$",
+                                 cmd, perl = TRUE, ignore.case = TRUE))[[1L]]
+    if (!length(m)) {
+        return(NULL)
+    }
     list(mode = if (nzchar(m[3L])) tolower(m[3L]) else "on",
          job = if (nzchar(m[4L])) m[4L] else NULL)
 }
@@ -51,7 +62,9 @@ bot_approval_mode_command <- function(chat, cfg, session, command, sender) {
                      origin_key = job_worker_key(session),
                      owner = job_worker_owner(session))
     if (!is.null(command$job)) jobs <- Filter(function(j) identical(j$id, command$job), jobs)
-    if (!length(jobs)) return("No active job here. Start a job, then use /approve-all.")
+    if (!length(jobs)) {
+        return("No active job here. Start a job, then use /approve-all.")
+    }
     if (length(jobs) != 1L) {
         return(paste("Choose a job: /approve-all <job-id>. Active jobs:",
                      paste(vapply(jobs, function(j) j$id, ""), collapse = ", ")))
@@ -77,7 +90,9 @@ bot_approval_mode_command <- function(chat, cfg, session, command, sender) {
         session$.job_prompts <- Filter(function(p) !identical(p$job, job$id), prompts)
     }
     log_event("job_approval_mode", job = job$id, by = sender, enabled = enabled)
-    if (!enabled) return(sprintf("Job %s: per-call approvals restored.", job$id))
+    if (!enabled) {
+        return(sprintf("Job %s: per-call approvals restored.", job$id))
+    }
     sprintf(paste0("Job %s: remaining approval requests authorized by %s until this job ends. ",
                    "Policy denials still apply. Use /auto off %s to revoke."), job$id, sender, job$id)
 }
