@@ -923,6 +923,9 @@ bot_session_model <- function(session) {
 
 bot_set_session_model <- function(session, model) {
     mm <- session$model_map %||% list()
+    if (!identical(mm$cloud, model)) {
+        session$thinking <- NULL
+    }
     mm$cloud <- model
     session$model_map <- mm
     invisible(session)
@@ -970,18 +973,19 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
     # echo of these user-supplied values is sanitized so it can't forge a line.
     if (isTRUE(cmd$query_only)) {
         if (is.null(available)) {
-            available <- bot_available_models(cfg)
+            available <- .model_menu_entries(session, cfg)
         }
-        return(bot_render_model_menu(available, session))
+        session$model_menu <- available
+        return(.model_menu_text(available, session))
     }
     if (grepl("^[0-9]+$", cmd$model)) {
         if (is.null(available)) {
-            available <- bot_available_models(cfg)
+            available <- session$model_menu %||% .model_menu_entries(session, cfg)
         }
-        idx <- as.integer(cmd$model)
-        if (idx < 1L || idx > length(available)) {
-            return(paste0(sprintf("No menu entry %d.\n", idx),
-                          bot_render_model_menu(available, session)))
+        idx <- suppressWarnings(as.integer(cmd$model))
+        if (is.na(idx) || idx < 1L || idx > length(available)) {
+            return(paste0(sprintf("No menu entry %s.\n", .sanitize_inline(cmd$model)),
+                          .model_menu_text(available, session)))
         }
         entry <- available[[idx]]
         bot_set_session_model(session, entry$model)
@@ -2213,6 +2217,20 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        effort_cmd <- .effort_parse_command(m$body)
+        if (!is.null(effort_cmd)) {
+            ack <- .effort_command(session, effort_cmd, cfg = cfg)
+            sent_id <- tryCatch(
+                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
