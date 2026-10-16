@@ -63,6 +63,15 @@ local({
     expect_true(grepl("rm important-file", ns$bot_approval_prompt(
         list(tool = "bash", args = list(command = long)), list(), 60L), fixed = TRUE))
     expect_null(ns$.approval_remote_problem(list(tool = "bash", args = list(command = "git status"))))
+    if (requireNamespace("mx.client", quietly = TRUE)) {
+        command <- 'echo [visible](https://example.invalid/payload); echo "```"'
+        expect_true(grepl("<a href", mx.client::mx_markdown_to_html(command), fixed = TRUE))
+        rendered <- mx.client::mx_markdown_to_html(ns$bot_approval_prompt(
+            list(tool = "bash", args = list(command = command)), list(reason = "ask"), 60L))
+        expect_true(grepl("<pre><code>", rendered, fixed = TRUE))
+        expect_false(grepl("<a href", rendered, fixed = TRUE))
+        expect_true(grepl("[visible](https://example.invalid/payload)", rendered, fixed = TRUE))
+    }
     emit <- get(".remote_emit", ns)
     on.exit(utils::assignInNamespace(".remote_emit", emit, "corteza"), add = TRUE)
     receipts <- character()
