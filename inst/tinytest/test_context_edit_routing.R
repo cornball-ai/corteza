@@ -86,17 +86,18 @@ local({
     if ("agent_uses_responses" %in% getNamespaceExports("llm.api")) {
         # The fallback's model, not the session's primary, selects its wire.
         s <- make("gpt-5.5")
+        s$provider <- "anthropic"
         s$fallback <- c("gpt-6-astra openai", "fixture openai_compatible")
         called <- character()
-        result <- corteza:::.agent_with_fallback(list(model = "gpt-5.5",
-            provider = "openai", tools = read_tool, web_search = FALSE, history = list()), s,
+        result <- corteza:::.agent_with_fallback(list(model = "fixture-primary",
+            provider = "anthropic", tools = read_tool, web_search = FALSE, history = list()), s,
             .call = function(args) {
                 called <<- c(called, args$model)
-                if (args$model == "gpt-5.5") stop("HTTP 429 rate limit")
+                if (args$model == "fixture-primary") stop("HTTP 429 rate limit")
                 expect_true(corteza:::.context_edit_enabled(s))
                 list(content = "Fallback completed", history = args$history)
             })
-        expect_equal(called, c("gpt-5.5", "fixture"))
+        expect_equal(called, c("fixture-primary", "fixture"))
         expect_equal(result$content, "Fallback completed")
         expect_null(s$context_edit_request)
         corteza:::.fallback_reset()
@@ -104,18 +105,19 @@ local({
         # Hybrid fallback can use Responses, but must omit the edit tool
         # before its first response exists. Candidate settings are restored.
         s <- make("gpt-5.5", strategy = "hybrid")
+        s$provider <- "anthropic"
         s$fallback <- "gpt-6-astra openai"
         called <- character()
-        corteza:::.agent_with_fallback(list(model = "gpt-5.5", provider = "openai",
+        corteza:::.agent_with_fallback(list(model = "fixture-primary", provider = "anthropic",
             tools = c(read_tool, list(corteza:::.context_edit_schema())),
             web_search = FALSE, history = list()), s, .call = function(args) {
                 called <<- c(called, args$model)
-                if (args$model == "gpt-5.5") stop("HTTP 429 rate limit")
+                if (args$model == "fixture-primary") stop("HTTP 429 rate limit")
                 expect_false(any(vapply(args$tools, function(tool) identical(tool$name, "edit_context"), logical(1))))
                 expect_false(corteza:::.context_edit_enabled(s))
                 list(content = "Fallback completed", history = args$history)
             })
-        expect_equal(called, c("gpt-5.5", "gpt-6-astra"))
+        expect_equal(called, c("fixture-primary", "gpt-6-astra"))
         expect_null(s$context_edit_request)
     }
 })
