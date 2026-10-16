@@ -225,14 +225,14 @@ with_state({
 with_state({
     id <- job_create("t")
     corteza:::job_mark_dispatched(id)
-    call <- list(tool = "bash", args = list(cmd = strrep("x", 5000)))
+    call <- list(tool = "bash", args = list(cmd = paste0(strrep("x", 5000), "; rm important-file")))
     req <- corteza:::job_approval_request(id, call, list(reason = "ask"))
     expect_true(grepl("^r[0-9]{6}-[0-9a-f]{6}$", req))
     pending <- corteza:::job_approval_pending(id)
     expect_identical(length(pending), 1L)
     expect_identical(pending[[1L]]$tool, "bash")
-    # Model-written args are bounded in the record.
-    expect_true(nchar(pending[[1L]]$args$cmd) < 2100L)
+    # The complete executable input, including its tail, reaches review.
+    expect_identical(pending[[1L]]$args, call$args)
 
     expect_true(corteza:::job_approval_answer(id, req, TRUE, by = "@troy:ex"))
     # Answered requests are no longer pending, and a second answer does
