@@ -1,4 +1,4 @@
-# corteza 0.7.1.75
+# corteza 0.7.1.73
 
 * `/model` now lists current and configured models plus the active provider's
   catalog, with numeric selection tied to the last displayed list. The CLI,
