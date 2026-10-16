@@ -642,6 +642,13 @@ bot_job_restored_text <- function(restore) {
 bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
+    local_reason <- req$local_approval %||% .approval_remote_problem(
+        list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg))
+    if (!is.null(local_reason)) {
+        job_answer(s, job$id, req$id, FALSE, by = "local approval required", reason = local_reason)
+        bot_job_send(chat, s, job, local_reason)
+        return(invisible(NULL))
+    }
     if (bot_job_auto_answer(chat, cfg, s, job, req)) return(invisible(NULL))
     if (identical(req$route, "monitor") && isTRUE(cfg$auto_approve_asks)) {
         asked <- tryCatch({

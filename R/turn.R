@@ -500,7 +500,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # Build the closure passed as tool_handler to llm.api::agent. Closes over
 # the session so sticky classifications persist across tool calls.
 .fire_observers <- function(session, event) {
-    event <- .redact_object(event)
+    .secret_observe(session, event$result)
+    event$display <- .redact_object(event, session$secret_values)
     notice <- .progress_record(session, event)
     observers <- session$on_tool %||% list()
     for (obs in observers) {
@@ -514,7 +515,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 .make_tool_handler <- function(session, tool_executor = NULL) {
-    .secret_environment()
+    .secret_environment(session)
     .validate_tool_output_caps(session$config)
     # Either session$dry_run (set by inst/bin/corteza per REPL
     # iteration) or session$config$dry_run (chat()'s /dryrun toggle)
@@ -587,7 +588,6 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # this, so a silent batch is nudged and the streak reset no matter
         # which outcome its final call takes -- not only the executed path.
         nudge <- function(text) {
-            text <- .redact_text(text)
             text <- .maybe_append_narration_nudge(text, session, call$model_context)
             .context_edit_result(session, text, internal_name, call$model_context)
         }
@@ -807,7 +807,6 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         error = function(e) err(paste("Tool error:", conditionMessage(e)))
         )
         success <- !isTRUE(raw$isError)
-        raw <- .redact_object(raw)
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
         }
@@ -960,6 +959,7 @@ add_observer <- function(session, observer) {
 #' @export
 observer_progress <- function() {
     function(event) {
+        event <- event$display %||% event
         # Observer's purpose is to print tool-call traces; gate behind
         # the corteza.verbose option so non-interactive scripts are
         # silent by default.
@@ -1112,9 +1112,7 @@ observer_progress <- function() {
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     .remote_check_stop(session)
     stopifnot(is.environment(session))
-    .secret_environment()
-    prompt <- .redact_text(prompt)
-    session$history <- .redact_object(session$history)
+    .secret_environment(session)
 
     # The message this turn is answering, where a tool can reach it: the
     # running history llm.api builds is not on the session until the turn
@@ -1248,7 +1246,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # llm.api later than the Imports minimum guarantees.
     if (is.function(session$on_delta) &&
         "on_delta" %in% names(formals(llm.api::agent))) {
-        redacted_stream <- .redact_stream(session$on_delta)
+        redacted_stream <- .redact_stream(session$on_delta, function() session$secret_values)
         agent_args$on_delta <- redacted_stream$push
     }
 
@@ -1429,7 +1427,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         redacted_stream$flush()
     }
     list(
-         reply = .progress_reply(session, .redact_text(.fallback_reply(response))),
+         reply = .progress_reply(session, .fallback_reply(response)),
          session = session,
          usage = response$usage,
          route = response$corteza_route,
