@@ -111,7 +111,7 @@
                 reason = decision$reason),
             auto_unbox = TRUE, null = "null"))
     labelled <- grepl(paste0("(?i)\\b(?!(?:sync|pagination)[_-]?token\\b)(?:[[:alnum:]_]*_)?",
-                            "(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)[\"']?\\s*[:=]"),
+                             "(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)[\"']?\\s*[:=]"),
                       paste(unlist(call$args), collapse = "\n"), perl = TRUE)
     if (length(.secret_values(call$args)) || labelled ||
         !identical(body, .redact_text(body, values))) {
