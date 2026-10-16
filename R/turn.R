@@ -1008,7 +1008,9 @@ observer_progress <- function() {
         if (!identical(event$outcome, "ran")) {
             return(invisible())
         }
-        for (line in cli_result_lines(event)) cat("  ", line, "\n", sep = "")
+        for (line in cli_result_lines(event)) {
+            cat("  ", line, "\n", sep = "")
+        }
 
         # File-edit tools attach a diff payload to their result. When
         # present, render the colored hunks in place of the usual
@@ -1423,7 +1425,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     .context_room_snapshot(session)
 
-    if (exists("redacted_stream", inherits = FALSE)) redacted_stream$flush()
+    if (exists("redacted_stream", inherits = FALSE)) {
+        redacted_stream$flush()
+    }
     list(
          reply = .progress_reply(session, .redact_text(.fallback_reply(response))),
          session = session,

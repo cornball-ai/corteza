@@ -311,7 +311,8 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
     if (is.na(kind)) {
         kind <- msgtype
     }
-    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id, .redact_text(text),
+    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id,
+                                     .redact_text(text),
                                      markup = bot_markup(markdown),
                                      kind = kind))
 }
