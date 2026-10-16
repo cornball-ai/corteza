@@ -41,7 +41,7 @@
     .remote_write(paste0(path, ".request"),
                   list(expires = as.numeric(Sys.time()) + timeout))
     on.exit(.remote_write(paste0(path, ".closed"), list(closed = TRUE)), add = TRUE)
-    body <- jsonlite::toJSON(call$args %||% list(), auto_unbox = TRUE, pretty = TRUE)
+    body <- jsonlite::toJSON(.redact_object(call$args %||% list()), auto_unbox = TRUE, pretty = TRUE)
     .remote_emit(ctx, paste0("Approval needed: ", .sanitize_inline(call$tool), "\n", body,
                              "\nReason: ", .sanitize_inline(decision$reason %||% "ask"),
                              "\n/approve ", id, " or /deny ", id, " (expires in ", timeout, "s)"))

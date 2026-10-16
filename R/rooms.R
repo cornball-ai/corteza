@@ -311,7 +311,8 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
     if (is.na(kind)) {
         kind <- msgtype
     }
-    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id, text,
+    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id,
+                                     .redact_text(text),
                                      markup = bot_markup(markdown),
                                      kind = kind))
 }
@@ -1687,6 +1688,8 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
 
 # Render a short readable approval prompt.
 bot_approval_prompt <- function(call, decision, timeout_sec) {
+    call <- .redact_object(call)
+    decision <- .redact_object(decision)
     args <- call$args %||% list()
     args_str <- if (length(args)) {
         paste(
