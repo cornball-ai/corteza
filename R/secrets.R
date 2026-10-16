@@ -41,7 +41,8 @@
     if (!is.character(text)) {
         return(character())
     }
-    pattern <- paste0("(?i)\\b(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|",
+    pattern <- paste0("(?i)\\b(?!(?:sync|pagination)[_-]?token\\b)(?:[[:alnum:]_]*_)?",
+                      "(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|",
                       "refresh[_-]?token|client[_-]?secret|authorization|secret|token)[\"']?",
                       "\\s*[:=]\\s*(?:chr\\s+)?([\"'])([A-Za-z0-9_./+=~-]{12,4096})\\1")
     hits <- unlist(regmatches(text, gregexpr(pattern, text, perl = TRUE)),
@@ -109,7 +110,8 @@
     body <- as.character(jsonlite::toJSON(list(args = call$args,
                 reason = decision$reason),
             auto_unbox = TRUE, null = "null"))
-    labelled <- grepl("(?i)\\b(password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)\\s*[:=]",
+    labelled <- grepl(paste0("(?i)\\b(?!(?:sync|pagination)[_-]?token\\b)(?:[[:alnum:]_]*_)?",
+                            "(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)[\"']?\\s*[:=]"),
                       paste(unlist(call$args), collapse = "\n"), perl = TRUE)
     if (length(.secret_values(call$args)) || labelled ||
         !identical(body, .redact_text(body, values))) {
