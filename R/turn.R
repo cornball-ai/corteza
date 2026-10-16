@@ -1246,7 +1246,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # llm.api later than the Imports minimum guarantees.
     if (is.function(session$on_delta) &&
         "on_delta" %in% names(formals(llm.api::agent))) {
-        agent_args$on_delta <- session$on_delta
+        redacted_stream <- .redact_stream(session$on_delta)
+        agent_args$on_delta <- redacted_stream$push
     }
 
     if (ws_active) {
@@ -1422,6 +1423,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     .context_room_snapshot(session)
 
+    if (exists("redacted_stream", inherits = FALSE)) redacted_stream$flush()
     list(
          reply = .progress_reply(session, .redact_text(.fallback_reply(response))),
          session = session,
