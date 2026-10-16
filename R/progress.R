@@ -2,14 +2,18 @@
 # These run at tool boundaries; they cannot interrupt a blocking tool/request.
 .progress_reset <- function(session, now = Sys.time()) {
     session$.progress <- list(started = now, last_at = now, completed = 0L,
-                              failed = 0L, last_tool = NULL, commentary = NULL)
+                              failed = 0L, last_tool = NULL,
+                              commentary = NULL)
 }
 
 .progress_record <- function(session, event, now = Sys.time()) {
-    if (is.null(session$.progress)) .progress_reset(session, now)
+    if (is.null(session$.progress)) {
+        .progress_reset(session, now)
+    }
     p <- session$.progress
     lines <- cli_commentary_lines(event)
-    if (event$outcome %in% c("start", "task", "deny", "declined") && length(lines)) {
+    if (event$outcome %in% c("start", "task", "deny", "declined") &&
+        length(lines)) {
         p$commentary <- paste(lines, collapse = "\n")
         p$last_at <- now
     }
@@ -30,7 +34,9 @@
 }
 
 .progress_reply <- function(session, reply) {
-    if (!grepl("[Max turns reached]", reply, fixed = TRUE)) return(reply)
+    if (!grepl("[Max turns reached]", reply, fixed = TRUE)) {
+        return(reply)
+    }
     p <- session$.progress
     paste(c(reply, "Paused at the tool-turn limit; the task is not marked complete.",
             if (!is.null(p$last_tool)) sprintf("Completed %d tool calls (%d failed). Latest: %s.",
@@ -41,7 +47,10 @@
 }
 
 cli_result_lines <- function(event) {
-    text <- rooms_activity_preview(.redact_text(event$result), lines = 5L, width = 120L)
-    if (!nzchar(text)) return(character())
+    text <- rooms_activity_preview(.redact_text(event$result), lines = 5L,
+                                   width = 120L)
+    if (!nzchar(text)) {
+        return(character())
+    }
     strsplit(text, "\n", fixed = TRUE)[[1L]]
 }

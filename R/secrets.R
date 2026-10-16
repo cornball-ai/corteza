@@ -6,7 +6,8 @@
 
 .secret_key <- function(key) {
     key <- tolower(gsub("[^[:alnum:]]", "", key))
-    grepl("(password|passwd|passphrase|apikey|accesstoken|refreshtoken|clientsecret|authorization|secret|token)$", key)
+    grepl("(password|passwd|passphrase|apikey|accesstoken|refreshtoken|clientsecret|authorization|secret|token)$",
+          key)
 }
 
 .secret_remember <- function(values) {
@@ -17,7 +18,9 @@
 }
 
 .secret_register <- function(x) {
-    if (!is.list(x)) return(invisible(NULL))
+    if (!is.list(x)) {
+        return(invisible(NULL))
+    }
     for (i in seq_along(x)) {
         key <- names(x)[i] %||% ""
         if (is.character(x[[i]]) && isTRUE(.secret_key(key))) {
@@ -36,7 +39,9 @@
 }
 
 .redact_text <- function(text) {
-    if (!is.character(text) || !length(text)) return(text)
+    if (!is.character(text) || !length(text)) {
+        return(text)
+    }
     # Learn labelled values before masking, so a later unlabelled echo of
     # the same value is masked too. Includes JSON, shell env, and R str().
     key <- "\\b(?:[[:alnum:]_]*_)?(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)"
@@ -50,7 +55,9 @@
         hits <- regmatches(text, gregexpr(pattern, text, perl = TRUE))
         for (hit in unlist(hits, use.names = FALSE)) {
             value <- sub(pattern, "\\2", hit, perl = TRUE)
-            if (!grepl("^[0-9]+$", value)) .secret_remember(value)
+            if (!grepl("^[0-9]+$", value)) {
+                .secret_remember(value)
+            }
         }
         replacement <- c('\\1"[REDACTED]"', "\\1'[REDACTED]'",
                          "\\1[REDACTED]", "\\1[REDACTED]")[[i]]
@@ -71,8 +78,12 @@
 }
 
 .redact_object <- function(x) {
-    if (is.character(x)) return(.redact_text(x))
-    if (!is.list(x)) return(x)
+    if (is.character(x)) {
+        return(.redact_text(x))
+    }
+    if (!is.list(x)) {
+        return(x)
+    }
     .secret_register(x)
     for (i in seq_along(x)) {
         key <- names(x)[i] %||% ""
