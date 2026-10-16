@@ -1696,7 +1696,8 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
     args <- call$args %||% list()
     # Full JSON preserves executable text while escaping control characters.
     # The send gate refuses credentials and oversized calls before this point.
-    args_str <- as.character(jsonlite::toJSON(args, auto_unbox = TRUE, pretty = TRUE))
+    args_str <- as.character(jsonlite::toJSON(args, auto_unbox = TRUE,
+            pretty = TRUE))
     expl <- cli_tool_explanation(call)
     if (!is.null(expl) && nzchar(expl)) {
         expl_line <- paste0(expl, "\n")

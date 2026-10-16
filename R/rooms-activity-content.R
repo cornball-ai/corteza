@@ -148,8 +148,7 @@ rooms_activity_frame <- function(acc) {
         # and the event envelope under the transport's 64 KiB ceiling.
         encoded <- jsonlite::toJSON(list(body = frame$text, formatted_body = frame$html),
                                     auto_unbox = TRUE)
-        if (nchar(encoded, type = "bytes") < 24000L ||
-            length(items) <= 1L) {
+        if (nchar(encoded, type = "bytes") < 24000L || length(items) <= 1L) {
             return(frame)
         }
         items <- items[-1L]
