@@ -124,4 +124,31 @@ local({
     excerpt <- ns$bot_sidebar_excerpt(source, 3L, "$command", history_chat, cfg$user_id)
     expect_length(excerpt, 1L)
     expect_true(grepl("Archived question", excerpt[[1]]$content, fixed = TRUE))
+
+    # Drive the actual poll dispatcher. Neither the command nor its receipt
+    # needs a provider request, and a repeated event must not send twice.
+    source$transcript <- before
+    saved <- list()
+    patch <- function(name, fn, package = "corteza") {
+        saved[[length(saved) + 1L]] <<- list(name = name, package = package,
+            fn = get(name, asNamespace(package)))
+        assignInNamespace(name, fn, package)
+    }
+    on.exit({ for (x in rev(saved)) assignInNamespace(x$name, x$fn, x$package) }, add = TRUE)
+    incoming <- chat.api::chat_message(id = "$poll-command", channel = source$room_id,
+        sender = "@operator:ex", body = "/sidebar 1", ts = Sys.time())
+    patch("bot_load_config", function(...) cfg)
+    patch("bot_chat_client", function(...) chat)
+    patch("chat_whoami", function(...) chat.api::chat_identity(cfg$user_id), "chat.api")
+    patch("chat_poll", function(...) list(first_run = FALSE, messages = list(incoming),
+        reactions = list(), invites = list()), "chat.api")
+    patch("chat_mark_read", function(...) TRUE, "chat.api")
+    patch("bot_run_turn_in_cwd", function(...) stop("sidebar reached the model"))
+    n <- length(sent)
+    expect_equal(corteza::bot_poll(sessions = sessions, timeout = 0), 1L)
+    expect_equal(length(sent), n + 2L)
+    expect_identical(sent[[n + 1L]]$room, cfg$room_id)
+    expect_identical(sent[[n + 2L]]$room, source$room_id)
+    expect_equal(corteza::bot_poll(sessions = sessions, timeout = 0), 0L)
+    expect_equal(length(sent), n + 2L)
 })
