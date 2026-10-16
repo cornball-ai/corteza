@@ -25,7 +25,7 @@ bot_job_auto_grant <- function(chat, cfg, s, job) {
         return(NULL)
     }
     members <- tryCatch(chat.api::chat_members(chat,
-            job$origin$room %||% s$room_id),
+            bot_job_delivery_check(chat, job)$room %||% s$room_id),
                         error = function(e) character())
     if (!g$by %in% members) {
         return(NULL)
@@ -88,7 +88,7 @@ bot_approval_mode_command <- function(chat, cfg, session, command, sender) {
                        job$id, if (active) "on" else "off"))
     }
     enabled <- identical(command$mode, "on")
-    members <- tryCatch(chat.api::chat_members(chat, job$origin$room %||% session$room_id),
+    members <- tryCatch(chat.api::chat_members(chat, bot_job_delivery_check(chat, job)$room %||% session$room_id),
                         error = function(e) character())
     if (enabled && !sender %in% members) {
         return("Could not verify your membership in the job's room; approval mode is unchanged.")

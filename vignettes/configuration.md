@@ -10,6 +10,23 @@ title: Configuration
 
 # Configuration
 
+In a shared Matrix room, say `Let's take this offline` or use `/sidebar [N]`.
+The selected conversation enters the private context as one user-role quotation,
+with original speaker roles and source-event links retained. It is background
+for the continuation, not new instructions or the private assistant's own reply.
+The bot copies the last N human exchanges (default 5, maximum 20) into your
+existing private room with source-event links, and redirects active jobs'
+progress, approvals and results there. Their worker and workspace stay the same.
+The source gets one continuation notice. Original messages remain in the source
+room; the extracted copy is durable and enters the private room's normal archive.
+Only configured operators can do this. `private_rooms` maps operator IDs to
+destination IDs; `sidebar_room` and then the bot's default `room_id` are fallbacks.
+The destination must be invite-only with just the operator and bot joined.
+Delivery is withheld if those checks later fail. A room controlling a remote CLI
+cannot receive a sidebar until that CLI disconnects. A failed send can be retried;
+as with other Matrix sends, a crash after acceptance but before recording its ID
+can duplicate a post.
+
 In a Matrix room, `/approve-all [job-id]` authorizes eligible remaining approval
 requests for one active job. `/approve-all status [job-id]` shows the grant;
 `/approve-all off [job-id]`

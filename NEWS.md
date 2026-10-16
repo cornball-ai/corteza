@@ -1,3 +1,11 @@
+# corteza 0.7.1.76
+
+- Add `/sidebar [N]` and "Let's take this offline" for copying recent
+  conversation into an operator's private room. Route active job progress,
+  approvals and results there, with private-destination checks and worker
+  retirement to keep subsequent shared-room work separate.
+  Import the excerpt as one user-role quotation with source attribution.
+
 # corteza 0.7.1.75
 
 - Let room operators use the explicit `/approve-all [job-id]` command
