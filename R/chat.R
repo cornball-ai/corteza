@@ -141,8 +141,10 @@ tool_hint <- function(name, args) {
 #'
 #' @param provider LLM provider: "anthropic", "openai", "moonshot", or
 #'   "ollama".
-#'   Defaults to config value or "anthropic".
-#' @param model Model name. Defaults to config value or provider default.
+#'   Defaults to the saved provider when resuming, otherwise the config value
+#'   or "anthropic".
+#' @param model Model name. Defaults to the saved model when resuming with the
+#'   same provider, otherwise the matching config value or provider default.
 #' @param tools Character vector of tool names or categories to enable.
 #'   Categories: file, code, r, data, web, git, chat, memory.
 #'   Use "core" for file+code+git, "all" for everything (default).
@@ -193,14 +195,21 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     # Resume / create the on-disk session record so we can persist the
     # transcript and workspace between R sessions.
     session_arg <- session
-    disk_session <- resolve_disk_session(session_arg, provider, model, cwd)
+    config <- load_config(cwd)
+    route <- .session_model_pair(provider, model, config)
+    disk_session <- resolve_disk_session(session_arg, route$provider,
+        route$model, cwd)
+    if (isTRUE(disk_session$resumed)) {
+        route <- .session_model_pair(provider, model, config,
+                                     saved = disk_session$session)
+    }
     history <- disk_session$history %||% list()
     resumed_count <- length(history)
 
     # Shared pre-session setup: config, provider, API key, skills,
     # system prompt.
     turn_session <- session_setup(channel = "console", cwd = cwd,
-                                  provider = provider, model = model,
+                                  provider = route$provider, model = route$model,
                                   tools = tools, history = history,
                                   load_project_context = TRUE,
                                   validate_api_key = TRUE,
@@ -212,6 +221,9 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     model <- turn_session$model_map$cloud
 
     validate_model(provider, model)
+
+    disk_session$session$provider <- provider
+    disk_session$session$model <- model
 
     # Attach on-disk session metadata so observers can trace.
     turn_session$sessionId <- disk_session$sessionId
