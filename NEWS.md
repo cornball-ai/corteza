@@ -1,3 +1,10 @@
+# corteza 0.7.1.77
+
+- Restore the saved provider and model together when resuming in the CLI or
+  `chat()`, rather than combining the saved provider with a configured model.
+  Honor explicit overrides; a provider change uses its matching configured
+  model or provider default.
+
 # corteza 0.7.1.76
 
 - Add `/sidebar [N]` and "Let's take this offline" for copying recent
