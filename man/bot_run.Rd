@@ -25,6 +25,12 @@ bot_run(
 \value{
 Never returns under normal operation. Crashes on fatal error
   so systemd can restart.
+
+This is a bare bot: it runs with no \code{hooks}, so \code{/clear}
+archives and resets without filing the conversation anywhere, and a
+thread reply starts from the thread's own history. A host that wants
+segment rooms and rehydration drives the loop itself through
+\code{\link{bot_run_init}} and supplies them.
 }
 \description{
 Creates one session up front and reuses it across polls so conversation

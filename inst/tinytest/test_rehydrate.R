@@ -2,6 +2,9 @@ library(tinytest)
 
 # Threaded sessions and rehydration: a reply in a folded conversation's
 # thread continues that conversation instead of starting a blank one.
+# Which archive a thread stands for is the host's knowledge, supplied as
+# the thread_context hook; corteza resolves the path, bounds the
+# transcript, and seeds the session.
 
 if (!requireNamespace("chat.api", quietly = TRUE)) {
     exit_file("chat.api not installed")
@@ -17,6 +20,18 @@ if (!("chat_get_state" %in% getNamespaceExports("chat.api"))) {
 # which there is no key to check. Nothing here reaches a model.
 test_cfg <- function() {
     list(room_id = "!r:ex", model = "qwen3:8b", provider = "ollama")
+}
+
+# A host's lookup, shaped like cerebro's: the fold index is state in the
+# topic room, keyed by the thread root.
+fold_lookup <- function(chat, room_id, thread_root) {
+    st <- tryCatch(chat.api::chat_get_state(chat, room_id, "ai.cornball.fold",
+                                            state_key = thread_root),
+                   error = function(e) NULL)
+    if (!is.list(st)) {
+        return(NULL)
+    }
+    list(segment = st$segment, vault = st$vault)
 }
 
 # ---- Session keys ----
@@ -88,27 +103,25 @@ local({
     expect_false(any(grepl("\r", unlist(seen), fixed = TRUE)))
 })
 
-# ---- Finding the archive a thread stands for ----
+# ---- Asking the host which archive a thread stands for ----
+# No hook, no root, a hook that answers nothing, or an answer without a
+# usable pointer: all NULL, never an error.
 local({
     lo <- chat.api::chat_loopback()
-    # A thread nobody folded into is not a fold, and answers NULL
-    # rather than erroring.
-    expect_null(corteza:::bot_thread_archive(lo, "topic", "$root"))
-    expect_null(corteza:::bot_thread_archive(lo, "topic", NULL))
+    expect_null(corteza:::bot_thread_context(NULL, lo, "topic", "$root"))
+    expect_null(corteza:::bot_thread_context(fold_lookup, lo, "topic", NULL))
+    expect_null(corteza:::bot_thread_context(fold_lookup, lo, "topic", "$root"))
+    expect_null(corteza:::bot_thread_context(function(...) "raw/x.md",
+                                             lo, "topic", "$root"))
+    expect_null(corteza:::bot_thread_context(function(...) list(segment = "!s:ex"),
+                                             lo, "topic", "$root"))
+    # A usable answer comes back as the documented pair.
     chat.api::chat_set_state(lo, "topic", "ai.cornball.fold",
                              list(segment = "!seg:ex",
                                   vault = "raw/matrix/seg.md"),
                              state_key = "$root")
-    got <- corteza:::bot_thread_archive(lo, "topic", "$root")
-    expect_identical(got$vault, "raw/matrix/seg.md")
-    expect_identical(got$segment, "!seg:ex")
-    # Keyed by the root: a different thread in the same room is a
-    # different fold, and an unindexed one is not a fold at all.
-    expect_null(corteza:::bot_thread_archive(lo, "topic", "$other"))
-    # An index without a usable pointer is no archive.
-    chat.api::chat_set_state(lo, "topic", "ai.cornball.fold",
-                             list(segment = "!seg:ex"), state_key = "$bare")
-    expect_null(corteza:::bot_thread_archive(lo, "topic", "$bare"))
+    got <- corteza:::bot_thread_context(fold_lookup, lo, "topic", "$root")
+    expect_identical(got, list(segment = "!seg:ex", vault = "raw/matrix/seg.md"))
 })
 
 # ---- Reading the archive ----
@@ -147,7 +160,7 @@ local({
     s <- new.env(parent = emptyenv())
     s$history <- list(list(role = "user", content = "and now?"))
     expect_message(ok <- corteza:::bot_rehydrate_session(s, lo, "topic",
-                                                         "$root"),
+                                                         "$root", fold_lookup),
                    "rehydrated thread")
     expect_true(ok)
     # The archive goes in front of what was already there, so the new
@@ -165,7 +178,8 @@ local({
     # A thread that is not a fold leaves the session alone.
     s2 <- new.env(parent = emptyenv())
     s2$history <- list()
-    expect_false(corteza:::bot_rehydrate_session(s2, lo, "topic", "$nope"))
+    expect_false(corteza:::bot_rehydrate_session(s2, lo, "topic", "$nope",
+                                                 fold_lookup))
     expect_identical(length(s2$history), 0L)
 
     # An index pointing at an archive that is gone says so and leaves
@@ -177,10 +191,20 @@ local({
     s3 <- new.env(parent = emptyenv())
     s3$history <- list()
     expect_message(res <- corteza:::bot_rehydrate_session(s3, lo, "topic",
-                                                          "$missing"),
+                                                          "$missing",
+                                                          fold_lookup),
                    "unreadable")
     expect_false(res)
     expect_identical(length(s3$history), 0L)
+
+    # A bare bot has no hook, and a thread with a perfectly good index
+    # behind it stays unseeded: the session is not even marked, since
+    # a hook cannot appear later in the process.
+    s4 <- new.env(parent = emptyenv())
+    s4$history <- list()
+    expect_false(corteza:::bot_maybe_rehydrate(s4, lo, "topic", "$root"))
+    expect_identical(length(s4$history), 0L)
+    expect_null(s4$rehydrate_checked)
 })
 
 # ---- Rehydration is considered once per session ----
@@ -199,49 +223,47 @@ local({
     # answering an active thread from the backfilled tail alone.
     s <- new.env(parent = emptyenv())
     s$history <- list(list(role = "user", content = "from backfill"))
-    expect_true(corteza:::bot_maybe_rehydrate(s, lo, "topic", "$root"))
+    expect_true(corteza:::bot_maybe_rehydrate(s, lo, "topic", "$root",
+                                              fold_lookup))
     expect_identical(length(s$history), 3L)
     expect_true(grepl("earlier turn", s$history[[1L]]$content, fixed = TRUE))
     # And not a second time, however many messages follow.
-    expect_false(corteza:::bot_maybe_rehydrate(s, lo, "topic", "$root"))
+    expect_false(corteza:::bot_maybe_rehydrate(s, lo, "topic", "$root",
+                                               fold_lookup))
     expect_identical(length(s$history), 3L)
 
     # A thread nobody folded into is asked about once too, or every
-    # message in an ordinary thread would cost a state read for the
-    # life of the process.
-    reads <- 0L
-    orig <- corteza:::bot_thread_archive
-    assignInNamespace("bot_thread_archive", function(...) {
-        reads <<- reads + 1L
+    # message in an ordinary thread would cost the host a lookup for
+    # the life of the process.
+    asked <- 0L
+    counting <- function(chat, room_id, thread_root) {
+        asked <<- asked + 1L
         NULL
-    }, ns = "corteza")
-    on.exit(assignInNamespace("bot_thread_archive", orig, ns = "corteza"),
-            add = TRUE)
+    }
     s2 <- new.env(parent = emptyenv())
     s2$history <- list()
-    for (i in 1:3) corteza:::bot_maybe_rehydrate(s2, lo, "topic", "$plain")
-    expect_identical(reads, 1L)
+    for (i in 1:3) corteza:::bot_maybe_rehydrate(s2, lo, "topic", "$plain",
+                                                 counting)
+    expect_identical(asked, 1L)
 
     # An unthreaded message is never a rehydration candidate, and does
-    # not spend a read finding that out.
+    # not spend a lookup finding that out.
     s3 <- new.env(parent = emptyenv())
-    expect_false(corteza:::bot_maybe_rehydrate(s3, lo, "topic", NULL))
-    expect_identical(reads, 1L)
+    expect_false(corteza:::bot_maybe_rehydrate(s3, lo, "topic", NULL, counting))
+    expect_identical(asked, 1L)
 })
 
 # A rehydration that throws is contained and still marks the session,
-# so a failing archive cannot take the turn with it or retry forever.
+# so a failing hook cannot take the turn with it or retry forever.
 local({
     lo <- chat.api::chat_loopback()
-    orig <- corteza:::bot_thread_archive
-    assignInNamespace("bot_thread_archive",
-                      function(...) stop("homeserver down"), ns = "corteza")
-    on.exit(assignInNamespace("bot_thread_archive", orig, ns = "corteza"),
-            add = TRUE)
     s <- new.env(parent = emptyenv())
     s$history <- list()
     expect_message(res <- corteza:::bot_maybe_rehydrate(s, lo, "topic",
-                                                        "$root"),
+                                                        "$root",
+                                                        function(...) {
+        stop("homeserver down")
+    }),
                    "rehydrate failed")
     expect_false(res)
     expect_true(isTRUE(s$rehydrate_checked))
@@ -333,7 +355,8 @@ local({
     }, add = TRUE)
 
     reg <- corteza:::bot_new_session_registry()
-    corteza:::bot_backfill_sessions(lo, reg, test_cfg())
+    corteza:::bot_backfill_sessions(lo, reg, test_cfg(),
+                                    thread_context = fold_lookup)
     s <- get(corteza:::bot_session_key("!r:ex", "$a"), envir = reg)
     bodies <- vapply(s$history, function(h) h$content, character(1))
     expect_true(grepl("the archived conversation", bodies[[1L]], fixed = TRUE))
@@ -341,14 +364,12 @@ local({
                       fixed = TRUE))
     # Considered once: the live path must not seed it a second time.
     expect_true(isTRUE(s$rehydrate_checked))
-    expect_false(corteza:::bot_maybe_rehydrate(s, lo, "!r:ex", "$a"))
-})
+    expect_false(corteza:::bot_maybe_rehydrate(s, lo, "!r:ex", "$a",
+                                               fold_lookup))
 
-# ---- A transport without durable state ----
-# rehydration is a no-op rather than an error, so a bot on a transport
-# that has no state events keeps answering.
-local({
-    irc <- structure(list(env = new.env(parent = emptyenv()), nick = "bot"),
-                     class = c("chat_irc", "chat_client"))
-    expect_null(corteza:::bot_thread_archive(irc, "#lab", "$root"))
+    # Without the hook, backfill leaves the thread's window as it is.
+    reg2 <- corteza:::bot_new_session_registry()
+    corteza:::bot_backfill_sessions(lo, reg2, test_cfg())
+    s2 <- get(corteza:::bot_session_key("!r:ex", "$a"), envir = reg2)
+    expect_identical(length(s2$history), 1L)
 })

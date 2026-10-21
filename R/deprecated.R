@@ -60,11 +60,12 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
 #' }
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
-                        tools_filter = NULL, timeout = 0L, sessions = NULL) {
+                        tools_filter = NULL, timeout = 0L, sessions = NULL,
+                        hooks = NULL) {
     .Deprecated("bot_poll")
     bot_poll(system = system, model = model, provider = provider,
              tools_filter = tools_filter, timeout = timeout,
-             sessions = sessions)
+             sessions = sessions, hooks = hooks)
 }
 
 #' Deprecated: use bot_run()
@@ -93,10 +94,10 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
 #' }
 #' @export
 matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                            tools_filter = NULL) {
+                            tools_filter = NULL, hooks = NULL) {
     .Deprecated("bot_run_init")
     bot_run_init(system = system, model = model, provider = provider,
-                 tools_filter = tools_filter)
+                 tools_filter = tools_filter, hooks = hooks)
 }
 
 #' Deprecated: use bot_run_step()
