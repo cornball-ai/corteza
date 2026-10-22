@@ -1,3 +1,15 @@
+# corteza 0.7.1.77
+
+- `bot_run_init()` takes `hooks`, a named list of callbacks for policy the
+  loop asks the host about: `on_clear(chat, cfg, room_id, title, vault_ref)`
+  decides whether a cleared conversation becomes a room of its own, and
+  `thread_context(chat, room_id, thread_root)` names the archive a thread
+  continues. `bot_segment_from_clear()` and `bot_thread_archive()`, which
+  made that decision and read that index here, are gone: a bare bot
+  (`bot_run()`, or no `hooks`) archives and resets at `/clear` and never
+  rehydrates. The `segment_rooms` config gate moves with the segment code
+  into the host (cerebro).
+
 # corteza 0.7.1.76
 
 - Add `/sidebar [N]` and "Let's take this offline" for copying recent

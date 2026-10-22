@@ -1,52 +1,34 @@
 # Rehydrating a folded conversation.
 #
 # A conversation that ended at /clear is archived to the vault and, once
-# stale, folded into a topic room as a thread whose root stands for it.
-# Replying to that thread should continue the conversation rather than
-# start a blank one in a room full of unrelated topics, so the first
-# message in such a thread seeds its session from the archive.
+# stale, the host folds it into a topic room as a thread whose root
+# stands for it. Replying to that thread should continue the conversation
+# rather than start a blank one in a room full of unrelated topics, so
+# the first message in such a thread seeds its session from the archive.
 #
-# The mapping from thread root to archive is a state event the fold
-# wrote into the topic room, keyed by the root's event id:
-#
-#   ai.cornball.fold / <root event id> -> {segment, vault}
-#
-# Read rather than derived, and O(1): the alternative was scanning the
-# topic room's history for the root event, which grows with the room and
-# is exactly the work the index exists to avoid.
+# Which archive a thread stands for is the host's knowledge (cerebro
+# keeps an index in the topic room's state), asked through the
+# thread_context hook given to bot_run_init(). This file owns what
+# corteza knows: resolving the archive path, bounding the transcript,
+# and seeding the session with it.
 
-# The archive a thread root stands for, or NULL when the root is not a
-# fold (an ordinary thread someone started in a room, a topic room
-# nobody folded into). Best-effort: a homeserver that cannot answer
-# leaves the session unseeded rather than failing the turn, because an
-# unseeded reply is a worse conversation and a failed one is no
-# conversation at all.
-bot_thread_archive <- function(chat, room_id, thread_root) {
-    if (is.null(thread_root) || !nzchar(thread_root)) {
+# The archive a thread root stands for, through the host's hook, or NULL
+# when there is no hook, the root is not a fold (an ordinary thread
+# someone started in a room), or the answer is not a usable pointer.
+bot_thread_context <- function(thread_context, chat, room_id, thread_root) {
+    if (!is.function(thread_context) || is.null(thread_root) ||
+        !nzchar(thread_root)) {
         return(NULL)
     }
-    caps <- tryCatch(chat.api::chat_capabilities(chat),
-                     error = function(e) list())
-    if (!isTRUE(caps$set_state)) {
+    ctx <- thread_context(chat, room_id, thread_root)
+    if (!is.list(ctx)) {
         return(NULL)
     }
-    st <- tryCatch(
-                   chat.api::chat_get_state(chat, room_id, "ai.cornball.fold",
-            state_key = thread_root),
-                   error = function(e) {
-        message("bot_thread_archive: could not read fold index: ",
-                conditionMessage(e))
-        NULL
-    }
-    )
-    if (!is.list(st)) {
+    ref <- ctx$vault
+    if (!is.character(ref) || length(ref) != 1L || is.na(ref) || !nzchar(ref)) {
         return(NULL)
     }
-    ref <- st$vault
-    if (!is.character(ref) || length(ref) != 1L || !nzchar(ref)) {
-        return(NULL)
-    }
-    list(segment = st$segment, vault = ref)
+    list(segment = ctx$segment, vault = ref)
 }
 
 # Absolute path of a vault-relative archive reference. The inverse of
@@ -104,13 +86,14 @@ bot_archive_excerpt <- function(path, max_chars = 6000L) {
 #
 # Returns TRUE when it seeded, invisibly, so a caller can tell a
 # rehydrated session from a blank one.
-bot_rehydrate_session <- function(session, chat, room_id, thread_root) {
+bot_rehydrate_session <- function(session, chat, room_id, thread_root,
+                                  thread_context = NULL) {
     # Marked before the lookup, not after, and whatever the outcome:
     # the flag means "this session has been considered", so a thread
     # nobody folded into is asked about once rather than on every
     # message for the life of the process.
     session$rehydrate_checked <- TRUE
-    archive <- bot_thread_archive(chat, room_id, thread_root)
+    archive <- bot_thread_context(thread_context, chat, room_id, thread_root)
     if (is.null(archive)) {
         return(invisible(FALSE))
     }
@@ -144,13 +127,17 @@ bot_rehydrate_session <- function(session, chat, room_id, thread_root) {
 # lost for good.
 #
 # Errors are contained here, so a rehydration that fails cannot take
-# the turn with it.
-bot_maybe_rehydrate <- function(session, chat, room_id, thread) {
-    if (is.null(thread) || !nzchar(thread) ||
+# the turn with it. Without a thread_context hook there is nothing to
+# ask, and the session is left as it is without being marked: a hook
+# cannot appear later in a process, so the mark would buy nothing.
+bot_maybe_rehydrate <- function(session, chat, room_id, thread,
+                                thread_context = NULL) {
+    if (!is.function(thread_context) || is.null(thread) || !nzchar(thread) ||
         isTRUE(session$rehydrate_checked)) {
         return(invisible(FALSE))
     }
-    tryCatch(bot_rehydrate_session(session, chat, room_id, thread),
+    tryCatch(bot_rehydrate_session(session, chat, room_id, thread,
+                                   thread_context),
              error = function(e) {
         session$rehydrate_checked <- TRUE
         message("corteza: rehydrate failed: ", conditionMessage(e))

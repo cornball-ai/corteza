@@ -1969,6 +1969,9 @@ bot_accept_invites <- function(chat, invites) {
 #'   immediately.
 #' @param sessions Environment from \code{bot_new_session_registry()}
 #'   keyed by room_id, or NULL to build fresh sessions each call.
+#' @param hooks Named list of functions or NULL, as validated by
+#'   \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
+#'   host nothing.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples
@@ -1978,7 +1981,8 @@ bot_accept_invites <- function(chat, invites) {
 #' }
 #' @export
 bot_poll <- function(system = NULL, model = NULL, provider = NULL,
-                     tools_filter = NULL, timeout = 0L, sessions = NULL) {
+                     tools_filter = NULL, timeout = 0L, sessions = NULL,
+                     hooks = NULL) {
     bot_require_mx()
     cfg <- bot_load_config()
 
@@ -2106,7 +2110,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # startup backfill can have built this session already, and
         # keying on freshness left a restart answering an active thread
         # from the backfilled tail alone.
-        bot_maybe_rehydrate(session, chat_now(), m$channel, m$thread)
+        bot_maybe_rehydrate(session, chat_now(), m$channel, m$thread,
+                            hooks$thread_context)
 
         # Self events: either an echo of our own reply (already in
         # $history via turn() — skip) or an out-of-band send from a
@@ -2342,8 +2347,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                  bot_archive_session(session, m$channel, chat_now()),
                                  error = function(e) NULL
             )
-            # Rooms listed in the config's segment_rooms get the ended
-            # conversation as a room of its own (see segment.R). Only
+            # Whether the ended conversation becomes a room of its own
+            # is the host's call, through the on_clear hook (see
+            # bot_run_init()); without one it is simply archived. Only
             # when something was archived: the transcript pointer is
             # the segment's content.
             # Not for a thread: a thread is already the segment of a
@@ -2355,14 +2361,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # named after the command that ended it.
             seg <- NULL
             if (!is.null(archived) && is.null(m$thread) && seg_worth &&
-                m$channel %in% as.character(cfg$segment_rooms %||%
-                    character())) {
+                is.function(hooks$on_clear)) {
                 seg <- tryCatch(
-                                bot_segment_from_clear(chat_now(),
-                        m$channel, seg_title,
-                        bot_vault_ref(archived)),
+                                bot_hook_segment(hooks$on_clear(chat_now(), cfg,
+                            m$channel, seg_title,
+                            bot_vault_ref(archived))),
                                 error = function(e) {
-                    message("bot_segment_from_clear: ", conditionMessage(e))
+                    message("on_clear hook: ", conditionMessage(e))
                     NULL
                 }
                 )
@@ -2505,7 +2510,8 @@ bot_remember_event <- function(seen, event_id, cap = 256L) {
 # @return Integer count of rooms backfilled, invisibly.
 bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                                   model = NULL, provider = NULL,
-                                  tools_filter = NULL, limit = 30L) {
+                                  tools_filter = NULL, limit = 30L,
+                                  thread_context = NULL) {
     rooms <- tryCatch(chat.api::chat_channels(chat),
                       error = function(e) character())
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
@@ -2568,7 +2574,7 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             # it goes in before the window does. Once per session: the
             # flag is what stops the second backfilled message in a
             # thread asking again.
-            bot_maybe_rehydrate(session, chat, rid, m$thread)
+            bot_maybe_rehydrate(session, chat, rid, m$thread, thread_context)
             is_self <- isTRUE(m$self)
             if (is_self) {
                 role <- "assistant"
@@ -2640,6 +2646,35 @@ bot_run_turn_in_cwd <- function(prompt, session) {
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
 #' @param tools_filter Character vector or NULL. Tool filter override.
+#' @param hooks Named list of functions or NULL. Policy the loop asks
+#'   the host about; see Hooks. NULL, the default, means a bare bot:
+#'   \code{/clear} archives and resets without filing anything, and a
+#'   thread reply starts from the thread's own history.
+#'
+#' @section Hooks:
+#' corteza runs a conversation. What becomes of one once it ends, and
+#' where a thread's earlier context comes from, belong to the host that
+#' runs the bot over time (cerebro files segments and folds them into
+#' topic rooms). Two slots, both optional:
+#'
+#' \describe{
+#'   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
+#'     from the \code{/clear} handler once the conversation is archived,
+#'     when the user said something in it and the clear was not inside a
+#'     thread. \code{chat} is the live chat.api client, \code{cfg} the
+#'     bot config, \code{title} the segment title corteza derived from
+#'     the transcript's opening line, \code{vault_ref} the archive's
+#'     vault-relative path (or NULL). Returns \code{list(id, name)} for a
+#'     room it filed the conversation into, which the acknowledgement
+#'     names, or NULL for none. An error is reported and treated as
+#'     none: archive-and-reset is the critical path.}
+#'   \item{\code{thread_context(chat, room_id, thread_root)}}{Called once
+#'     per thread session before its first reply. Returns
+#'     \code{list(segment, vault)} naming the archived conversation the
+#'     thread continues, or NULL when it continues nothing; \code{vault}
+#'     is the transcript's path, vault-relative or absolute. A result
+#'     seeds the session with the transcript's tail.}
+#' }
 #'
 #' @return A list holding the session registry, startup session handle,
 #'   archive-flush signal path, and the saved poll options. Pass it to
@@ -2653,8 +2688,9 @@ bot_run_turn_in_cwd <- function(prompt, session) {
 #' }
 #' @export
 bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                         tools_filter = NULL) {
+                         tools_filter = NULL, hooks = NULL) {
     bot_require_mx()
+    hooks <- bot_hooks(hooks)
     sessions <- bot_new_session_registry()
     chat <- NULL
 
@@ -2689,7 +2725,8 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
                                 bot_backfill_sessions(chat, sessions, cfg,
                     system = system, model = model,
                     provider = provider,
-                    tools_filter = tools_filter),
+                    tools_filter = tools_filter,
+                    thread_context = hooks$thread_context),
                                 error = function(e) {
                 message("bot_run: backfill failed: ", conditionMessage(e))
                 0L
@@ -2723,7 +2760,8 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
     list(sessions = sessions, chat = chat,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
-                     provider = provider, tools_filter = tools_filter))
+                     provider = provider, tools_filter = tools_filter,
+                     hooks = hooks))
 }
 
 #' One Matrix long-poll iteration
@@ -2767,7 +2805,8 @@ bot_run_step <- function(state, timeout = 30000L) {
     }
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
-                        timeout = timeout, sessions = state$sessions)
+                        timeout = timeout, sessions = state$sessions,
+                        hooks = o$hooks)
     # Advance every room's jobs: start queued ones, post results, raise
     # approval prompts. Never blocks on a worker. Client derived now, as
     # for the flush below.
@@ -2825,6 +2864,12 @@ bot_run_step <- function(state, timeout = 30000L) {
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
+#'
+#' This is a bare bot: it runs with no \code{hooks}, so \code{/clear}
+#' archives and resets without filing the conversation anywhere, and a
+#' thread reply starts from the thread's own history. A host that wants
+#' segment rooms and rehydration drives the loop itself through
+#' \code{\link{bot_run_init}} and supplies them.
 #' @seealso \code{\link{bot_run_init}}, \code{\link{bot_run_step}}
 #' @examples
 #' \dontrun{
@@ -2836,7 +2881,8 @@ bot_run_step <- function(state, timeout = 30000L) {
 bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
                     provider = NULL, tools_filter = NULL) {
     state <- bot_run_init(system = system, model = model,
-                          provider = provider, tools_filter = tools_filter)
+                          provider = provider, tools_filter = tools_filter,
+                          hooks = NULL)
     message("bot_run: starting long-poll loop")
     message("bot_run: flush signal at ", state$flush_signal)
     repeat {
