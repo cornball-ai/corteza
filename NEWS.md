@@ -1,3 +1,13 @@
+# corteza 0.7.1.78
+
+- R code is ASCII: the non-ASCII characters in string literals (the
+  ellipsis in the sentence-break pattern, the em dashes in the context
+  meter, the instruction catalog and the fallback banner, the banner's
+  emoji, the curly apostrophe in the sidebar pattern) are `\u` escapes
+  now, which R turns into the same characters at parse time. This clears
+  the one WARNING `R CMD check` had been reporting, and CI now fails on a
+  check WARNING (`WARNINGS_ARE_ERRORS`).
+
 # corteza 0.7.1.77
 
 - `bot_run_init()` takes `hooks`, a named list of callbacks for policy the
