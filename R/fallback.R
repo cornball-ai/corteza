@@ -55,11 +55,11 @@
     provider <- .fallback_route_label(route$provider, 40L)
     if (isTRUE(route$api_key)) {
         return(paste0(
-                      "🚨🚨🚨 PAID API KEY FALLBACK — BILLABLE USAGE 🚨🚨🚨\n",
+                      "\U{1F6A8}\U{1F6A8}\U{1F6A8} PAID API KEY FALLBACK \u2014 BILLABLE USAGE \U{1F6A8}\U{1F6A8}\U{1F6A8}\n",
                       "Subscriptions are limited; using ", model, " via ", provider, "."
             ))
     }
-    sprintf("⚡ Automatic subscription failover: %s via %s.", model, provider)
+    sprintf("\u26a1 Automatic subscription failover: %s via %s.", model, provider)
 }
 
 .fallback_reply <- function(response) {
