@@ -3,7 +3,7 @@
 # tagged values so an old plain record is never decoded as tagged content.
 .history_json_wrapped <- function(x) {
     is.list(x) && identical(names(x), c(".corteza_history", "data")) &&
-        identical(x[[".corteza_history"]], "multimodal-v1")
+    identical(x[[".corteza_history"]], "multimodal-v1")
 }
 
 .history_json_encode <- function(x) {
@@ -51,7 +51,11 @@
             if (is.character(kind) && length(kind) == 1L &&
                 kind %in% c("list", "llm_content", "llm_text", "llm_image")) {
                 data <- lapply(value$value, decode)
-                return(if (kind == "list") data else structure(data, class = kind))
+                return(if (kind == "list") {
+                        data
+                    } else {
+                        structure(data, class = kind)
+                    })
             }
         }
         lapply(value, decode)
@@ -60,6 +64,6 @@
 }
 
 .history_json <- function(x) {
-    jsonlite::toJSON(.history_json_encode(x), auto_unbox = TRUE, null = "null",
-                     na = "null", digits = NA)
+    jsonlite::toJSON(.history_json_encode(x), auto_unbox = TRUE,
+                     null = "null", na = "null", digits = NA)
 }
