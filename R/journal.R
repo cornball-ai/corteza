@@ -456,8 +456,7 @@ journal_history <- function(dir) {
 # retry that fails or a process that stops here leaves it for
 # .journal_read_live to fall back to. A landed replacement removes it.
 .journal_write_json <- function(x, path) {
-    json <- jsonlite::toJSON(x, auto_unbox = TRUE, null = "null",
-                             na = "null", digits = NA)
+    json <- .history_json(x)
     tmp <- paste0(path, ".tmp")
     written <- tryCatch({
         suppressWarnings(writeLines(json, tmp, useBytes = TRUE))
@@ -491,7 +490,7 @@ journal_history <- function(dir) {
 }
 
 .journal_read_json <- function(path) {
-    jsonlite::fromJSON(path, simplifyVector = FALSE)
+    .history_json_decode(jsonlite::fromJSON(path, simplifyVector = FALSE))
 }
 
 .journal_tail <- function(history, skip) {
