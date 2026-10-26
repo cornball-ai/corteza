@@ -1,5 +1,6 @@
 # Tests for R/handles.R — large-result stashing and read_handle.
 
+local({
 corteza::ensure_skills()
 corteza:::clear_handles()
 on.exit(corteza:::clear_handles(), add = TRUE)
@@ -261,3 +262,4 @@ res <- corteza:::call_tool("read_handle", list(handle = df$handle, op = "grep",
 expect_true(grepl("row17", res$content[[1]]$text))
 expect_true(grepl("^1 of 31 lines match", res$content[[1]]$text))
 corteza:::clear_handles()
+})

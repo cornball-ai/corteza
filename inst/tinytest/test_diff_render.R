@@ -1,5 +1,6 @@
 library(tinytest)
 
+local({
 # Identical inputs return NULL so the display layer can skip silently.
 expect_null(corteza:::compute_unified_diff("a\nb\n", "a\nb\n", "x.R"))
 expect_null(corteza:::compute_unified_diff("", "", "x.R"))
@@ -154,3 +155,4 @@ expect_true(any(grepl("^\\s*2 \\+ beta$", rn)))
 expect_true(any(grepl("^\\s*3 \\+ gamma$", rn)))
 # No context, no removals.
 expect_false(any(grepl(" - ", rn)))
+})

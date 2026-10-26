@@ -3,21 +3,23 @@
 #   ~/.openclaw/agents/{agent_id}/sessions/sessions.json  - Session metadata
 #   ~/.openclaw/agents/{agent_id}/sessions/{id}.jsonl     - Transcript per session
 
+local({
+data_root <- tempfile("session-data-")
+dir.create(data_root)
+old_data <- Sys.getenv("R_USER_DATA_DIR", unset = NA_character_)
+Sys.setenv(R_USER_DATA_DIR = data_root)
+on.exit({
+    if (is.na(old_data)) Sys.unsetenv("R_USER_DATA_DIR") else
+        Sys.setenv(R_USER_DATA_DIR = old_data)
+    unlink(data_root, recursive = TRUE)
+}, add = TRUE)
+
 # Use a unique test agent_id to avoid conflicts with real sessions
 test_agent_id <- paste0("test_", format(Sys.time(), "%Y%m%d%H%M%S"), "_", sample(1000:9999, 1))
 
-on.exit({
-    # Cleanup test sessions directory
-    test_dir <- corteza:::sessions_dir(test_agent_id)
-    if (dir.exists(test_dir)) {
-        unlink(test_dir, recursive = TRUE)
-    }
-    # Also clean up parent agent directory if empty
-    agent_dir <- dirname(test_dir)
-    if (dir.exists(agent_dir) && length(list.files(agent_dir)) == 0) {
-        unlink(agent_dir, recursive = TRUE)
-    }
-}, add = TRUE)
+expect_true(startsWith(normalizePath(corteza:::sessions_dir(test_agent_id),
+                                    winslash = "/", mustWork = FALSE),
+                       paste0(normalizePath(data_root, winslash = "/"), "/")))
 
 # session_id() now generates docker-style adjective_surname names
 # (e.g. "boring_wozniak") instead of UUIDs. The format is two
@@ -219,3 +221,4 @@ corteza:::transcript_append(session3, "assistant", "resp3", agent_id = test_agen
 # Load messages (compaction not yet filtering, so get all)
 all_messages <- corteza:::transcript_load(session3$sessionId, test_agent_id, from_compaction = FALSE)
 expect_equal(length(all_messages), 7)  # 4 original + compaction + 2 new
+})

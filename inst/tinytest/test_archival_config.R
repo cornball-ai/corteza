@@ -1,6 +1,7 @@
 # Archival config block defaults + startup validation. Pure-function,
 # offline.
 
+local({
 cfg <- corteza:::load_config(tempdir())
 
 # Default block is present, off by default.
@@ -40,3 +41,4 @@ err <- tryCatch(corteza:::load_config(project_cfg_dir),
 expect_inherits(err, "error")
 expect_true(grepl("archival.enabled requires subagents.enabled",
                   conditionMessage(err)))
+})
