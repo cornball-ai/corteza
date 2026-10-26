@@ -554,6 +554,11 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     executor_wants_context <- "context" %in% executor_formals ||
     "..." %in% executor_formals
     execute <- function(name, args, context) {
+        if (identical(name, "send_room_file")) {
+            if (session_dry_run()) return(ok("Dry run: would send a file to this conversation."))
+            if (!is.function(session$send_room_file)) return(err("Room file sending is unavailable"))
+            return(do.call(session$send_room_file, args))
+        }
         if (identical(name, "ask_room")) {
             if (session_dry_run()) {
                 return(ok("Dry run: would ask another room."))
@@ -1155,6 +1160,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .context_edit_tools(tools, session)
     tools <- .delegation_tools(tools, session)
     tools <- .room_consult_tools(tools, session)
+    tools <- .room_media_tools(tools, session)
     tools <- .auto_filter_tools(tools, session$auto_config)
 
     # Provider-native (server-side) web search: enable it when the session

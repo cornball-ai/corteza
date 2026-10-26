@@ -2463,11 +2463,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             s
         })
         session$context_edit_events <- list()
+        .room_media_bind(session, cfg, chat_now, sender, m$channel, m$thread)
         reply <- tryCatch(rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg, thread = m$thread), finally = {
             session$job_handoff <- NULL
             session$ask_room <- NULL
+            session$send_room_file <- NULL
         })
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
