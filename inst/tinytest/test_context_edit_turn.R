@@ -94,6 +94,54 @@ local({
     expect_equal(seen$calls, 6L)
 })
 
+# Two unaddressed image posts followed by addressed text must reach the model,
+# and a later turn must still receive both images after context indexing.
+local({
+    original <- llm.api::agent
+    on.exit(assignInNamespace("agent", original, "llm.api"), add = TRUE)
+    root <- tempfile("context-image-turn-")
+    dir.create(root)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    requests <- list()
+    assignInNamespace("agent", function(prompt, history, provider,
+                                         history_callback, ...) {
+        h <- c(history, list(list(role = "user", content = prompt)))
+        # Exercise the real provider conversion and JSON boundary. Only the
+        # remote response is synthetic; no key, image file or API is needed.
+        wire <- llm.api:::.llm_blocks(h, provider)
+        requests[[length(requests) + 1L]] <<- jsonlite::fromJSON(
+            jsonlite::toJSON(wire, auto_unbox = TRUE), simplifyVector = FALSE)
+        h <- c(h, list(list(role = "assistant", content = "I can see both images.")))
+        history_callback(h)
+        list(content = "I can see both images.", history = h, usage = list(), turns = 1L)
+    }, "llm.api")
+    image <- llm.api::llm_image(data = as.raw(1:4), mime = "image/png")
+    for (provider in c("anthropic", "openai")) {
+        s <- corteza::new_session(provider = provider, channel = "matrix",
+            system = "Fixture", web_search = FALSE,
+            context_edit = list(enabled = TRUE, cadence = "always"))
+        s$config <- list(context_compact_pct = 1000)
+        s$context_window <- 100000L
+        s$context_conversation <- TRUE
+        s$context_archive_vault <- root
+        s$history <- list(list(role = "user", content = llm.api::llm_content("First", image)),
+                          list(role = "user", content = llm.api::llm_content("Second", image)))
+        corteza:::journal_install(s, file.path(root, provider))
+        for (prompt in c("What is shown?", "Tell me more.")) {
+            reply <- corteza::turn(prompt, s, tools = list())
+            expect_identical(reply$reply, "I can see both images.")
+            wire <- tail(requests, 1)[[1]]
+            for (i in 1:2) {
+                blocks <- Filter(function(b) b$type %in% c("image", "image_url"), wire[[i]]$content)
+                expect_equal(length(blocks), 1L)
+                expect_inherits(s$history[[i]]$content, "llm_content")
+            }
+            expect_identical(corteza:::journal_load(s$journal_dir)$live$history, s$history)
+        }
+    }
+    expect_equal(length(requests), 4L)
+})
+
 # Provider fallback must remove the edit schema on the Responses shape and
 # journal the bridge before native messages disappear from the live window.
 local({

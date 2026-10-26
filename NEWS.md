@@ -1,9 +1,32 @@
+# corteza 0.7.1.79
+
+- Preserve image turns when conversation context editing adds labels, rewrites
+  the journal, or files retired messages to a vault. Multimodal records retain
+  their classes and image bytes across save/restore, so later requests still
+  translate correctly for the selected provider. Existing plain JSON journals
+  remain readable.
+
+# corteza 0.7.1.78
+
+- R code is ASCII: the non-ASCII characters in string literals (the
+  ellipsis in the sentence-break pattern, the em dashes in the context
+  meter, the instruction catalog and the fallback banner, the banner's
+  emoji, the curly apostrophe in the sidebar pattern) are `\u` escapes
+  now, which R turns into the same characters at parse time. This clears
+  the one WARNING `R CMD check` had been reporting, and CI now fails on a
+  check WARNING (`WARNINGS_ARE_ERRORS`).
+
 # corteza 0.7.1.77
 
-- Restore the saved provider and model together when resuming in the CLI or
-  `chat()`, rather than combining the saved provider with a configured model.
-  Honor explicit overrides; a provider change uses its matching configured
-  model or provider default.
+- `bot_run_init()` takes `hooks`, a named list of callbacks for policy the
+  loop asks the host about: `on_clear(chat, cfg, room_id, title, vault_ref)`
+  decides whether a cleared conversation becomes a room of its own, and
+  `thread_context(chat, room_id, thread_root)` names the archive a thread
+  continues. `bot_segment_from_clear()` and `bot_thread_archive()`, which
+  made that decision and read that index here, are gone: a bare bot
+  (`bot_run()`, or no `hooks`) archives and resets at `/clear` and never
+  rehydrates. The `segment_rooms` config gate moves with the segment code
+  into the host (cerebro).
 
 # corteza 0.7.1.76
 

@@ -205,7 +205,7 @@
                 reasons[[i]]
             }
         }
-        suffix <- if (nzchar(detail)) paste0(" — ", detail) else ""
+        suffix <- if (nzchar(detail)) paste0(" \u2014 ", detail) else ""
         sprintf("  %-4s %6s  %s [%s]%s", marker,
                 format_tokens(tokens[[i]]), ids[[i]], kinds[[i]], suffix)
     }, character(1L), USE.NAMES = FALSE)

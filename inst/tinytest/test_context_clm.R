@@ -168,6 +168,33 @@ local({
     if (requireNamespace("pensar", quietly = TRUE)) {
         vault <- file.path(root, "vault")
         pensar::init_vault(vault, rproj = FALSE, agent_instructions = FALSE)
+        # Image retirement uses the same lossless representation for hashing,
+        # writing and verifying an existing archive on retry after restart.
+        for (provider in c("anthropic", "openai")) {
+            s <- make(provider, vault)
+            image <- llm.api::llm_image(data = as.raw(1:4), mime = "image/png")
+            s$history[[1]]$content <- llm.api::llm_content("Photo evidence", image, image)
+            f(".context_edit_prepare")(s)
+            uid <- f(".context_edit_label")(f(".compact_entry_body")(s$history[[1]]), "u")
+            retired <- s$history[1]
+            queue(s, uid)
+            before <- s$history
+            pending <- s$pending_context_edits
+            path <- f(".context_archive_write")(s, before, pending)
+            native <- sub("[.]md$", ".json", path)
+            record <- f(".journal_read_json")(native)
+            expect_identical(record$history, retired)
+            expect_identical(record$history[[1]]$content[[3]], image)
+            expect_true(any(grepl("Photo evidence", readLines(path), fixed = TRUE)))
+            expect_identical(f(".context_archive_write")(s, before, pending), path)
+            f("journal_snapshot")(s)
+            restored <- f("journal_load")(s$journal_dir)$live$history
+            expect_identical(f(".context_archive_write")(s, restored, pending), path)
+            expect_true(f(".context_edit_checkpoint")(s))
+            expect_false(grepl("Photo evidence", rendered(s), fixed = TRUE))
+            expect_true(grepl("Filed:", rendered(s), fixed = TRUE))
+            expect_identical(f(".journal_read_json")(native)$history, retired)
+        }
         for (provider in c("anthropic", "openai")) {
             s <- make(provider, vault)
             ids <- names(f(".context_edit_state")(s)$messages)

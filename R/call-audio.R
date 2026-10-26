@@ -298,7 +298,7 @@ voice_sentences <- function(text) {
     }
     # A break after sentence punctuation (with any closing quote or
     # bracket) that is followed by white space, and at a line break.
-    m <- gregexpr("[.!?…][\"')\\]]*[[:space:]]+|\n+", text, perl = TRUE)[[1L]]
+    m <- gregexpr("[.!?\u2026][\"')\\]]*[[:space:]]+|\n+", text, perl = TRUE)[[1L]]
     total <- nchar(text, type = "chars")
     if (m[[1L]] == -1L) {
         return(list(list(text = text, end = total)))

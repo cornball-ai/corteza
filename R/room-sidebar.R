@@ -2,7 +2,7 @@
 # the selected visible conversation independently of either active window.
 bot_parse_sidebar <- function(body) {
     text <- tolower(bot_command_text(body))
-    if (grepl("^(let['’]s )?take this (offline|to (our|the) private room)[.!]?$",
+    if (grepl("^(let['\u2019]s )?take this (offline|to (our|the) private room)[.!]?$",
               text)) {
         return(list(turns = 5L))
     }

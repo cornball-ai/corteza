@@ -231,8 +231,22 @@
     history
 }
 
+# Keep provider-neutral image parts classed so llm.api can translate them for
+# whichever provider serves the next request, including after a fallback.
+.context_edit_prefix <- function(content, id) {
+    label <- paste0("[", id, "]\n")
+    if (inherits(content, "llm_content")) {
+        part <- structure(list(text = label), class = "llm_text")
+        return(structure(c(list(part), unclass(content)), class = class(content)))
+    }
+    if (is.list(content)) {
+        return(c(list(list(type = "text", text = label)), content))
+    }
+    paste0(label, content)
+}
+
 # Label a rendered copy, then journal it before changing the live history.
-# Only plain assistant messages and completed tool outputs get editable IDs.
+# Human turns are eligible only for conversation owners with a vault.
 .context_edit_index <- function(session, history, boundary) {
     state <- .context_edit_state(session)
     for (call in llm.api::history_tool_calls(history)) {
@@ -247,12 +261,7 @@
             if (identical(call$provider_shape, "anthropic")) {
                 block <- Filter(function(b) identical(b$tool_use_id, call$id),
                                 history[[i]]$content)[[1L]]
-                content <- block$content
-                if (is.list(content)) {
-                    content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), content)
-                } else {
-                    content <- paste0("[", id, "]\n", content)
-                }
+                content <- .context_edit_prefix(block$content, id)
             } else {
                 content <- paste0("[", id, "]\n", call$result)
             }
@@ -272,11 +281,7 @@
         id <- .context_edit_label(.compact_entry_body(m), prefix)
         if (is.null(id) || id %in% names(state$messages)) {
             id <- .context_edit_id(state, prefix)
-            if (is.character(m$content)) {
-                m$content <- paste0("[", id, "]\n", m$content)
-            } else {
-                m$content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), m$content)
-            }
+            m$content <- .context_edit_prefix(m$content, id)
         }
         history[[i]] <- m
         state$messages[[id]] <- m
