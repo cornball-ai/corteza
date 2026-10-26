@@ -993,6 +993,20 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
 
+## Room attachments
+
+Room conversations offer `send_room_file(path)` to configured bot operators.
+It sends an existing file to the current room using the host's chat identity;
+the model does not load credentials or select another destination. Tool policy
+and supervision still apply. Credential files and runtime configuration files
+are refused, and the file limit is 25 MiB. Workers do not receive this tool.
+
+Encrypted Matrix attachments require chat.api 0.1.0.4, mx.client 0.2.1.4,
+and mx.crypto 0.2.2.2. Uploads contain ciphertext; the file metadata travels
+inside the encrypted room event. Older adapters report that attachment sending
+is unavailable. File sends from threads are refused until the transport's
+file contract can preserve their destination.
+
 ## R options
 
 | Option | Default | Description |

@@ -82,7 +82,7 @@ classify_op <- function(tool_name) {
                     "list_files", "grep_files", "git_log", "git_diff",
                     "git_status", "web_search", "fetch_url", "r_help",
                     "installed_packages")
-    write_tools <- c("write_file", "replace_in_file")
+    write_tools <- c("write_file", "replace_in_file", "send_room_file")
     exec_tools <- c("bash", "cmd", "run_r", "run_r_script")
 
     if (tool_name %in% read_tools) {
