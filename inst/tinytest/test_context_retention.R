@@ -28,6 +28,8 @@ local({
         s <- corteza::new_session(provider = provider,
             context_edit = list(enabled = TRUE, cadence = "always", retain_turns = keep))
         s$config <- list(context_compact_pct = 1000)
+        s$model_map$cloud <- "fixture-model"
+        s$web_search <- FALSE
         s$context_conversation <- owner
         # Enable human eligibility without writing: this suite only drops tools.
         s$context_archive_vault <- root
