@@ -27,10 +27,12 @@ local({
         auto_unbox = TRUE))$required, "path")
     expect_true(grepl('"required":\\["path"\\]', jsonlite::toJSON(
         schemas[[1]]$input_schema, auto_unbox = TRUE)))
-    old_send <- get("chat_send.chat_loopback", asNamespace("chat.api"))
+    # Mock the public generic. R 4.6 may hold S3 registrations as functions
+    # after another adapter test, which assignInNamespace cannot remap by name.
+    old_send <- chat.api::chat_send
     sent <- list()
     fail <- FALSE
-    assignInNamespace("chat_send.chat_loopback", function(client, channel, text,
+    assignInNamespace("chat_send", function(client, channel, text,
         files = NULL, ...) {
         expect_identical(client, current)
         expect_identical(channel, "fixture-room")
@@ -40,7 +42,7 @@ local({
         sent[[length(sent) + 1L]] <<- files
         "$image"
     }, "chat.api")
-    on.exit(assignInNamespace("chat_send.chat_loopback", old_send, "chat.api"), add = TRUE)
+    on.exit(assignInNamespace("chat_send", old_send, "chat.api"), add = TRUE)
     # Through the real policy/observer handler, never the arbitrary executor.
     events <- list()
     s$on_tool <- list(function(e) events[[length(events) + 1L]] <<- e)
