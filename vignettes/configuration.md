@@ -833,6 +833,94 @@ The session is an environment that carries history, the active provider/model, a
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
 
+## Consulting another room
+
+Set `"room_consultation": true` in a bot's account config to expose
+`ask_room(room, question, thread)` when it answers a configured operator.
+This asks another conversation owned by the same bot. No shared room, second
+bot, Matrix self-mention, or additional listener is needed. The default is off.
+Use a room name, ID, or project directory, and optionally a destination thread
+root ID. Ambiguous names require an ID. `delegate(room=...)` still hands work
+to the destination's doer; `ask_room` asks about its conversation instead.
+
+The destination's current text context, including human messages, assistant
+replies, and completed tool text, is captured when the question is submitted.
+Its conversational model answers in a separate process while both rooms and
+any doer remain available. The snapshot excludes images and hidden reasoning;
+it does not retrieve material retired into a vault. Missing context must be
+reported as missing. The consultation has no tools, web search, CLM edits, or
+ability to start another consultation. Its snapshot and outcome stay in the
+durable job ledger. Neither live conversation is replaced with the snapshot.
+
+Questions and answers appear in both rooms and their conversation histories,
+including the originating thread. Enabling this setting allows operators to
+share information between the bot's joined rooms, whose members may differ.
+Non-operators cannot request it. Plan mode and rooms attached to a remote CLI
+refuse consultations. `job_status` and `job_cancel` work from either conversation.
+Repeated pending questions reuse the same job. Consultations have a 120 second
+limit, one active query per destination, and at most 4 active queries per bot.
+Turning the setting off cancels pending queries. A restart leaves undispatched
+queries queued and marks interrupted queries indeterminate, without retrying
+the model call. Ordinary failed-message retries deliver results after an outage.
+
+## Delegation between bots
+
+Conversation sessions can ask another configured bot to run a job using
+`delegate_to(bot, task, review)`. This works with split talkers and unsplit bots.
+It uses the bot's existing chat client and poll cursor. No extra Matrix login
+or listener is started. Configure outgoing destinations in the account config:
+
+```json
+"delegates": {
+  "helper": {
+    "bot": "@helper:example.org",
+    "channel": "!project:example.org",
+    "transport": "matrix"
+  }
+}
+```
+
+The receiving account must explicitly allow the requester. An entry may narrow
+the worker's tools or require a review:
+
+```json
+"delegators": [
+  {"bot": "@requester:example.org", "tools": ["read_file", "grep_files"], "review": true}
+]
+```
+
+A string entry allows the worker's usual tools. Both lists default to empty.
+The originating conversation must be answering a configured human operator.
+The receiving room determines the project directory, doer configuration,
+supervision, approvals, and checkout lock. Requests carry a self-contained task
+of at most 7000 UTF-8 bytes; tasks are rejected rather than shortened. The
+destination and its room members can read the task and reports.
+
+The requester records a remote job, with no local worker or checkout lock.
+The worker records an ordinary job, with the same doer/reviewer lifecycle as
+local delegation. Duplicate delivery reuses that job. Results are authenticated
+against the recorded peer, transport, channel, and job ID; a late result cannot
+overwrite a terminal outcome. Results and any later review return to the
+originating conversation. Long reports are bounded for the transport; the full
+report stays in the worker's ledger. `job_status` and `job_cancel` are available
+alongside `delegate_to`, including on an unsplit bot.
+
+Protocol notices start with `[corteza-job v1 ...]` and are consumed before the
+conversation dispatcher. They mention their recipient and use threads only
+when supported. A bot cannot approve a delegated job's tool calls, including
+when it was accidentally listed as an operator. Human approvers can react or
+send `approve REQUEST_ID` / `deny REQUEST_ID`; the prompt supplies the ID.
+Unverified encrypted senders are rejected. Requests are bounded by hop counts
+and active root IDs, and a room attached to a remote CLI refuses new jobs.
+
+Unreceived requests expire after 2 minutes. Dispatched requests without an
+acknowledgment are probed after 2 minutes; accepted jobs are probed every
+5 minutes. Restart also triggers a status probe. An unanswered probe becomes
+`indeterminate` after 2 minutes; the job is never resubmitted as new work.
+Cancellation before receipt is remembered so a delayed request cannot run.
+A completed job is retained in the ledger, including across bot restarts.
+These settings do not enable automatic recursive delegation by worker models.
+
 ## Room progress and images
 
 Room turns and delegated jobs show tool counts and failed or refused outcomes.

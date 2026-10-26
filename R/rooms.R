@@ -1124,7 +1124,11 @@ bot_update_displayname <- function(cfg, session = NULL, model = NULL,
 # -- and chat.api::chat_whoami() is where that question belongs.
 bot_known_bots <- function(cfg, self_id) {
     bots <- as.character(unlist(cfg$bots, use.names = FALSE))
-    unique(c(self_id, bots[nzchar(bots)]))
+    delegated <- vapply(cfg$delegators %||% list(), function(x) {
+        if (is.list(x)) x$bot %||% "" else as.character(x)
+    }, "")
+    peers <- vapply(.delegation_peers(cfg), function(x) x$bot, "")
+    unique(c(self_id, bots[nzchar(bots)], delegated[nzchar(delegated)], peers))
 }
 
 # Cached joined-member list for a room's session. Refetched when the
@@ -1917,6 +1921,7 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
         s$default_model <- bot_session_model(s)
         s$default_provider <- s$provider
     }
+    .delegation_bind(s, cfg)
     assign(key, s, envir = registry)
     s
 }
@@ -2030,6 +2035,15 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     # here is a comparison the transport is better placed to make.
     self_id <- chat.api::chat_whoami(chat)$id
 
+    if (!is.null(sessions)) {
+        tryCatch(.room_consult_pump(chat, cfg, sessions), error = function(e) {
+            message("room consultation pump: ", conditionMessage(e))
+        })
+        tryCatch(.delegation_pump(chat, cfg, sessions), error = function(e) {
+            message("delegation pump: ", conditionMessage(e))
+        })
+    }
+
     # Accept new invites before we process this sync's messages so the
     # matching JOIN state is in place before any replies go out. Invites
     # in this sync won't yet appear in rooms$join; the next sync will
@@ -2086,6 +2100,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
     replied <- joined_calls
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
+        if (tryCatch(.delegation_route(m, cfg, chat, sessions), error = function(e) {
+            message("delegation input: ", conditionMessage(e))
+            !is.null(.delegation_parse(m$body))
+        })) next
         if (tryCatch(.remote_bot_route(m, cfg), error = function(e) {
             message("remote control input: ", conditionMessage(e))
             TRUE
@@ -2103,6 +2121,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         session <- bot_get_or_create_session(sessions, skey, cfg,
             system = system, model = model, provider = provider,
             tools_filter = tools_filter, room_id = m$channel)
+        .delegation_bind(session, cfg)
         # A folded conversation's thread root stands for an archived
         # transcript, and replying there should continue that
         # conversation rather than open a blank one. Gated on the
@@ -2435,11 +2454,21 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                       system = system, model = model, provider = provider,
                                       tools_filter = tools_filter, room_id = room_id)
         })
+        .room_consult_bind(session, cfg, chat_now(), sender, session$job_origin,
+                           new_session = function(room_id, thread) {
+            s <- bot_get_or_create_session(sessions, bot_session_key(room_id, thread), cfg,
+                system = system, model = model, provider = provider,
+                tools_filter = tools_filter, room_id = room_id)
+            bot_maybe_rehydrate(s, chat_now(), room_id, thread)
+            s
+        })
         session$context_edit_events <- list()
-        reply <- rooms_with_activity(session, chat, m$channel, function() {
+        reply <- tryCatch(rooms_with_activity(session, chat, m$channel, function() {
             bot_run_turn_in_cwd(ingest_content, session)
-        }, cfg = cfg, thread = m$thread)
-        session$job_handoff <- NULL
+        }, cfg = cfg, thread = m$thread), finally = {
+            session$job_handoff <- NULL
+            session$ask_room <- NULL
+        })
         chat.api::chat_typing(chat_now(), m$channel, FALSE)
         if (is.null(reply) || !nzchar(reply)) {
             reply <- "(no reply)"

@@ -447,6 +447,22 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
     session <- .subagent_state$session
     if (is.environment(session)) {
+        old_tools <- session$tools_filter
+        old_allowed <- session$job_allowed_tools
+        old_search <- session$web_search
+        restricted <- job_read(job_id)$origin$delegation$tools
+        if (!is.null(restricted)) {
+            allowed <- as.character(unlist(restricted, use.names = FALSE))
+            if (!is.null(spec$tools)) allowed <- intersect(allowed, spec$tools)
+            session$tools_filter <- allowed
+            session$job_allowed_tools <- allowed
+            if (!"web_search" %in% allowed) session$web_search <- FALSE
+        }
+        on.exit({
+            session$tools_filter <- old_tools
+            session$job_allowed_tools <- old_allowed
+            session$web_search <- old_search
+        }, add = TRUE)
         before <- session$on_tool
         add_observer(session, job_progress_observer(job_id))
         on.exit(session$on_tool <- before, add = TRUE)
@@ -801,7 +817,7 @@ job_cancel <- function(session, id, by = "local") {
     if (!job_request_cancel(id, by = by)) {
         return(FALSE)
     }
-    if (identical(j$status, "queued")) {
+    if (identical(j$status, "queued") && !identical(j$backend, "remote")) {
         job_settle(id, "cancelled",
                    reason = paste("cancelled by", by, "before it started"))
     }
@@ -966,6 +982,7 @@ job_dispatch_next <- function(session) {
     key <- job_worker_key(session)
     queued <- job_list(status = "queued", origin_key = key,
                        owner = job_worker_owner(session))
+    queued <- Filter(function(j) !j$backend %in% c("remote", "consultation"), queued)
     events <- list()
     checkouts <- list()
     for (j in queued) {

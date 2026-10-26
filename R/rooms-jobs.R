@@ -47,6 +47,11 @@ bot_jobs_active <- function(sessions) {
     if (length(bot_job_sessions(sessions))) {
         return(TRUE)
     }
+    owners <- vapply(bot_sessions_list(sessions), job_worker_owner, "")
+    if (any(vapply(ls(.room_consult_workers), function(id)
+                   get(id, .room_consult_workers)$owner %in% owners, TRUE))) {
+        return(TRUE)
+    }
     any(vapply(bot_sessions_list(sessions),
                function(s) length(s$.job_prompts) > 0L, logical(1)))
 }
@@ -289,6 +294,13 @@ bot_present_job_event <- function(chat, cfg, s, ev, sessions = NULL) {
 }
 
 bot_job_settled <- function(chat, s, job, sessions = NULL) {
+    if (!is.null(job$origin$delegation)) {
+        .delegation_worker_reply(chat, job)
+        s$history <- c(s$history %||% list(), list(list(role = "assistant",
+            content = bot_job_result_text(job))))
+        .context_room_snapshot(s)
+        return(invisible(NULL))
+    }
     destination <- bot_job_delivery(job)
     recipient <- s
     if (!is.null(destination$sender)) {
@@ -780,6 +792,10 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
     members <- tryCatch(chat.api::chat_members(chat, room),
                         error = function(e) NULL)
     approvers <- bot_approvers(cfg, members, bot_known_bots(cfg, self_id))
+    if (!is.null(job$origin$delegation)) {
+        approvers <- setdiff(approvers, c(job$origin$delegation$peer,
+            bot_known_bots(cfg, self_id)))
+    }
     call <- list(tool = req$tool, args = req$args)
     if (!length(approvers)) {
         job_answer(s, job$id, req$id, FALSE, by = "no approver")
@@ -789,6 +805,7 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
     text <- paste0(sprintf("Job %s: ", job$id),
                    bot_approval_prompt(call, list(reason = req$reason),
                                        timeout_sec = bot_job_request_remaining(s, req)))
+    text <- paste0(text, "\nReply `approve ", req$id, "` or `deny ", req$id, "` to answer without a reaction.")
     text <- paste0(text, "\nOperator shortcut: /approve-all ", job$id,
                    " authorizes eligible remaining requests for this job; /approve-all off ", job$id,
                    " restores per-call approvals.")
