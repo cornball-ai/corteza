@@ -6,6 +6,9 @@
 local({
 data_root <- tempfile("session-data-")
 dir.create(data_root)
+# macOS tempdir() can use /var while normalizePath() resolves /private/var.
+# Resolve the existing root before deriving session paths that do not exist yet.
+data_root <- normalizePath(data_root, winslash = "/")
 old_data <- Sys.getenv("R_USER_DATA_DIR", unset = NA_character_)
 Sys.setenv(R_USER_DATA_DIR = data_root)
 on.exit({
