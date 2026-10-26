@@ -69,7 +69,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
         corteza:::.fire_observers(s, list(call = call, outcome = "ran", turn_number = 1L,
                                          success = TRUE, result = "hello"))
         "done"
-    }, cfg = list(activity_interval = 0), thread = "root")
+    }, cfg = list(activity_interval = 0, activity_detail = TRUE), thread = "root")
     expect_identical(got, "done")
     expect_identical(length(s$on_tool), 0L)
     msgs <- chat.api::chat_history(cl, "room")$messages
@@ -115,7 +115,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
     repeat {
         evs <- corteza:::job_pump(s)
         seen <- c(seen, evs)
-        for (ev in evs) corteza:::bot_present_job_event(cl, list(activity_interval = 0), s, ev)
+        for (ev in evs) corteza:::bot_present_job_event(cl, list(activity_interval = 0, activity_detail = TRUE), s, ev)
         if (any(vapply(seen, function(e) identical(e$type, "settled"), TRUE))) break
         if (Sys.time() > deadline) stop("worker did not finish")
         Sys.sleep(0.05)
@@ -172,7 +172,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
             result = "Permission required"))
         expect_identical(length(chat.api::chat_history(cl, "room")$messages), 0L)
         stop("provider failed")
-    }), "provider failed")
+    }, cfg = list(activity_detail = TRUE)), "provider failed")
     messages <- chat.api::chat_history(cl, "room")$messages
     expect_identical(length(messages), 1L)
     expect_true(grepl("Checking permission.", messages[[1L]]$body, fixed = TRUE))

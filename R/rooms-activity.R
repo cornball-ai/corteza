@@ -142,6 +142,7 @@ rooms_activity_live <- function(chat) {
 rooms_with_activity <- function(session, chat, channel, expr, cfg = NULL,
                                 thread = NULL) {
     acc <- rooms_activity_new()
+    acc$detail <- isTRUE(cfg$activity_detail)
     acc$thread <- thread
     before <- session$on_tool
     live <- rooms_activity_live(chat)

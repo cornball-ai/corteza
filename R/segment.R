@@ -1,18 +1,19 @@
-# /clear-time conversation segmentation.
+# /clear-time conversation segmentation: corteza's half.
 #
-# When a cleared room is listed in the bot config's `segment_rooms`
-# (a character vector of room ids, hand-added to the saved config),
-# the conversation that just ended gets a room of its own: a "segment"
-# the user can reopen from the room list while it is fresh. The segment
-# room holds a pointer to the archived transcript and an
-# ai.cornball.lifecycle state event that clients group and demote by.
+# When a conversation ends at /clear, the host may give it a room of its
+# own: a "segment" the user can reopen from the room list while it is
+# fresh (cerebro does this, through the on_clear hook given to
+# bot_run_init(), for the rooms its config names). Creating that room is
+# the host's; what this file owns is read from the session transcript,
+# which is corteza's data: the segment's title and whether the
+# conversation is worth a room at all, plus the durable form of the
+# archive path the hook is handed.
 #
 # Segmentation is best-effort from the /clear handler's point of view:
-# archive-and-reset is the critical path, and a homeserver that cannot
-# create a room must not break it. It also rides on the archive: a
-# clear that archived nothing (empty conversation, or pensar absent)
-# makes no segment, because the pointer to the transcript is the
-# segment's content.
+# archive-and-reset is the critical path, and a hook that fails must not
+# break it. It also rides on the archive: a clear that archived nothing
+# (empty conversation, or pensar absent) asks the hook nothing, because
+# the pointer to the transcript is the segment's content.
 
 # A line that drives the tool rather than saying anything: "/clear",
 # "/reset", "/model sonnet".
@@ -104,53 +105,4 @@ bot_vault_ref <- function(path) {
         return(substring(p, nchar(root) + 2L))
     }
     p
-}
-
-# Create the segment room for a conversation that /clear just ended.
-# Returns list(id, name) on success, NULL when the transport cannot do
-# it. Errors from the create itself propagate to the caller's tryCatch:
-# a segment the user was told about must exist, so the failure has to
-# reach the handler that words the acknowledgement.
-bot_segment_from_clear <- function(chat, home_id, title, vault_ref) {
-    caps <- chat.api::chat_capabilities(chat)
-    if (!isTRUE(caps$channel_create) || !isTRUE(caps$set_state)) {
-        message("bot_segment_from_clear: transport cannot create rooms ",
-                "or set state; skipping")
-        return(invisible(NULL))
-    }
-    # Everyone in the home room except the bot itself. A segment room
-    # without its human is a sidebar entry no one sees. Best-effort:
-    # a transport without a member list yields an uninvited room, which
-    # still archives correctly.
-    invite <- tryCatch({
-        members <- chat.api::chat_members(chat, home_id)
-        setdiff(members, chat.api::chat_whoami(chat)$id)
-    }, error = function(e) character())
-    seg_id <- chat.api::chat_channel_create(chat, name = title,
-        preset = "private_chat",
-        invite = invite)
-    home_label <- bot_room_name(chat, home_id) %||% home_id
-    if (!length(home_label) || !nzchar(home_label)) {
-        home_label <- home_id
-    }
-    body <- paste0(
-                   "Continued from ", home_label, ".",
-        if (!is.null(vault_ref)) paste0("\nArchived transcript: ", vault_ref),
-                   "\nReply here to pick the topic back up."
-    )
-    # The summary is bot bookkeeping, not conversation: a notice renders
-    # without a notification ping.
-    tryCatch(chat.api::chat_send(chat, seg_id, body, kind = "notice"),
-             error = function(e) {
-        message("bot_segment_from_clear: summary send failed: ",
-                conditionMessage(e))
-        NULL
-    })
-    content <- list(state = "segment", segment_of = home_id,
-                    since = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"))
-    if (!is.null(vault_ref)) {
-        content$vault <- vault_ref
-    }
-    chat.api::chat_set_state(chat, seg_id, "ai.cornball.lifecycle", content)
-    invisible(list(id = seg_id, name = title))
 }

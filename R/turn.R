@@ -500,14 +500,22 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # Build the closure passed as tool_handler to llm.api::agent. Closes over
 # the session so sticky classifications persist across tool calls.
 .fire_observers <- function(session, event) {
+    .secret_observe(session, event$result)
+    event$display <- .redact_object(event, session$secret_values)
+    notice <- .progress_record(session, event)
     observers <- session$on_tool %||% list()
     for (obs in observers) {
         tryCatch(obs(event), error = function(e) NULL)
+        if (!is.null(notice)) {
+            tryCatch(obs(list(outcome = "progress", result = notice)),
+                     error = function(e) NULL)
+        }
     }
     invisible(NULL)
 }
 
 .make_tool_handler <- function(session, tool_executor = NULL) {
+    .secret_environment(session)
     .validate_tool_output_caps(session$config)
     # Either session$dry_run (set by inst/bin/corteza per REPL
     # iteration) or session$config$dry_run (chat()'s /dryrun toggle)
@@ -969,11 +977,16 @@ add_observer <- function(session, observer) {
 #' @export
 observer_progress <- function() {
     function(event) {
+        event <- event$display %||% event
         # Observer's purpose is to print tool-call traces; gate behind
         # the corteza.verbose option so non-interactive scripts are
         # silent by default.
         if (!.corteza_verbose()) {
             return(invisible())
+        }
+        if (identical(event$outcome, "progress")) {
+            cat("\n", event$result, "\n\n", sep = "")
+            return(invisible(NULL))
         }
 
         # The model's running commentary, printed once per model response
@@ -1012,6 +1025,9 @@ observer_progress <- function() {
 
         if (!identical(event$outcome, "ran")) {
             return(invisible())
+        }
+        for (line in cli_result_lines(event)) {
+            cat("  ", line, "\n", sep = "")
         }
 
         # File-edit tools attach a diff payload to their result. When
@@ -1114,6 +1130,7 @@ observer_progress <- function() {
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     .remote_check_stop(session)
     stopifnot(is.environment(session))
+    .secret_environment(session)
 
     # The message this turn is answering, where a tool can reach it: the
     # running history llm.api builds is not on the session until the turn
@@ -1126,6 +1143,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # run boundary (here, before agent()) rather than after, so an interrupt
     # mid-run can't leave a stale streak behind.
     session$silent_streak <- 0L
+    .progress_reset(session)
 
     if (is.null(tools)) {
         ensure_skills()
@@ -1248,7 +1266,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # llm.api later than the Imports minimum guarantees.
     if (is.function(session$on_delta) &&
         "on_delta" %in% names(formals(llm.api::agent))) {
-        agent_args$on_delta <- session$on_delta
+        redacted_stream <- .redact_stream(session$on_delta, function() session$secret_values)
+        agent_args$on_delta <- redacted_stream$push
     }
 
     if (ws_active) {
@@ -1428,8 +1447,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     .context_room_snapshot(session)
 
+    if (exists("redacted_stream", inherits = FALSE)) {
+        redacted_stream$flush()
+    }
     list(
-         reply = reply,
+         reply = .progress_reply(session, reply),
          session = session,
          usage = response$usage,
          route = response$corteza_route,

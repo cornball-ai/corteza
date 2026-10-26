@@ -80,6 +80,62 @@ local({
 
 # Snapshot: both provider shapes round-trip exactly --------
 
+local({
+    dir <- journal_tmp()
+    on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+    image <- llm.api::llm_image(data = as.raw(1:4), mime = "image/png")
+    content <- llm.api::llm_content("Image evidence", image, "More text", image)
+    history <- list(user_msg(content), list(role = "assistant", content = "reply"))
+    s <- journal_session(dir, history)
+    expect_true(corteza:::journal_snapshot(s))
+    expect_identical(corteza:::journal_load(dir)$live$history, history)
+    expect_identical(corteza:::journal_history(dir), history)
+
+    # Compact edit segments store both shared surviving entries and changed
+    # entries. Exercise both storage paths, followed by a full compaction.
+    after <- c(history[1], list(list(role = "assistant", content = "short reply")))
+    corteza:::journal_rewrite(s, history, after, "context_edit", edits = list())
+    j <- corteza:::journal_load(dir)
+    expect_identical(j$segments[[1]]$history, history)
+    expect_identical(j$segments[[1]]$after, after)
+    expect_identical(j$live$history, after)
+    without_image <- after[-1]
+    corteza:::journal_rewrite(s, after, without_image, "context_edit", edits = list())
+    j <- corteza:::journal_load(dir)
+    expect_identical(j$segments[[2]]$history, after)
+    expect_identical(j$segments[[2]]$after, without_image)
+    corteza:::journal_rewrite(s, without_image, without_image, "threshold")
+    expect_identical(corteza:::journal_load(dir)$segments[[3]]$history, without_image)
+    expect_identical(corteza:::journal_history(dir), history)
+
+    s$history <- history
+    expect_true(corteza:::journal_snapshot(s))
+    restored <- journal_session(dir, corteza:::journal_load(dir)$live$history)
+    expect_identical(restored$history, history)
+    expect_identical(tail(corteza:::journal_load(dir)$segments, 1)[[1]]$history, history)
+
+    # Single parts also occur nested in records. Reserved tag-shaped tool
+    # arguments remain plain data, whether read from old or new JSON files.
+    literal <- list(.corteza_type = "llm_image", value = list(mime = "literal", data = "text"))
+    p <- file.path(dir, "roundtrip.json")
+    record <- list(text = content[[1]], image = image, args = literal,
+                   nested = list(literal, content))
+    corteza:::.journal_write_json(record, p)
+    expect_identical(corteza:::.journal_read_json(p), record)
+    corteza:::.journal_write_json(literal, p)
+    expect_identical(corteza:::.journal_read_json(p), literal)
+    writeLines(jsonlite::toJSON(literal, auto_unbox = TRUE), p)
+    expect_identical(corteza:::.journal_read_json(p), literal)
+    envelope_literal <- list(.corteza_history = "multimodal-v1", data = literal)
+    corteza:::.journal_write_json(envelope_literal, p)
+    expect_identical(corteza:::.journal_read_json(p), envelope_literal)
+
+    # Ordinary provider-native histories keep their existing on-disk shape.
+    plain <- list(history = anthropic_round(1))
+    corteza:::.journal_write_json(plain, p)
+    expect_identical(jsonlite::fromJSON(p, simplifyVector = FALSE), plain)
+})
+
 h <- c(list(user_msg("find foo")), anthropic_round(1), openai_round(2),
        list(list(role = "assistant", content = list(list(
            type = "text", text = "pi is 3.14159265358979")))))

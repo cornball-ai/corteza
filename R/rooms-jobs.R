@@ -65,11 +65,16 @@ bot_job_owner <- function(cfg) {
 # Send into a job's originating room or thread and record the message as
 # the bot's own, the same way every other bot reply is recorded.
 bot_job_send <- function(chat, s, job, text) {
-    room <- job$origin$room %||% s$room_id
+    destination <- tryCatch(bot_job_delivery_check(chat, job),
+                            error = function(e) NULL)
+    if (is.null(destination)) {
+        return(NULL)
+    }
+    room <- destination$room %||% s$room_id
     sent <- tryCatch(bot_reply_send(chat, room, text, markdown = TRUE,
-                                    thread = job$origin$thread),
+                                    thread = destination$thread),
                      error = function(e) NULL)
-    if (!is.null(sent)) {
+    if (!is.null(sent) && is.null(destination$sender)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent)
         bot_transcript_add(s, sent, "assistant", text)
     }
@@ -102,6 +107,24 @@ bot_notice_dir <- function() {
 # it belongs to (so its echo through sync is skipped) and return the
 # event id; NULL when it did not go out.
 bot_notice_send <- function(chat, n, session = NULL) {
+    if (!is.null(n$job)) {
+        job <- job_read(n$job)
+        if (!is.null(job)) {
+            destination <- tryCatch(bot_job_delivery_check(chat, job),
+                                    error = function(e) NULL)
+            if (is.null(destination)) {
+                return(NULL)
+            }
+            if (!is.null(destination$sender)) {
+                n$room <- destination$room
+                n$thread <- destination$thread
+                if (is.environment(session) &&
+                    !identical(session$room_id, n$room)) {
+                    session <- NULL
+                }
+            }
+        }
+    }
     sent <- tryCatch(bot_reply_send(chat, n$room, n$text, markdown = TRUE,
                                     thread = n$thread),
                      error = function(e) NULL)
@@ -278,6 +301,14 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
         .context_room_snapshot(s)
         return(invisible(NULL))
     }
+    destination <- bot_job_delivery(job)
+    recipient <- s
+    if (!is.null(destination$sender)) {
+        recipient <- if (!is.null(sessions) &&
+            exists(destination$room, sessions, inherits = FALSE)) {
+            get(destination$room, sessions, inherits = FALSE)
+        } else NULL
+    }
     result <- bot_job_result_text(job)
     from <- job$origin$from
     text <- if (is.null(from$room)) {
@@ -288,16 +319,19 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     # A result is posted once; if it cannot go out now it is retried
     # (bot_post_or_queue()) rather than lost.
     sent <- bot_post_or_queue(chat, job$owner %||% job_worker_owner(s),
-                              job$origin$room %||% s$room_id, text,
-                              thread = job$origin$thread, session = s,
-                              session_key = job_worker_key(s), job = job$id)
+                              destination$room %||% s$room_id, text,
+                              thread = destination$thread, session = recipient,
+                              session_key = destination$session_key %||% job_worker_key(s), job = job$id)
     # Into the talker's history either way. The post can fail; the
     # talker still has to know the job ended, or it will keep telling the
     # user the work is in progress.
-    s$history <- c(s$history %||% list(),
-                   list(list(role = "assistant", content = text)))
-    .context_room_snapshot(s)
-    if (!is.null(from$room)) {
+    if (is.environment(recipient) &&
+        (is.null(destination$sender) || !is.null(sent))) {
+        recipient$history <- c(recipient$history %||% list(),
+                               list(list(role = "assistant", content = text)))
+        .context_room_snapshot(recipient)
+    }
+    if (!is.null(from$room) && is.null(destination$sender)) {
         bot_job_report_back(chat, sessions, job, result)
     }
     invisible(sent)
@@ -654,6 +688,17 @@ bot_job_restored_text <- function(restore) {
 bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
+    local_reason <- req$local_approval %||% .approval_remote_problem(
+        list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg))
+    if (!is.null(local_reason)) {
+        job_answer(s, job$id, req$id, FALSE,
+                   by = "local approval required", reason = local_reason)
+        bot_job_send(chat, s, job, local_reason)
+        return(invisible(NULL))
+    }
+    if (bot_job_auto_answer(chat, cfg, s, job, req)) {
+        return(invisible(NULL))
+    }
     if (identical(req$route, "monitor") && isTRUE(cfg$auto_approve_asks)) {
         asked <- tryCatch({
             job_monitor_ask(s, bot_monitor_question(job, req))
@@ -734,7 +779,14 @@ bot_job_request_remaining <- function(s, req) {
 # both reactions seeded, and the prompt is remembered on the session
 # until a reaction answers it.
 bot_job_ask_person <- function(chat, cfg, s, job, req) {
-    room <- job$origin$room %||% s$room_id
+    destination <- tryCatch(bot_job_delivery_check(chat, job),
+                            error = function(e) NULL)
+    if (is.null(destination)) {
+        job_answer(s, job$id, req$id, FALSE, by = "privacy check",
+                   reason = "Could not verify the private approval destination.")
+        return(invisible(NULL))
+    }
+    room <- destination$room %||% s$room_id
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
                         error = function(e) cfg$user_id)
     members <- tryCatch(chat.api::chat_members(chat, room),
@@ -754,6 +806,9 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
                    bot_approval_prompt(call, list(reason = req$reason),
                                        timeout_sec = bot_job_request_remaining(s, req)))
     text <- paste0(text, "\nReply `approve ", req$id, "` or `deny ", req$id, "` to answer without a reaction.")
+    text <- paste0(text, "\nOperator shortcut: /approve-all ", job$id,
+                   " authorizes eligible remaining requests for this job; /approve-all off ", job$id,
+                   " restores per-call approvals.")
     eid <- bot_job_send(chat, s, job, text)
     if (is.null(eid)) {
         # Nobody can see a prompt that was never posted.
