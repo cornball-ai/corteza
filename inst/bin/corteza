@@ -31,8 +31,8 @@ parse_args <- function() {
   config <- corteza:::load_config(getwd())
 
   opts <- list(
-    provider = config$provider,
-    model = config$model,
+    provider = NULL,  # Only explicit flags override a resumed provider/model
+    model = NULL,
     base_url = config$base_url,  # openai_compatible endpoint (NULL = unset)
     port = config$port,
     tools = config$tools,  # NULL = all tools
@@ -111,7 +111,7 @@ Options:
   --web-search    Provider-native web search, on by default for hosted providers
   --no-web-search Disable provider-native web search (e.g. to rely on the Tavily tool)
   --session, -s   Session key (resume if exists, create if not)
-  --resume, -r    Resume the most recent session
+  --resume, -r    Resume the most recent session (including its provider/model)
   --list          List sessions
   --help, -h      Show this help
 
@@ -527,6 +527,7 @@ run_agent <- function(opts) {
   # Load or create session
   session <- NULL
   ws_enabled <- isTRUE(config$workspace$enabled)
+  route <- corteza:::.session_model_pair(opts$provider, opts$model, config)
 
   if (!is.null(opts$session)) {
     # Try to resume session by key, create if not found
@@ -534,13 +535,12 @@ run_agent <- function(opts) {
     if (is.null(session)) {
       # Create new session with specified key
       cat(sprintf("%sCreating session: %s%s\n", color$dim, opts$session, color$reset))
-      session <- corteza:::session_new(opts$provider, opts$model, cwd, session_key = opts$session)
+      session <- corteza:::session_new(route$provider, route$model, cwd, session_key = opts$session)
     } else {
       # Resuming existing session
       cat(sprintf("%sResuming session: %s%s\n", color$dim, opts$session, color$reset))
-      # Use session's provider/model unless overridden
-      if (is.null(opts$model)) opts$model <- session$model
-      opts$provider <- session$provider %||% opts$provider
+      route <- corteza:::.session_model_pair(opts$provider, opts$model,
+                                             config, saved = session)
       # Restore workspace
       if (ws_enabled) {
         loaded <- corteza:::ws_load(session$sessionId)
@@ -551,7 +551,7 @@ run_agent <- function(opts) {
     }
   } else {
     # No session key specified - create new session
-    session <- corteza:::session_new(opts$provider, opts$model, cwd)
+    session <- corteza:::session_new(route$provider, route$model, cwd)
     # Scan globalenv for existing objects
     if (ws_enabled && isTRUE(config$workspace$scan_globalenv)) {
       registered <- corteza:::ws_scan_globalenv(
@@ -562,6 +562,9 @@ run_agent <- function(opts) {
       }
     }
   }
+
+  opts$provider <- session$provider <- route$provider
+  opts$model <- session$model <- route$model
 
   # Banner is deferred until after provider / model / tool count are
   # resolved (below) so it can show them. The session id is the only

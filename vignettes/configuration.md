@@ -113,6 +113,12 @@ corteza [options]
 
 Flags override config values for the current run.
 
+Resuming restores the saved provider and model together, even if configuration
+has changed. Explicit `--provider` and `--model` flags still override that pair.
+Changing only the provider uses its matching configured model or its default;
+it does not carry the old provider's model across. The same rules apply to
+`chat(session = ...)` and its `provider` and `model` arguments.
+
 ## Unattended work
 
 `/auto` continues the current task using the conversation and its approved
