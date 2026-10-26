@@ -1,3 +1,11 @@
+# corteza 0.7.1.79
+
+- Preserve image turns when conversation context editing adds labels, rewrites
+  the journal, or files retired messages to a vault. Multimodal records retain
+  their classes and image bytes across save/restore, so later requests still
+  translate correctly for the selected provider. Existing plain JSON journals
+  remain readable.
+
 # corteza 0.7.1.78
 
 - R code is ASCII: the non-ASCII characters in string literals (the

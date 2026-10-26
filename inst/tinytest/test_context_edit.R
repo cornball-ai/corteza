@@ -92,6 +92,46 @@ run_context_edit_tests <- function() {
     expect_null(dry$pending_context_edits)
 
     for (provider in c("anthropic", "openai")) {
+        # An image posted before a later human turn remains provider-neutral
+        # when it acquires a human-turn label and is saved to the journal.
+        image <- llm.api::llm_image(data = as.raw(1:4), mime = "image/png")
+        for (content in list(llm.api::llm_content("Two images", image, image),
+                             llm.api::llm_content(image))) {
+            original_image <- list(role = "user", content = content)
+            latest <- list(role = "user", content = "What did those show?")
+            s <- make(provider, list(original_image,
+                list(role = "assistant", content = "Earlier reply."), latest))
+            s$context_conversation <- TRUE
+            s$context_archive_vault <- tempdir()
+            corteza:::.context_edit_prepare(s)
+            labeled <- s$history[[1]]$content
+            expect_inherits(labeled, "llm_content")
+            expect_inherits(labeled[[1]], "llm_text")
+            expect_true(grepl("^\\[u[0-9]+\\]\n$", labeled[[1]]$text))
+            expect_identical(unclass(labeled)[-1L], unclass(content))
+            expect_identical(tail(s$history, 1)[[1]], latest)
+            saved <- corteza:::journal_load(s$journal_dir)$live$history
+            expect_identical(saved, s$history)
+            expect_identical(corteza:::journal_history(s$journal_dir)[[1]], original_image)
+            # These are llm.api's real provider translators, with no network.
+            wire <- llm.api:::.llm_blocks(saved, provider)[[1]]$content
+            expect_identical(wire[[1]]$type, "text")
+            images <- Filter(function(b) b$type %in% c("image", "image_url"), wire)
+            expect_equal(length(images), sum(vapply(content, inherits, logical(1), "llm_image")))
+            if (provider == "anthropic") {
+                expect_identical(images[[1]]$source$data, image$data)
+            } else {
+                expect_identical(images[[1]]$image_url$url,
+                                 paste0("data:image/png;base64,", image$data))
+            }
+            restored <- make(provider, saved)
+            restored$context_conversation <- TRUE
+            restored$context_archive_vault <- tempdir()
+            corteza:::.context_edit_prepare(restored)
+            expect_identical(restored$history, saved)
+            expect_equal(length(corteza:::journal_load(restored$journal_dir)$segments), 0L)
+        }
+
         original <- ce_history(provider)
         s <- make(provider)
         corteza:::.context_edit_prepare(s)
