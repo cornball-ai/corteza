@@ -1,11 +1,77 @@
+# corteza 0.7.1.80
+
+- Restore the saved provider and model together when resuming in the CLI or
+  `chat()`, rather than combining the saved provider with a configured model.
+  Honor explicit overrides; a provider change uses its matching configured
+  model or provider default.
+
+# corteza 0.7.1.79
+
+- Preserve image turns when conversation context editing adds labels, rewrites
+  the journal, or files retired messages to a vault. Multimodal records retain
+  their classes and image bytes across save/restore, so later requests still
+  translate correctly for the selected provider. Existing plain JSON journals
+  remain readable.
+
+# corteza 0.7.1.78
+
+- R code is ASCII: the non-ASCII characters in string literals (the
+  ellipsis in the sentence-break pattern, the em dashes in the context
+  meter, the instruction catalog and the fallback banner, the banner's
+  emoji, the curly apostrophe in the sidebar pattern) are `\u` escapes
+  now, which R turns into the same characters at parse time. This clears
+  the one WARNING `R CMD check` had been reporting, and CI now fails on a
+  check WARNING (`WARNINGS_ARE_ERRORS`).
+
+# corteza 0.7.1.77
+
+- `bot_run_init()` takes `hooks`, a named list of callbacks for policy the
+  loop asks the host about: `on_clear(chat, cfg, room_id, title, vault_ref)`
+  decides whether a cleared conversation becomes a room of its own, and
+  `thread_context(chat, room_id, thread_root)` names the archive a thread
+  continues. `bot_segment_from_clear()` and `bot_thread_archive()`, which
+  made that decision and read that index here, are gone: a bare bot
+  (`bot_run()`, or no `hooks`) archives and resets at `/clear` and never
+  rehydrates. The `segment_rooms` config gate moves with the segment code
+  into the host (cerebro).
+
+# corteza 0.7.1.76
+
+- Add `/sidebar [N]` and "Let's take this offline" for copying recent
+  conversation into an operator's private room. Route active job progress,
+  approvals and results there, with private-destination checks and worker
+  retirement to keep subsequent shared-room work separate.
+  Import the excerpt as one user-role quotation with source attribution.
+
+# corteza 0.7.1.75
+
+- Let room operators use the explicit `/approve-all [job-id]` command
+  to authorize remaining requests for one active job. Add status and revoke
+  commands; preserve policy denials and per-call credential approvals, and
+  verify operator membership on use. Ordinary words and `/auto` do not grant it.
+
+# corteza 0.7.1.74
+
+- Mask credentials only at display boundaries using a session-local registry.
+  Preserve exact tool data and journals, immediate voice delivery, and complete
+  approval arguments. Credential-bearing remote requests require local review.
+- Default room progress to summaries; `activity_detail: true` enables previews.
+- Show CLI result previews and visible commentary. Emit factual updates at
+  tool boundaries after 60 seconds of silence and explain tool-turn limits.
+
 # corteza 0.7.1.73
 
-- Add `context_edit.retain_turns` for conversation owners: protect the recent
-  human-led turns, including assistant replies and tools, from CLM edits.
-  Doers do not inherit this retention floor. The package default remains 0.
-- Keep an unrecovered output-token cutoff's visible reply in active history
-  and the session journal so later turns can refer to it. Incomplete tool
-  calls remain discarded.
+* `/model` now lists current and configured models plus the active provider's
+  catalog, with numeric selection tied to the last displayed list. The CLI,
+  `chat()`, and Matrix rooms share the menu. Live discovery uses llm.api's
+  optional `list_models()` API; discovery failures keep configured choices.
+* Add `/effort` to show or change a conversation's reasoning effort.
+  `/effort default` restores its configuration/provider default. Split
+  talkers change independently of their doers.
+* Keep gateway URL overrides scoped to `openai_compatible` during model
+  discovery. Check Responses routing before offering context editing;
+  reject unsupported pure-CLM requests before generation and skip incompatible
+  fallback models.
 
 # corteza 0.7.1.72
 

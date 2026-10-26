@@ -45,9 +45,31 @@
 }
 
 .context_edit_supported <- function(session) {
-    provider <- session$context_edit_provider %||% session$provider
+    request <- session$context_edit_request
+    provider <- request$provider %||% session$context_edit_provider %||% session$provider
     .context_edit_provider_supported(provider) &&
-    !identical(.history_shape(session$history), "responses")
+    !identical(.history_shape(session$history), "responses") &&
+    !.context_edit_responses(provider, request$model %||% .resolve_model(session),
+        if (is.null(request)) {
+            .session_web_search(session)
+        } else {
+            request$web_search
+        },
+                             session$history)
+}
+
+.context_edit_responses <- function(provider, model, web_search,
+                                    history = NULL) {
+    if ("agent_uses_responses" %in% getNamespaceExports("llm.api")) {
+        # Enabling CLM necessarily adds a tool, even to a tool-free caller.
+        return(getExportedValue("llm.api", "agent_uses_responses")(
+                provider, model, tools = list(list(name = "edit_context")),
+                web_search = web_search, history = history))
+    }
+    # Before the routing export, OpenAI selected Responses only for search.
+    # Do not duplicate llm.api's model-family rules in the host.
+    identical(provider, "openai_codex") ||
+    (identical(provider, "openai") && !isFALSE(web_search))
 }
 
 .context_edit_enabled <- function(session) {
@@ -217,8 +239,22 @@
     history
 }
 
+# Keep provider-neutral image parts classed so llm.api can translate them for
+# whichever provider serves the next request, including after a fallback.
+.context_edit_prefix <- function(content, id) {
+    label <- paste0("[", id, "]\n")
+    if (inherits(content, "llm_content")) {
+        part <- structure(list(text = label), class = "llm_text")
+        return(structure(c(list(part), unclass(content)), class = class(content)))
+    }
+    if (is.list(content)) {
+        return(c(list(list(type = "text", text = label)), content))
+    }
+    paste0(label, content)
+}
+
 # Label a rendered copy, then journal it before changing the live history.
-# Only plain assistant messages and completed tool outputs get editable IDs.
+# Human turns are eligible only for conversation owners with a vault.
 .context_edit_index <- function(session, history, boundary) {
     boundary <- min(boundary, .context_retention_boundary(session, history))
     state <- .context_edit_state(session)
@@ -234,12 +270,7 @@
             if (identical(call$provider_shape, "anthropic")) {
                 block <- Filter(function(b) identical(b$tool_use_id, call$id),
                                 history[[i]]$content)[[1L]]
-                content <- block$content
-                if (is.list(content)) {
-                    content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), content)
-                } else {
-                    content <- paste0("[", id, "]\n", content)
-                }
+                content <- .context_edit_prefix(block$content, id)
             } else {
                 content <- paste0("[", id, "]\n", call$result)
             }
@@ -259,11 +290,7 @@
         id <- .context_edit_label(.compact_entry_body(m), prefix)
         if (is.null(id) || id %in% names(state$messages)) {
             id <- .context_edit_id(state, prefix)
-            if (is.character(m$content)) {
-                m$content <- paste0("[", id, "]\n", m$content)
-            } else {
-                m$content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), m$content)
-            }
+            m$content <- .context_edit_prefix(m$content, id)
         }
         history[[i]] <- m
         state$messages[[id]] <- m

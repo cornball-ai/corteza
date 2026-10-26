@@ -310,7 +310,8 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
     if (is.na(kind)) {
         kind <- msgtype
     }
-    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id, text,
+    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id,
+                                     .redact_text(text, .secret_values(cfg)),
                                      markup = bot_markup(markdown),
                                      kind = kind))
 }
@@ -333,6 +334,7 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
 # is what every caller tests for.
 bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
                            thread = NULL) {
+    text <- .redact_text(text, .chat_secrets(chat))
     # A reply to a threaded message goes back into its thread, and only
     # where the transport can carry one: chat_send() refuses a threaded
     # send it cannot route, so asking first is what keeps a reply in an
@@ -923,6 +925,9 @@ bot_session_model <- function(session) {
 
 bot_set_session_model <- function(session, model) {
     mm <- session$model_map %||% list()
+    if (!identical(mm$cloud, model)) {
+        session$thinking <- NULL
+    }
     mm$cloud <- model
     session$model_map <- mm
     invisible(session)
@@ -970,18 +975,20 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
     # echo of these user-supplied values is sanitized so it can't forge a line.
     if (isTRUE(cmd$query_only)) {
         if (is.null(available)) {
-            available <- bot_available_models(cfg)
+            available <- .model_menu_entries(session, cfg)
         }
-        return(bot_render_model_menu(available, session))
+        session$model_menu <- available
+        return(.model_menu_text(available, session))
     }
     if (grepl("^[0-9]+$", cmd$model)) {
         if (is.null(available)) {
-            available <- bot_available_models(cfg)
+            available <- session$model_menu %||% .model_menu_entries(session,
+                cfg)
         }
-        idx <- as.integer(cmd$model)
-        if (idx < 1L || idx > length(available)) {
-            return(paste0(sprintf("No menu entry %d.\n", idx),
-                          bot_render_model_menu(available, session)))
+        idx <- suppressWarnings(as.integer(cmd$model))
+        if (is.na(idx) || idx < 1L || idx > length(available)) {
+            return(paste0(sprintf("No menu entry %s.\n", .sanitize_inline(cmd$model)),
+                          .model_menu_text(available, session)))
         }
         entry <- available[[idx]]
         bot_set_session_model(session, entry$model)
@@ -1202,6 +1209,10 @@ bot_should_respond <- function(msg, self_id, members, bots = character(),
     sender <- msg$sender %||% ""
     if (sender %in% bots) {
         return(isTRUE(msg$addressed))
+    }
+    if (sender %in% operators && grepl("^/(sidebar|approve-all)(\\s|$)",
+                                       bot_command_text(msg$body), perl = TRUE)) {
+        return(TRUE)
     }
     # The sender demonstrably posts in this room, so count them even when
     # the cached member list hasn't caught up or the fetch failed. Unknown
@@ -1598,6 +1609,12 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
         return(FALSE)
     }
 
+    local_reason <- .approval_remote_problem(call, decision, .secret_values(cfg))
+    if (!is.null(local_reason)) {
+        bot_reply_send(chat, room_id, local_reason)
+        return(FALSE)
+    }
+
     # Membership is read fresh rather than from the session's 10-minute
     # cache: this decides who may authorize a tool call, and someone who
     # joined since would otherwise leave a stale "one human" answer.
@@ -1681,24 +1698,13 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
 # Render a short readable approval prompt.
 bot_approval_prompt <- function(call, decision, timeout_sec) {
     args <- call$args %||% list()
-    args_str <- if (length(args)) {
-        paste(
-              mapply(function(k, v) {
-            # Model-controlled name AND value: sanitize both (strip ANSI/
-            # control chars incl. newlines) and bound, so neither can forge a
-            # line in the prompt. A command or code body gets more room
-            # than a path: it is the thing being approved, and a person
-            # cannot rule on its first 60 characters.
-            wide <- isTRUE(k %in% c("command", "cmd", "code", "script"))
-            s <- .sanitize_inline(as.character(v)[1L],
-                                  max_chars = if (wide) 400L else 60L)
-            sprintf("%s=%s", .sanitize_inline(k, max_chars = 40L), s)
-        }, names(args), args, USE.NAMES = FALSE),
-              collapse = ", "
-        )
-    } else {
-        ""
-    }
+    # Full JSON preserves executable text while escaping control characters.
+    # The send gate refuses credentials and oversized calls before this point.
+    args_str <- as.character(jsonlite::toJSON(args, auto_unbox = TRUE,
+            pretty = TRUE))
+    # JSON escapes embedded newlines, so an argument cannot close this fence.
+    # Worker notices use Markdown; executable text must remain literal there.
+    args_str <- paste0("```json\n", args_str, "\n```")
     expl <- cli_tool_explanation(call)
     if (!is.null(expl) && nzchar(expl)) {
         expl_line <- paste0(expl, "\n")
@@ -1706,7 +1712,7 @@ bot_approval_prompt <- function(call, decision, timeout_sec) {
         expl_line <- ""
     }
     sprintf(
-            "Approval needed: %s(%s)\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
+            "Approval needed: %s\nArguments (complete JSON):\n%s\n%sReason: %s\n\U0001F44D approve / \U0001F44E deny  (timeout %ds)",
             .sanitize_inline(call$tool %||% "", max_chars = 60L), args_str,
             expl_line, .sanitize_inline(decision$reason %||% "ask",
                                         max_chars = 300L),
@@ -1963,6 +1969,9 @@ bot_accept_invites <- function(chat, invites) {
 #'   immediately.
 #' @param sessions Environment from \code{bot_new_session_registry()}
 #'   keyed by room_id, or NULL to build fresh sessions each call.
+#' @param hooks Named list of functions or NULL, as validated by
+#'   \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
+#'   host nothing.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples
@@ -1972,7 +1981,8 @@ bot_accept_invites <- function(chat, invites) {
 #' }
 #' @export
 bot_poll <- function(system = NULL, model = NULL, provider = NULL,
-                     tools_filter = NULL, timeout = 0L, sessions = NULL) {
+                     tools_filter = NULL, timeout = 0L, sessions = NULL,
+                     hooks = NULL) {
     bot_require_mx()
     cfg <- bot_load_config()
 
@@ -2100,7 +2110,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # startup backfill can have built this session already, and
         # keying on freshness left a restart answering an active thread
         # from the backfilled tail alone.
-        bot_maybe_rehydrate(session, chat_now(), m$channel, m$thread)
+        bot_maybe_rehydrate(session, chat_now(), m$channel, m$thread,
+                            hooks$thread_context)
 
         # Self events: either an echo of our own reply (already in
         # $history via turn() — skip) or an out-of-band send from a
@@ -2200,6 +2211,43 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             session$engaged <- engaged
         }
 
+        approval_mode <- bot_parse_approval_mode(m$body)
+        if (!is.null(approval_mode)) {
+            ack <- tryCatch({
+                approval_session <- bot_sidebar_job_session(sessions, session, approval_mode)
+                bot_approval_mode_command(chat_now(), cfg, approval_session, approval_mode, sender)
+            }, error = function(e) conditionMessage(e))
+            sent_id <- bot_reply_send(chat_now(), m$channel, ack, thread = m$thread)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        sidebar <- tryCatch(bot_parse_sidebar(m$body), error = function(e) e)
+        if (!is.null(sidebar)) {
+            ack <- tryCatch({
+                if (inherits(sidebar, "error")) stop(sidebar)
+                bot_sidebar(chat_now(), cfg, sessions, session, sender, m$id,
+                            sidebar$turns, new_session = function(room) {
+                    bot_get_or_create_session(sessions, room, cfg, system = system,
+                        model = model, provider = provider, tools_filter = tools_filter,
+                        room_id = room)
+                })
+            }, error = function(e) paste("Sidebar not completed:", conditionMessage(e)))
+            sent_id <- bot_reply_send(chat_now(), m$channel, ack, markdown = TRUE, thread = m$thread)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", ack)
+                session$history <- c(session$history %||% list(), list(list(role = "assistant", content = ack)))
+                .context_room_snapshot(session)
+            }
+            replied <- replied + 1L
+            next
+        }
+
         if (bot_is_status_command(m$body)) {
             ack <- sprintf("model: %s\nprovider: %s\ncwd: %s\n%s",
                            bot_session_model(session) %||% "(unset)",
@@ -2213,6 +2261,20 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        effort_cmd <- .effort_parse_command(m$body)
+        if (!is.null(effort_cmd)) {
+            ack <- .effort_command(session, effort_cmd, cfg = cfg)
+            sent_id <- tryCatch(
+                                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
@@ -2285,8 +2347,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                  bot_archive_session(session, m$channel, chat_now()),
                                  error = function(e) NULL
             )
-            # Rooms listed in the config's segment_rooms get the ended
-            # conversation as a room of its own (see segment.R). Only
+            # Whether the ended conversation becomes a room of its own
+            # is the host's call, through the on_clear hook (see
+            # bot_run_init()); without one it is simply archived. Only
             # when something was archived: the transcript pointer is
             # the segment's content.
             # Not for a thread: a thread is already the segment of a
@@ -2298,14 +2361,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # named after the command that ended it.
             seg <- NULL
             if (!is.null(archived) && is.null(m$thread) && seg_worth &&
-                m$channel %in% as.character(cfg$segment_rooms %||%
-                    character())) {
+                is.function(hooks$on_clear)) {
                 seg <- tryCatch(
-                                bot_segment_from_clear(chat_now(),
-                        m$channel, seg_title,
-                        bot_vault_ref(archived)),
+                                bot_hook_segment(hooks$on_clear(chat_now(), cfg,
+                            m$channel, seg_title,
+                            bot_vault_ref(archived))),
                                 error = function(e) {
-                    message("bot_segment_from_clear: ", conditionMessage(e))
+                    message("on_clear hook: ", conditionMessage(e))
                     NULL
                 }
                 )
@@ -2393,7 +2455,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            bot_reply_send(chat, m$channel, reply,
+                            bot_reply_send(chat, m$channel, .redact_text(reply, session$secret_values),
                 markdown = TRUE, thread = m$thread),
                             error = function(e) NULL
         )
@@ -2448,7 +2510,8 @@ bot_remember_event <- function(seen, event_id, cap = 256L) {
 # @return Integer count of rooms backfilled, invisibly.
 bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                                   model = NULL, provider = NULL,
-                                  tools_filter = NULL, limit = 30L) {
+                                  tools_filter = NULL, limit = 30L,
+                                  thread_context = NULL) {
     rooms <- tryCatch(chat.api::chat_channels(chat),
                       error = function(e) character())
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
@@ -2511,7 +2574,7 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             # it goes in before the window does. Once per session: the
             # flag is what stops the second backfilled message in a
             # thread asking again.
-            bot_maybe_rehydrate(session, chat, rid, m$thread)
+            bot_maybe_rehydrate(session, chat, rid, m$thread, thread_context)
             is_self <- isTRUE(m$self)
             if (is_self) {
                 role <- "assistant"
@@ -2583,6 +2646,35 @@ bot_run_turn_in_cwd <- function(prompt, session) {
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
 #' @param tools_filter Character vector or NULL. Tool filter override.
+#' @param hooks Named list of functions or NULL. Policy the loop asks
+#'   the host about; see Hooks. NULL, the default, means a bare bot:
+#'   \code{/clear} archives and resets without filing anything, and a
+#'   thread reply starts from the thread's own history.
+#'
+#' @section Hooks:
+#' corteza runs a conversation. What becomes of one once it ends, and
+#' where a thread's earlier context comes from, belong to the host that
+#' runs the bot over time (cerebro files segments and folds them into
+#' topic rooms). Two slots, both optional:
+#'
+#' \describe{
+#'   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
+#'     from the \code{/clear} handler once the conversation is archived,
+#'     when the user said something in it and the clear was not inside a
+#'     thread. \code{chat} is the live chat.api client, \code{cfg} the
+#'     bot config, \code{title} the segment title corteza derived from
+#'     the transcript's opening line, \code{vault_ref} the archive's
+#'     vault-relative path (or NULL). Returns \code{list(id, name)} for a
+#'     room it filed the conversation into, which the acknowledgement
+#'     names, or NULL for none. An error is reported and treated as
+#'     none: archive-and-reset is the critical path.}
+#'   \item{\code{thread_context(chat, room_id, thread_root)}}{Called once
+#'     per thread session before its first reply. Returns
+#'     \code{list(segment, vault)} naming the archived conversation the
+#'     thread continues, or NULL when it continues nothing; \code{vault}
+#'     is the transcript's path, vault-relative or absolute. A result
+#'     seeds the session with the transcript's tail.}
+#' }
 #'
 #' @return A list holding the session registry, startup session handle,
 #'   archive-flush signal path, and the saved poll options. Pass it to
@@ -2596,8 +2688,9 @@ bot_run_turn_in_cwd <- function(prompt, session) {
 #' }
 #' @export
 bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                         tools_filter = NULL) {
+                         tools_filter = NULL, hooks = NULL) {
     bot_require_mx()
+    hooks <- bot_hooks(hooks)
     sessions <- bot_new_session_registry()
     chat <- NULL
 
@@ -2632,7 +2725,8 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
                                 bot_backfill_sessions(chat, sessions, cfg,
                     system = system, model = model,
                     provider = provider,
-                    tools_filter = tools_filter),
+                    tools_filter = tools_filter,
+                    thread_context = hooks$thread_context),
                                 error = function(e) {
                 message("bot_run: backfill failed: ", conditionMessage(e))
                 0L
@@ -2666,7 +2760,8 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
     list(sessions = sessions, chat = chat,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
-                     provider = provider, tools_filter = tools_filter))
+                     provider = provider, tools_filter = tools_filter,
+                     hooks = hooks))
 }
 
 #' One Matrix long-poll iteration
@@ -2710,7 +2805,8 @@ bot_run_step <- function(state, timeout = 30000L) {
     }
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
-                        timeout = timeout, sessions = state$sessions)
+                        timeout = timeout, sessions = state$sessions,
+                        hooks = o$hooks)
     # Advance every room's jobs: start queued ones, post results, raise
     # approval prompts. Never blocks on a worker. Client derived now, as
     # for the flush below.
@@ -2768,6 +2864,12 @@ bot_run_step <- function(state, timeout = 30000L) {
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
+#'
+#' This is a bare bot: it runs with no \code{hooks}, so \code{/clear}
+#' archives and resets without filing the conversation anywhere, and a
+#' thread reply starts from the thread's own history. A host that wants
+#' segment rooms and rehydration drives the loop itself through
+#' \code{\link{bot_run_init}} and supplies them.
 #' @seealso \code{\link{bot_run_init}}, \code{\link{bot_run_step}}
 #' @examples
 #' \dontrun{
@@ -2779,7 +2881,8 @@ bot_run_step <- function(state, timeout = 30000L) {
 bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
                     provider = NULL, tools_filter = NULL) {
     state <- bot_run_init(system = system, model = model,
-                          provider = provider, tools_filter = tools_filter)
+                          provider = provider, tools_filter = tools_filter,
+                          hooks = NULL)
     message("bot_run: starting long-poll loop")
     message("bot_run: flush signal at ", state$flush_signal)
     repeat {

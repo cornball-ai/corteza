@@ -326,7 +326,8 @@ auto_autonomy_policy <- function() {
     paste0(
            "Work toward this goal autonomously.\n\n",
            "Make reasonable decisions and act rather than stopping to ask or\n",
-           "to report progress; keep going until the goal is met. Prefer a\n",
+           "to report progress; keep going until the goal is met. Give brief\n",
+           "updates while working, without ending the turn to do so. Prefer a\n",
            "sensible assumption over pausing for confirmation. This overrides\n",
            "the usual posture of checking in whenever a task could go more than\n",
            "one way: here, pick the reasonable option and proceed within the\n",

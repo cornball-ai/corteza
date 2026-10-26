@@ -303,20 +303,11 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 next
             }
             if (cmd == "/model") {
-                if (length(parts) < 2L) {
-                    cat(sprintf("Current model: %s\nUsage: /model <name>\n",
-                                ctx$session$model_map$cloud %||% "(default)"))
-                    next
-                }
-                ctx$session$model_map$cloud <- parts[2]
-                # A thinking type set on the session (a talker's) names
-                # the model it was set for and is an error on another.
-                ctx$session$thinking <- NULL
-                ctx$model <- parts[2]
-                if (!is.null(ctx$disk_session)) {
-                    ctx$disk_session$session$model <- parts[2]
-                }
-                cat(sprintf("Model set to %s\n", parts[2]))
+                cat(.repl_model_command(ctx, sp), "\n", sep = "")
+                next
+            }
+            if (cmd == "/effort") {
+                cat(.effort_command(ctx$session, .effort_parse_command(sp)), "\n", sep = "")
                 next
             }
             if (cmd == "/provider") {
@@ -1102,7 +1093,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         if (nchar(reply) == 0) {
             cat(sprintf("%s[No response text]%s\n\n", ctx$palette$dim, ctx$palette$reset))
         } else {
-            ctx$render_reply(reply)
+            ctx$render_reply(.redact_text(reply, ctx$session$secret_values))
             ctx$last_assistant_response <- reply
         }
         cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")

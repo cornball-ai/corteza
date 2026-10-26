@@ -5,6 +5,17 @@ on:
 
 env:
   _R_CHECK_FORCE_SUGGESTS_: "false"
+  # run.sh's own gate: R CMD check exits 0 on a WARNING and run_tests
+  # passes that through, so a check ending "Status: 1 WARNING" is a
+  # green tick; the non-ASCII WARNING sat under one here for months.
+  # Set, run_tests greps 00check.log and fails the job. NOTEs still pass.
+  WARNINGS_ARE_ERRORS: "true"
+  # r-ci's defaults skip vignettes on both sides, and a package with
+  # vignette sources then checks with a WARNING (files in vignettes/
+  # but none in inst/doc). Build and check them; the runners have
+  # pandoc and the Suggests step installs simplermarkdown.
+  R_BUILD_ARGS: "--no-manual"
+  R_CHECK_ARGS: "--no-manual --as-cran"
 
 jobs:
   ci:
@@ -110,6 +121,15 @@ jobs:
               stop("this llm.api has no llm_content(): every image test ",
                    "would skip itself and the run would go green",
                    call. = FALSE)'
+
+      # install_deps brings Imports only, and a check without the
+      # VignetteBuilder is a WARNING ("Cannot process vignettes"), which
+      # the gate above fails. These are the Suggests CRAN carries that
+      # the check and the vignettes read; the ones left out (livekitr,
+      # rgrpc, RProtoBuf) stay a NOTE under _R_CHECK_FORCE_SUGGESTS_=false
+      # and their tests keep skipping, as before.
+      - name: Suggests from CRAN
+        run: Rscript -e 'install.packages(c("clipr", "fortunes", "pensar", "rstudioapi", "simplermarkdown"), repos = "https://cloud.r-project.org")'
 
       - name: Test
         run: ./run.sh run_tests

@@ -81,7 +81,10 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
 
     provider <- provider %||% config$provider %||% "anthropic"
     ensure_llm_api_provider(provider)
-    model <- model %||% config$model
+    if (is.null(model) &&
+        identical(provider, config$provider %||% "anthropic")) {
+        model <- config$model
+    }
     web_search <- web_search %||% config$web_search %||% TRUE
     base_url <- config$base_url
 

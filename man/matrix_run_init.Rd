@@ -7,7 +7,8 @@ matrix_run_init(
   system = NULL,
   model = NULL,
   provider = NULL,
-  tools_filter = NULL
+  tools_filter = NULL,
+  hooks = NULL
 )
 }
 \arguments{
@@ -18,6 +19,11 @@ matrix_run_init(
 \item{provider}{Character or NULL. Provider override.}
 
 \item{tools_filter}{Character vector or NULL. Tool filter override.}
+
+\item{hooks}{Named list of functions or NULL. Policy the loop asks
+the host about; see Hooks. NULL, the default, means a bare bot:
+\code{/clear} archives and resets without filing anything, and a
+thread reply starts from the thread's own history.}
 }
 \value{
 See \code{\link{bot_run_init}}.

@@ -87,6 +87,7 @@
 }
 
 .remote_emit <- function(ctx, text) {
+    text <- .redact_text(text, ctx$session$secret_values)
     dir <- ctx$remote_dir
     if (!is.null(dir) && nzchar(paste(text, collapse = "\n"))) {
         if (is.function(ctx$remote_flush)) {

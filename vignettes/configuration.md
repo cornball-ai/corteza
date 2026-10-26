@@ -10,6 +10,55 @@ title: Configuration
 
 # Configuration
 
+In a shared Matrix room, say `Let's take this offline` or use `/sidebar [N]`.
+The selected conversation enters the private context as one user-role quotation,
+with original speaker roles and source-event links retained. It is background
+for the continuation, not new instructions or the private assistant's own reply.
+The bot copies the last N human exchanges (default 5, maximum 20) into your
+existing private room with source-event links, and redirects active jobs'
+progress, approvals and results there. Their worker and workspace stay the same.
+The source gets one continuation notice. Original messages remain in the source
+room; the extracted copy is durable and enters the private room's normal archive.
+Only configured operators can do this. `private_rooms` maps operator IDs to
+destination IDs; `sidebar_room` and then the bot's default `room_id` are fallbacks.
+The destination must be invite-only with just the operator and bot joined.
+Delivery is withheld if those checks later fail. A room controlling a remote CLI
+cannot receive a sidebar until that CLI disconnects. A failed send can be retried;
+as with other Matrix sends, a crash after acceptance but before recording its ID
+can duplicate a post.
+
+In a Matrix room, `/approve-all [job-id]` authorizes eligible remaining approval
+requests for one active job. `/approve-all status [job-id]` shows the grant;
+`/approve-all off [job-id]`
+revokes it. With multiple active jobs an ID is required. Only a configured
+operator who is still in the room can authorize requests. The authorization
+includes requests normally escalated by the supervisor, is recorded against
+that operator, and expires when the job ends. It does not override a policy
+denial, authorize other jobs, or cover credential-path requests: those still
+require individual human approval. Credential-bearing calls require local review.
+Only the explicit slash command grants approval; ordinary words and `/auto`
+do not. CLI `/auto`, including through remote control, is unchanged.
+
+Display output masks known credentials from configuration and environment, plus
+quoted credential-shaped literals. The registry belongs to one session; source
+expressions and unquoted words are never learned as values. Tool inputs/results,
+handles, native history, transcripts and journals remain unchanged. These private
+records can contain secrets. Worker checkpoints and approval request files use
+owner-only permissions. A Matrix `sync_token` is a cursor, not a credential.
+
+Room activity defaults to counts only. Set `activity_detail: true` in the bot
+configuration to include commands, paths, result previews and model narration.
+Masking cannot identify arbitrary encodings or unknown unlabelled secrets; it
+does not replace the summary setting. Approval displays are never masked or
+truncated: calls containing credentials or too large to display in full require
+review in a local CLI. Voice deltas are delivered immediately except for a partial
+match to a known credential, which is held until it can be masked safely.
+
+The CLI shows five-line result previews and separates commentary from tool logs.
+After 60 seconds without commentary, the next completed tool emits a factual
+progress update. A blocking request or tool must return before that update can
+run. Reaching the tool-turn limit reports the last update and how to continue.
+
 How to configure corteza for your workflow.
 
 ## Config files
@@ -63,6 +112,12 @@ corteza [options]
 | `--help` | Show help and exit | - |
 
 Flags override config values for the current run.
+
+Resuming restores the saved provider and model together, even if configuration
+has changed. Explicit `--provider` and `--model` flags still override that pair.
+Changing only the provider uses its matching configured model or its default;
+it does not carry the old provider's model across. The same rules apply to
+`chat(session = ...)` and its `provider` and `model` arguments.
 
 ## Unattended work
 
@@ -612,7 +667,9 @@ In-chat commands prefixed with `/`.
 | `/compact` | Summarize conversation to free context |
 | `/sessions` | List sessions |
 | `/context` | Live context usage and loaded files |
-| `/model <name>` | Switch model |
+| `/model` | List current/configured models and the active provider's catalog |
+| `/model <name> [provider]` or `/model <number>` | Switch model, optionally provider; numbers select from the last displayed list |
+| `/effort [level \| default]` | Show or change reasoning effort for this conversation; `default` restores the configured/provider default |
 | `/provider <p>` | Switch provider |
 | `/dryrun` | Toggle dry-run mode |
 | `/trace [N]` | Last N tool executions |
@@ -632,6 +689,35 @@ In-chat commands prefixed with `/`.
 | `/last [N]` | Show Nth most recent tool output |
 | `/outputs` | List recent tool outputs |
 | `/help` | Show help |
+
+The model menu is shared by the CLI, `chat()`, and Matrix rooms. With a
+version of llm.api that exports `list_models()`, it queries the active
+provider's catalog (OpenAI, Anthropic API, Moonshot, Ollama, or a compatible
+gateway). Codex subscription entries come from its local `models_cache.json`
+and are identified as cached. Catalog membership is not a tool-support check.
+If discovery fails or is unavailable, the current and configured `models`
+entries remain selectable. Refresh the list with `/model`; numeric selection
+uses the last displayed list.
+
+`/effort` reports the current reasoning setting and `/effort high` changes it
+for the current conversation. `/effort default` removes the session override
+and uses configuration, or the provider default when none is configured.
+The provider validates which levels its model accepts. In a split bot this
+changes the talker, leaving the doer's effort unchanged. These overrides are
+not global configuration changes; use `reasoning_effort` (or
+`talker.reasoning_effort` for a split bot) for a startup default.
+
+GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
+The corresponding llm.api routing update selects Responses with web search
+off as well as on. Older OpenAI models keep their Chat Completions route
+when search is off, and `openai_codex` always uses Responses. Corteza's
+context-editing tool currently excludes Responses histories, so CLM edits
+remain unavailable on that wire. With llm.api's `agent_uses_responses()`
+export, Corteza checks the selected model and search setting before the first
+request, including fallback candidates. Pure CLM rejects unsupported routes
+before generation; hybrid mode keeps automatic compaction and omits the
+editing tool. With older llm.api versions, the preflight follows their
+search-only OpenAI routing rule.
 
 ## Instruction skills
 
@@ -749,9 +835,9 @@ The session is an environment that carries history, the active provider/model, a
 
 ## Room progress and images
 
-Room turns and delegated jobs show public commentary between expandable tool
-groups. Each group includes command or path previews, short result excerpts,
-and failed or refused outcomes. The final answer is a separate message. Progress
+Room turns and delegated jobs show tool counts and failed or refused outcomes.
+With `activity_detail: true`, they also show commentary, command or path previews,
+and short result excerpts in expandable tool groups. The final answer is a separate message. Progress
 stays in the originating room or thread and uses notices so bots do not answer
 the activity trail.
 
@@ -759,7 +845,7 @@ Updates to the notice are coalesced by `activity_interval` in the bot config
 (15 seconds by default), with a final flush when the turn or job ends. Transports
 that cannot edit messages receive the completed trail once. Long trails show a
 bounded tail; full tool traffic remains in the session journal. Plain-text
-clients receive the same commentary and previews without the disclosure widgets.
+clients receive the same selected detail level without the disclosure widgets.
 
 Image attachments are checked against the configured size ceiling after download.
 Their PNG, JPEG, GIF, or WebP signatures determine the format sent to the model,
