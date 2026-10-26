@@ -207,6 +207,9 @@ Exhausting recovery prints a clear stop and the budget command. An unattended
 run stops rather than treating the incomplete response as progress; change
 the budget and use `/auto resume`. Output cutoffs are separate from context
 window exhaustion and do not trigger summary compaction.
+If recovery ends with a partial reply, the rendered text is kept in conversation
+history and the journal. A later turn can refer to what the user actually saw;
+unfinished tool calls are still discarded.
 
 ## Conversation context editing
 
@@ -292,6 +295,16 @@ the `talker` block overrides those account settings. Workers inherit only
 the editing policy, never the vault or conversation-owner role. Invalid
 conversation policies or vault configuration warn and disable context editing
 for that session. Vaults must have `schema.md` and must not be adopted read-only.
+
+Set `"retain_turns": 10` inside the conversation owner's `context_edit` block
+to protect the previous 10 human-led turns plus the current turn. Each protected
+turn includes its human message, assistant replies, and tool traffic. Only older
+entries receive editable IDs; edits are checked again at the checkpoint, so
+previously issued IDs cannot bypass the retention setting. Tool-result messages
+do not count as human turns. The default is 0 (the existing eligibility rules).
+This setting applies to split talkers and unsplit room conversations. Doers,
+reviewers, and monitors do not acquire a retention floor through inheritance.
+It limits CLM edits, not threshold compaction in the `hybrid` strategy.
 
 Only a conversation owner with a configured vault may retire older human turns, labeled
 `[uN]`. It can drop them, but cannot replace them with model-written words.

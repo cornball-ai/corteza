@@ -1421,13 +1421,17 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(response$history)) {
         session$history <- response$history
     }
+    reply <- .fallback_reply(response)
+    if (.output_keep_reply(session, response, reply)) {
+        response$history <- session$history
+    }
     .context_room_snapshot(session)
 
     if (exists("redacted_stream", inherits = FALSE)) {
         redacted_stream$flush()
     }
     list(
-         reply = .progress_reply(session, .fallback_reply(response)),
+         reply = .progress_reply(session, reply),
          session = session,
          usage = response$usage,
          route = response$corteza_route,

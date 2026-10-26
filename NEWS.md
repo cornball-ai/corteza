@@ -1,3 +1,12 @@
+# corteza 0.7.1.81
+
+- Add `context_edit.retain_turns` for conversation owners: protect the recent
+  human-led turns, including assistant replies and tools, from CLM edits.
+  Doers do not inherit this retention floor. The package default remains 0.
+- Keep an unrecovered output-token cutoff's visible reply in active history
+  and the session journal so later turns can refer to it. Incomplete tool
+  calls remain discarded.
+
 # corteza 0.7.1.80
 
 - Restore the saved provider and model together when resuming in the CLI or

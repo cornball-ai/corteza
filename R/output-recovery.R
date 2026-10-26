@@ -114,3 +114,22 @@
     }
     .output_budget_command(session, "status")
 }
+
+# llm.api intentionally omits an incomplete assistant message from history.
+# Once retries end, the text returned to the user must still be available on
+# the next turn. Keep only the rendered reply, never unfinished tool blocks.
+.output_keep_reply <- function(session, response, reply) {
+    if (!.output_cutoff(response) || !nzchar(reply)) {
+        return(FALSE)
+    }
+    history <- session$history %||% list()
+    last <- tail(history, 1L)
+    if (length(last) && identical(last[[1L]]$role, "assistant") &&
+        identical(.compact_entry_body(last[[1L]]), reply)) {
+        return(FALSE)
+    }
+    session$history <- c(history,
+                         list(list(role = "assistant", content = reply)))
+    journal_snapshot(session)
+    TRUE
+}

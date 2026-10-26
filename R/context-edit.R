@@ -17,6 +17,13 @@
         value <- utils::modifyList(value, override)
     }
     value <- utils::modifyList(list(enabled = FALSE, cadence = "pressure"), value)
+    keep <- value$retain_turns
+    if (!is.null(keep) && (!is.numeric(keep) || length(keep) != 1L ||
+            is.na(keep) || !is.finite(keep) || keep < 0 ||
+            keep > .Machine$integer.max || keep != trunc(keep))) {
+        stop("context_edit retain_turns must be a non-negative whole number",
+             call. = FALSE)
+    }
     if (!is.null(value$strategy) && (!is.character(value$strategy) ||
         length(value$strategy) != 1L || is.na(value$strategy) ||
         !value$strategy %in% c("hybrid", "clm"))) {
@@ -191,6 +198,7 @@
 }
 
 .context_edit_targets <- function(session, history, boundary) {
+    boundary <- min(boundary, .context_retention_boundary(session, history))
     state <- .context_edit_state(session)
     targets <- list()
     for (call in llm.api::history_tool_calls(history)) {
@@ -248,6 +256,7 @@
 # Label a rendered copy, then journal it before changing the live history.
 # Human turns are eligible only for conversation owners with a vault.
 .context_edit_index <- function(session, history, boundary) {
+    boundary <- min(boundary, .context_retention_boundary(session, history))
     state <- .context_edit_state(session)
     for (call in llm.api::history_tool_calls(history)) {
         if (!isTRUE(call$completed) || call$result_message_index >= boundary ||
@@ -360,6 +369,10 @@
                       "Search earlier filed topics under:",
                       file.path(session$context_archive_vault, "raw", "chats"))
             } else "Human messages stay protected.",
+            if (.context_retention_turns(session) > 0) {
+                sprintf("The previous %d human-led turns and the current turn are protected, including replies and tool traffic. Only older entries are editable.",
+                        .context_retention_turns(session))
+            },
             if (.context_edit_pure(session)) {
                 "You manage the window: automatic summary compaction and holder archival are disabled. Edit proactively before it fills."
             },
@@ -388,7 +401,7 @@
     }
     state <- .context_edit_state(session)
     call <- .context_edit_active_call(session, name, context)
-    if (!is.null(call)) {
+    if (!is.null(call) && .context_retention_turns(session) == 0) {
         id <- .context_edit_call_id(state, call)
         text <- paste0("[", id, "]\n", text)
     }
