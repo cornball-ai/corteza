@@ -1,16 +1,9 @@
 library(tinytest)
 
-# /clear-time segmentation: title derivation, vault pointer form, and
-# the segment room a cleared conversation becomes. The loopback adapter
-# is the transport double: it supports channel_create and set_state,
-# which is exactly the pair segmentation is gated on.
-
-if (!requireNamespace("chat.api", quietly = TRUE)) {
-    exit_file("chat.api not installed")
-}
-if (!isTRUE(chat.api::chat_capabilities(chat.api::chat_loopback())$set_state)) {
-    exit_file("chat.api too old: loopback has no set_state")
-}
+# /clear-time segmentation, corteza's half: the title derived from the
+# transcript, whether a conversation is worth a room, and the vault
+# pointer form. The room itself is the host's, through the on_clear hook
+# (test_hooks.R).
 
 fake_session <- function(transcript) {
     s <- new.env(parent = emptyenv())
@@ -113,46 +106,12 @@ if (requireNamespace("pensar", quietly = TRUE)) {
     }
 }
 
-# ---- The segment room ----
-local({
-    lo <- chat.api::chat_loopback()
-    seg <- corteza:::bot_segment_from_clear(lo, "home", "Fold formula (2026-08-19)",
-                                            "raw/matrix/seg.md")
-    expect_identical(seg$id, "Fold formula (2026-08-19)")
-    expect_identical(seg$name, "Fold formula (2026-08-19)")
-    # The summary went to the new room as a notice carrying the pointer.
-    msg <- chat.api::chat_poll(lo)$messages[[1L]]
-    expect_identical(msg$channel, seg$id)
-    expect_identical(msg$kind, "notice")
-    expect_true(grepl("raw/matrix/seg.md", msg$body, fixed = TRUE))
-    # And the lifecycle state event marks it a segment of the home room.
-    key <- paste(seg$id, "ai.cornball.lifecycle", "", sep = "\r")
-    st <- lo$env$state[[key]]
-    expect_identical(st$state, "segment")
-    expect_identical(st$segment_of, "home")
-    expect_identical(st$vault, "raw/matrix/seg.md")
-    expect_true(is.character(st$since) && nzchar(st$since))
-})
-
-# No archive pointer: the state event and summary simply omit it.
-local({
-    lo <- chat.api::chat_loopback()
-    seg <- corteza:::bot_segment_from_clear(lo, "home", "Untitled (x)", NULL)
-    key <- paste(seg$id, "ai.cornball.lifecycle", "", sep = "\r")
-    expect_false("vault" %in% names(lo$env$state[[key]]))
-    expect_false(grepl("Archived transcript",
-                       chat.api::chat_poll(lo)$messages[[1L]]$body,
-                       fixed = TRUE))
-})
-
-# A transport that cannot write state skips with a message rather than
-# erroring: archive-and-reset is the critical path, not the segment.
-local({
-    irc <- structure(list(env = new.env(parent = emptyenv()), nick = "bot"),
-                     class = c("chat_irc", "chat_client"))
-    expect_false(isTRUE(chat.api::chat_capabilities(irc)$set_state))
-    expect_message(res <- corteza:::bot_segment_from_clear(irc, "#lab",
-                                                           "t", NULL),
-                   "skipping")
-    expect_null(res)
-})
+# ---- What on_clear may hand back ----
+# list(id, name) names the segment in the acknowledgement; anything
+# else is "no segment", so a malformed return cannot break the clear.
+expect_identical(corteza:::bot_hook_segment(list(id = "!s:ex", name = "T (d)")),
+                 list(id = "!s:ex", name = "T (d)"))
+expect_null(corteza:::bot_hook_segment(NULL))
+expect_null(corteza:::bot_hook_segment(list(id = "!s:ex")))
+expect_null(corteza:::bot_hook_segment(list(id = "!s:ex", name = "")))
+expect_null(corteza:::bot_hook_segment("!s:ex"))

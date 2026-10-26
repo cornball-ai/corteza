@@ -9,7 +9,8 @@ matrix_poll(
   provider = NULL,
   tools_filter = NULL,
   timeout = 0L,
-  sessions = NULL
+  sessions = NULL,
+  hooks = NULL
 )
 }
 \arguments{
@@ -26,6 +27,10 @@ immediately.}
 
 \item{sessions}{Environment from \code{bot_new_session_registry()}
 keyed by room_id, or NULL to build fresh sessions each call.}
+
+\item{hooks}{Named list of functions or NULL, as validated by
+\code{\link{bot_run_init}}; see its Hooks section. NULL asks the
+host nothing.}
 }
 \value{
 See \code{\link{bot_poll}}.

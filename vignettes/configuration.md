@@ -10,6 +10,55 @@ title: Configuration
 
 # Configuration
 
+In a shared Matrix room, say `Let's take this offline` or use `/sidebar [N]`.
+The selected conversation enters the private context as one user-role quotation,
+with original speaker roles and source-event links retained. It is background
+for the continuation, not new instructions or the private assistant's own reply.
+The bot copies the last N human exchanges (default 5, maximum 20) into your
+existing private room with source-event links, and redirects active jobs'
+progress, approvals and results there. Their worker and workspace stay the same.
+The source gets one continuation notice. Original messages remain in the source
+room; the extracted copy is durable and enters the private room's normal archive.
+Only configured operators can do this. `private_rooms` maps operator IDs to
+destination IDs; `sidebar_room` and then the bot's default `room_id` are fallbacks.
+The destination must be invite-only with just the operator and bot joined.
+Delivery is withheld if those checks later fail. A room controlling a remote CLI
+cannot receive a sidebar until that CLI disconnects. A failed send can be retried;
+as with other Matrix sends, a crash after acceptance but before recording its ID
+can duplicate a post.
+
+In a Matrix room, `/approve-all [job-id]` authorizes eligible remaining approval
+requests for one active job. `/approve-all status [job-id]` shows the grant;
+`/approve-all off [job-id]`
+revokes it. With multiple active jobs an ID is required. Only a configured
+operator who is still in the room can authorize requests. The authorization
+includes requests normally escalated by the supervisor, is recorded against
+that operator, and expires when the job ends. It does not override a policy
+denial, authorize other jobs, or cover credential-path requests: those still
+require individual human approval. Credential-bearing calls require local review.
+Only the explicit slash command grants approval; ordinary words and `/auto`
+do not. CLI `/auto`, including through remote control, is unchanged.
+
+Display output masks known credentials from configuration and environment, plus
+quoted credential-shaped literals. The registry belongs to one session; source
+expressions and unquoted words are never learned as values. Tool inputs/results,
+handles, native history, transcripts and journals remain unchanged. These private
+records can contain secrets. Worker checkpoints and approval request files use
+owner-only permissions. A Matrix `sync_token` is a cursor, not a credential.
+
+Room activity defaults to counts only. Set `activity_detail: true` in the bot
+configuration to include commands, paths, result previews and model narration.
+Masking cannot identify arbitrary encodings or unknown unlabelled secrets; it
+does not replace the summary setting. Approval displays are never masked or
+truncated: calls containing credentials or too large to display in full require
+review in a local CLI. Voice deltas are delivered immediately except for a partial
+match to a known credential, which is held until it can be masked safely.
+
+The CLI shows five-line result previews and separates commentary from tool logs.
+After 60 seconds without commentary, the next completed tool emits a factual
+progress update. A blocking request or tool must return before that update can
+run. Reaching the tool-turn limit reports the last update and how to continue.
+
 How to configure corteza for your workflow.
 
 ## Config files
@@ -63,6 +112,104 @@ corteza [options]
 | `--help` | Show help and exit | - |
 
 Flags override config values for the current run.
+
+Resuming restores the saved provider and model together, even if configuration
+has changed. Explicit `--provider` and `--model` flags still override that pair.
+Changing only the provider uses its matching configured model or its default;
+it does not carry the old provider's model across. The same rules apply to
+`chat(session = ...)` and its `provider` and `model` arguments.
+
+## Unattended work
+
+`/auto` continues the current task using the conversation and its approved
+plan. `/auto <goal>` supplies a new goal; an empty session needs one. Runs
+continue until completion, a blocker, or a resource limit. `--loops N` sets
+an iteration limit. `/auto status` reports the last stop, and `/auto resume`
+restarts that goal in the same conversation.
+
+The startup display names the working-directory scope and whether shell/R
+execution is enabled. `/auto --exec` explicitly permits the monitor to assess
+shell/R calls; a project restriction can still veto it. Without that grant,
+those tools are omitted. Unclassified package tools are also omitted rather
+than offered to the model and then stopping the run when selected. Path,
+credential, policy, and monitor checks still apply to every dispatched call.
+
+When a run stops, auto mode is off. Ordinary messages do not restart it.
+`/permissions` controls ordinary tool approvals separately from `/auto`.
+
+## Matrix remote control
+
+`/remote-control [--bot @bot:server] [room]` hands the current CLI or `chat()`
+session to a Matrix room. The model, history, working directory, and approval
+policy stay in the CLI process. Keep that process running. The existing bot
+loop carries messages and replies; the CLI does not log in to Matrix or share
+the bot's sync cursor or encryption store.
+
+`/rc` is an alias for `/remote-control`, with the same arguments. In the
+attached room, `/rc status` reports the connection and `/rc off` disconnects.
+
+Both processes must run a version with remote control, on the same machine
+under the same user. The bot must have an explicit `operators` list. With one
+available bot it is selected automatically; otherwise specify `--bot`. The
+default room name is `~/<working-directory-name>`. Set `remote_control.bot_id`
+and `remote_control.room` in Corteza config to choose other defaults. The room
+must already exist and be accessible to the bot. Rooms with delegated work in
+flight or another attached CLI are refused.
+
+In the room, send text tasks, `/auto [--exec] [goal]`, `/auto status`,
+`/auto resume`, or `/max-tokens [N|default]`. The bot relays model replies,
+tool previews, and errors. Approval prompts require `/approve <request-id>`
+or `/deny <request-id>` from a configured operator. Each answer applies only
+to that pending request; ordinary conversation cannot approve a tool.
+Attachments and other slash commands are currently unsupported.
+
+`/stop` interrupts at the next tool or completed-batch boundary. It does not
+kill a running shell command or an in-flight model request. Send
+`/remote-control off` to stop at that boundary and return control to the
+terminal. Ctrl+C at the terminal also disconnects; a stopped turn retains the
+completed tool history. Only the room's main timeline is attached; threads
+keep their own bot sessions. Other senders cannot control the CLI, but room
+members can see its public output.
+
+Remote operators act with the CLI's channel policy. A Matrix session's
+supervisor gate is not added to the CLI; `/auto` still uses its own monitor.
+Approval prompts include full tool arguments, including file bodies. Treat
+the configured operators as people authorized to control this CLI session.
+Room prompts and replies also enter the bot's normal conversation archive.
+
+The local mailbox lives under Corteza's user data directory, in
+`remote-control`. `CORTEZA_REMOTE_DIR` can relocate it, with the same setting
+in both processes. Records remain available for diagnosing failed delivery;
+the bot retries unsent output without resubmitting model work. An ambiguous
+send failure or crash before recording its event ID can duplicate a post.
+If the courier disappears, the CLI returns to its local prompt when it next
+waits for input or an approval.
+
+## Response output limits
+
+`max_tokens` is the per-response output budget. `/max-tokens` shows the active
+budget; `/max-tokens 32768` changes it for the current CLI or `chat()` session.
+`/max-tokens default` clears that session override and any learned budget.
+
+When Anthropic's unset default of 4,096 tokens cuts a response short, Corteza
+retries the unfinished response with 8,192, 16,384, then 32,768 tokens. Completed
+tool calls stay in history and are not replayed. Partial calls are not executed.
+A successful larger budget is reused for that provider/model in the session.
+
+`output_retries` defaults to 3 (0 disables recovery; maximum 10).
+`output_retry_max_tokens` sets the ceiling. An explicit `max_tokens` is also
+the ceiling unless `output_retry_max_tokens` explicitly permits a larger one.
+For providers with no known default, recovery requires an explicit starting
+budget and ceiling. Codex does not support this output-budget setting.
+Streaming consumers do not retry text they may already have delivered.
+
+Exhausting recovery prints a clear stop and the budget command. An unattended
+run stops rather than treating the incomplete response as progress; change
+the budget and use `/auto resume`. Output cutoffs are separate from context
+window exhaustion and do not trigger summary compaction.
+If recovery ends with a partial reply, the rendered text is kept in conversation
+history and the journal. A later turn can refer to what the user actually saw;
+unfinished tool calls are still discarded.
 
 ## Conversation context editing
 
@@ -148,6 +295,16 @@ the `talker` block overrides those account settings. Workers inherit only
 the editing policy, never the vault or conversation-owner role. Invalid
 conversation policies or vault configuration warn and disable context editing
 for that session. Vaults must have `schema.md` and must not be adopted read-only.
+
+Set `"retain_turns": 10` inside the conversation owner's `context_edit` block
+to protect the previous 10 human-led turns plus the current turn. Each protected
+turn includes its human message, assistant replies, and tool traffic. Only older
+entries receive editable IDs; edits are checked again at the checkpoint, so
+previously issued IDs cannot bypass the retention setting. Tool-result messages
+do not count as human turns. The default is 0 (the existing eligibility rules).
+This setting applies to split talkers and unsplit room conversations. Doers,
+reviewers, and monitors do not acquire a retention floor through inheritance.
+It limits CLM edits, not threshold compaction in the `hybrid` strategy.
 
 Only a conversation owner with a configured vault may retire older human turns, labeled
 `[uN]`. It can drop them, but cannot replace them with model-written words.
@@ -510,7 +667,9 @@ In-chat commands prefixed with `/`.
 | `/compact` | Summarize conversation to free context |
 | `/sessions` | List sessions |
 | `/context` | Live context usage and loaded files |
-| `/model <name>` | Switch model |
+| `/model` | List current/configured models and the active provider's catalog |
+| `/model <name> [provider]` or `/model <number>` | Switch model, optionally provider; numbers select from the last displayed list |
+| `/effort [level \| default]` | Show or change reasoning effort for this conversation; `default` restores the configured/provider default |
 | `/provider <p>` | Switch provider |
 | `/dryrun` | Toggle dry-run mode |
 | `/trace [N]` | Last N tool executions |
@@ -530,6 +689,35 @@ In-chat commands prefixed with `/`.
 | `/last [N]` | Show Nth most recent tool output |
 | `/outputs` | List recent tool outputs |
 | `/help` | Show help |
+
+The model menu is shared by the CLI, `chat()`, and Matrix rooms. With a
+version of llm.api that exports `list_models()`, it queries the active
+provider's catalog (OpenAI, Anthropic API, Moonshot, Ollama, or a compatible
+gateway). Codex subscription entries come from its local `models_cache.json`
+and are identified as cached. Catalog membership is not a tool-support check.
+If discovery fails or is unavailable, the current and configured `models`
+entries remain selectable. Refresh the list with `/model`; numeric selection
+uses the last displayed list.
+
+`/effort` reports the current reasoning setting and `/effort high` changes it
+for the current conversation. `/effort default` removes the session override
+and uses configuration, or the provider default when none is configured.
+The provider validates which levels its model accepts. In a split bot this
+changes the talker, leaving the doer's effort unchanged. These overrides are
+not global configuration changes; use `reasoning_effort` (or
+`talker.reasoning_effort` for a split bot) for a startup default.
+
+GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
+The corresponding llm.api routing update selects Responses with web search
+off as well as on. Older OpenAI models keep their Chat Completions route
+when search is off, and `openai_codex` always uses Responses. Corteza's
+context-editing tool currently excludes Responses histories, so CLM edits
+remain unavailable on that wire. With llm.api's `agent_uses_responses()`
+export, Corteza checks the selected model and search setting before the first
+request, including fallback candidates. Pure CLM rejects unsupported routes
+before generation; hybrid mode keeps automatic compaction and omits the
+editing tool. With older llm.api versions, the preflight follows their
+search-only OpenAI routing rule.
 
 ## Instruction skills
 
@@ -645,11 +833,99 @@ The session is an environment that carries history, the active provider/model, a
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
 
+## Consulting another room
+
+Set `"room_consultation": true` in a bot's account config to expose
+`ask_room(room, question, thread)` when it answers a configured operator.
+This asks another conversation owned by the same bot. No shared room, second
+bot, Matrix self-mention, or additional listener is needed. The default is off.
+Use a room name, ID, or project directory, and optionally a destination thread
+root ID. Ambiguous names require an ID. `delegate(room=...)` still hands work
+to the destination's doer; `ask_room` asks about its conversation instead.
+
+The destination's current text context, including human messages, assistant
+replies, and completed tool text, is captured when the question is submitted.
+Its conversational model answers in a separate process while both rooms and
+any doer remain available. The snapshot excludes images and hidden reasoning;
+it does not retrieve material retired into a vault. Missing context must be
+reported as missing. The consultation has no tools, web search, CLM edits, or
+ability to start another consultation. Its snapshot and outcome stay in the
+durable job ledger. Neither live conversation is replaced with the snapshot.
+
+Questions and answers appear in both rooms and their conversation histories,
+including the originating thread. Enabling this setting allows operators to
+share information between the bot's joined rooms, whose members may differ.
+Non-operators cannot request it. Plan mode and rooms attached to a remote CLI
+refuse consultations. `job_status` and `job_cancel` work from either conversation.
+Repeated pending questions reuse the same job. Consultations have a 120 second
+limit, one active query per destination, and at most 4 active queries per bot.
+Turning the setting off cancels pending queries. A restart leaves undispatched
+queries queued and marks interrupted queries indeterminate, without retrying
+the model call. Ordinary failed-message retries deliver results after an outage.
+
+## Delegation between bots
+
+Conversation sessions can ask another configured bot to run a job using
+`delegate_to(bot, task, review)`. This works with split talkers and unsplit bots.
+It uses the bot's existing chat client and poll cursor. No extra Matrix login
+or listener is started. Configure outgoing destinations in the account config:
+
+```json
+"delegates": {
+  "helper": {
+    "bot": "@helper:example.org",
+    "channel": "!project:example.org",
+    "transport": "matrix"
+  }
+}
+```
+
+The receiving account must explicitly allow the requester. An entry may narrow
+the worker's tools or require a review:
+
+```json
+"delegators": [
+  {"bot": "@requester:example.org", "tools": ["read_file", "grep_files"], "review": true}
+]
+```
+
+A string entry allows the worker's usual tools. Both lists default to empty.
+The originating conversation must be answering a configured human operator.
+The receiving room determines the project directory, doer configuration,
+supervision, approvals, and checkout lock. Requests carry a self-contained task
+of at most 7000 UTF-8 bytes; tasks are rejected rather than shortened. The
+destination and its room members can read the task and reports.
+
+The requester records a remote job, with no local worker or checkout lock.
+The worker records an ordinary job, with the same doer/reviewer lifecycle as
+local delegation. Duplicate delivery reuses that job. Results are authenticated
+against the recorded peer, transport, channel, and job ID; a late result cannot
+overwrite a terminal outcome. Results and any later review return to the
+originating conversation. Long reports are bounded for the transport; the full
+report stays in the worker's ledger. `job_status` and `job_cancel` are available
+alongside `delegate_to`, including on an unsplit bot.
+
+Protocol notices start with `[corteza-job v1 ...]` and are consumed before the
+conversation dispatcher. They mention their recipient and use threads only
+when supported. A bot cannot approve a delegated job's tool calls, including
+when it was accidentally listed as an operator. Human approvers can react or
+send `approve REQUEST_ID` / `deny REQUEST_ID`; the prompt supplies the ID.
+Unverified encrypted senders are rejected. Requests are bounded by hop counts
+and active root IDs, and a room attached to a remote CLI refuses new jobs.
+
+Unreceived requests expire after 2 minutes. Dispatched requests without an
+acknowledgment are probed after 2 minutes; accepted jobs are probed every
+5 minutes. Restart also triggers a status probe. An unanswered probe becomes
+`indeterminate` after 2 minutes; the job is never resubmitted as new work.
+Cancellation before receipt is remembered so a delayed request cannot run.
+A completed job is retained in the ledger, including across bot restarts.
+These settings do not enable automatic recursive delegation by worker models.
+
 ## Room progress and images
 
-Room turns and delegated jobs show public commentary between expandable tool
-groups. Each group includes command or path previews, short result excerpts,
-and failed or refused outcomes. The final answer is a separate message. Progress
+Room turns and delegated jobs show tool counts and failed or refused outcomes.
+With `activity_detail: true`, they also show commentary, command or path previews,
+and short result excerpts in expandable tool groups. The final answer is a separate message. Progress
 stays in the originating room or thread and uses notices so bots do not answer
 the activity trail.
 
@@ -657,7 +933,7 @@ Updates to the notice are coalesced by `activity_interval` in the bot config
 (15 seconds by default), with a final flush when the turn or job ends. Transports
 that cannot edit messages receive the completed trail once. Long trails show a
 bounded tail; full tool traffic remains in the session journal. Plain-text
-clients receive the same commentary and previews without the disclosure widgets.
+clients receive the same selected detail level without the disclosure widgets.
 
 Image attachments are checked against the configured size ceiling after download.
 Their PNG, JPEG, GIF, or WebP signatures determine the format sent to the model,

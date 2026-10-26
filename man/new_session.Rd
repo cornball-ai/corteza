@@ -71,9 +71,10 @@ forwarded to \code{llm.api::agent}. NULL falls back to
 \code{config$max_tokens}, then llm.api's provider default (4096
 on Anthropic). Agent turns that write long tool calls -- big
 \code{run_r} bodies especially -- need more than that default:
-a response the budget cuts off ends the whole turn with
-\code{[Output truncated: max_tokens]} instead of the model's
-answer.}
+an unset Anthropic budget can grow through bounded output retries.
+An explicit budget stays a ceiling unless
+\code{config$output_retry_max_tokens} permits a larger one.
+Exhausted recovery reports \code{[Output truncated: max_tokens]}.}
 
 \item{reasoning_effort}{Character or NULL. How hard a reasoning
 model should think before answering, e.g. \code{"low"},

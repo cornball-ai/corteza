@@ -63,7 +63,8 @@ job_requested_by <- function(j, session) {
 # May this session ask about job `j` or cancel it? The session that runs
 # it and the session that asked for it both may.
 job_visible_to <- function(j, session) {
-    job_in_session(j, session) || job_requested_by(j, session)
+    job_in_session(j, session) || job_requested_by(j, session) ||
+    bot_sidebar_job_visible(j, session)
 }
 
 # Whose saved workspace a worker may restore. All four parts count:
@@ -80,7 +81,8 @@ job_visible_to <- function(j, session) {
 # the same conversation).
 job_worker_identity <- function(session, role = "doer") {
     list(owner = session$job_checkpoint_owner %||% job_worker_owner(session),
-         key = session$job_checkpoint_key %||% job_worker_key(session),
+         key = bot_sidebar_worker_key(session,
+                                      session$job_checkpoint_key %||% job_worker_key(session)),
          workspace = normalizePath(session$cwd %||% getwd(), mustWork = FALSE),
          role = role)
 }
@@ -415,7 +417,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 # (and the previous workspace it names) or none, never a marker pointing
 # at a half-written save.
 .job_worker_child_checkpoint <- function(state_dir, identity, job_id) {
-    dir.create(state_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(state_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+    Sys.chmod(state_dir, "0700")
     objects <- .workspace_checkpoint_write(globalenv(),
         file.path(state_dir, "workspace.RData"))
     history <- .subagent_state$session$history
@@ -431,6 +434,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     job_write_file(file.path(state_dir, "checkpoint.json"),
                    list(identity = identity, job = job_id, at = job_now(),
                         objects = objects, packages = attached))
+    Sys.chmod(file.path(state_dir, c("workspace.RData", "history.rds",
+                                     "checkpoint.json")), "0600")
     objects
 }
 
@@ -442,6 +447,22 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
     session <- .subagent_state$session
     if (is.environment(session)) {
+        old_tools <- session$tools_filter
+        old_allowed <- session$job_allowed_tools
+        old_search <- session$web_search
+        restricted <- job_read(job_id)$origin$delegation$tools
+        if (!is.null(restricted)) {
+            allowed <- as.character(unlist(restricted, use.names = FALSE))
+            if (!is.null(spec$tools)) allowed <- intersect(allowed, spec$tools)
+            session$tools_filter <- allowed
+            session$job_allowed_tools <- allowed
+            if (!"web_search" %in% allowed) session$web_search <- FALSE
+        }
+        on.exit({
+            session$tools_filter <- old_tools
+            session$job_allowed_tools <- old_allowed
+            session$web_search <- old_search
+        }, add = TRUE)
         before <- session$on_tool
         add_observer(session, job_progress_observer(job_id))
         on.exit(session$on_tool <- before, add = TRUE)
@@ -796,7 +817,7 @@ job_cancel <- function(session, id, by = "local") {
     if (!job_request_cancel(id, by = by)) {
         return(FALSE)
     }
-    if (identical(j$status, "queued")) {
+    if (identical(j$status, "queued") && !identical(j$backend, "remote")) {
         job_settle(id, "cancelled",
                    reason = paste("cancelled by", by, "before it started"))
     }
@@ -865,6 +886,7 @@ job_pump_current <- function(session, id) {
     finish <- function(status, ...) {
         job_settle(id, status, ...)
         session$.job_current <- NULL
+        bot_sidebar_worker_retire(session, j)
         # Idle from now, as far as retiring the worker goes.
         job_worker_note(session, j$role)
         if (job_role_locks(j$role)) {
@@ -960,6 +982,7 @@ job_dispatch_next <- function(session) {
     key <- job_worker_key(session)
     queued <- job_list(status = "queued", origin_key = key,
                        owner = job_worker_owner(session))
+    queued <- Filter(function(j) !j$backend %in% c("remote", "consultation"), queued)
     events <- list()
     checkouts <- list()
     for (j in queued) {

@@ -42,6 +42,12 @@ expect_true(help_hit)
 # 2. /quit: clean exit.
 expect_null(corteza:::run_repl_loop(base_ctx(c("/quit"))))
 
+# Both remote-control spellings dispatch locally without starting a model.
+for (command in c("/remote-control", "/rc")) {
+    output <- capture.output(corteza:::run_repl_loop(base_ctx(paste(command, "status"))))
+    expect_true(any(grepl("Remote control is off.", output, fixed = TRUE)))
+}
+
 # 3. /model: a slash command that mutates session + ctx state.
 ctx3 <- base_ctx(c("/model kimi-test"))
 ctx3$session <- new.env(parent = emptyenv())

@@ -71,7 +71,8 @@
 
 .context_edit_require <- function(session) {
     if (.context_edit_pure(session) && !.context_edit_enabled(session)) {
-        stop("Pure CLM requires a supported provider and an enabled journal",
+        stop(paste("Pure CLM requires a supported provider/history format and an enabled journal.",
+                   "Responses cannot edit context; use a supported route or hybrid context management."),
              call. = FALSE)
     }
 }
@@ -113,8 +114,7 @@
                    edits = lapply(pending, function(e) e[c("op", "ids", "text")]),
                    history = records)
     # Hash the portable serialization so restart/retry has the same identity.
-    payload <- jsonlite::toJSON(record, auto_unbox = TRUE, null = "null",
-                                na = "null", digits = NA)
+    payload <- .history_json(record)
     id <- digest::digest(payload, algo = "sha256", serialize = FALSE)
     base <- paste0("clm-", id)
     dir <- file.path(vault, "raw", "chats")
@@ -123,8 +123,7 @@
     path <- file.path(dir, paste0(base, ".md"))
     if (!file.exists(native)) {
         .journal_write_json(record, native)
-    } else if (!identical(jsonlite::toJSON(.journal_read_json(native),
-                auto_unbox = TRUE, null = "null", na = "null", digits = NA), payload)) {
+    } else if (!identical(.history_json(.journal_read_json(native)), payload)) {
         stop("Context archive identity collision: ", native, call. = FALSE)
     }
     if (!file.exists(path)) {

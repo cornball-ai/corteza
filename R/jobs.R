@@ -66,6 +66,10 @@ job_check_id <- function(id) {
 # result is checked; reporting success on a failed rename would lose the
 # record silently.
 job_write_file <- function(path, x) {
+    # Requests retain executable arguments, which can contain credentials.
+    # Set the mode before writing any bytes, including for temporary files.
+    previous_umask <- Sys.umask("0077")
+    on.exit(Sys.umask(previous_umask), add = TRUE)
     tmp <- tempfile(paste0(basename(path), "."), tmpdir = dirname(path))
     on.exit(unlink(tmp), add = TRUE)
     writeLines(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null",
@@ -121,7 +125,11 @@ job_create <- function(task, role = "doer", workspace = getwd(),
         stop("job task must be one non-empty string", call. = FALSE)
     }
     limits <- utils::modifyList(JOB_DEFAULT_LIMITS, limits)
-    hop <- 0L
+    hop <- origin$delegation$hop %||% 0L
+    if (!is.numeric(hop) || length(hop) != 1L || is.na(hop) ||
+        hop < 0 || hop != trunc(hop) || hop > limits$hops) {
+        stop("job hop limit exceeded", call. = FALSE)
+    }
     if (!is.null(parent)) {
         up <- job_read(parent)
         if (is.null(up)) {
@@ -316,7 +324,7 @@ job_list <- function(status = NULL, origin_key = NULL, owner = NULL) {
 # not this process's to declare lost.
 job_recover <- function(live = character(), owner = "local") {
     open <- job_list(status = JOB_STATUSES_OPEN, owner = owner)
-    open <- Filter(function(j) !j$id %in% live, open)
+    open <- Filter(function(j) !j$id %in% live && !identical(j$backend, "remote"), open)
     verdicts <- vapply(open, function(j) {
         if (identical(j$status, "queued")) {
             return("retryable")
@@ -424,18 +432,10 @@ job_approval_path <- function(id, req, kind) {
     file.path(job_dir(id), "approvals", paste0(req, ".", kind, ".json"))
 }
 
-# Bound what goes into the record: args are model-written and can be a
-# whole file's contents. The surface renders from this, and a prompt
-# does not need more than the start of each value.
-job_approval_args <- function(args, max_chars = 2000L) {
-    lapply(args %||% list(), function(v) {
-        v <- paste(format(v), collapse = " ")
-        if (nchar(v) > max_chars) {
-            paste0(substr(v, 1L, max_chars), "...")
-        } else {
-            v
-        }
-    })
+# Keep executable arguments exact. Remote approval refuses a call it cannot
+# display in full; the private request file must not substitute a preview.
+job_approval_args <- function(args) {
+    as.list(args %||% list())
 }
 
 # Worker side: record a request. Returns the request id. `extra` adds
@@ -446,6 +446,8 @@ job_approval_request <- function(id, call, decision, extra = list()) {
     req <- job_new_request_id()
     dir.create(file.path(job_dir(id), "approvals"), recursive = TRUE,
                showWarnings = FALSE)
+    extra$local_approval <- .approval_remote_problem(call, decision,
+        .subagent_state$session$secret_values %||% character())
     job_write_file(job_approval_path(id, req, "request"), c(list(
                 id = req,
                 job = id,

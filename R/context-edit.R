@@ -17,6 +17,13 @@
         value <- utils::modifyList(value, override)
     }
     value <- utils::modifyList(list(enabled = FALSE, cadence = "pressure"), value)
+    keep <- value$retain_turns
+    if (!is.null(keep) && (!is.numeric(keep) || length(keep) != 1L ||
+            is.na(keep) || !is.finite(keep) || keep < 0 ||
+            keep > .Machine$integer.max || keep != trunc(keep))) {
+        stop("context_edit retain_turns must be a non-negative whole number",
+             call. = FALSE)
+    }
     if (!is.null(value$strategy) && (!is.character(value$strategy) ||
         length(value$strategy) != 1L || is.na(value$strategy) ||
         !value$strategy %in% c("hybrid", "clm"))) {
@@ -38,9 +45,31 @@
 }
 
 .context_edit_supported <- function(session) {
-    provider <- session$context_edit_provider %||% session$provider
+    request <- session$context_edit_request
+    provider <- request$provider %||% session$context_edit_provider %||% session$provider
     .context_edit_provider_supported(provider) &&
-    !identical(.history_shape(session$history), "responses")
+    !identical(.history_shape(session$history), "responses") &&
+    !.context_edit_responses(provider, request$model %||% .resolve_model(session),
+        if (is.null(request)) {
+            .session_web_search(session)
+        } else {
+            request$web_search
+        },
+                             session$history)
+}
+
+.context_edit_responses <- function(provider, model, web_search,
+                                    history = NULL) {
+    if ("agent_uses_responses" %in% getNamespaceExports("llm.api")) {
+        # Enabling CLM necessarily adds a tool, even to a tool-free caller.
+        return(getExportedValue("llm.api", "agent_uses_responses")(
+                provider, model, tools = list(list(name = "edit_context")),
+                web_search = web_search, history = history))
+    }
+    # Before the routing export, OpenAI selected Responses only for search.
+    # Do not duplicate llm.api's model-family rules in the host.
+    identical(provider, "openai_codex") ||
+    (identical(provider, "openai") && !isFALSE(web_search))
 }
 
 .context_edit_enabled <- function(session) {
@@ -169,6 +198,7 @@
 }
 
 .context_edit_targets <- function(session, history, boundary) {
+    boundary <- min(boundary, .context_retention_boundary(session, history))
     state <- .context_edit_state(session)
     targets <- list()
     for (call in llm.api::history_tool_calls(history)) {
@@ -209,9 +239,24 @@
     history
 }
 
+# Keep provider-neutral image parts classed so llm.api can translate them for
+# whichever provider serves the next request, including after a fallback.
+.context_edit_prefix <- function(content, id) {
+    label <- paste0("[", id, "]\n")
+    if (inherits(content, "llm_content")) {
+        part <- structure(list(text = label), class = "llm_text")
+        return(structure(c(list(part), unclass(content)), class = class(content)))
+    }
+    if (is.list(content)) {
+        return(c(list(list(type = "text", text = label)), content))
+    }
+    paste0(label, content)
+}
+
 # Label a rendered copy, then journal it before changing the live history.
-# Only plain assistant messages and completed tool outputs get editable IDs.
+# Human turns are eligible only for conversation owners with a vault.
 .context_edit_index <- function(session, history, boundary) {
+    boundary <- min(boundary, .context_retention_boundary(session, history))
     state <- .context_edit_state(session)
     for (call in llm.api::history_tool_calls(history)) {
         if (!isTRUE(call$completed) || call$result_message_index >= boundary ||
@@ -225,12 +270,7 @@
             if (identical(call$provider_shape, "anthropic")) {
                 block <- Filter(function(b) identical(b$tool_use_id, call$id),
                                 history[[i]]$content)[[1L]]
-                content <- block$content
-                if (is.list(content)) {
-                    content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), content)
-                } else {
-                    content <- paste0("[", id, "]\n", content)
-                }
+                content <- .context_edit_prefix(block$content, id)
             } else {
                 content <- paste0("[", id, "]\n", call$result)
             }
@@ -250,11 +290,7 @@
         id <- .context_edit_label(.compact_entry_body(m), prefix)
         if (is.null(id) || id %in% names(state$messages)) {
             id <- .context_edit_id(state, prefix)
-            if (is.character(m$content)) {
-                m$content <- paste0("[", id, "]\n", m$content)
-            } else {
-                m$content <- c(list(list(type = "text", text = paste0("[", id, "]\n"))), m$content)
-            }
+            m$content <- .context_edit_prefix(m$content, id)
         }
         history[[i]] <- m
         state$messages[[id]] <- m
@@ -333,6 +369,10 @@
                       "Search earlier filed topics under:",
                       file.path(session$context_archive_vault, "raw", "chats"))
             } else "Human messages stay protected.",
+            if (.context_retention_turns(session) > 0) {
+                sprintf("The previous %d human-led turns and the current turn are protected, including replies and tool traffic. Only older entries are editable.",
+                        .context_retention_turns(session))
+            },
             if (.context_edit_pure(session)) {
                 "You manage the window: automatic summary compaction and holder archival are disabled. Edit proactively before it fills."
             },
@@ -361,7 +401,7 @@
     }
     state <- .context_edit_state(session)
     call <- .context_edit_active_call(session, name, context)
-    if (!is.null(call)) {
+    if (!is.null(call) && .context_retention_turns(session) == 0) {
         id <- .context_edit_call_id(state, call)
         text <- paste0("[", id, "]\n", text)
     }

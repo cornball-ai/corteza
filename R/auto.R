@@ -326,12 +326,13 @@ auto_autonomy_policy <- function() {
     paste0(
            "Work toward this goal autonomously.\n\n",
            "Make reasonable decisions and act rather than stopping to ask or\n",
-           "to report progress; keep going until the goal is met. Prefer a\n",
+           "to report progress; keep going until the goal is met. Give brief\n",
+           "updates while working, without ending the turn to do so. Prefer a\n",
            "sensible assumption over pausing for confirmation. This overrides\n",
            "the usual posture of checking in whenever a task could go more than\n",
-           "one way: here, pick the reasonable option and proceed. You do not\n",
-           "need approval to run tools or to record a plan; a plan you propose\n",
-           "in this run is accepted automatically.\n\n",
+           "one way: here, pick the reasonable option and proceed within the\n",
+           "existing permissions and approved scope. Use the available tools;\n",
+           "the supervisor still checks calls and can require a person.\n\n",
            "Stop only for a genuine blocker: if you hit an ambiguity that\n",
            "would materially change the intended outcome -- a public interface\n",
            "or a behaviour choice -- do not guess, and do not report continue\n",
@@ -503,6 +504,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     cwd <- ctx$cwd %||% getwd()
     palette <- ctx$palette %||% list()
     say <- function(fmt, ...) {
+        .remote_emit(ctx, paste0("[auto] ", sprintf(fmt, ...)))
         cat(sprintf("%s[auto] %s%s\n", palette$dim %||% "",
                     sprintf(fmt, ...), palette$reset %||% ""))
     }
@@ -660,6 +662,12 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     say("caps: %s, %g min, $%g, %s tool calls",
         loops_label, auto$max_minutes, auto$max_cost,
         format(auto$max_tool_calls))
+    say("scope: %s", cwd)
+    say("shell/R execution: %s", if (isTRUE(auto$allow_exec)) "monitored" else
+        "off (use /auto --exec to permit it; project restrictions still apply)")
+    prev_auto_config <- ctx$session$auto_config
+    ctx$session$auto_config <- config
+    on.exit(ctx$session$auto_config <- prev_auto_config, add = TRUE)
 
     # Stamped before the monitor spawns, not after: the spawn writes the
     # child's transcript header, and the header picks the run id up from
@@ -852,6 +860,7 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
                            interrupt = "interrupted",
                            denied = "a tool call was denied",
                            error = paste("turn errored:", ctx$last_turn_error %||% "?"),
+                           truncated = paste("output incomplete:", ctx$last_turn_error %||% "?"),
                            paste("turn ended:", status)))
             return(character(0))
         }
@@ -966,7 +975,9 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     state$stop_reason <- stop_reason
     state$stop_category <- stop_cat
     state$run_id <- run_id
+    ctx$last_auto_state <- state
     finish(stop_cat, stop_reason, stop_kind)
+    say("auto is off; /auto resume continues this task")
     invisible(state)
 }
 

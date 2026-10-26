@@ -120,12 +120,15 @@
 }
 
 # @noRd
-run_repl_loop <- function(ctx) {
+run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     .repl_install_compaction_hook(ctx)
-    if (is.environment(ctx$session) && !isTRUE(ctx$session$.context_edit_display)) {
+    if (is.environment(ctx$session) &&
+        !isTRUE(ctx$session$.context_edit_display)) {
         previous_edit <- ctx$session$on_context_edit
         ctx$session$on_context_edit <- function(event) {
-            if (is.function(previous_edit)) previous_edit(event)
+            if (is.function(previous_edit)) {
+                previous_edit(event)
+            }
             cat(sprintf("%s%s%s\n", ctx$palette$dim,
                         .context_edit_event_text(event), ctx$palette$reset))
         }
@@ -137,7 +140,7 @@ run_repl_loop <- function(ctx) {
     .repl_jobs_setup(ctx)
     # Covers exits by error or interrupt; /quit and EOF call it directly
     # so its message comes before "Bye.". A second call is a no-op.
-    on.exit(.repl_jobs_shutdown(ctx), add = TRUE)
+    on.exit(if (!keep_jobs) .repl_jobs_shutdown(ctx), add = TRUE)
     while (TRUE) {
         # Delegated jobs surface here, between commands: the input read
         # below blocks, and nothing can print while it waits.
@@ -148,7 +151,9 @@ run_repl_loop <- function(ctx) {
             # right; a driver that ends the loop by returning EOF (see
             # run_auto_loop) sets its own message, since the run did not
             # end because anyone said goodbye.
-            .repl_jobs_shutdown(ctx)
+            if (!keep_jobs) {
+                .repl_jobs_shutdown(ctx)
+            }
             cat(ctx$eof_message %||% "\nBye.\n")
             break
         }
@@ -163,8 +168,8 @@ run_repl_loop <- function(ctx) {
         # `from_paste` blocks the slash-command dispatcher below from
         # reinterpreting a paste that happens to start with `/`
         # (filenames, code snippets, etc.) as a corteza command.
-        from_paste <- FALSE
-        if (!startsWith(sp, "/")) {
+        from_paste <- !is.null(ctx$remote_dir)
+        if (!from_paste && !startsWith(sp, "/")) {
             cont_seed <- backslash_continuation_seed(prompt)
             if (!is.null(cont_seed)) {
                 joined <- read_paste_block(seed = cont_seed, heredoc = TRUE)
@@ -181,7 +186,9 @@ run_repl_loop <- function(ctx) {
             cmd <- tolower(parts[1])
 
             if (cmd %in% c("/quit", "/exit", "/q")) {
-                .repl_jobs_shutdown(ctx)
+                if (!keep_jobs) {
+                    .repl_jobs_shutdown(ctx)
+                }
                 if (ctx$ws_enabled) {
                     ws_prune()
                     tryCatch(ws_save(ctx$disk_session$sessionId),
@@ -296,20 +303,11 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/model") {
-                if (length(parts) < 2L) {
-                    cat(sprintf("Current model: %s\nUsage: /model <name>\n",
-                                ctx$session$model_map$cloud %||% "(default)"))
-                    next
-                }
-                ctx$session$model_map$cloud <- parts[2]
-                # A thinking type set on the session (a talker's) names
-                # the model it was set for and is an error on another.
-                ctx$session$thinking <- NULL
-                ctx$model <- parts[2]
-                if (!is.null(ctx$disk_session)) {
-                    ctx$disk_session$session$model <- parts[2]
-                }
-                cat(sprintf("Model set to %s\n", parts[2]))
+                cat(.repl_model_command(ctx, sp), "\n", sep = "")
+                next
+            }
+            if (cmd == "/effort") {
+                cat(.effort_command(ctx$session, .effort_parse_command(sp)), "\n", sep = "")
                 next
             }
             if (cmd == "/provider") {
@@ -517,20 +515,20 @@ run_repl_loop <- function(ctx) {
                 # and unwind back to the user's prompt when the run ends.
                 # Its on.exit restores read_input, the gate, and the EOF
                 # message, so the outer loop resumes unchanged.
-                spec <- parse_auto_flags(paste(parts[-1], collapse = " "))
-                if (!nzchar(spec$goal)) {
-                    cat(paste0(
-                               "Usage: /auto [--loops N] [--exec|--no-exec] <goal>\n",
-                               "  Runs unattended iterations toward <goal>, supervised\n",
-                               "  by a read-only monitor subagent. With --loops N the\n",
-                               "  run stops after N iterations; without it the run is\n",
-                               "  continuous, governed by the monitor and the resource\n",
-                               "  caps (tool calls, tokens, time, cost, stall).\n"))
-                    next
-                }
-                run_auto_loop(ctx, spec$goal, max_loops = spec$loops,
-                              allow_exec = spec$allow_exec,
-                              continuous = is.null(spec$loops))
+                .auto_command(ctx, paste(parts[-1], collapse = " "))
+                next
+            }
+            if (cmd == "/max-tokens") {
+                text <- tryCatch(.output_budget_command(ctx$session,
+                        paste(parts[-1], collapse = " ")),
+                                 error = function(e) conditionMessage(e))
+                cat(text, "\n")
+                next
+            }
+            if (cmd %in% c("/remote-control", "/rc")) {
+                tryCatch(.remote_run(ctx, paste(parts[-1], collapse = " ")),
+                         error = function(e) cat("Remote control: ", conditionMessage(e), "\n", sep = ""),
+                         interrupt = function(e) cat("Remote control cancelled.\n"))
                 next
             }
             if (cmd == "/dryrun") {
@@ -583,7 +581,11 @@ run_repl_loop <- function(ctx) {
                 next
             }
             if (cmd == "/context-edit") {
-                arg <- if (length(parts) == 1L) "status" else paste(parts[-1L], collapse = " ")
+                if (length(parts) == 1L) {
+                    arg <- "status"
+                } else {
+                    arg <- paste(parts[-1L], collapse = " ")
+                }
                 cat(.context_edit_command(ctx$session, arg), "\n")
                 ctx$config$context_edit <- ctx$session$config$context_edit
                 next
@@ -1076,6 +1078,7 @@ run_repl_loop <- function(ctx) {
         }
 
         if (is.null(result)) {
+            .remote_emit(ctx, paste("Turn stopped:", ctx$last_turn_error %||% ctx$last_turn_status))
             # Interrupt or error path. Still print the timing footer
             # so the user sees how long the aborted turn ran.
             cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")
@@ -1083,10 +1086,14 @@ run_repl_loop <- function(ctx) {
         }
 
         reply <- result$reply %||% ""
+        if (isTRUE(result$raw$truncated)) {
+            ctx$last_turn_status <- "truncated"
+            ctx$last_turn_error <- result$raw$truncation_reason %||% "incomplete response"
+        }
         if (nchar(reply) == 0) {
             cat(sprintf("%s[No response text]%s\n\n", ctx$palette$dim, ctx$palette$reset))
         } else {
-            ctx$render_reply(reply)
+            ctx$render_reply(.redact_text(reply, ctx$session$secret_values))
             ctx$last_assistant_response <- reply
         }
         cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")
@@ -1114,7 +1121,7 @@ run_repl_loop <- function(ctx) {
         # then print a terse one-line indicator and auto-compact when we
         # cross the compaction threshold.
         sys_tok <- estimate_text_tokens(
-            .context_edit_system(ctx$session$system, ctx$session) %||% "")
+                                        .context_edit_system(ctx$session$system, ctx$session) %||% "")
         compact_tools <- tryCatch(
                                   skills_as_api_tools(ctx$session$tools_filter),
                                   error = function(e) list())

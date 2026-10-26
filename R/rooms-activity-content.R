@@ -1,6 +1,7 @@
 # Bounded public progress records shared by direct turns and child workers.
 # Keep only rendered previews here; full arguments/results stay in the journal.
 rooms_activity_preview <- function(text, lines = 5L, width = 160L) {
+    text <- .redact_text(text)
     if (!is.character(text) || !length(text)) {
         return("")
     }
@@ -15,7 +16,11 @@ rooms_activity_preview <- function(text, lines = 5L, width = 160L) {
 }
 
 rooms_activity_record <- function(event) {
+    event <- event$display %||% .redact_object(event)
     kind <- event$outcome
+    if (identical(kind, "progress")) {
+        return(list(narration = event$result, batch = event$result))
+    }
     if (length(kind) != 1L ||
         !kind %in% c("start", "ran", "deny", "declined")) {
         return(NULL)
@@ -43,6 +48,13 @@ rooms_activity_record <- function(event) {
 rooms_activity_add <- function(acc, record) {
     if (is.null(record)) {
         return(invisible(NULL))
+    }
+    if (identical(acc$detail, FALSE)) {
+        record$narration <- ""
+        if (!is.null(record$tool)) {
+            record$tool$command <- NULL
+            record$tool$output <- NULL
+        }
     }
     if (nzchar(record$narration %||% "") &&
         !identical(record$batch, acc$narration_key)) {
@@ -136,8 +148,7 @@ rooms_activity_frame <- function(acc) {
         # and the event envelope under the transport's 64 KiB ceiling.
         encoded <- jsonlite::toJSON(list(body = frame$text, formatted_body = frame$html),
                                     auto_unbox = TRUE)
-        if (nchar(encoded, type = "bytes") < 24000L ||
-            length(items) <= 1L) {
+        if (nchar(encoded, type = "bytes") < 24000L || length(items) <= 1L) {
             return(frame)
         }
         items <- items[-1L]

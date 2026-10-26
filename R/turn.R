@@ -100,9 +100,10 @@ default_local_model <- function() {
 #'   \code{config$max_tokens}, then llm.api's provider default (4096
 #'   on Anthropic). Agent turns that write long tool calls -- big
 #'   \code{run_r} bodies especially -- need more than that default:
-#'   a response the budget cuts off ends the whole turn with
-#'   \code{[Output truncated: max_tokens]} instead of the model's
-#'   answer.
+#'   an unset Anthropic budget can grow through bounded output retries.
+#'   An explicit budget stays a ceiling unless
+#'   \code{config$output_retry_max_tokens} permits a larger one.
+#'   Exhausted recovery reports \code{[Output truncated: max_tokens]}.
 #' @param reasoning_effort Character or NULL. How hard a reasoning
 #'   model should think before answering, e.g. \code{"low"},
 #'   \code{"medium"}, \code{"high"}. One setting, routed to whichever
@@ -205,7 +206,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
              call. = FALSE)
     }
     s$compaction_prompt <- compaction_prompt
-    if (!is.null(context_edit)) .context_edit_config(override = context_edit)
+    if (!is.null(context_edit)) {
+        .context_edit_config(override = context_edit)
+    }
     s$context_edit <- context_edit
     # A supervised run_r worker is created lazily and belongs to this session.
     # Its R6 finalizer is a fallback; closing here also covers a session env
@@ -497,14 +500,22 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # Build the closure passed as tool_handler to llm.api::agent. Closes over
 # the session so sticky classifications persist across tool calls.
 .fire_observers <- function(session, event) {
+    .secret_observe(session, event$result)
+    event$display <- .redact_object(event, session$secret_values)
+    notice <- .progress_record(session, event)
     observers <- session$on_tool %||% list()
     for (obs in observers) {
         tryCatch(obs(event), error = function(e) NULL)
+        if (!is.null(notice)) {
+            tryCatch(obs(list(outcome = "progress", result = notice)),
+                     error = function(e) NULL)
+        }
     }
     invisible(NULL)
 }
 
 .make_tool_handler <- function(session, tool_executor = NULL) {
+    .secret_environment(session)
     .validate_tool_output_caps(session$config)
     # Either session$dry_run (set by inst/bin/corteza per REPL
     # iteration) or session$config$dry_run (chat()'s /dryrun toggle)
@@ -543,6 +554,20 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     executor_wants_context <- "context" %in% executor_formals ||
     "..." %in% executor_formals
     execute <- function(name, args, context) {
+        if (identical(name, "ask_room")) {
+            if (session_dry_run()) {
+                return(ok("Dry run: would ask another room."))
+            }
+            if (!is.function(session$ask_room)) {
+                return(err("Room consultation is unavailable"))
+            }
+            return(do.call(session$ask_room, args))
+        }
+        if (identical(name, "delegate_to")) {
+            if (session_dry_run()) return(ok("Dry run: would delegate this task."))
+            if (!is.function(session$delegate_to)) return(err("No remote delegates configured"))
+            return(do.call(session$delegate_to, args))
+        }
         if (executor_wants_context) {
             tool_executor(name, args, context = context)
         } else {
@@ -550,7 +575,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         }
     }
     function(name, args, context = NULL) {
+        .remote_check_stop(session)
         internal_name <- unsanitize_tool_name(name)
+        if (!is.null(session$job_allowed_tools) &&
+            !internal_name %in% session$job_allowed_tools) {
+            return("[job policy denied: tool is outside this delegator's allowed tools]")
+        }
         call <- list(
                      tool = internal_name,
                      args = as.list(args),
@@ -584,7 +614,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # They only queue intent; the checkpoint enforces the protected set.
         if (identical(internal_name, "edit_context")) {
             result <- tryCatch(.context_edit_queue(session, as.list(args), call$model_context),
-                error = function(e) paste("Context edit rejected:", conditionMessage(e)))
+                               error = function(e) paste("Context edit rejected:", conditionMessage(e)))
             return(nudge(result))
         }
 
@@ -947,11 +977,16 @@ add_observer <- function(session, observer) {
 #' @export
 observer_progress <- function() {
     function(event) {
+        event <- event$display %||% event
         # Observer's purpose is to print tool-call traces; gate behind
         # the corteza.verbose option so non-interactive scripts are
         # silent by default.
         if (!.corteza_verbose()) {
             return(invisible())
+        }
+        if (identical(event$outcome, "progress")) {
+            cat("\n", event$result, "\n\n", sep = "")
+            return(invisible(NULL))
         }
 
         # The model's running commentary, printed once per model response
@@ -990,6 +1025,9 @@ observer_progress <- function() {
 
         if (!identical(event$outcome, "ran")) {
             return(invisible())
+        }
+        for (line in cli_result_lines(event)) {
+            cat("  ", line, "\n", sep = "")
         }
 
         # File-edit tools attach a diff payload to their result. When
@@ -1090,7 +1128,9 @@ observer_progress <- function() {
 #' }
 #' @export
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
+    .remote_check_stop(session)
     stopifnot(is.environment(session))
+    .secret_environment(session)
 
     # The message this turn is answering, where a tool can reach it: the
     # running history llm.api builds is not on the session until the turn
@@ -1103,6 +1143,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # run boundary (here, before agent()) rather than after, so an interrupt
     # mid-run can't leave a stale streak behind.
     session$silent_streak <- 0L
+    .progress_reset(session)
 
     if (is.null(tools)) {
         ensure_skills()
@@ -1112,6 +1153,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .task_filter_tools(tools, session$channel)
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .context_edit_tools(tools, session)
+    tools <- .delegation_tools(tools, session)
+    tools <- .room_consult_tools(tools, session)
+    tools <- .auto_filter_tools(tools, session$auto_config)
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api
@@ -1200,6 +1244,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     attempt_checkpoint_turns <- 0L
     if ("checkpoint_callback" %in% names(formals(llm.api::agent))) {
         agent_args$checkpoint_callback <- function(history, context) {
+            .remote_check_stop(session)
             session$last_checkpoint_context <- context
             attempt_checkpoint_usage <<- .turn_add_usage(
                 attempt_checkpoint_usage, context$usage %||% list())
@@ -1221,7 +1266,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # llm.api later than the Imports minimum guarantees.
     if (is.function(session$on_delta) &&
         "on_delta" %in% names(formals(llm.api::agent))) {
-        agent_args$on_delta <- session$on_delta
+        redacted_stream <- .redact_stream(session$on_delta, function() session$secret_values)
+        agent_args$on_delta <- redacted_stream$push
     }
 
     if (ws_active) {
@@ -1235,6 +1281,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(mt)) {
         agent_args$max_tokens <- mt
     }
+    agent_args <- .output_recovery_args(agent_args, session)
 
     # Reasoning depth. Both settings mean "how hard to think", but they
     # reach the provider differently: reasoning_effort rides `...` into
@@ -1338,7 +1385,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         }
         response
     }
-    response <- call_agent_request_safe(agent_args)
+    call_agent_output_safe <- function(args) {
+        .recover_output(call_agent_request_safe(args), args, session,
+                        call_agent_request_safe)
+    }
+    response <- call_agent_output_safe(agent_args)
 
     # Pi pairs proactive threshold compaction with one compact-and-retry on an
     # actual context overflow. llm.api deliberately excludes the incomplete
@@ -1365,7 +1416,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             retry_args$max_turns <- max(
                                         1L, as.integer(agent_args$max_turns) -
                                         as.integer(overflow_response$turns %||% 0L))
-            response <- call_agent_request_safe(retry_args)
+            response <- call_agent_output_safe(retry_args)
             response$usage <- .turn_add_usage(overflow_response$usage,
                 response$usage)
             response$turns <- as.integer(overflow_response$turns %||% 0L) +
@@ -1390,10 +1441,17 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(response$history)) {
         session$history <- response$history
     }
+    reply <- .fallback_reply(response)
+    if (.output_keep_reply(session, response, reply)) {
+        response$history <- session$history
+    }
     .context_room_snapshot(session)
 
+    if (exists("redacted_stream", inherits = FALSE)) {
+        redacted_stream$flush()
+    }
     list(
-         reply = .fallback_reply(response),
+         reply = .progress_reply(session, reply),
          session = session,
          usage = response$usage,
          route = response$corteza_route,

@@ -510,7 +510,7 @@ format_instruction_catalog <- function(catalog) {
                ""
     )
     for (entry in entries) {
-        lines <- c(lines, sprintf("- %s — %s [%s]", entry$name,
+        lines <- c(lines, sprintf("- %s \u2014 %s [%s]", entry$name,
                                   entry$description, entry$id))
     }
     paste(lines, collapse = "\n")

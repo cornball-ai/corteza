@@ -15,9 +15,11 @@ chat(
 \arguments{
 \item{provider}{LLM provider: "anthropic", "openai", "moonshot", or
 "ollama".
-Defaults to config value or "anthropic".}
+Defaults to the saved provider when resuming, otherwise the config value
+or "anthropic".}
 
-\item{model}{Model name. Defaults to config value or provider default.}
+\item{model}{Model name. Defaults to the saved model when resuming with the
+same provider, otherwise the matching config value or provider default.}
 
 \item{tools}{Character vector of tool names or categories to enable.
 Categories: file, code, r, data, web, git, chat, memory.

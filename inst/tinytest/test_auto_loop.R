@@ -561,9 +561,9 @@ expect_equal(turns, 1L)
 
 # ---- /auto is wired into the REPL ----
 #
-# A bare /auto prints usage and must not spawn anything. The monitor is
+# A bare /auto in a fresh conversation must not spawn anything. The monitor is
 # left unstubbed here on purpose: if the command tried to start a run
-# without a goal, this would attempt a real subagent spawn and fail
+# without a current task, this would attempt a real subagent spawn and fail
 # loudly rather than passing quietly.
 
 reset_wt()
@@ -579,7 +579,7 @@ scripted <- function(lines) {
 }
 ctx$read_input <- scripted(c("/auto"))
 out <- capture.output(corteza:::run_repl_loop(ctx))
-expect_true(any(grepl("Usage: /auto", out)))
+expect_true(any(grepl("no current task", out)))
 expect_null(ctx$session$auto_gate)
 
 # And a goal reaches run_auto_loop with the flags parsed.
@@ -707,6 +707,36 @@ for (blk in c("AUTO_STATUS: blocked - cannot continue without your decision",
     expect_equal(turns, 1L)
     expect_true(any(grepl("blocked", res)))
 }
+
+# Bare /auto uses the existing conversation, and resume retains that goal.
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(edit_turn)
+ctx$session$history <- list(list(role = "user", content = "Finish the fixture"))
+ctx$read_input <- scripted(c("/auto", "/auto status", "/auto --exec resume"))
+out <- with_stubs(stub_monitor(c("stop", "stop")),
+                  capture.output(corteza:::run_repl_loop(ctx)))
+expect_equal(turns, 2L)
+expect_true(any(grepl("Continue the current task", out)))
+expect_true(any(grepl("Auto is off. Last run:", out, fixed = TRUE)))
+expect_true(isTRUE(ctx$last_auto_request$allow_exec))
+expect_null(ctx$session$auto_config)
+
+# An unrecovered cutoff stops before the monitor can mistake it for progress.
+reset_wt()
+turns <- 0L
+ctx <- auto_ctx(function(prompt, session) {
+    turns <<- turns + 1L
+    list(reply = "[Output truncated: max_tokens]", session = session,
+         raw = list(truncated = TRUE, truncation_reason = "max_tokens"),
+         usage = list(cost = 0.01, total_tokens = 100L))
+})
+out <- with_stubs(list(spawn = function(...) "mon-stub",
+                       progress = function(...) stop("must not consult monitor")),
+                  capture.output(corteza:::run_auto_loop(ctx, "fixture")))
+expect_equal(turns, 1L)
+expect_equal(ctx$last_turn_status, "truncated")
+expect_true(any(grepl("output incomplete: max_tokens", out, fixed = TRUE)))
 
 unlink(c(wt, tmp_data), recursive = TRUE)
 if (is.na(old_home)) {
