@@ -1,3 +1,12 @@
+# corteza 0.7.1.83
+
+- Add `send_room_file(path)` for bot operators to send a requested attachment
+  to the current conversation through the host's chat client. Models and workers
+  do not receive chat credentials. Preserve tool policy and supervision, refuse
+  credential/configuration files, and record confirmed attachment event IDs.
+- Use the transport's encrypted attachment support when available. Limit files
+  to 25 MiB and refuse thread sends until file routing can preserve them.
+
 # corteza 0.7.1.82
 
 - Add opt-in `ask_room(room, question, thread)` for one bot to consult its own
