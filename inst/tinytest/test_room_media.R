@@ -3,6 +3,7 @@ local({
     f <- function(name) get(name, asNamespace("corteza"))
     root <- tempfile("room-media-")
     dir.create(root)
+    root <- normalizePath(root, winslash = "/")
     on.exit(unlink(root, recursive = TRUE), add = TRUE)
     path <- file.path(root, "plot.png")
     writeBin(as.raw(0:15), path)
