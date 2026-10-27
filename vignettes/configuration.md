@@ -833,6 +833,20 @@ The session is an environment that carries history, the active provider/model, a
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
 
+## Incomplete worker jobs
+
+A worker that exhausts its tool-turn or output budget is recorded as
+`incomplete`, with its stop reason and usage, rather than `done`. Returned
+cancellation remains `cancelled`; exceptions remain `failed`. A model quoting
+a stop marker does not change the job's status. Room and CLI notifications
+show the same outcome and retain the partial reply.
+
+An incomplete attempt releases its checkout lock and does not queue automatic
+review. Its outcome is immutable. The worker still tries to save its ordinary
+checkpoint, and reports a failed save, but that shared checkpoint can be
+overwritten by another job. No automatic continuation is started, and a
+dedicated job resume command is not yet available.
+
 ## Consulting another room
 
 Set `"room_consultation": true` in a bot's account config to expose

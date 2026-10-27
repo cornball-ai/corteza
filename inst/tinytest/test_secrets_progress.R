@@ -151,5 +151,7 @@ local({
     ns$.progress_reset(s, now)
     expect_null(ns$.progress_record(s, event, now + 59))
     expect_true(grepl("2 tool calls completed", ns$.progress_record(s, event, now + 60), fixed = TRUE))
-    expect_true(grepl("not marked complete", ns$.progress_reply(s, "[Max turns reached]"), fixed = TRUE))
+    expect_true(grepl("not marked complete", ns$.progress_reply(s, "[Max turns reached]",
+        list(status = "incomplete", reason = "max_turns")), fixed = TRUE))
+    expect_identical(ns$.progress_reply(s, "[Max turns reached]"), "[Max turns reached]")
 })

@@ -100,9 +100,7 @@
 }
 
 .repl_job_result_text <- function(job) {
-    o <- job$outcome
-    body <- switch(job$status, done = o$result %||% "",
-                   failed = o$error %||% o$reason %||% "", o$reason %||% "")
+    body <- job_result_body(job)
     head <- sprintf("Job %s %s: %s", job$id, job$status, job_title(job))
     paste(c(head, if (nzchar(body)) body, job_outcome_notes(job)),
           collapse = "\n")

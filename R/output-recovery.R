@@ -77,8 +77,7 @@
         response$citations <- c(citations, response$citations %||% list())
         response$searches <- c(searches, response$searches %||% list())
         response$corteza_output_retries <- attempts
-        response$corteza_output_recovered <- !isTRUE(response$truncated) &&
-        !isTRUE(response$cancelled)
+        response$corteza_output_recovered <- identical(.turn_termination(response)$status, "done")
         if (isTRUE(response$corteza_output_recovered) && is.null(explicit) &&
             identical(response$provider %||% args$provider, args$provider) &&
             identical(response$model %||% args$model, args$model)) {
@@ -90,8 +89,11 @@
         response$content <- paste0(response$content %||% "", "\n\n",
                                    "Stopped at the response output limit. Completed tools are saved; ",
                                    "tool calls in the unfinished response were not executed. Increase max_tokens ",
-                                   "or output_retry_max_tokens in .corteza/config.json, then resume. ",
-                                   "In this CLI session, /max-tokens 32768 sets the next response budget.")
+                                   "or output_retry_max_tokens in .corteza/config.json before continuing.",
+                                   if (is.null(.job_worker_state$job_id) &&
+                                       !identical(session$channel, "matrix")) {
+                                       " In this CLI session, /max-tokens 32768 sets the next response budget."
+                                   })
     }
     response
 }

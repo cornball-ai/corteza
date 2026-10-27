@@ -477,6 +477,7 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                 job_id)),
                            error = function(e) list(ok = FALSE, error = conditionMessage(e)))
     list(reply = res$reply, usage = res$usage, error = res$error,
+         termination = res$termination,
          checkpoint = checkpoint)
 }
 
@@ -952,6 +953,20 @@ job_pump_current <- function(session, id) {
     res <- msg$result
     if (!is.null(res$error)) {
         return(finish("failed", error = res$error, usage = res$usage))
+    }
+    termination <- res$termination
+    if (!is.null(termination) && !identical(termination$status, "done")) {
+        if (!isTRUE(termination$status %in% c("incomplete", "cancelled"))) {
+            return(finish("failed", error = "The worker returned invalid termination metadata.",
+                          usage = res$usage))
+        }
+        reason <- .termination_text(termination)
+        if (!isTRUE(res$checkpoint$ok)) {
+            reason <- paste(reason, "Workspace checkpoint failed:", res$checkpoint$error)
+        }
+        return(finish(termination$status, result = res$reply, usage = res$usage,
+                      reason = reason,
+                      extra = list(termination = termination, checkpoint = res$checkpoint)))
     }
     done(res$reply %||% "", res$usage, if (!isTRUE(res$checkpoint$ok)) {
             paste("workspace checkpoint failed:", res$checkpoint$error)
