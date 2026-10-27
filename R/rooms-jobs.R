@@ -689,7 +689,7 @@ bot_job_approval <- function(chat, cfg, s, ev) {
         list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg))
     if (!is.null(local_reason)) {
         job_answer(s, job$id, req$id, FALSE,
-                   by = "local approval required", reason = local_reason)
+                   by = "remote approval declined", reason = local_reason)
         bot_job_send(chat, s, job, local_reason)
         return(invisible(NULL))
     }

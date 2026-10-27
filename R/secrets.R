@@ -105,20 +105,34 @@
 }
 
 # Approval displays are executable input, never redacted previews.
+.approval_labelled_value <- function(text) {
+    key <- paste0("(?!(?:sync|pagination)[_-]?token\\b)(?:[[:alnum:]_]*_)?",
+                  "(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|",
+                  "refresh[_-]?token|client[_-]?secret|authorization|secret|token)")
+    # A complete label-only string, e.g. cat("token:", m), has no value.
+    # Do not remove quoted keys followed by an assignment, or escaped quotes
+    # within another string. Only this tiny literal is exempted, never its
+    # containing command or the rest of the arguments.
+    text <- gsub(paste0("(?i)(?<!\\\\)([\"'])", key,
+                        "\\s*[:=]\\s*\\1(?!\\s*[:=])"), "", text, perl = TRUE)
+    grepl(paste0("(?i)\\b", key, "[\"']?\\s*[:=]\\s*",
+                 "(?:[\"'][^\"'\\r\\n]|[^\\s\"'\\]),;}])"), text, perl = TRUE)
+}
+
 .approval_remote_problem <- function(call, decision = list(),
                                      values = character()) {
     body <- as.character(jsonlite::toJSON(list(args = call$args,
                 reason = decision$reason),
             auto_unbox = TRUE, null = "null"))
-    labelled <- grepl(paste0("(?i)\\b(?!(?:sync|pagination)[_-]?token\\b)(?:[[:alnum:]_]*_)?",
-                             "(?:password|passwd|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|secret|token)[\"']?\\s*[:=]"),
-                      paste(unlist(call$args), collapse = "\n"), perl = TRUE)
+    labelled <- .approval_labelled_value(paste(unlist(call$args), collapse = "\n"))
     if (length(.secret_values(call$args)) || labelled ||
         !identical(body, .redact_text(body, values))) {
-        return("Credential-bearing calls must be reviewed in a local CLI; nothing was approved remotely.")
+        return(paste("Declined: this call may contain a credential, so its arguments were not posted.",
+                     "No local approval is pending. Use a host credential reference or run the task separately in a local CLI."))
     }
     if (nchar(body, type = "bytes") > 16000L) {
-        return("The complete call is too large for a room approval. Review it in a local CLI.")
+        return(paste("Declined: the complete call exceeds the room approval size limit.",
+                     "No local approval is pending. Split it into independently reviewable calls or use a local CLI."))
     }
     NULL
 }
