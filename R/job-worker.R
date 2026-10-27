@@ -233,6 +233,7 @@ job_worker_spec <- function(session, role = "doer") {
                  channel = session$channel %||% "console",
                  approval_timeout = as.numeric(cfg$approval_timeout_sec %||% 600),
                  identity = job_worker_identity(session, role),
+                 resume_of = session$.job_resume_of,
                  init_fn = NULL,
                  run_fn = NULL
     )
@@ -339,7 +340,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             })
         }
     }
-    restored <- .job_worker_child_restore(state_dir, spec$identity)
+    restored <- if (is.null(spec$resume_of)) {
+        .job_worker_child_restore(state_dir, spec$identity)
+    } else list(restored = FALSE)
     # Installed after the restore, so a restored history is what an
     # earlier live snapshot rolls over to rather than an empty one.
     if (!is.null(.subagent_state$session)) {
@@ -412,10 +415,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     list(restored = TRUE, job = info$job, at = info$at, objects = names(values))
 }
 
-# Checkpoint at a job boundary. The marker is written last: a restore
-# reads it first, so a crash partway through leaves the previous marker
-# (and the previous workspace it names) or none, never a marker pointing
-# at a half-written save.
+# Warm-worker checkpoint at a job boundary. These shared files may be
+# overwritten by later work; only the separate immutable job snapshot is a
+# resume source. The marker does not make this multi-file update atomic.
 .job_worker_child_checkpoint <- function(state_dir, identity, job_id) {
     dir.create(state_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     Sys.chmod(state_dir, "0700")
@@ -446,11 +448,20 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     .job_worker_state$job_id <- job_id
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
     session <- .subagent_state$session
+    job <- job_read(job_id)
     if (is.environment(session)) {
         old_tools <- session$tools_filter
         old_allowed <- session$job_allowed_tools
         old_search <- session$web_search
-        restricted <- job_read(job_id)$origin$delegation$tools
+        old_max_turns <- session$max_turns
+        if (!is.null(job$limits$max_turns)) {
+            session$max_turns <- min(session$max_turns %||% spec$max_turns, job$limits$max_turns)
+        }
+        restricted <- job$origin$delegation$tools
+        if (!is.null(job$resume_of)) {
+            original <- as.character(unlist(job$permissions$tools, use.names = FALSE))
+            restricted <- if (is.null(restricted)) original else intersect(original, unlist(restricted))
+        }
         if (!is.null(restricted)) {
             allowed <- as.character(unlist(restricted, use.names = FALSE))
             if (!is.null(spec$tools)) allowed <- intersect(allowed, spec$tools)
@@ -462,22 +473,37 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             session$tools_filter <- old_tools
             session$job_allowed_tools <- old_allowed
             session$web_search <- old_search
+            session$max_turns <- old_max_turns
         }, add = TRUE)
         before <- session$on_tool
         add_observer(session, job_progress_observer(job_id))
         on.exit(session$on_tool <- before, add = TRUE)
     }
     run <- spec$run_fn %||% function(task) subagent_turn_prompt(task)
-    res <- tryCatch(run(task), error = function(e) {
+    resumed <- is.null(job$resume_of)
+    res <- tryCatch({
+        if (!is.null(job$resume_of)) {
+            task <- .job_resume_restore(job$resume_of, spec, session)
+            resumed <- TRUE
+        }
+        run(task)
+    }, error = function(e) {
         list(error = conditionMessage(e))
     })
-    checkpoint <- tryCatch(
+    resume <- if (identical(res$termination$status, "incomplete")) {
+        tryCatch(.job_resume_save(job_id, spec$identity, session),
+            error = function(e) list(ready = FALSE, error = conditionMessage(e)))
+    }
+    checkpoint <- if (!resumed) {
+        list(ok = FALSE, error = "Resume failed; the warm-worker checkpoint was not replaced")
+    } else tryCatch(
                            list(ok = TRUE,
                                 objects = .job_worker_child_checkpoint(state_dir, spec$identity,
                 job_id)),
                            error = function(e) list(ok = FALSE, error = conditionMessage(e)))
     list(reply = res$reply, usage = res$usage, error = res$error,
          termination = res$termination,
+         resume = resume,
          checkpoint = checkpoint)
 }
 
@@ -790,6 +816,7 @@ job_submit <- function(session, task, role = "doer", requester = "local",
                        origin = list(), parent = NULL, limits = list(),
                        review = FALSE, context = NULL) {
     origin$session_key <- job_worker_key(session)
+    limits$max_turns <- limits$max_turns %||% job_worker_spec(session, role)$max_turns
     id <- job_create(task, role = role,
                      workspace = session$cwd %||% getwd(),
                      requester = requester, origin = origin,
@@ -885,7 +912,10 @@ job_pump_current <- function(session, id) {
     # Every ending settles the job, frees the session, and gives back the
     # checkout lock (a no-op for a role that never took one).
     finish <- function(status, ...) {
-        job_settle(id, status, ...)
+        args <- list(...)
+        args$extra <- c(args$extra %||% list(), list(
+            cumulative_usage = job_resume_usage(j, args$usage)))
+        do.call(job_settle, c(list(id = id, status = status), args))
         session$.job_current <- NULL
         bot_sidebar_worker_retire(session, j)
         # Idle from now, as far as retiring the worker goes.
@@ -952,6 +982,7 @@ job_pump_current <- function(session, id) {
     }
     res <- msg$result
     if (!is.null(res$error)) {
+        if (!is.null(j$resume_of)) job_worker_close(session)
         return(finish("failed", error = res$error, usage = res$usage))
     }
     termination <- res$termination
@@ -966,7 +997,8 @@ job_pump_current <- function(session, id) {
         }
         return(finish(termination$status, result = res$reply, usage = res$usage,
                       reason = reason,
-                      extra = list(termination = termination, checkpoint = res$checkpoint)))
+                      extra = list(termination = termination, checkpoint = res$checkpoint,
+                                   resume = res$resume)))
     }
     done(res$reply %||% "", res$usage, if (!isTRUE(res$checkpoint$ok)) {
             paste("workspace checkpoint failed:", res$checkpoint$error)
@@ -1070,6 +1102,15 @@ job_dispatch <- function(session, j, checkout) {
     }
     # Always through job_worker_activate(): it reuses a live worker only
     # when that worker is in the session's directory.
+    old_resume <- session$.job_resume_of
+    session$.job_resume_of <- j$resume_of
+    on.exit(session$.job_resume_of <- old_resume, add = TRUE)
+    if (!is.null(j$resume_of)) {
+        # A new process prevents the intervening jobs' workspace, tool handles,
+        # and conversation state from leaking into the selected attempt.
+        job_worker_close(session)
+        job_worker_drop_parked(session, j$role)
+    }
     restore <- tryCatch(job_worker_activate(session, j$role),
                         error = function(e) e)
     if (inherits(restore, "error")) {

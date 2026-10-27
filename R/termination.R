@@ -61,7 +61,10 @@ job_result_body <- function(job) {
            done = o$result %||% "",
            failed = o$error %||% o$reason %||% "",
            incomplete = paste(Filter(nzchar, c(o$result %||% "", o$reason %||% "",
-                    "No automatic continuation was started. A dedicated job resume command is not yet available.")),
+                    if (isTRUE(o$resume$ready)) {
+                        paste0("No automatic continuation was started. Use /job resume ", job$id,
+                            " to request a new attempt. Tool handles and any listed unrestorable objects will be unavailable.")
+                    } else paste("Resume unavailable:", o$resume$error %||% "no per-job snapshot was saved."))),
                               collapse = "\n\n"),
            o$reason %||% "")
 }

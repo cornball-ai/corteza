@@ -120,7 +120,8 @@ job_create <- function(task, role = "doer", workspace = getwd(),
                        requester = "local", origin = list(), parent = NULL,
                        backend = "subagent", permissions = list(),
                        limits = list(), owner = "local", review = FALSE,
-                       review_of = NULL, context = NULL) {
+                       review_of = NULL, context = NULL, resume_of = NULL,
+                       id = NULL, resume_request = NULL) {
     if (!is.character(task) || length(task) != 1L || is.na(task) ||
         !nzchar(trimws(task))) {
         stop("job task must be one non-empty string", call. = FALSE)
@@ -148,9 +149,17 @@ job_create <- function(task, role = "doer", workspace = getwd(),
                          parent, as.integer(limits$hops)), call. = FALSE)
         }
     }
-    id <- job_new_id()
-    dir <- job_dir(id)
-    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    id <- id %||% job_new_id()
+    job_check_id(id)
+    destination <- job_dir(id)
+    # A reserved resume ID is published once as a whole directory. Retrying
+    # after a coordinator crash cannot overwrite an already-visible intent.
+    dir <- if (is.null(resume_of)) destination else {
+        dir.create(job_root(), recursive = TRUE, showWarnings = FALSE)
+        tempfile(".resume-job-", tmpdir = job_root())
+    }
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+    if (!is.null(resume_of)) on.exit(unlink(dir, recursive = TRUE), add = TRUE)
     # Content the delegator attached by reference (for example the message
     # a talker was acting on) is written beside the job rather than copied
     # into the task text, so a large paste does not have to pass through
@@ -187,8 +196,16 @@ job_create <- function(task, role = "doer", workspace = getwd(),
             # `review`: have a reviewer check this job's work when it is
             # done. `review_of`: this job is the review of that one.
             review = isTRUE(review),
-            review_of = review_of
+            review_of = review_of,
+            resume_of = resume_of,
+            resume_request = resume_request
         ))
+    if (!is.null(resume_of) && !isTRUE(suppressWarnings(file.rename(dir, destination)))) {
+        existing <- job_read(id)
+        if (is.null(existing) || !identical(existing$resume_of, resume_of)) {
+            stop("Could not publish resume attempt", call. = FALSE)
+        }
+    }
     id
 }
 

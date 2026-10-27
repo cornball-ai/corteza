@@ -220,12 +220,13 @@ local({
             finish <- grepl("finish fixture", prompt, fixed = TRUE)
             cancel <- grepl("cancel fixture", prompt, fixed = TRUE)
             call <- list(id = paste0("call-", length(messages)), name = "read_file",
-                input = list(path = file.path(getwd(), "marker.txt")))
+                arguments = list(path = file.path(getwd(), "marker.txt")))
             list(text = "fixture result", cancelled = cancel,
                 tool_calls = if (finish || cancel) list() else list(call),
                 assistant_message = list(role = "assistant", content = if (finish || cancel) {
                     list(list(type = "text", text = "fixture result"))
-                } else list(c(list(type = "tool_use"), call))),
+                } else list(list(type = "tool_use", id = call$id,
+                    name = call$name, input = call$arguments))),
                 usage = list(input_tokens = 2L, output_tokens = 3L))
         }, "llm.api")
     })
@@ -252,7 +253,7 @@ local({
     expect_true(grepl("incomplete", corteza:::bot_job_result_text(j), fixed = TRUE))
     expect_true(grepl("incomplete", corteza:::.repl_job_result_text(j), fixed = TRUE))
     expect_false(grepl("/auto", corteza:::bot_job_result_text(j), fixed = TRUE))
-    expect_true(grepl("not yet available", corteza:::job_result_body(j), fixed = TRUE))
+    expect_true(grepl("/job resume", corteza:::job_result_body(j), fixed = TRUE))
     expect_false(corteza:::job_settle(id, "done", result = "late result"))
     expect_identical(corteza:::job_read(id)$status, "incomplete")
     # Acquiring the same checkout proves that the incomplete writer freed it.

@@ -104,9 +104,12 @@
         } else if (cmd == "/max-tokens") {
             .remote_emit(ctx, tryCatch(.output_budget_command(ctx$session, rest),
                                        error = function(e) conditionMessage(e)))
+        } else if (cmd == "/job") {
+            output <- capture.output(.repl_cmd_job_resume(ctx, strsplit(text, "\\s+")[[1L]]))
+            .remote_emit(ctx, output)
         } else {
             .remote_emit(ctx, paste("Send a task, /auto [--exec] [goal], /auto status,",
-                                    "/max-tokens [N], /stop, or /remote-control off."))
+                                    "/job resume <id>, /max-tokens [N], /stop, or /remote-control off."))
         }
     }
 }
