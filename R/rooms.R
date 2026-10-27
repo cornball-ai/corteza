@@ -2192,13 +2192,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # speaking; the reply gate below is unchanged.
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
-        # What the model gets: the same text, plus any picture that came
-        # with the message. Identical to ingest_body whenever there is
-        # no image, which is why everything below that is not the
-        # model's own copy goes on using ingest_body -- the reply gate
-        # reads text, and so does the transcript ledger.
-        ingest_content <- bot_message_content(chat_now(), m, ingest_body,
+        media <- bot_message_media(chat_now(), m, ingest_body,
             session$provider, cfg = cfg)
+        ingest_content <- media$content
+        ingest_body <- media$text
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
@@ -2228,6 +2225,14 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (nzchar(sender) && !(sender %in% bots)) {
             engaged[[sender]] <- now
             session$engaged <- engaged
+        }
+
+        if (!is.null(media$notice)) {
+            receipt_id <- bot_reply_send(chat_now(), m$channel, media$notice, thread = m$thread)
+            if (!is.null(receipt_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, receipt_id)
+                bot_transcript_add(session, receipt_id, "assistant", media$notice)
+            }
         }
 
         approval_mode <- bot_parse_approval_mode(m$body)

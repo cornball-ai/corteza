@@ -200,7 +200,10 @@ tool_delegate <- function(task, review = NULL, room = NULL,
         isTRUE(review)
     }
     context <- if (isTRUE(attach_context)) {
-        p <- session$current_prompt
+        p <- message_text(list(content = session$current_prompt))
+        if (inherits(session$current_prompt, "llm_content")) {
+            p <- paste(p, "Attachment image bytes are not included in this delegated text.", sep = "\n\n")
+        }
         if (is.character(p) && length(p) == 1L && nzchar(trimws(p))) {
             p
         }
