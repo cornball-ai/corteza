@@ -98,6 +98,18 @@ local({
     expect_true(any(grepl(next_id, output, fixed = TRUE)))
     expect_equal(length(ns$job_list()), n)
     source$job_resume <- NULL
+    source$cwd <- root
+    source$job_resume <- function(id) ns$bot_job_resume(sessions, source, cfg, "requester", "$handler", id)
+    source$auto_gate <- ns$supervisor_gate(ask = function(...) stop("unexpected repeat approval"),
+        cwd = root, mode = "human")
+    handler <- ns$.make_tool_handler(source)
+    expect_true(grepl(next_id, handler("job_resume", list(id = id)), fixed = TRUE))
+    source$config$permissions <- list(job_resume = "deny")
+    expect_true(grepl("policy denied", handler("job_resume", list(id = id)), fixed = TRUE))
+    source$config$permissions <- list()
+    source$job_resume <- function(id) ns$bot_job_resume(sessions, source, cfg, "bystander", "$handler", id)
+    expect_true(grepl("original requester", handler("job_resume", list(id = id)), fixed = TRUE))
+    source$job_resume <- NULL
     ns$job_lock_release(ns$job_checkout(root), blocker)
 
     # Failure at publication leaves no readable snapshot. An existing one
@@ -110,4 +122,10 @@ local({
     expect_error(ns$job_resume_snapshot(bad, ns$job_worker_identity(target)), "missing")
     expect_error(ns$.job_resume_save(id, ns$job_worker_identity(target), target,
         new.env(parent = emptyenv())), "already exists")
+    con <- file(file.path(root, "unrestorable.txt"), "w")
+    on.exit(close(con), add = TRUE, after = FALSE)
+    workspace <- new.env(parent = emptyenv())
+    expect_true(ns$.job_resume_unsafe(list(nested = list(connection = con)), workspace))
+    expect_true(ns$.job_resume_unsafe(structure(list(value = 1L), handle = con), workspace))
+    expect_false(ns$.job_resume_unsafe(list(value = 1L, text = "ordinary"), workspace))
 })

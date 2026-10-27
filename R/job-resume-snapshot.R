@@ -13,6 +13,11 @@ job_resume_path <- function(id) {
         typeof(x) %in% c("externalptr", "weakref")) {
         return(TRUE)
     }
+    attrs <- attributes(x)
+    if (length(attrs) && any(vapply(attrs, .job_resume_unsafe, TRUE,
+        root = root, seen = seen, depth = depth + 1L))) {
+        return(TRUE)
+    }
     if (is.function(x)) {
         return(.job_resume_unsafe(environment(x), root, seen, depth + 1L))
     }
@@ -32,15 +37,9 @@ job_resume_path <- function(id) {
                           TRUE, root = root, seen = seen, depth = depth + 1L)) ||
                .job_resume_unsafe(parent.env(x), root, seen, depth + 1L))
     }
-    if (isS4(x)) {
-        return(.job_resume_unsafe(attributes(x), root, seen, depth + 1L))
-    }
     if (is.list(x) ||
         is.pairlist(x)) return(any(vapply(x, .job_resume_unsafe, TRUE,
                 root = root, seen = seen, depth = depth + 1L)))
-    if (length(attributes(x))) {
-        return(.job_resume_unsafe(attributes(x), root, seen, depth + 1L))
-    }
     FALSE
 }
 

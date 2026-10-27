@@ -865,6 +865,10 @@ Connections, external pointers, and transient tool handles are unavailable;
 omitted workspace objects are named in the continuation prompt. Missing or
 corrupt snapshots fail before a provider request.
 
+Queuing the requested continuation does not require another default approval.
+Explicit per-tool ask/deny settings and user policy still apply to `job_resume`;
+the host also enforces requester, operator, conversation and workspace checks.
+
 Each stopped attempt has at most one continuation. Repeating its resume command
 returns that continuation's ID, including after restart. If that continuation
 also stops incomplete, resume its ID. The ledger retains per-attempt usage and

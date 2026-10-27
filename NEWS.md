@@ -6,7 +6,7 @@
   normal checkout lock. Preserve newer checkout files and identify unavailable
   workspace objects. Resume requests require the original requester or operator.
 - Link each continuation to its prior attempt, deduplicate repeated requests,
-  retain per-attempt limits and approvals, and record cumulative usage. No
+  retain per-attempt limits and normal approval checks, and record cumulative usage. No
   automatic continuation is enabled. Old jobs without snapshots cannot resume.
 
 # corteza 0.7.1.86

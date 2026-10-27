@@ -212,6 +212,16 @@ default_policy <- function(call) {
     op <- classify_op(call$tool %||% "")
     channel <- call$channel %||% "cli"
 
+    # Requester/operator and conversation checks live in job_resume(). This
+    # host operation queues an explicitly requested attempt, whose tool calls
+    # still pass their own policy and supervision. Do not ask to approve the
+    # same task again merely because this orchestration tool is unclassified.
+    # User policy and explicit per-tool ask/deny settings still take precedence.
+    if (identical(call$tool, "job_resume")) {
+        return(list(model = .default_model_route(data_class), approval = "allow",
+                    reason = "default: resume authorization is checked by the job host"))
+    }
+
     approval <- tryCatch(.default_tensor[[data_class]][[op]][[channel]],
                          error = function(e) NULL)
     if (is.null(approval)) {
