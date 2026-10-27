@@ -1,3 +1,10 @@
+# corteza 0.7.1.85
+
+- Allow diagnostic strings such as `cat("token:", value)` through remote
+  approval while retaining credential-value and known-secret checks. Explain
+  credential and oversized-call refusals as declines, with no pending local
+  approval, and suggest credential references or smaller reviewable calls.
+
 # corteza 0.7.1.84
 
 - Record tool-turn and output limits as incomplete worker outcomes, preserving
