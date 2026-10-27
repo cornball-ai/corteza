@@ -19,7 +19,9 @@ containing status, findings, concerns, deviations, questions, and feedback.}
 \value{
 A list with `$reply` (character, the LLM reply text),
   `$usage` (list with `input_tokens`, `output_tokens`, `total_tokens`,
-  and optionally `cost` -- provider-dependent), and, when
+  and optionally `cost` -- provider-dependent). `$termination` records
+  whether the turn finished, stopped incomplete, or was cancelled, with
+  a machine-readable reason. When
   `return_name` is set, `$final` (the resolved value) or
   `$final_note` (why nothing was returned). When `report = TRUE`,
   `$report` is the validated structured handoff or `$report_error`

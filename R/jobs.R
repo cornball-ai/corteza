@@ -26,7 +26,8 @@
 # again is a new job.
 
 JOB_STATUSES_OPEN <- c("queued", "running")
-JOB_STATUSES_FINAL <- c("done", "incomplete", "failed", "cancelled", "indeterminate")
+JOB_STATUSES_FINAL <- c("done", "incomplete", "failed", "cancelled",
+                        "indeterminate")
 
 JOB_DEFAULT_LIMITS <- list(hops = 3L)
 

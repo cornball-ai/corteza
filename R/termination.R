@@ -24,7 +24,8 @@
         }
     })
     if (max_turns) {
-        response$corteza_termination <- list(status = "incomplete", reason = "max_turns")
+        response$corteza_termination <- list(status = "incomplete",
+            reason = "max_turns")
     }
     response
 }
@@ -36,29 +37,31 @@
         return(list(status = "cancelled", reason = "cancelled"))
     }
     if (isTRUE(response$truncated)) {
-        return(list(status = "incomplete", reason = response$truncation_reason %||% "truncated"))
+        return(list(status = "incomplete",
+                    reason = response$truncation_reason %||% "truncated"))
     }
     response$corteza_termination %||% list(status = "done", reason = NULL)
 }
 
 .termination_text <- function(termination) {
     switch(termination$reason %||% "",
-        max_turns = "Stopped at the tool-turn limit; the task is incomplete.",
-        max_tokens =, length =, max_output_tokens =
-            "Stopped at the response output limit; the task is incomplete.",
-        model_context_window_exceeded =
-            "Stopped at the context-window limit; the task is incomplete.",
-        cancelled = "The response was cancelled before completion.",
-        sprintf("The response stopped before completion (%s).", termination$reason %||% "unknown reason"))
+           max_turns = "Stopped at the tool-turn limit; the task is incomplete.",
+           max_tokens =, length =, max_output_tokens =
+           "Stopped at the response output limit; the task is incomplete.",
+           model_context_window_exceeded =
+           "Stopped at the context-window limit; the task is incomplete.",
+           cancelled = "The response was cancelled before completion.",
+           sprintf("The response stopped before completion (%s).",
+                   termination$reason %||% "unknown reason"))
 }
 
 job_result_body <- function(job) {
     o <- job$outcome
     switch(job$status,
-        done = o$result %||% "",
-        failed = o$error %||% o$reason %||% "",
-        incomplete = paste(Filter(nzchar, c(o$result %||% "", o$reason %||% "",
-            "No automatic continuation was started. A dedicated job resume command is not yet available.")),
-            collapse = "\n\n"),
-        o$reason %||% "")
+           done = o$result %||% "",
+           failed = o$error %||% o$reason %||% "",
+           incomplete = paste(Filter(nzchar, c(o$result %||% "", o$reason %||% "",
+                    "No automatic continuation was started. A dedicated job resume command is not yet available.")),
+                              collapse = "\n\n"),
+           o$reason %||% "")
 }

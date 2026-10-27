@@ -330,8 +330,7 @@
 # Run llm.api::agent with agent_args, walking the session's fallback
 # chain on limit errors. `.call` is the seam tests replace; production
 # leaves it at the real agent.
-.agent_with_fallback <- function(agent_args, session,
-                                 .call = .agent_call) {
+.agent_with_fallback <- function(agent_args, session, .call = .agent_call) {
     previous_edit_provider <- session$context_edit_provider
     previous_edit_request <- session$context_edit_request
     on.exit({
@@ -423,7 +422,8 @@
         if (is.function(checkpoint)) {
             args$checkpoint_callback <- function(history, context) {
                 usage <- context$usage %||% list()
-                if (is.null(usage$total_tokens) && is.numeric(usage$input_tokens) &&
+                if (is.null(usage$total_tokens) &&
+                    is.numeric(usage$input_tokens) &&
                     is.numeric(usage$output_tokens)) {
                     usage$total_tokens <- usage$input_tokens + usage$output_tokens
                 }
