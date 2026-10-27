@@ -1,3 +1,14 @@
+# corteza 0.7.1.87
+
+- Add explicit `/job resume <id>` and talker `job_resume` for incomplete local
+  doer jobs. Save immutable per-attempt history and workspace snapshots, validate
+  identity and file integrity, and restore them in a fresh worker under the
+  normal checkout lock. Preserve newer checkout files and identify unavailable
+  workspace objects. Resume requests require the original requester or operator.
+- Link each continuation to its prior attempt, deduplicate repeated requests,
+  retain per-attempt limits and approvals, and record cumulative usage. No
+  automatic continuation is enabled. Old jobs without snapshots cannot resume.
+
 # corteza 0.7.1.86
 
 - Retain attributed attachment receipts in room context, transcripts, journals,
