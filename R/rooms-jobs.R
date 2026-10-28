@@ -72,7 +72,8 @@ bot_job_send <- function(chat, s, job, text) {
     }
     room <- destination$room %||% s$room_id
     sent <- tryCatch(bot_reply_send(chat, room, text, markdown = TRUE,
-                                    thread = destination$thread),
+                                    thread = destination$thread, session = s,
+                                    audit = .audit_first_ref(job$usage_turns)),
                      error = function(e) NULL)
     if (!is.null(sent) && is.null(destination$sender)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent)
@@ -126,7 +127,8 @@ bot_notice_send <- function(chat, n, session = NULL) {
         }
     }
     sent <- tryCatch(bot_reply_send(chat, n$room, n$text, markdown = TRUE,
-                                    thread = n$thread),
+                                    thread = n$thread, session = session,
+                                    audit = if (!is.null(n$job)) .audit_first_ref(job$usage_turns)),
                      error = function(e) NULL)
     if (!is.character(sent) || length(sent) != 1L || is.na(sent) ||
         !nzchar(sent)) {

@@ -417,7 +417,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
-| `audit.enabled` | boolean | `true` | Record turn accounting and tool decisions independently of display verbosity and `journal_enabled` |
+| `audit.enabled` | boolean | `true` | Record turns, tool decisions and room deliveries independently of display verbosity and `journal_enabled` |
 | `context_edit` | object | `{"enabled": false, "cadence": "pressure"}` | Model-requested conversation edits; cadence is `pressure` or `always`, and journaling is required |
 | `tool_output_caps` | object | `{}` | Per-tool result caps, e.g. `{"game_action": {"max_chars": 400000, "max_lines": 20000}}`; other tools keep the 50-line / 5000-char cap |
 | `context_include_soul` | boolean or null | null | Include `SOUL.md` (null = saber default) |
@@ -429,6 +429,14 @@ Audit streams are private JSONL files under `<journal_dir>/audit/`, with one
 writer per stream. Sessions without a journal use the package data directory's
 `audit/` folder. Set `audit.enabled` to `false` to disable recording; embedded
 callers may set `session$audit_dir` or `session$audit_enabled` explicitly.
+
+Room sends and edits record a delivery start and ending, every returned event
+ID, destination, and hashes of the generated and posted text. They work without
+a vault. A missing event ID is unconfirmed; an error retains its condition
+class. Recording failure never retries a send. Reply, worker-progress and
+remote-control records link their originating turn where it is available;
+administrative sends without a turn retain a null reference. The existing
+conversation transcript still uses its last-event deduplication convention.
 The terminal turn record owns usage. Transcript and job-outcome copies are
 marked derived and link to it; do not add these copies to turn totals. Unknown
 usage is `null`. Older transcript zero blocks cannot establish measured zero.

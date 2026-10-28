@@ -86,7 +86,7 @@
     .remote_write(file.path(dir, folder, sprintf("%012.0f.json", n)), record)
 }
 
-.remote_emit <- function(ctx, text) {
+.remote_emit <- function(ctx, text, audit = NULL) {
     text <- .redact_text(text, ctx$session$secret_values)
     dir <- ctx$remote_dir
     if (!is.null(dir) && nzchar(paste(text, collapse = "\n"))) {
@@ -94,7 +94,7 @@
             ctx$remote_flush()
         }
         .remote_append(dir, "out",
-                       list(type = "text", text = paste(text, collapse = "\n")))
+                       list(type = "text", text = paste(text, collapse = "\n"), audit = audit))
     }
     invisible(NULL)
 }
