@@ -1,3 +1,13 @@
+# corteza 0.7.1.88
+
+- Record canonical turn accounting across interactive, room, voice and worker
+  sessions, including errors and interrupts. Link tool decisions, approvals,
+  worker outcomes and monitor verdicts by stable turn and call IDs. Record
+  observational write failures as gaps on recovery without changing execution.
+- Preserve actual CLI usage and route metadata, use null for unknown usage,
+  and mark copied usage as derived from canonical turns. Audit streams remain
+  private and independent of verbosity and history-journal configuration.
+
 # corteza 0.7.1.87
 
 - Add explicit `/job resume <id>` and talker `job_resume` for incomplete local
