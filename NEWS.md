@@ -1,3 +1,15 @@
+# corteza 0.7.1.91
+
+- Capture final provider request bodies and context manifests when llm.api
+  supports request callbacks, including transport retries and fallback usage.
+  Keep the 0.1.9.13 dependency floor and mark unavailable request accounting.
+- Preserve full captured tool output and admitted previews in private,
+  content-addressed payload stores with explicit size/quota omissions. Add
+  redacted readers, payload pins and explicit expiry with a dry-run default.
+- Record auxiliary summaries, reviews and consultations as canonical turns,
+  with parent links and inherited audit settings. Link supervised R captures
+  from separate worker streams and retain known usage on failed worker turns.
+
 # corteza 0.7.1.90
 
 - Create transcripts and traces with owner-only permissions before writing and
