@@ -84,9 +84,12 @@ local({
     links <- Filter(function(x) identical(x$type, "auxiliary_turn"), rows)
     expect_length(links, 1L)
     child <- corteza::audit_read(links[[1L]]$child$stream, FALSE)$records
+    expect_identical(links[[1L]]$child$stream, runtime$active$ref$stream)
+    child <- Filter(function(x) identical(x$turn_id, links[[1L]]$child$turn_id), child)
     expect_identical(child[[1L]]$owner, s$job_owner)
     expect_identical(child[[1L]]$session_key, s$job_key)
-    expect_equal(child[[1L]]$audit_limits$result_bytes, 1234)
+    metadata <- Filter(function(x) identical(x$type, "turn_metadata"), child)[[1L]]
+    expect_equal(metadata$details$audit_limits$result_bytes, 1234)
     expect_identical(tail(child, 1L)[[1L]]$termination$status, "error")
 })
 

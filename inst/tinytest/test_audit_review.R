@@ -1,0 +1,125 @@
+# Optional metadata errors leave the basic turn and terminal record intact.
+local({
+    root <- tempfile("audit-metadata-")
+    s <- corteza::new_session(provider = "openai")
+    s$audit_dir <- root
+    details <- corteza:::.audit_turn_details
+    run <- corteza:::.turn_impl
+    on.exit({
+        utils::assignInNamespace(".audit_turn_details", details, "corteza")
+        utils::assignInNamespace(".turn_impl", run, "corteza")
+        unlink(root, recursive = TRUE)
+    }, add = TRUE)
+    enrichments <- executions <- 0L
+    utils::assignInNamespace(".audit_turn_details", function(...) {
+        enrichments <<- enrichments + 1L
+        stop("fixture pricing lookup failed")
+    }, "corteza")
+    utils::assignInNamespace(".turn_impl", function(...) {
+        executions <<- executions + 1L
+        list(reply = "answer", usage = list(total_tokens = 9),
+            termination = list(status = "done", reason = "reply"))
+    }, "corteza")
+    result <- suppressMessages(corteza::turn("test", s))
+    expect_equal(enrichments, 1L)
+    expect_equal(executions, 1L)
+    expect_identical(result$reply, "answer")
+    rows <- corteza::audit_read(result$audit$stream, FALSE)$records
+    expect_identical(vapply(rows, `[[`, "", "type"), c("turn_start", "turn_metadata", "turn_end"))
+    expect_false(rows[[2L]]$complete)
+    expect_identical(rows[[3L]]$termination$status, "done")
+    expect_equal(rows[[3L]]$usage$total_tokens, 9)
+    expect_false(dir.exists(s$.audit_stream$reservation))
+})
+
+# Repeated auxiliary calls reuse the caller's store, but receive their own
+# turn IDs. The real flush factory shares that writer without sharing history.
+local({
+    root <- tempfile("audit-reuse-")
+    s <- corteza::new_session(provider = "openai", web_search = FALSE)
+    s$audit_dir <- root
+    s$config <- list(memory_flush_prompt = "fixture flush")
+    s$history <- list(list(role = "user", content = "keep caller history"))
+    parent <- corteza:::.audit_turn_begin(s)
+    corteza:::.audit_turn_end(s, parent)
+    calls <- 0L
+    fake <- function(..., request_callback = NULL) {
+        calls <<- calls + 1L
+        if (is.function(request_callback)) {
+            event <- list(request_id = paste0("fixture", calls), attempt_id = paste0("attempt", calls),
+                provider = "openai", requested_model = "fixture")
+            request_callback(c(event, list(phase = "start", serialized_request =
+                '{"model":"fixture","messages":[{"role":"user","content":"fixture"}]}')))
+            request_callback(c(event, list(phase = "end", status = "complete",
+                raw_usage = list(prompt_tokens = 3, completion_tokens = 2))))
+        }
+        list(content = "summary", usage = list(input_tokens = 3, output_tokens = 2))
+    }
+    one <- corteza:::run_review("openai", "fixture", "HEAD", "clean", "diff", fake, s)
+    two <- corteza:::run_review("openai", "fixture", "HEAD", "clean", "diff", fake, s)
+    expect_equal(calls, 2L)
+    expect_identical(one$audit$stream, parent$ref$stream)
+    expect_identical(two$audit$stream, parent$ref$stream)
+    expect_length(unique(c(parent$id, one$audit$turn_id, two$audit$turn_id)), 3L)
+    expect_length(list.files(root, "jsonl$"), 1L)
+    rows <- corteza::audit_read(parent$ref$stream, FALSE)$records
+    starts <- Filter(function(x) identical(x$type, "request_start"), rows)
+    expect_length(starts, 2L)
+    expect_identical(starts[[1L]]$manifest$request, starts[[2L]]$manifest$request)
+    stores <- list.dirs(file.path(root, "payloads"), recursive = FALSE)
+    expect_length(stores, 1L)
+    run <- corteza:::.turn_impl
+    on.exit({
+        utils::assignInNamespace(".turn_impl", run, "corteza")
+        unlink(root, recursive = TRUE)
+    }, add = TRUE)
+    utils::assignInNamespace(".turn_impl", function(prompt, session, ...) {
+        calls <<- calls + 1L
+        session$history <- list()
+        list(reply = "flushed", usage = list(total_tokens = 7),
+            termination = list(status = "done", reason = "reply"))
+    }, "corteza")
+    ctx <- list(session = s, config = s$config, cwd = root)
+    flushed <- corteza:::run_memory_flush(ctx)
+    expect_equal(calls, 3L)
+    expect_identical(flushed$audit$stream, parent$ref$stream)
+    expect_false(flushed$audit$turn_id %in% c(parent$id, one$audit$turn_id, two$audit$turn_id))
+    expect_identical(s$history[[1L]]$content, "keep caller history")
+    expect_length(list.files(root, "jsonl$"), 1L)
+})
+
+local({
+    path <- tempfile("audit-blank-")
+    on.exit(unlink(path), add = TRUE)
+    writeLines(c('{"type":"run_start"}', "", "   ", '{"type":"run_end"}'), path)
+    read <- corteza::audit_read(path)
+    expect_equal(read$n_malformed, 2L)
+    expect_equal(read$malformed_lines, c(2L, 3L))
+    expect_length(read$records, 2L)
+})
+
+local({
+    root <- tempfile("audit-quota-notice-")
+    runtime <- corteza:::.audit_runtime
+    noticed <- runtime$noticed
+    runtime$noticed <- FALSE
+    on.exit({ runtime$noticed <- noticed; unlink(root, recursive = TRUE) }, add = TRUE)
+    s <- new.env(parent = emptyenv())
+    s$audit_dir <- root
+    s$config <- list(audit = list(limits = list(quota_bytes = 2)))
+    a <- corteza:::.audit_turn_begin(s)
+    notices <- character()
+    withCallingHandlers({
+        first <- corteza:::.audit_payload_put(a, "large payload", "request")
+        second <- corteza:::.audit_payload_put(a, "another payload", "request")
+    }, message = function(m) {
+        notices <<- c(notices, conditionMessage(m))
+        invokeRestart("muffleMessage")
+    })
+    expect_identical(first$reason, "quota")
+    expect_identical(second$reason, "quota")
+    expect_length(notices, 1L)
+    expect_true(grepl("quota", notices, fixed = TRUE))
+    rows <- corteza::audit_read(a$ref$stream)$records
+    expect_length(Filter(function(x) identical(x$type, "payload_omitted"), rows), 2L)
+})

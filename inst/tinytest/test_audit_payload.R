@@ -9,7 +9,11 @@ local({
     ref <- corteza:::.audit_payload_put(a, text, "tool_full")
     expect_identical(corteza::audit_payload_read(ref, redact = FALSE), text)
     expect_identical(corteza::audit_payload_read(ref), 'token = "[REDACTED]"')
+    old_time <- Sys.time() - 86400
+    Sys.setFileTime(file.path(ref$store, ref$hash), old_time)
+    unchanged_time <- file.info(file.path(ref$store, ref$hash))$mtime
     expect_identical(corteza:::.audit_payload_put(a, text, "tool_full"), ref)
+    expect_identical(file.info(file.path(ref$store, ref$hash))$mtime, unchanged_time)
     expect_length(list.files(ref$store, "^[a-f0-9]{64}$"), 1L)
     expect_equal(a$payload_bytes, nchar(text, "bytes"))
     if (.Platform$OS.type != "windows") {
@@ -41,7 +45,10 @@ local({
     expect_identical(corteza::audit_payload_expire(ref$store, now = future), ref$hash)
     writeLines("damaged", file.path(ref$store, ref$hash))
     expect_error(corteza::audit_payload_read(ref), "hash mismatch")
-    omitted <- suppressMessages(corteza:::.audit_payload_put(a, text, "context"))
+    # Already captured bytes are not rehashed in the same turn; read still
+    # detects corruption, and the next turn verifies reused blobs again.
+    next_turn <- corteza:::.audit_turn_begin(s)
+    omitted <- suppressMessages(corteza:::.audit_payload_put(next_turn, text, "context"))
     expect_identical(omitted$reason, "capture_failure")
     corteza:::.audit_append(a$state, "fixture", text = text)
     expect_identical(tail(corteza::audit_read(a$state$path)$records, 1L)[[1L]]$text,

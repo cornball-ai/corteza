@@ -1174,9 +1174,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
                 condition = e)),
                                   interrupt = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)))
     .audit_safe(.audit_turn_end(session, audit, result))
-    if (!is.null(audit) && length(audit$request_starts)) {
-        result$usage <- audit$request_usage
+    if (!is.null(audit) && isTRUE(audit$request_seen)) {
         result$usage_coverage <- .audit_request_coverage(audit)
+        if (identical(result$usage_coverage, "complete")) result$usage <- audit$request_usage
     }
     result$audit <- if (!is.null(audit)) audit$ref
     result

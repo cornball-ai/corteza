@@ -101,6 +101,55 @@ local({
     expect_identical(corteza::audit_payload_read(starts[[2L]]$manifest$messages[[3L]], FALSE), body$messages[[3L]])
     expect_length(corteza:::journal_load(s$journal_dir)$segments, 2L)
 
+    # A failed observer write cannot lower the reported usage received by
+    # /spent, jobs and subagent consumers. Coverage describes durable records.
+    writer <- get(".audit_write", asNamespace("corteza"))
+    failed <- 0L
+    replace("corteza", ".audit_write", function(state, record) {
+        if (identical(record$type, "request_end") && failed == 0L) {
+            failed <<- failed + 1L
+            stop("fixture audit write failure")
+        }
+        writer(state, record)
+    })
+    calls <- 0L
+    partial <- suppressMessages(corteza::turn("record failure", s, tools = list(),
+        tool_executor = function(...) corteza:::ok("result")))
+    expect_equal(failed, 1L)
+    expect_equal(calls, 2L)
+    expect_equal(partial$usage$total_tokens, 20)
+    expect_identical(partial$usage_coverage, "partial")
+    rows <- Filter(function(x) identical(x$turn_id, partial$audit$turn_id),
+        corteza::audit_read(partial$audit$stream, FALSE)$records)
+    end <- select("turn_end")[[1L]]
+    expect_equal(end$request_usage$total_tokens, 10)
+    expect_equal(end$reported_usage$total_tokens, 20)
+    expect_equal(end$usage$total_tokens, 20)
+    expect_identical(end$usage_basis, "reported")
+    expect_length(select("request_end"), 1L)
+    utils::assignInNamespace(".audit_write", writer, "corteza")
+
+    manifest <- get(".audit_request_manifest", asNamespace("corteza"))
+    failed <- 0L
+    replace("corteza", ".audit_request_manifest", function(...) {
+        if (failed == 0L) {
+            failed <<- failed + 1L
+            stop("fixture manifest failure")
+        }
+        manifest(...)
+    })
+    calls <- 0L
+    partial <- suppressMessages(corteza::turn("manifest failure", s, tools = list(),
+        tool_executor = function(...) corteza:::ok("result")))
+    rows <- Filter(function(x) identical(x$turn_id, partial$audit$turn_id),
+        corteza::audit_read(partial$audit$stream, FALSE)$records)
+    expect_equal(failed, 1L)
+    expect_equal(calls, 2L)
+    expect_length(select("request_start"), 1L)
+    expect_identical(partial$usage_coverage, "partial")
+    expect_equal(partial$usage$total_tokens, 20)
+    utils::assignInNamespace(".audit_request_manifest", manifest, "corteza")
+
     # Earlier requests served by Anthropic remain counted after an OpenAI
     # fallback. Its 429 attempt is unknown usage, never fabricated zero spend.
     corteza:::.fallback_reset()

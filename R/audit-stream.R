@@ -13,12 +13,12 @@
             format(.audit_runtime$counter, scientific = FALSE, trim = TRUE))
 }
 
-.audit_notice <- function() {
+.audit_notice <- function(text = "Corteza audit recording is failing; work continues with incomplete records.") {
     if (isTRUE(.audit_runtime$noticed)) {
         return(invisible(NULL))
     }
     .audit_runtime$noticed <- TRUE
-    tryCatch(message("Corteza audit recording is failing; work continues with incomplete records."),
+    tryCatch(message(text),
              error = function(e) NULL)
     invisible(NULL)
 }
@@ -109,6 +109,11 @@
     }
     con <- file(state$path, "ab")
     tryCatch({ writeBin(bytes, con) ; flush(con) }, finally = close(con))
+    # Once bytes are committed, the stream file guards the identity. Keep a
+    # reservation only when a writer has not yet completed its first write.
+    if (!isTRUE(state$released)) {
+        state$released <- unlink(state$reservation, recursive = TRUE) == 0L
+    }
     TRUE
 }
 

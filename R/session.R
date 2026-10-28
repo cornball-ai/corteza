@@ -449,6 +449,7 @@ transcript_append <- function(session, role, content, provider = NULL,
         msg$provider <- provider %||% session$provider %||% "corteza"
         msg$model <- model %||% session$model %||% "unknown"
         msg["usage"] <- list(usage)
+        msg$usage_format <- "llm.api"
         msg$usage_source <- "derived"
         if (is.null(audit)) {
             msg$usage_turns <- list()

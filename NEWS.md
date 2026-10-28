@@ -1,5 +1,16 @@
 # corteza 0.7.1.91
 
+- Preserve the reported `turn()$usage` total when request records are partial;
+  terminal records retain both totals and identify the canonical choice.
+  Complete request coverage returns normalized input/output/total token,
+  cache and cost fields. Transcript usage is explicitly tagged `llm.api`;
+  its pi-style envelope does not imply pi usage field names.
+- Reuse the caller's audit writer for in-process summaries, reviews and memory
+  flushes. Release writer reservation directories after the first write, notify
+  once on payload-quota exhaustion, and keep basic turn records when optional
+  metadata enrichment fails. Coverage counts successfully written request records.
+- `auto_log_read()` now counts blank lines as malformed and reports their
+  positions rather than silently ignoring them.
 - Capture final provider request bodies and context manifests when llm.api
   supports request callbacks, including transport retries and fallback usage.
   Keep the 0.1.9.13 dependency floor and mark unavailable request accounting.

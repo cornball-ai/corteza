@@ -31,6 +31,8 @@
     ref <- list(store = store, hash = hash, bytes = size, format = format,
                 status = "stored")
     omit <- function(reason) {
+        if (identical(reason, "quota")) .audit_notice(
+            "Corteza audit payload quota reached; work continues with incomplete payload records.")
         ref$status <- "omitted"
         ref$reason <- reason
         .audit_append(audit$state, "payload_omitted", turn_id = audit$id,
@@ -66,10 +68,10 @@
             tryCatch(writeBin(bytes, con), finally = close(con))
             if (!file.rename(tmp, path)) stop("Could not commit audit payload")
             audit$state$payload_used <- used + size
-        } else if (!identical(digest::digest(file = path, algo = "sha256"), hash)) {
+        } else if (!already && !identical(digest::digest(file = path, algo = "sha256"), hash)) {
             stop("Existing audit payload failed its content hash")
         }
-        Sys.setFileTime(path, Sys.time())
+        if (!already) Sys.setFileTime(path, Sys.time())
         if (!already) {
             audit$payload_hashes <- c(audit$payload_hashes %||% character(), hash)
             audit$payload_bytes <- (audit$payload_bytes %||% 0) + size

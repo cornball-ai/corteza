@@ -12,7 +12,11 @@ Corteza records model turns, tool decisions, provider requests and room
 deliveries as linked events. Each writer owns its JSONL stream. A warm worker
 keeps its stream across jobs, with the job ID recorded on each applicable
 event. Child processes write separate streams and carry parent turn/call
-references. There is no global sequence and no shared-file append protocol.
+references. In-process summaries, reviews, refinements and memory flushes reuse
+their caller's writer and payload store, with separate turn IDs. There is no
+global sequence and no shared-file append protocol. The initial reservation
+directory is removed after the first successful write; the stream file then
+guards that identity. A crash before the first write can leave a reservation.
 
 The history journal remains the provider-native conversation record. Audit
 streams live in its `audit/` directory, or in the package data `audit/` directory
@@ -28,10 +32,12 @@ returns records plus malformed-line counts/locations, `torn_tail`,
 `redact = FALSE` only when an exact restricted view is needed. Additional known
 values can be supplied in `secrets`. Pattern-based filtering cannot identify
 every credential.
+Blank lines count as malformed and retain their original line positions.
 
 | Event | Meaning |
 |---|---|
 | `turn_start`, `turn_end` | Canonical model work, including error/interruption endings |
+| `turn_metadata` | Optional settings, versions, pricing and journal details; an enrichment failure leaves the basic start/end records intact |
 | `tool_call`, `policy`, `tool_event` | A call ID exists before allow/ask/deny; decisions and execution join by it |
 | `request_start`, `request_end`, `request_error` | Logical provider request and individual transport attempts |
 | `tool_payload`, `tool_capture_child` | Full capture and admitted preview, including supervised evaluator output |
@@ -44,6 +50,10 @@ and transcripts preserve their compatibility usage fields and mark them
 `usage_source: derived`, with originating turn references. Provider request
 events are a `breakdown`, not another charge to add. Auxiliary summaries and
 consultations own their own canonical turns, linked to their parent.
+Known transcript usage uses llm.api field names (`input_tokens`,
+`output_tokens`, `total_tokens`, cache counts and `cost`) and is explicitly
+tagged `usage_format: llm.api`. The surrounding transcript follows the pi-style
+message envelope; the usage block is not the pi `input`/`cacheRead` schema.
 
 With llm.api 0.1.9.15, usage comes from observed requests, including final
 tool-less replies and partial requests before a fallback. Request records keep
@@ -53,6 +63,12 @@ missing usage is not invented as zero. Costs are estimates tied to the llm.api
 version and its bundled table/calculation fingerprints. Earlier llm.api remains
 supported with per-request coverage `unavailable`. An instrumented client that
 emits no requests is marked `unobserved`, as happens with some test adapters.
+Only complete, successfully written request coverage replaces `turn()$usage`
+with the normalized request sum. With partial coverage the reported total is
+preserved for `/spent`, jobs and other callers. `turn_end` stores `reported_usage`
+and `request_usage` for reconciliation and `usage_basis` identifies its canonical
+`usage`. These alternate totals must not be added together. An escaping error
+without a reported total can retain the known request sum or checkpoint usage.
 
 A missing terminal record means unresolved completion. It does not establish
 that no tool effect or model charge occurred. A killed worker's ordinary job
@@ -90,6 +106,10 @@ writer's payload store. Set `audit.limits.result_bytes`, `turn_bytes` and
 quotas are not a machine-wide bound across restarts. Supervised captures charge
 their bytes to the parent turn's remaining allowance. Omission reasons are
 `per_result`, `per_turn`, `quota` or `capture_failure`.
+The first quota omission uses the same once-per-process notice as write
+failures. Payloads already captured in the current turn skip a second on-disk
+hash check and mtime update; reads always verify their content hash, and reuse
+in another turn verifies it again.
 
 `audit_payload_pin(ref)` exempts a payload from expiry. Pins still count toward
 quota, so a full pinned store causes future capture omissions. Explicit

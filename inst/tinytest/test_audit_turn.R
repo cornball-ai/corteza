@@ -153,6 +153,7 @@ local({
     expect_true(grepl('"usage":null', tail(readLines(path), 2)[[1]], fixed = TRUE))
     expect_null(tail(rows, 2)[[1]]$usage)
     expect_equal(tail(rows, 1)[[1]]$usage$input_tokens, 7)
+    expect_identical(tail(rows, 1)[[1]]$usage_format, "llm.api")
     s <- new.env(parent = emptyenv())
     s$journal_enabled <- FALSE
     s$journal_dir <- file.path(root, "history")

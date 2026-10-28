@@ -34,39 +34,52 @@
 
 .audit_request_callback <- function(session, audit) {
     if (is.null(audit)) return(NULL)
-    function(event) .audit_safe({
-        phase <- event$phase
-        # Attribution comes from the adapter, including fallback providers.
-        # The body is stored once by hash, never copied into the event stream.
-        text <- event$serialized_request
-        event$serialized_request <- NULL
-        event$request_ts <- event$ts
-        if (identical(phase, "start")) {
-            audit$request_ids <- c(audit$request_ids %||% character(),
-                                   event$request_id)
-            audit$request_starts <- c(audit$request_starts %||% character(), event$attempt_id)
-            event$manifest <- .audit_request_manifest(audit, text)
-            event$journal <- .audit_journal_position(session)
-        } else {
-            audit$request_ends <- c(audit$request_ends %||% character(), event$attempt_id)
-            usage <- .audit_usage(event$raw_usage, event$provider,
-                                  event$reported_model %||% event$requested_model)
-            event$usage <- usage
-            audit$request_usage <- .turn_add_usage(audit$request_usage, usage)
-            if (is.null(usage$input_tokens) || is.null(usage$output_tokens) ||
+    function(event) {
+        audit$request_seen <- TRUE
+        recorded <- .audit_safe({
+            phase <- event$phase
+            # Attribution comes from the adapter, including fallback providers.
+            # The body is stored once by hash, never copied into the event stream.
+            text <- event$serialized_request
+            event$serialized_request <- NULL
+            event$request_ts <- event$ts
+            if (identical(phase, "start")) {
+                event$manifest <- .audit_request_manifest(audit, text)
+                event$journal <- .audit_journal_position(session)
+            } else {
+                usage <- .audit_usage(event$raw_usage, event$provider,
+                                      event$reported_model %||% event$requested_model)
+                event$usage <- usage
+                if (is.null(usage$input_tokens) ||
+                                is.null(usage$output_tokens) ||
                                 !identical(event$status, "complete")) audit$request_partial <- TRUE
-        }
-        do.call(.audit_append, c(list(state = audit$state, type = paste0("request_", phase),
-                                      turn_id = audit$id, job_id = audit$origin$job_id, usage_source = "breakdown"),
-                                 event[setdiff(names(event), c("type", "version", "ts"))]))
-    })
+            }
+            written <- do.call(.audit_append, c(list(state = audit$state,
+                        type = paste0("request_", phase), turn_id = audit$id,
+                        job_id = audit$origin$job_id,
+                        usage_source = "breakdown"),
+                    event[setdiff(names(event), c("type", "version", "ts"))]))
+            if (isTRUE(written)) {
+                audit$request_ids <- c(audit$request_ids %||% character(), event$request_id)
+                if (identical(phase, "start")) {
+                    audit$request_starts <- c(audit$request_starts %||% character(), event$attempt_id)
+                } else {
+                    audit$request_ends <- c(audit$request_ends %||% character(), event$attempt_id)
+                    audit$request_usage <- .turn_add_usage(audit$request_usage, usage)
+                }
+            }
+            written
+        })
+        if (!isTRUE(recorded)) audit$request_partial <- TRUE
+        invisible(NULL)
+    }
 }
 
 .audit_request_coverage <- function(audit) {
     if (!isTRUE(audit$request_supported)) return("unavailable")
+    if (isTRUE(audit$request_partial)) return("partial")
     if (!length(audit$request_starts)) return("unobserved")
-    if (isTRUE(audit$request_partial) ||
-        !setequal(audit$request_starts, audit$request_ends)) return("partial")
+    if (!setequal(audit$request_starts, audit$request_ends)) return("partial")
     "complete"
 }
 

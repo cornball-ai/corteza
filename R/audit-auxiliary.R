@@ -39,6 +39,14 @@
     s$job_owner <- context$identity$owner
     s$job_key <- context$identity$session_key
     s$sessionId <- context$identity$session_id
+    .audit_safe({
+        writer <- if (is.environment(session)) .audit_state(session) else parent$state
+        if (!is.null(writer) && identical(writer$pid, Sys.getpid()) &&
+                is.null(root)) {
+            s$audit_dir <- writer$root
+            s$.audit_stream <- writer
+        }
+    })
     audit <- .audit_safe(.audit_turn_begin(s))
     s$.audit_turn <- audit
     .audit_runtime$active <- audit
@@ -75,7 +83,8 @@
                                    reason = result$finish_reason %||% "reply"),
                 route = list(provider = args$provider, model = args$model))))
     if (!is.null(audit)) {
-        if (length(audit$request_starts)) result$usage <- audit$request_usage
+        result$usage_coverage <- .audit_request_coverage(audit)
+        if (identical(result$usage_coverage, "complete")) result$usage <- audit$request_usage
         result$audit <- audit$ref
         result$usage_source <- "derived"
     }
