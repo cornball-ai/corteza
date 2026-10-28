@@ -1007,9 +1007,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         ctx$last_turn_status <- "ok"
         result <- tryCatch(
                            .audit_with_origin(ctx$session,
-                               list(kind = ctx$session$channel %||% "cli",
-                                   auto_run_id = ctx$session$auto_run_id),
-                               ctx$turn_fn(prompt, ctx$session)),
+                list(kind = ctx$session$channel %||% "cli",
+                     auto_run_id = ctx$session$auto_run_id),
+                ctx$turn_fn(prompt, ctx$session)),
                            corteza_user_deny = function(c) {
             ctx$last_turn_status <- "denied"
             # User picked "3. Deny" at the approval prompt. Abort the

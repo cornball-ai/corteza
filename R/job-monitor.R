@@ -148,9 +148,9 @@ job_monitor_ask <- function(session, q) {
         get(".job_monitor_child_ask", envir = asNamespace("corteza"),
             inherits = FALSE)(prompt, scope, origin)
     }, list(prompt = job_monitor_question(q), scope = q$scope %||% "",
-        origin = list(kind = "approval", role = "monitor", job_id = q$job,
-            approval_request_id = q$request_id,
-            parent_turn = q[["req"]]$audit_parent %||% session$.audit_turn$ref)))
+            origin = list(kind = "approval", role = "monitor", job_id = q$job,
+                          approval_request_id = q$request_id,
+                          parent_turn = q[["req"]]$audit_parent %||% session$.audit_turn$ref)))
     session$.job_monitor_pending <- list(q = q, asked_at = Sys.time())
     job_worker_note(session, "monitor")
     invisible(TRUE)
@@ -175,9 +175,10 @@ job_monitor_poll <- function(session, timeout = supervisor_config()$timeout) {
         v$audit <- res$audit
         v <- c(v, .audit_derived(res$audit))
         .audit_safe(.audit_append(.audit_state(session), "monitor_verdict",
-            approval_request_id = p$q$request_id, job_id = p$q$job,
-            verdict = v$verdict, usage = res$usage,
-            usage_source = "derived", usage_turns = v$usage_turns))
+                                  approval_request_id = p$q$request_id,
+                                  job_id = p$q$job, verdict = v$verdict,
+                                  usage = res$usage, usage_source = "derived",
+                                  usage_turns = v$usage_turns))
         v
     }
     escalate <- function(why) {
@@ -208,7 +209,7 @@ job_monitor_poll <- function(session, timeout = supervisor_config()$timeout) {
         return(escalate(paste("the monitor failed:", res$error)))
     }
     verdict <- parse_monitor_verdict(res$reply,
-        allowed = .MONITOR_VERDICTS_APPROVAL, request_id = p$q$request_id)
+                                     allowed = .MONITOR_VERDICTS_APPROVAL, request_id = p$q$request_id)
     done(verdict)
 }
 
@@ -266,11 +267,11 @@ job_monitor_ask_wait <- function(session, q,
     function(prompt) subagent_turn_prompt(prompt)
     previous_audit <- if (is.environment(session)) session$last_turn_audit
     res <- tryCatch(if (is.environment(session)) {
-        .audit_with_origin(session, origin %||% list(kind = "approval", role = "monitor"),
-            run(prompt))
-    } else run(prompt), error = function(e) {
+            .audit_with_origin(session, origin %||% list(kind = "approval", role = "monitor"),
+                               run(prompt))
+        } else run(prompt), error = function(e) {
         list(error = conditionMessage(e), audit = if (is.environment(session) &&
-            !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
+                !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
     list(reply = res$reply, usage = res$usage, error = res$error, audit = res$audit)
 }

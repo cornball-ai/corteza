@@ -2103,7 +2103,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         if (tryCatch(.delegation_route(m, cfg, chat, sessions), error = function(e) {
             message("delegation input: ", conditionMessage(e))
             !is.null(.delegation_parse(m$body))
-        })) next
+        })) {
+            next
+        }
         if (tryCatch(.remote_bot_route(m, cfg), error = function(e) {
             message("remote control input: ", conditionMessage(e))
             TRUE
@@ -2193,7 +2195,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
         media <- bot_message_media(chat_now(), m, ingest_body,
-            session$provider, cfg = cfg)
+                                   session$provider, cfg = cfg)
         ingest_content <- media$content
         ingest_body <- media$text
         # Ledger the incoming event once, before the gate, so both the
@@ -2465,7 +2467,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             request_sender <- sender
             request_event <- m$id
             function(id) bot_job_resume(sessions, request_session, cfg,
-                request_sender, request_event, id)
+                                        request_sender, request_event, id)
         })
         # What was asked, for a monitor ruling on a call this turn makes
         # itself (bot_supervisor_ask()). The message id marks where one
@@ -2495,8 +2497,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         .room_media_bind(session, cfg, chat_now, sender, m$channel, m$thread)
         reply <- tryCatch(rooms_with_activity(session, chat, m$channel, function() {
             .audit_with_origin(session, list(kind = "matrix", event_id = m$id,
-                room = m$channel, thread = m$thread, requester = sender),
-                bot_run_turn_in_cwd(ingest_content, session))
+                    room = m$channel, thread = m$thread, requester = sender),
+                               bot_run_turn_in_cwd(ingest_content, session))
         }, cfg = cfg, thread = m$thread), finally = {
             session$job_handoff <- NULL
             session$job_resume <- NULL

@@ -114,7 +114,7 @@ voice_room_session <- function(state, room_id) {
     s$on_delta <- on_delta
     on.exit(s$on_delta <- NULL, add = TRUE)
     .audit_with_origin(s, list(kind = "voice", room = room_id),
-        bot_run_turn_in_cwd(text, s))
+                       bot_run_turn_in_cwd(text, s))
 }
 
 # One turn of the voice brain, for any media backend. `send(delta)` is

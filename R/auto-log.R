@@ -101,8 +101,8 @@ auto_log_append <- function(path, type, ...) {
 auto_log_read <- function(path) {
     if (!file.exists(path)) {
         return(list(start = NULL, records = list(), end = NULL,
-            n_malformed = 0L, malformed_lines = integer(), torn_tail = FALSE,
-            interior_damage = FALSE))
+                    n_malformed = 0L, malformed_lines = integer(),
+                    torn_tail = FALSE, interior_damage = FALSE))
     }
     lines <- readLines(path, warn = FALSE)
     recs <- lapply(lines, function(l) {
@@ -110,7 +110,7 @@ auto_log_read <- function(path) {
                  error = function(e) NULL)
     })
     valid <- vapply(recs, function(r) is.list(r) && is.character(r$type) &&
-        length(r$type) == 1L && !is.na(r$type), logical(1))
+                    length(r$type) == 1L && !is.na(r$type), logical(1))
     malformed <- which(!valid)
     recs <- recs[valid]
     types <- vapply(recs, function(r) r$type %||% "", character(1))
@@ -124,7 +124,7 @@ auto_log_read <- function(path) {
             recs[[utils::tail(which(types == "run_end"), 1L)]]
         } else {
             NULL
-         }, n_malformed = length(malformed), malformed_lines = malformed,
+        }, n_malformed = length(malformed), malformed_lines = malformed,
          torn_tail = length(lines) %in% malformed,
          interior_damage = any(malformed < length(lines)))
 }

@@ -429,8 +429,8 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
-                              agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL,
-                              audit = NULL) {
+                              agent_id = DEFAULT_AGENT_ID,
+                              auto_run_id = NULL, audit = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -455,7 +455,11 @@ transcript_append <- function(session, role, content, provider = NULL,
         msg$model <- model %||% session$model %||% "unknown"
         msg["usage"] <- list(usage)
         msg$usage_source <- "derived"
-        msg$usage_turns <- if (is.null(audit)) list() else list(audit)
+        if (is.null(audit)) {
+            msg$usage_turns <- list()
+        } else {
+            msg$usage_turns <- list(audit)
+        }
         msg$timestamp <- as.numeric(Sys.time()) * 1000
     }
 
@@ -656,7 +660,9 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
     if (!is.null(call_id)) {
         entry$call_id <- call_id
     }
-    if (!is.null(turn_id)) entry$turn_id <- turn_id
+    if (!is.null(turn_id)) {
+        entry$turn_id <- turn_id
+    }
 
     json <- jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
     cat(json, "\n", file = path, append = TRUE)

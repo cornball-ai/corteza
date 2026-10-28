@@ -200,8 +200,8 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                plan_mode = FALSE, web_search = NULL,
                                allowed_paths = NULL, channel = "console",
                                reasoning_effort = NULL,
-                               thinking_budget_tokens = NULL, thinking = NULL,
-                               context_edit = NULL) {
+                               thinking_budget_tokens = NULL,
+                               thinking = NULL, context_edit = NULL) {
     if (!is.null(allowed_paths)) {
         # Process-level and read by tool_config() (R/tool-impl.R). Safe
         # to set globally here: this runs inside the child's own R
@@ -520,7 +520,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
     if (!.context_edit_pure(.subagent_state$session) &&
         isTRUE(arc_cfg$enabled) && depth < cap &&
         !journal_rewritten_since(.subagent_state$session, mark,
-                                  ignore = c("context_index", "context_edit_rejected"))) {
+                                 ignore = c("context_index", "context_edit_rejected"))) {
         slice <- journal_turn_slice(.subagent_state$session, mark, pre_len)
         if (length(slice) > 0L) {
             max_turns_hit <- identical(result$termination$reason, "max_turns")
@@ -902,7 +902,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                               web_search = child_web_search,
                               allowed_paths = child_allowed_paths,
                               context_edit = .context_edit_config(config,
-                                  parent_session$context_edit %||% parent_session$config$context_edit))
+                    parent_session$context_edit %||% parent_session$config$context_edit))
         ),
              error = function(e) {
         try(session$close(), silent = TRUE)
@@ -920,7 +920,11 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                      session_key = session_key,
                                      session = session,
                                      task = task,
-                                     audit_role = if (identical(preset, "monitor")) "monitor" else "subagent",
+                                     audit_role = if (identical(preset, "monitor")) {
+            "monitor"
+        } else {
+            "subagent"
+        },
                                      tools = tools,
                                      model = spawn_model,
                                      provider = spawn_provider,
@@ -1053,14 +1057,14 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
     tryCatch(
              info$session$call(
                                function(p, rn, rp, origin) {
-            ns <- asNamespace("corteza")
-            get(".audit_with_origin", ns)(get(".subagent_state", ns)$session, origin,
-                corteza::subagent_turn_prompt(p, rn, rp))
-        },
+        ns <- asNamespace("corteza")
+        get(".audit_with_origin", ns)(get(".subagent_state", ns)$session, origin,
+                               corteza::subagent_turn_prompt(p, rn, rp))
+    },
                                list(p = prompt, rn = return_name, rp = report,
-                                   origin = list(kind = "subagent", subagent_id = canonical,
-                                       role = info$audit_role %||% "subagent",
-                                       parent_turn = .audit_runtime$active$ref))
+                                    origin = list(kind = "subagent", subagent_id = canonical,
+                    role = info$audit_role %||% "subagent",
+                    parent_turn = .audit_runtime$active$ref))
         ),
              error = function(e) {
         stop("Subagent query failed to start: ",
@@ -1137,7 +1141,8 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
         info <- subagent_accumulate_usage(info, msg$result$usage)
         info$usage_source <- "derived"
         if (!is.null(msg$result$audit)) {
-            info$usage_turns <- c(info$usage_turns %||% list(), list(msg$result$audit))
+            info$usage_turns <- c(info$usage_turns %||% list(),
+                                  list(msg$result$audit))
         }
     }
     .subagent_registry[[canonical]] <- info

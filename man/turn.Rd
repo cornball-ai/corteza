@@ -23,7 +23,8 @@ A list with \code{reply} (character), \code{session} (the
   updated session environment; also mutated in place), \code{route}
   (the actual model/provider and fallback credential mode), and
   \code{termination} (status \code{done}, \code{incomplete}, or
-  \code{cancelled}, with a machine-readable reason).
+  \code{cancelled}, with a machine-readable reason), and \code{audit}
+  (the stream path and canonical turn ID, or NULL when recording is disabled).
 }
 \description{
 Sends \code{prompt} to the configured LLM with tool use enabled. Every

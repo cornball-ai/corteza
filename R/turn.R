@@ -556,8 +556,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     "..." %in% executor_formals
     execute <- function(name, args, context) {
         if (identical(name, "send_room_file")) {
-            if (session_dry_run()) return(ok("Dry run: would send a file to this conversation."))
-            if (!is.function(session$send_room_file)) return(err("Room file sending is unavailable"))
+            if (session_dry_run()) {
+                return(ok("Dry run: would send a file to this conversation."))
+            }
+            if (!is.function(session$send_room_file)) {
+                return(err("Room file sending is unavailable"))
+            }
             return(do.call(session$send_room_file, args))
         }
         if (identical(name, "ask_room")) {
@@ -570,8 +574,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             return(do.call(session$ask_room, args))
         }
         if (identical(name, "delegate_to")) {
-            if (session_dry_run()) return(ok("Dry run: would delegate this task."))
-            if (!is.function(session$delegate_to)) return(err("No remote delegates configured"))
+            if (session_dry_run()) {
+                return(ok("Dry run: would delegate this task."))
+            }
+            if (!is.function(session$delegate_to)) {
+                return(err("No remote delegates configured"))
+            }
             return(do.call(session$delegate_to, args))
         }
         if (executor_wants_context) {
@@ -587,8 +595,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (!is.null(session$job_allowed_tools) &&
             !internal_name %in% session$job_allowed_tools) {
             .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
-                outcome = "deny", decision = list(approval = "deny", reason = "job_tool_scope"),
-                success = FALSE)))
+                        outcome = "deny", decision = list(approval = "deny", reason = "job_tool_scope"),
+                        success = FALSE)))
             return("[job policy denied: tool is outside this delegator's allowed tools]")
         }
         call <- list(
@@ -770,7 +778,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             )
             action <- gate$action %||% "escalate"
             .audit_safe(.audit_tool_event(session, list(call = call,
-                outcome = "gate", decision = gate)))
+                        outcome = "gate", decision = gate)))
             if (identical(action, "deny")) {
                 # Policy's verdict, surfaced through the gate purely so
                 # it was recorded; same message as the attended branch.
@@ -815,7 +823,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                                  error = function(e) FALSE
             )
             .audit_safe(.audit_tool_event(session, list(call = call,
-                outcome = "approval", decision = list(approved = isTRUE(approved)))))
+                        outcome = "approval", decision = list(approved = isTRUE(approved)))))
             if (!isTRUE(approved)) {
                 return(outcome_text(
                                     "declined",
@@ -1152,16 +1160,19 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     previous <- if (is.environment(session)) session$.audit_turn
     previous_active <- .audit_runtime$active
     .audit_runtime$active <- audit
-    if (is.environment(session)) session$.audit_turn <- audit
+    if (is.environment(session)) {
+        session$.audit_turn <- audit
+    }
     on.exit({
         .audit_safe(.audit_turn_end(session, audit))
         if (is.environment(session)) session$.audit_turn <- previous
         .audit_runtime$active <- previous_active
     }, add = TRUE)
     result <- withCallingHandlers(
-        .turn_impl(prompt, session, tool_executor, tools),
-        error = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)),
-        interrupt = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)))
+                                  .turn_impl(prompt, session, tool_executor, tools),
+                                  error = function(e) .audit_safe(.audit_turn_end(session, audit,
+                condition = e)),
+                                  interrupt = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)))
     .audit_safe(.audit_turn_end(session, audit, result))
     result$audit <- if (!is.null(audit)) audit$ref
     result
@@ -1365,8 +1376,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         if (!is.null(audit)) .audit_append(audit$state, "turn_config",
             turn_id = audit$id, job_id = audit$origin$job_id,
             settings = agent_args[intersect(names(agent_args), c("provider", "model",
-                "max_turns", "max_tokens", "reasoning_effort", "thinking_budget_tokens",
-                "thinking", "cache", "web_search"))],
+                        "max_turns", "max_tokens", "reasoning_effort", "thinking_budget_tokens",
+                        "thinking", "cache", "web_search"))],
             system_hash = digest::digest(.history_json(system), algo = "sha256", serialize = FALSE),
             tools_hash = digest::digest(.history_json(tools), algo = "sha256", serialize = FALSE))
     })
