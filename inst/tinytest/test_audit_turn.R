@@ -46,7 +46,7 @@ local({
     answer <- corteza:::.audit_with_origin(s, list(kind = "matrix", event_id = "fixture-event"),
         corteza::turn("test", s, tools = list(), tool_executor = function(...) {
             executions <<- executions + 1L
-            "result"
+            corteza:::ok("result")
         }))
     expect_identical(.Random.seed, seed)
     expect_equal(requests, 2L)

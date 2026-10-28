@@ -270,7 +270,9 @@ job_monitor_ask_wait <- function(session, q,
             .audit_with_origin(session, origin %||% list(kind = "approval", role = "monitor"),
                                run(prompt))
         } else run(prompt), error = function(e) {
-        list(error = conditionMessage(e), audit = if (is.environment(session) &&
+        list(error = conditionMessage(e), usage = if (is.environment(session) &&
+                !identical(session$last_turn_audit, previous_audit)) session$last_turn_usage,
+             audit = if (is.environment(session) &&
                 !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
     list(reply = res$reply, usage = res$usage, error = res$error, audit = res$audit)

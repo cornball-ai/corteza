@@ -350,7 +350,7 @@ format_doctor_report <- function(cwd, session, provider, display_model,
 #' to bypass the network round-trip.
 #' @noRd
 run_review <- function(provider, model, diff_target, diff_status, diff_text,
-                       chat_fn = llm.api::chat) {
+                       chat_fn = llm.api::chat, session = NULL) {
     review_prompt <- paste(
                            "Review the current git changes.",
                            "Focus on bugs, behavioral regressions, risky assumptions, and missing tests.",
@@ -368,7 +368,7 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text,
     )
 
     tryCatch({
-        chat_fn(
+        .audit_model_call(chat_fn, list(
                 prompt = review_prompt,
                 provider = provider,
                 model = resolve_provider_model(provider, model),
@@ -377,7 +377,7 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text,
                                "Findings must come first and should prioritize correctness over style."
             ),
                 temperature = preferred_chat_temperature(provider, 0.1)
-        )
+        ), "review", session = session)
     }, error = function(e) e)
 }
 
@@ -428,13 +428,13 @@ do_compact <- function(session, provider, model, chat_fn = llm.api::chat,
                               .compact_prompt, conv_text)
 
     result <- tryCatch({
-        chat_fn(
+        .audit_model_call(chat_fn, list(
                 prompt = summary_prompt,
                 provider = provider,
                 model = resolve_provider_model(provider, model),
                 system = "You are a helpful assistant that creates concise conversation summaries.",
                 temperature = preferred_chat_temperature(provider, 0.3)
-        )
+        ), "manual_compaction", session = if (is.environment(session)) session else NULL)
     }, error = function(e) {
         emit(sprintf("Compaction failed: %s\n", conditionMessage(e)))
         NULL

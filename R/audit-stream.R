@@ -46,7 +46,11 @@
         isFALSE(session$config$audit$enabled)) {
         return(NULL)
     }
-    root <- .audit_root(session)
+    root <- path.expand(.audit_root(session))
+    if (!startsWith(root, "/") && !startsWith(root, "\\\\") && !grepl("^[A-Za-z]:", root)) {
+        root <- file.path(getwd(), root)
+    }
+    root <- normalizePath(root, winslash = "/", mustWork = FALSE)
     old <- session$.audit_stream
     if (!is.null(old) && identical(old$root, root) &&
         identical(old$pid, Sys.getpid())) {

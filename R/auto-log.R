@@ -102,7 +102,7 @@ auto_log_read <- function(path) {
     if (!file.exists(path)) {
         return(list(start = NULL, records = list(), end = NULL,
                     n_malformed = 0L, malformed_lines = integer(),
-                    torn_tail = FALSE, interior_damage = FALSE))
+                    torn_tail = FALSE, malformed_tail = FALSE, interior_damage = FALSE))
     }
     lines <- readLines(path, warn = FALSE)
     recs <- lapply(lines, function(l) {
@@ -112,6 +112,16 @@ auto_log_read <- function(path) {
     valid <- vapply(recs, function(r) is.list(r) && is.character(r$type) &&
                     length(r$type) == 1L && !is.na(r$type), logical(1))
     malformed <- which(!valid)
+    malformed_tail <- length(lines) %in% malformed
+    torn_tail <- FALSE
+    if (malformed_tail) {
+        con <- file(path, "rb")
+        last <- tryCatch({
+            seek(con, where = file.info(path)$size - 1, origin = "start")
+            readBin(con, "raw", 1L)
+        }, finally = close(con))
+        torn_tail <- !identical(last, charToRaw("\n"))
+    }
     recs <- recs[valid]
     types <- vapply(recs, function(r) r$type %||% "", character(1))
     list(start = if (any(types == "run_start")) {
@@ -125,6 +135,6 @@ auto_log_read <- function(path) {
         } else {
             NULL
         }, n_malformed = length(malformed), malformed_lines = malformed,
-         torn_tail = length(lines) %in% malformed,
+         torn_tail = torn_tail, malformed_tail = malformed_tail,
          interior_damage = any(malformed < length(lines)))
 }

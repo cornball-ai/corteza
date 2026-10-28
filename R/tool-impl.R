@@ -766,6 +766,8 @@ tool_run_r <- function(code, envir = globalenv()) {
         outcome$printed
     }
     text <- paste(c(streams, text), collapse = "\n")
+    .audit_safe(.audit_tool_payload(.audit_runtime$active,
+        paste(c(streams, outcome$printed), collapse = "\n"), text, "run_r", stage = "render"))
 
     if (isTRUE(capture_workspace)) {
         # Auto-capture new bindings into the workspace. Hidden names

@@ -153,9 +153,9 @@ run_refine <- function(ctx, args = character()) {
                     sep = "\n")
     cat("Reviewing the conversation for durable lessons...\n")
     resp <- tryCatch(
-                     llm.api::chat(prompt = prompt, system = .REFINE_SYSTEM,
+                     .audit_model_call(llm.api::chat, list(prompt = prompt, system = .REFINE_SYSTEM,
                                    model = .resolve_model(session),
-                                   provider = session$provider),
+                                   provider = session$provider), "refinement", session = session),
                      error = function(e) {
         cat("Refine pass failed:", conditionMessage(e), "\n")
         NULL

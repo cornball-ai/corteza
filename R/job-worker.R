@@ -504,7 +504,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                     parent_turn = job$origin$audit_parent, requester = job$requester), run(task))
         } else run(task)
     }, error = function(e) {
-        list(error = conditionMessage(e), audit = if (is.environment(session) &&
+        list(error = conditionMessage(e), usage = if (is.environment(session) &&
+                !identical(session$last_turn_audit, previous_audit)) session$last_turn_usage,
+             audit = if (is.environment(session) &&
                 !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
     resume <- if (identical(res$termination$status, "incomplete")) {

@@ -1,6 +1,10 @@
 # tinyrox says don't edit this manually, but it can't stop you!
 
 export(add_observer)
+export(audit_payload_expire)
+export(audit_payload_pin)
+export(audit_payload_read)
+export(audit_read)
 export(bot_archive_all)
 export(bot_configure)
 export(bot_poll)

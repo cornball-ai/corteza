@@ -418,6 +418,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
 | `audit.enabled` | boolean | `true` | Record turns, tool decisions and room deliveries independently of display verbosity and `journal_enabled` |
+| `audit.limits` | object | see below | Bound raw payload capture independently of model context caps |
 | `context_edit` | object | `{"enabled": false, "cadence": "pressure"}` | Model-requested conversation edits; cadence is `pressure` or `always`, and journaling is required |
 | `tool_output_caps` | object | `{}` | Per-tool result caps, e.g. `{"game_action": {"max_chars": 400000, "max_lines": 20000}}`; other tools keep the 50-line / 5000-char cap |
 | `context_include_soul` | boolean or null | null | Include `SOUL.md` (null = saber default) |
@@ -449,8 +450,21 @@ usage is `null`. Older transcript zero blocks cannot establish measured zero.
 These records are observational: a write failure emits one notice, and recovery
 writes a gap with the missed-record count and interval. A process that exits
 before recovery can leave an unresolved ending. Existing job, approval, and
-journal commit requirements still apply. Per-provider-request accounting is
-not available in this version; the turn record states that limitation.
+journal commit requirements still apply. With llm.api 0.1.9.15, each provider
+request records the final adapter-built body, raw usage and transport attempts.
+Older llm.api versions remain supported and report request coverage unavailable.
+Requests break down a turn's usage; do not add them to its canonical total.
+
+Payload limits default to 16 MiB per full tool result (`result_bytes`), 256 MiB
+per turn (`turn_bytes`), and 2 GiB per writer's store (`quota_bytes`). Requests,
+message components and tool output are stored by SHA-256 under each stream's
+payload store. Explicit omission records name the limit reached or a capture
+failure. `audit_payload_pin()` protects incident/evaluation evidence from
+explicit expiry; pinned bytes still count toward quota. `audit_payload_expire()`
+defaults to a dry run with a 30-day horizon. It writes expiry records before
+deleting unpinned payloads. There is no automatic pruning of payloads or event
+metadata. The 365-day metadata retention value is planning guidance, not an
+automatic deletion policy. See `vignette("audit-records")` for the record format.
 
 ### Safety
 

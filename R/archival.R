@@ -338,7 +338,7 @@ archival_summary_system_prompt <- function(style) {
 #' @noRd
 archival_summarize <- function(history_slice, style = "structured",
                                provider = "anthropic", model = NULL,
-                               timeout_seconds = 30L) {
+                               timeout_seconds = 30L, audit_context = NULL) {
     # Ollama JSON-mode reliability is wildly variable, so force
     # paragraph style for ollama no matter what config says.
     if (identical(provider, "ollama") && identical(style, "structured")) {
@@ -350,34 +350,56 @@ archival_summarize <- function(history_slice, style = "structured",
     sys <- archival_summary_system_prompt(style)
     user <- sprintf("Summarize the following completed agent turn:\n\n%s",
                     archival_render_transcript(history_slice))
-    summary <- tryCatch(
+    audit_context <- audit_context %||% .audit_aux_context(role = "archival")
+    dispatch <- .audit_safe({
+        s <- new.env(parent = emptyenv())
+        s$audit_dir <- audit_context$root
+        s$config <- audit_context$config
+        s$audit_enabled <- audit_context$enabled
+        state <- .audit_state(s)
+        id <- .audit_id()
+        .audit_append(state, "auxiliary_dispatch", dispatch_id = id,
+            origin = audit_context$origin, timeout_seconds = timeout_seconds)
+        list(state = state, id = id)
+    })
+    audit_context$origin$dispatch_id <- dispatch$id
+    answer <- tryCatch(
                         callr::r(
-                                 function(prompt, system, model, provider) {
-        resp <- llm.api::agent(
+                                 function(prompt, system, model, provider, context) {
+        resp <- get(".audit_model_call", asNamespace("corteza"))(llm.api::agent, list(
                                prompt = prompt, system = system, tools = list(),
                                model = model, provider = provider,
                                max_turns = 1L, history = list(), verbose = FALSE
-        )
-        as.character(resp$content %||% "")
+        ), "archival", context = context)
+        list(text = as.character(resp$content %||% ""), audit = resp$audit, usage = resp$usage)
     },
                                  args = list(prompt = user, system = sys, model = model,
-                provider = provider),
+                provider = provider,
+                context = audit_context),
                                  timeout = timeout_seconds
         ),
                         error = function(e) {
         log_event("archival_summary_failed",
                   error = conditionMessage(e), level = "warn")
+        .audit_safe(.audit_append(dispatch$state, "auxiliary_exit", dispatch_id = dispatch$id,
+            status = "error", condition_classes = as.list(class(e)), condition_message = conditionMessage(e)))
         NULL
     }
     )
+    if (is.null(answer)) return("[summary unavailable]")
+    .audit_safe(.audit_append(dispatch$state, "auxiliary_exit", dispatch_id = dispatch$id,
+        status = "complete", child = answer$audit, usage = answer$usage,
+        usage_source = "derived", usage_turns = .audit_derived(answer$audit)$usage_turns))
+    summary <- answer$text
     if (is.null(summary) || !nzchar(summary)) {
         return("[summary unavailable]")
     }
     if (identical(style, "structured")) {
-        archival_validate_structured(summary)
-    } else {
-        summary
+        summary <- archival_validate_structured(summary)
     }
+    attr(summary, "usage") <- answer$usage
+    attr(summary, "audit") <- answer$audit
+    summary
 }
 
 #' Generate the summary in a background process; do not wait.
@@ -391,10 +413,10 @@ archival_summarize <- function(history_slice, style = "structured",
 #' @noRd
 archival_summarize_bg <- function(subagent_id, history_slice, style,
                                   provider, model, cwd = getwd(),
-                                  timeout_seconds = 60L) {
+                                  timeout_seconds = 60L, audit_context = NULL) {
     callr::r_bg(
                 function(subagent_id, history_slice, style, provider, model,
-                         cwd, timeout_seconds) {
+                         cwd, timeout_seconds, audit_context) {
         library(corteza)
         setwd(cwd)
         archival_summarize <- utils::getFromNamespace("archival_summarize",
@@ -404,7 +426,7 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
         summary <- tryCatch(
                             archival_summarize(history_slice, style = style,
                 provider = provider, model = model,
-                timeout_seconds = timeout_seconds),
+                timeout_seconds = timeout_seconds, audit_context = audit_context),
                             error = function(e) "[summary unavailable]"
         )
         agent_id <- paste0("subagent-", subagent_id)
@@ -415,7 +437,8 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                                    sess, "assistant",
                                    paste0("[archival summary]\n\n", summary),
                                    provider = "corteza", model = "archival",
-                                   agent_id = agent_id
+                                   agent_id = agent_id, usage = attr(summary, "usage"),
+                                   audit = attr(summary, "audit")
             ),
                  error = function(e) NULL
         )
@@ -424,7 +447,7 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                 args = list(subagent_id = subagent_id,
                             history_slice = history_slice,
                             style = style, provider = provider, model = model,
-                            cwd = cwd, timeout_seconds = timeout_seconds),
+                            cwd = cwd, timeout_seconds = timeout_seconds, audit_context = audit_context),
                 supervise = FALSE
     )
     invisible(NULL)
@@ -544,6 +567,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
 
     summary_model <- arc_cfg$summary$model %||% parent_model
     summary_style <- arc_cfg$summary$style %||% "structured"
+    audit_context <- .audit_aux_context(turn_session, "archival")
     is_async <- isTRUE(arc_cfg$async %||% TRUE)
 
     if (is_async) {
@@ -580,7 +604,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
                               provider = parent_provider,
                               model = summary_model,
                               cwd = getwd(),
-                              timeout_seconds = timeout_secs)
+                              timeout_seconds = timeout_secs, audit_context = audit_context)
         log_event("archival_succeeded_async", subagent_id = subagent_id,
                   depth = depth, slice_len = length(history_slice))
         # Hand the holder back to maybe_archive_turn intact; its
@@ -594,7 +618,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
     summary <- archival_summarize(history_slice, style = summary_style,
                                   provider = parent_provider,
                                   model = summary_model,
-                                  timeout_seconds = timeout_secs)
+                                  timeout_seconds = timeout_secs, audit_context = audit_context)
     persist_attempt <- tryCatch({
         archival_persist_subagent(subagent_id, history_slice, summary,
                                   parent_session_id = parent_session_id,
