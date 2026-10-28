@@ -1006,7 +1006,10 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         # nothing went wrong. Handlers below overwrite it.
         ctx$last_turn_status <- "ok"
         result <- tryCatch(
-                           ctx$turn_fn(prompt, ctx$session),
+                           .audit_with_origin(ctx$session,
+                               list(kind = ctx$session$channel %||% "cli",
+                                   auto_run_id = ctx$session$auto_run_id),
+                               ctx$turn_fn(prompt, ctx$session)),
                            corteza_user_deny = function(c) {
             ctx$last_turn_status <- "denied"
             # User picked "3. Deny" at the approval prompt. Abort the
@@ -1102,6 +1105,10 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         }
         cat(turn_footer_line(turn_start, palette = ctx$palette), "\n", sep = "")
         transcript_append(ctx$disk_session$session, "assistant", reply,
+                          usage = result$usage,
+                          audit = result$audit,
+                          provider = result$route$provider %||% ctx$session$provider,
+                          model = result$route$model %||% ctx$session$model_map$cloud,
                           auto_run_id = ctx$session$auto_run_id)
 
         # Archival hook: opt-in via config$archival$enabled. Mutates

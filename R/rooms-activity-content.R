@@ -32,6 +32,7 @@ rooms_activity_record <- function(event) {
     } else ""
     tool <- call$tool %||% event$tool %||% ""
     record <- list(narration = narration,
+                   turn_id = call$turn_id, call_id = call$call_id,
                    batch = paste(event$turn_number %||% mc$agent_turn %||% "", narration))
     if (!identical(kind, "start")) {
         record$tool <- list(

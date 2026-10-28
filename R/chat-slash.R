@@ -241,9 +241,12 @@ run_memory_flush <- function(ctx) {
     isTRUE(config$dry_run)
 
     tryCatch({
-        r <- turn(prompt = flush_prompt, session = flush_session)
+        r <- .audit_with_origin(flush_session,
+            list(kind = "memory_flush", role = "summarizer",
+                parent_turn = session$.audit_turn$ref %||% session$last_turn_audit),
+            turn(prompt = flush_prompt, session = flush_session))
         list(content = r$reply, history = flush_session$history,
-             usage = r$usage)
+             usage = r$usage, audit = r$audit, usage_source = "derived")
     }, corteza_user_deny = function(c) {
         message("Memory flush denied -- skipping.")
         NULL

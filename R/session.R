@@ -419,6 +419,7 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #' @param provider LLM provider (for assistant messages)
 #' @param model Model name (for assistant messages)
 #' @param usage Token usage list (for assistant messages)
+#' @param audit Canonical turn reference for copied usage, or NULL.
 #' @param agent_id Agent ID
 #' @return Invisible path to transcript file
 #' @param auto_run_id Auto-run id when this message belongs to an auto
@@ -428,7 +429,8 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
-                              agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL) {
+                              agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL,
+                              audit = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -451,24 +453,13 @@ transcript_append <- function(session, role, content, provider = NULL,
         msg$api <- "openai-responses"
         msg$provider <- provider %||% session$provider %||% "corteza"
         msg$model <- model %||% session$model %||% "unknown"
-        msg$usage <- usage %||% list(
-                                     input = 0L,
-                                     output = 0L,
-                                     cacheRead = 0L,
-                                     cacheWrite = 0L,
-                                     totalTokens = 0L,
-                                     cost = list(
-                input = 0,
-                output = 0,
-                cacheRead = 0,
-                cacheWrite = 0,
-                total = 0
-            )
-        )
+        msg["usage"] <- list(usage)
+        msg$usage_source <- "derived"
+        msg$usage_turns <- if (is.null(audit)) list() else list(audit)
         msg$timestamp <- as.numeric(Sys.time()) * 1000
     }
 
-    json <- jsonlite::toJSON(msg, auto_unbox = TRUE)
+    json <- jsonlite::toJSON(msg, auto_unbox = TRUE, null = "null")
     cat(json, "\n", file = path, append = TRUE)
 
     invisible(path)
@@ -626,7 +617,7 @@ trace_path <- function(session_id, agent_id = DEFAULT_AGENT_ID) {
 trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                       approved_by = NULL, turn = NULL,
                       agent_id = DEFAULT_AGENT_ID, auto_run_id = NULL,
-                      call_id = NULL) {
+                      call_id = NULL, turn_id = NULL) {
     path <- trace_path(session_id, agent_id)
 
     dir <- dirname(path)
@@ -665,6 +656,7 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
     if (!is.null(call_id)) {
         entry$call_id <- call_id
     }
+    if (!is.null(turn_id)) entry$turn_id <- turn_id
 
     json <- jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
     cat(json, "\n", file = path, append = TRUE)

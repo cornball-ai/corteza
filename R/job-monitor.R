@@ -144,10 +144,13 @@ job_monitor_ask <- function(session, q) {
         !job_worker_in_place(session, "monitor")) {
         job_monitor_start(session)
     }
-    session$.job_monitor$call(function(prompt, scope) {
+    session$.job_monitor$call(function(prompt, scope, origin) {
         get(".job_monitor_child_ask", envir = asNamespace("corteza"),
-            inherits = FALSE)(prompt, scope)
-    }, list(prompt = job_monitor_question(q), scope = q$scope %||% ""))
+            inherits = FALSE)(prompt, scope, origin)
+    }, list(prompt = job_monitor_question(q), scope = q$scope %||% "",
+        origin = list(kind = "approval", role = "monitor", job_id = q$job,
+            approval_request_id = q$request_id,
+            parent_turn = q[["req"]]$audit_parent %||% session$.audit_turn$ref)))
     session$.job_monitor_pending <- list(q = q, asked_at = Sys.time())
     job_worker_note(session, "monitor")
     invisible(TRUE)
@@ -163,10 +166,18 @@ job_monitor_poll <- function(session, timeout = supervisor_config()$timeout) {
     if (is.null(p)) {
         return(NULL)
     }
+    res <- NULL
     done <- function(v) {
         session$.job_monitor_pending <- NULL
         job_worker_note(session, "monitor")
         v$q <- p$q
+        v$usage <- res$usage
+        v$audit <- res$audit
+        v <- c(v, .audit_derived(res$audit))
+        .audit_safe(.audit_append(.audit_state(session), "monitor_verdict",
+            approval_request_id = p$q$request_id, job_id = p$q$job,
+            verdict = v$verdict, usage = res$usage,
+            usage_source = "derived", usage_turns = v$usage_turns))
         v
     }
     escalate <- function(why) {
@@ -196,9 +207,9 @@ job_monitor_poll <- function(session, timeout = supervisor_config()$timeout) {
     if (!is.null(res$error)) {
         return(escalate(paste("the monitor failed:", res$error)))
     }
-    done(parse_monitor_verdict(res$reply,
-                               allowed = .MONITOR_VERDICTS_APPROVAL,
-                               request_id = p$q$request_id))
+    verdict <- parse_monitor_verdict(res$reply,
+        allowed = .MONITOR_VERDICTS_APPROVAL, request_id = p$q$request_id)
+    done(verdict)
 }
 
 # Ask and wait for the answer: for a call made in the session's own
@@ -227,7 +238,7 @@ job_monitor_ask_wait <- function(session, q,
 
 # Rule on one call. The conversation is kept while `scope` (the job)
 # stays the same and dropped when it changes.
-.job_monitor_child_ask <- function(prompt, scope) {
+.job_monitor_child_ask <- function(prompt, scope, origin = NULL) {
     session <- .subagent_state$session
     if (!identical(.job_worker_state$monitor_scope, scope)) {
         if (!is.null(session) && length(session$history %||% list())) {
@@ -253,8 +264,13 @@ job_monitor_ask_wait <- function(session, q,
     }
     run <- .job_worker_state$monitor_run_fn %||%
     function(prompt) subagent_turn_prompt(prompt)
-    res <- tryCatch(run(prompt), error = function(e) {
-        list(error = conditionMessage(e))
+    previous_audit <- if (is.environment(session)) session$last_turn_audit
+    res <- tryCatch(if (is.environment(session)) {
+        .audit_with_origin(session, origin %||% list(kind = "approval", role = "monitor"),
+            run(prompt))
+    } else run(prompt), error = function(e) {
+        list(error = conditionMessage(e), audit = if (is.environment(session) &&
+            !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
-    list(reply = res$reply, usage = res$usage, error = res$error)
+    list(reply = res$reply, usage = res$usage, error = res$error, audit = res$audit)
 }

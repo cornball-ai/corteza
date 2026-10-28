@@ -417,12 +417,27 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
+| `audit.enabled` | boolean | `true` | Record turn accounting and tool decisions independently of display verbosity and `journal_enabled` |
 | `context_edit` | object | `{"enabled": false, "cadence": "pressure"}` | Model-requested conversation edits; cadence is `pressure` or `always`, and journaling is required |
 | `tool_output_caps` | object | `{}` | Per-tool result caps, e.g. `{"game_action": {"max_chars": 400000, "max_lines": 20000}}`; other tools keep the 50-line / 5000-char cap |
 | `context_include_soul` | boolean or null | null | Include `SOUL.md` (null = saber default) |
 | `context_include_user` | boolean or null | null | Include `USER.md` (null = saber default) |
 | `instruction_roots` | object | `{}` | Additional named roots for lazily loaded `SKILL.md` instructions |
 | `instruction_disabled` | string[] | `[]` | Exact stable instruction ids to omit |
+
+Audit streams are private JSONL files under `<journal_dir>/audit/`, with one
+writer per stream. Sessions without a journal use the package data directory's
+`audit/` folder. Set `audit.enabled` to `false` to disable recording; embedded
+callers may set `session$audit_dir` or `session$audit_enabled` explicitly.
+The terminal turn record owns usage. Transcript and job-outcome copies are
+marked derived and link to it; do not add these copies to turn totals. Unknown
+usage is `null`. Older transcript zero blocks cannot establish measured zero.
+
+These records are observational: a write failure emits one notice, and recovery
+writes a gap with the missed-record count and interval. A process that exits
+before recovery can leave an unresolved ending. Existing job, approval, and
+journal commit requirements still apply. Per-provider-request accounting is
+not available in this version; the turn record states that limitation.
 
 ### Safety
 

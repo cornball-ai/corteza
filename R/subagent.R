@@ -501,6 +501,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
                      transcript_append(disk_sess, role, body,
                                        provider = disk_sess$provider,
                                        model = disk_sess$model,
+                                       audit = result$audit,
                                        agent_id = agent_id),
                      error = function(e) {
                 log_event("subagent_transcript_append_failed",
@@ -615,6 +616,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
 
     list(reply = extracted$reply,
          usage = result$usage %||% list(),
+         audit = result$audit,
          termination = result$termination,
          final = final, final_found = final_found, final_note = final_note,
          report = extracted$report, report_error = extracted$report_error)
@@ -918,6 +920,7 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                                      session_key = session_key,
                                      session = session,
                                      task = task,
+                                     audit_role = if (identical(preset, "monitor")) "monitor" else "subagent",
                                      tools = tools,
                                      model = spawn_model,
                                      provider = spawn_provider,
@@ -1049,8 +1052,15 @@ subagent_query <- function(id, prompt, wait = TRUE, timeout = 60L,
     # deadline degrades a slow child into a pending query instead.
     tryCatch(
              info$session$call(
-                               function(p, rn, rp) corteza::subagent_turn_prompt(p, rn, rp),
-                               list(p = prompt, rn = return_name, rp = report)
+                               function(p, rn, rp, origin) {
+            ns <- asNamespace("corteza")
+            get(".audit_with_origin", ns)(get(".subagent_state", ns)$session, origin,
+                corteza::subagent_turn_prompt(p, rn, rp))
+        },
+                               list(p = prompt, rn = return_name, rp = report,
+                                   origin = list(kind = "subagent", subagent_id = canonical,
+                                       role = info$audit_role %||% "subagent",
+                                       parent_turn = .audit_runtime$active$ref))
         ),
              error = function(e) {
         stop("Subagent query failed to start: ",
@@ -1125,6 +1135,10 @@ subagent_collect <- function(id, wait = TRUE, timeout = 60L) {
     info$pending_started_at <- NULL
     if (is.null(msg$error)) {
         info <- subagent_accumulate_usage(info, msg$result$usage)
+        info$usage_source <- "derived"
+        if (!is.null(msg$result$audit)) {
+            info$usage_turns <- c(info$usage_turns %||% list(), list(msg$result$audit))
+        }
     }
     .subagent_registry[[canonical]] <- info
     if (!is.null(msg$error)) {

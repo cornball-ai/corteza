@@ -500,6 +500,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # Build the closure passed as tool_handler to llm.api::agent. Closes over
 # the session so sticky classifications persist across tool calls.
 .fire_observers <- function(session, event) {
+    .audit_safe(.audit_tool_event(session, event))
     .secret_observe(session, event$result)
     event$display <- .redact_object(event, session$secret_values)
     notice <- .progress_record(session, event)
@@ -580,10 +581,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         }
     }
     function(name, args, context = NULL) {
-        .remote_check_stop(session)
         internal_name <- unsanitize_tool_name(name)
+        ids <- .audit_safe(.audit_tool_call(session, internal_name)) %||% list()
+        .remote_check_stop(session)
         if (!is.null(session$job_allowed_tools) &&
             !internal_name %in% session$job_allowed_tools) {
+            .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
+                outcome = "deny", decision = list(approval = "deny", reason = "job_tool_scope"),
+                success = FALSE)))
             return("[job policy denied: tool is outside this delegator's allowed tools]")
         }
         call <- list(
@@ -598,6 +603,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      # approval rationale and the silent-streak narration guard.
                      model_context = context
         )
+        call <- c(call, ids)
 
         # Silent-streak narration guard: bookkeep once per model turn
         # (the first dispatched call of the batch, call_index == 1). A
@@ -620,6 +626,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         if (identical(internal_name, "edit_context")) {
             result <- tryCatch(.context_edit_queue(session, as.list(args), call$model_context),
                                error = function(e) paste("Context edit rejected:", conditionMessage(e)))
+            .audit_safe(.audit_tool_event(session, list(call = call, outcome = "context_queued")))
             return(nudge(result))
         }
 
@@ -658,6 +665,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                             error = function(e) err(paste("Tool error:",
                         conditionMessage(e)))
             )
+            .audit_safe(.audit_tool_event(session, list(call = call, outcome = "dry_run")))
             return(nudge(.admit_tool_result_for(
                         session, .flatten_mcp_result(raw), internal_name)))
         }
@@ -673,6 +681,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # the prompt in chat() even though `replace_in_file` is in the
         # default dangerous_tools list.
         decision <- policy(call, config = session$config)
+        .audit_safe(.audit_policy(session, call, decision))
         # decision$reason can embed a model-controlled path or tool name
         # (policy.R); it is rendered into the approval prompt and the
         # model-visible deny/decline results, so sanitize it once here.
@@ -744,15 +753,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # or "escalate" (abort the whole turn for a human).
         gate_approved <- FALSE
         if (is.function(session$auto_gate)) {
-            # One id per gated call, minted before anything decides.
-            # Every artifact this call produces -- the gate record, the
-            # observer event (and through it the trace row), the
-            # monitor's approval request -- carries it, so two calls to
-            # the same tool with the same args (one refused, one run)
-            # reconstruct unambiguously from disk. turn_number cannot do
-            # this job: it also counts denials and intercepts.
+            # Retain the run-local alias. The canonical call_id was minted
+            # before policy; bare handler callers without a turn keep the
+            # older alias as their ID.
             session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
-            call$call_id <- sprintf("c%d", session$auto_call_seq)
+            call$auto_call_id <- sprintf("c%d", session$auto_call_seq)
+            call$call_id <- call$call_id %||% call$auto_call_id
             gate <- tryCatch(
                              session$auto_gate(call, decision),
                              # A gate that errored did not approve anything.
@@ -763,6 +769,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             }
             )
             action <- gate$action %||% "escalate"
+            .audit_safe(.audit_tool_event(session, list(call = call,
+                outcome = "gate", decision = gate)))
             if (identical(action, "deny")) {
                 # Policy's verdict, surfaced through the gate purely so
                 # it was recorded; same message as the attended branch.
@@ -806,6 +814,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                                  session$approval_cb(call, decision),
                                  error = function(e) FALSE
             )
+            .audit_safe(.audit_tool_event(session, list(call = call,
+                outcome = "approval", decision = list(approved = isTRUE(approved)))))
             if (!isTRUE(approved)) {
                 return(outcome_text(
                                     "declined",
@@ -1124,7 +1134,8 @@ observer_progress <- function() {
 #'   updated session environment; also mutated in place), \code{route}
 #'   (the actual model/provider and fallback credential mode), and
 #'   \code{termination} (status \code{done}, \code{incomplete}, or
-#'   \code{cancelled}, with a machine-readable reason).
+#'   \code{cancelled}, with a machine-readable reason), and \code{audit}
+#'   (the stream path and canonical turn ID, or NULL when recording is disabled).
 #' @examples
 #' \dontrun{
 #' # Requires ANTHROPIC_API_KEY (or the configured provider's key) and
@@ -1135,6 +1146,28 @@ observer_progress <- function() {
 #' }
 #' @export
 turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
+    # Install before validation/stop checks so early failures retain their
+    # original condition while leaving an observable terminal record.
+    audit <- .audit_safe(.audit_turn_begin(session))
+    previous <- if (is.environment(session)) session$.audit_turn
+    previous_active <- .audit_runtime$active
+    .audit_runtime$active <- audit
+    if (is.environment(session)) session$.audit_turn <- audit
+    on.exit({
+        .audit_safe(.audit_turn_end(session, audit))
+        if (is.environment(session)) session$.audit_turn <- previous
+        .audit_runtime$active <- previous_active
+    }, add = TRUE)
+    result <- withCallingHandlers(
+        .turn_impl(prompt, session, tool_executor, tools),
+        error = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)),
+        interrupt = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)))
+    .audit_safe(.audit_turn_end(session, audit, result))
+    result$audit <- if (!is.null(audit)) audit$ref
+    result
+}
+
+.turn_impl <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     .remote_check_stop(session)
     stopifnot(is.environment(session))
     .secret_environment(session)
@@ -1252,6 +1285,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     attempt_checkpoint_turns <- 0L
     if ("checkpoint_callback" %in% names(formals(llm.api::agent))) {
         agent_args$checkpoint_callback <- function(history, context) {
+            .audit_safe({
+                audit <- session$.audit_turn
+                if (!is.null(audit)) audit$checkpoint_usage <- .turn_add_usage(
+                    audit$checkpoint_usage %||% list(), context$usage %||% list())
+            })
             .remote_check_stop(session)
             session$last_checkpoint_context <- context
             attempt_checkpoint_usage <<- .turn_add_usage(
@@ -1322,6 +1360,16 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         agent_args$cache <- ch
     }
     agent_args <- .gate_reasoning_args(agent_args, session$provider)
+    .audit_safe({
+        audit <- session$.audit_turn
+        if (!is.null(audit)) .audit_append(audit$state, "turn_config",
+            turn_id = audit$id, job_id = audit$origin$job_id,
+            settings = agent_args[intersect(names(agent_args), c("provider", "model",
+                "max_turns", "max_tokens", "reasoning_effort", "thinking_budget_tokens",
+                "thinking", "cache", "web_search"))],
+            system_hash = digest::digest(.history_json(system), algo = "sha256", serialize = FALSE),
+            tools_hash = digest::digest(.history_json(tools), algo = "sha256", serialize = FALSE))
+    })
 
     # For openai_compatible the endpoint is corteza-configured, not built
     # into llm.api. Apply it through llm.api's own setter (so we don't

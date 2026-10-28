@@ -2494,7 +2494,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         session$context_edit_events <- list()
         .room_media_bind(session, cfg, chat_now, sender, m$channel, m$thread)
         reply <- tryCatch(rooms_with_activity(session, chat, m$channel, function() {
-            bot_run_turn_in_cwd(ingest_content, session)
+            .audit_with_origin(session, list(kind = "matrix", event_id = m$id,
+                room = m$channel, thread = m$thread, requester = sender),
+                bot_run_turn_in_cwd(ingest_content, session))
         }, cfg = cfg, thread = m$thread), finally = {
             session$job_handoff <- NULL
             session$job_resume <- NULL

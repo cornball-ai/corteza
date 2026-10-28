@@ -346,6 +346,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     # Installed after the restore, so a restored history is what an
     # earlier live snapshot rolls over to rather than an empty one.
     if (!is.null(.subagent_state$session)) {
+        .subagent_state$session$job_owner <- spec$identity$owner
+        .subagent_state$session$job_key <- spec$identity$key
         journal_install(.subagent_state$session,
                         dir = job_worker_journal_dir(state_dir))
     }
@@ -480,15 +482,21 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
         on.exit(session$on_tool <- before, add = TRUE)
     }
     run <- spec$run_fn %||% function(task) subagent_turn_prompt(task)
+    previous_audit <- if (is.environment(session)) session$last_turn_audit
     resumed <- is.null(job$resume_of)
     res <- tryCatch({
         if (!is.null(job$resume_of)) {
             task <- .job_resume_restore(job$resume_of, spec, session)
             resumed <- TRUE
         }
-        run(task)
+        if (is.environment(session)) {
+            .audit_with_origin(session, list(kind = "job", job_id = job_id,
+                role = job$role %||% spec$identity$role,
+                parent_turn = job$origin$audit_parent, requester = job$requester), run(task))
+        } else run(task)
     }, error = function(e) {
-        list(error = conditionMessage(e))
+        list(error = conditionMessage(e), audit = if (is.environment(session) &&
+            !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
     resume <- if (identical(res$termination$status, "incomplete")) {
         tryCatch(.job_resume_save(job_id, spec$identity, session),
@@ -502,6 +510,7 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                 job_id)),
                            error = function(e) list(ok = FALSE, error = conditionMessage(e)))
     list(reply = res$reply, usage = res$usage, error = res$error,
+         audit = res$audit,
          termination = res$termination,
          resume = resume,
          checkpoint = checkpoint)
@@ -816,6 +825,7 @@ job_submit <- function(session, task, role = "doer", requester = "local",
                        origin = list(), parent = NULL, limits = list(),
                        review = FALSE, context = NULL) {
     origin$session_key <- job_worker_key(session)
+    origin$audit_parent <- origin$audit_parent %||% session$.audit_turn$ref
     limits$max_turns <- limits$max_turns %||% job_worker_spec(session, role)$max_turns
     id <- job_create(task, role = role,
                      workspace = session$cwd %||% getwd(),
@@ -909,11 +919,12 @@ job_answer <- function(session, id, req, approved, by = "local",
 job_pump_current <- function(session, id) {
     worker <- session$.job_worker
     j <- job_read(id)
+    audit_ref <- NULL
     # Every ending settles the job, frees the session, and gives back the
     # checkout lock (a no-op for a role that never took one).
     finish <- function(status, ...) {
         args <- list(...)
-        args$extra <- c(args$extra %||% list(), list(
+        args$extra <- c(args$extra %||% list(), .audit_derived(audit_ref), list(
             cumulative_usage = job_resume_usage(j, args$usage)))
         do.call(job_settle, c(list(id = id, status = status), args))
         session$.job_current <- NULL
@@ -981,6 +992,7 @@ job_pump_current <- function(session, id) {
         return(finish("failed", error = conditionMessage(msg$error)))
     }
     res <- msg$result
+    audit_ref <- res$audit
     if (!is.null(res$error)) {
         if (!is.null(j$resume_of)) job_worker_close(session)
         return(finish("failed", error = res$error, usage = res$usage))
