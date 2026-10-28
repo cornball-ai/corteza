@@ -381,11 +381,6 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
                                     extra = NULL) {
     path <- session_transcript_path(id, agent_id)
 
-    dir <- dirname(path)
-    if (!dir.exists(dir)) {
-        dir.create(dir, recursive = TRUE, mode = "0700")
-    }
-
     # Only write if file doesn't exist
     if (file.exists(path)) {
         return(invisible(path))
@@ -407,7 +402,7 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
     }
 
     json <- jsonlite::toJSON(header, auto_unbox = TRUE)
-    cat(json, "\n", file = path, append = FALSE)
+    .private_record_write(path, json, append = FALSE)
 
     invisible(path)
 }
@@ -464,7 +459,7 @@ transcript_append <- function(session, role, content, provider = NULL,
     }
 
     json <- jsonlite::toJSON(msg, auto_unbox = TRUE, null = "null")
-    cat(json, "\n", file = path, append = TRUE)
+    .private_record_write(path, json)
 
     invisible(path)
 }
@@ -624,25 +619,10 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                       call_id = NULL, turn_id = NULL) {
     path <- trace_path(session_id, agent_id)
 
-    dir <- dirname(path)
-    if (!dir.exists(dir)) {
-        dir.create(dir, recursive = TRUE)
-    }
-
-    # Truncate large values
-    args_summary <- lapply(args, function(x) {
-        if (is.character(x) && nchar(x) > 200) {
-            paste0(substr(x, 1, 197), "...")
-        } else {
-            x
-        }
-    })
-
-    result_summary <- if (is.character(result) && nchar(result) > 500) {
-        paste0(substr(result, 1, 497), "...")
-    } else {
-        result
-    }
+    args_summary <- .trace_preview(args, 200L)
+    result_summary <- .trace_preview(result, 500L)
+    args_cut <- !identical(args, args_summary)
+    result_cut <- !identical(result, result_summary)
 
     entry <- list(
                   timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
@@ -650,6 +630,9 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
                   tool = tool,
                   args = args_summary,
                   result = result_summary,
+                  truncated = args_cut || result_cut,
+                  truncation = list(args = args_cut, result = result_cut,
+                      args_character_limit = 200L, result_character_limit = 500L),
                   success = success,
                   elapsed_ms = elapsed_ms,
                   approved_by = approved_by
@@ -665,7 +648,7 @@ trace_add <- function(session_id, tool, args, result, success, elapsed_ms,
     }
 
     json <- jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
-    cat(json, "\n", file = path, append = TRUE)
+    .private_record_write(path, json)
 
     invisible(path)
 }
