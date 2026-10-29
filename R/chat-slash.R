@@ -232,6 +232,14 @@ run_memory_flush <- function(ctx) {
                                  max_turns = 20L
     )
     flush_session$config <- config
+    .audit_safe({
+        flush_session$audit_enabled <- session$audit_enabled
+        flush_session$config$audit <- session$config$audit %||% config$audit
+        flush_session$audit_dir <- .audit_root(session)
+        flush_session$.audit_stream <- .audit_state(session)
+        flush_session$job_owner <- session$job_owner
+        flush_session$job_key <- job_worker_key(session)
+    })
     # The parent compactor already chose a safe threshold boundary. Preserve
     # the complete pre-compaction history while the flush extracts durable
     # facts; only a real provider overflow may invoke emergency recovery.

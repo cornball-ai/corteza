@@ -68,6 +68,7 @@
     }
     args <- .gate_reasoning_args(args, session$provider)
     list(args = args, base_url = .session_base_url(session),
+         audit_context = .audit_aux_context(session, "consultant"),
          history = session$history, captured_at = job_now())
 }
 
@@ -128,7 +129,8 @@
     id <- job_create(question, role = "consultation", backend = "consultation",
                      workspace = target$cwd, requester = sender, owner = bot_job_owner(cfg),
                      origin = list(room = destination$id, thread = thread, session_key = key,
-                                   label = bot_room_label(destination), from = from),
+                                   label = bot_room_label(destination), from = from,
+                                   audit_parent = session$.audit_turn$ref),
                      permissions = list(tools = character()), limits = list(wall_seconds = 120))
     path <- file.path(job_dir(id), "consultation.rds")
     written <- tryCatch({

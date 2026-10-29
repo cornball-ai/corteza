@@ -50,7 +50,7 @@ local({
     reply <- "$delivered-once"
     runtime <- corteza:::.audit_runtime
     noticed <- runtime$noticed
-    runtime$noticed <- FALSE
+    runtime$noticed <- list()
     on.exit(runtime$noticed <- noticed, add = TRUE)
     writer <- get(".audit_write", asNamespace("corteza"))
     on.exit(utils::assignInNamespace(".audit_write", writer, "corteza"), add = TRUE)
@@ -90,7 +90,8 @@ local({
     rows <- read()
     gap <- Filter(function(x) identical(x$type, "gap"), rows)
     expect_length(gap, 1L)
-    expect_equal(gap[[1L]]$lost_records, 3)
+    expect_equal(gap[[1L]]$lost_records, 4,
+        info = paste("lost records:", gap[[1L]]$lost_records))
     expect_identical(tail(rows, 1L)[[1L]]$event_ids[[1L]], "$delivered-once")
     expect_identical(tail(rows, 1L)[[1L]]$turn, result$audit)
 })

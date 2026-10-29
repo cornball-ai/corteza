@@ -5,22 +5,31 @@
         old <- llm.api::llm_base(snapshot$base_url)
         on.exit(llm.api::llm_base(old), add = TRUE)
     }
-    answer <- do.call(.chat, snapshot$args)
+    answer <- .audit_model_call(.chat, snapshot$args, "consultant",
+        origin = snapshot$audit_origin, root = snapshot$audit_root,
+        context = snapshot$audit_context)
     text <- answer$content %||% ""
     if (identical(answer$finish_reason, "length")) {
         return(list(error = paste("The consultation reached its output limit; this answer is incomplete:",
                                   text, sep = "\n\n"),
-                    usage = answer$usage))
+                    usage = answer$usage, audit = answer$audit))
     }
     if (!is.character(text) || length(text) != 1L || !nzchar(trimws(text))) {
         return(list(error = "The consultation returned no answer",
-                    usage = answer$usage))
+                    usage = answer$usage, audit = answer$audit))
     }
-    list(reply = text, usage = answer$usage)
+    list(reply = text, usage = answer$usage, audit = answer$audit)
 }
 
 .room_consult_child <- function(id) {
     snapshot <- readRDS(file.path(job_dir(id), "consultation.rds"))
+    job <- job_read(id)
+    snapshot$audit_root <- file.path(job_dir(id), "audit")
+    snapshot$audit_context$identity <- list(owner = job$owner,
+        session_key = job$origin$session_key,
+        session_id = snapshot$audit_context$identity$session_id)
+    snapshot$audit_origin <- list(kind = "consultation", role = "consultant", job_id = id,
+        parent_turn = job$origin$audit_parent, room = job$origin$room, requester = job$requester)
     .room_consult_answer(snapshot)
 }
 
@@ -123,9 +132,11 @@
                 answer <- tryCatch(w$process$get_result(), error = function(e) list(error = conditionMessage(e)))
                 .room_consult_close(j$id)
                 if (!is.null(answer$error)) {
-                    job_settle(j$id, "failed", error = answer$error, usage = answer$usage)
+                    job_settle(j$id, "failed", error = answer$error, usage = answer$usage,
+                        extra = .audit_derived(answer$audit))
                 } else {
-                    job_settle(j$id, "done", result = answer$reply, usage = answer$usage)
+                    job_settle(j$id, "done", result = answer$reply, usage = answer$usage,
+                        extra = .audit_derived(answer$audit))
                 }
             }
         }

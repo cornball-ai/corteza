@@ -9,7 +9,8 @@ compact_summarize_slice(
   model = NULL,
   timeout_seconds = 60L,
   summary_prompt = NULL,
-  error_callback = NULL
+  error_callback = NULL,
+  session = NULL
 )
 }
 \arguments{
@@ -27,6 +28,9 @@ NULL uses corteza's general coding-agent brief.}
 
 \item{error_callback}{Optional function called with a caught summarizer
 error before NULL is returned.}
+
+\item{session}{Optional session supplying audit settings, identity and the
+parent turn reference.}
 }
 \description{
 Returns the summary text on success or NULL on any error

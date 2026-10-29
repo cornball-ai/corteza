@@ -46,7 +46,7 @@ local({
     answer <- corteza:::.audit_with_origin(s, list(kind = "matrix", event_id = "fixture-event"),
         corteza::turn("test", s, tools = list(), tool_executor = function(...) {
             executions <<- executions + 1L
-            "result"
+            corteza:::ok("result")
         }))
     expect_identical(.Random.seed, seed)
     expect_equal(requests, 2L)
@@ -96,7 +96,7 @@ local({
     state <- corteza:::.audit_state(s)
     runtime <- corteza:::.audit_runtime
     old_notice <- runtime$noticed
-    runtime$noticed <- FALSE
+    runtime$noticed <- list()
     on.exit(runtime$noticed <- old_notice, add = TRUE)
     writer <- get(".audit_write", asNamespace("corteza"))
     on.exit(utils::assignInNamespace(".audit_write", writer, "corteza"), add = TRUE)
@@ -153,6 +153,7 @@ local({
     expect_true(grepl('"usage":null', tail(readLines(path), 2)[[1]], fixed = TRUE))
     expect_null(tail(rows, 2)[[1]]$usage)
     expect_equal(tail(rows, 1)[[1]]$usage$input_tokens, 7)
+    expect_identical(tail(rows, 1)[[1]]$usage_format, "llm.api")
     s <- new.env(parent = emptyenv())
     s$journal_enabled <- FALSE
     s$journal_dir <- file.path(root, "history")

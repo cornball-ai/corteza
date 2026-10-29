@@ -277,11 +277,13 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #'   NULL uses corteza's general coding-agent brief.
 #' @param error_callback Optional function called with a caught summarizer
 #'   error before NULL is returned.
+#' @param session Optional session supplying audit settings, identity and the
+#'   parent turn reference.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
                                     model = NULL, timeout_seconds = 60L,
                                     summary_prompt = NULL,
-                                    error_callback = NULL) {
+                                    error_callback = NULL, session = NULL) {
     if (length(slice) == 0L) {
         return(NULL)
     }
@@ -302,7 +304,7 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
     # Compaction does not need a sampling override. Provider-default sampling
     # keeps it compatible with models that reject or deprecate `temperature`.
     result <- tryCatch(
-                       do.call(llm.api::chat, chat_args),
+                       .audit_model_call(llm.api::chat, chat_args, "compaction", session = session),
                        error = function(e) {
         if (is.function(error_callback)) {
             error_callback(e)
@@ -318,6 +320,7 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
     }
     summary <- as.character(result$content %||% "")
     attr(summary, "usage") <- result$usage %||% NULL
+    attr(summary, "audit") <- result$audit
     summary
 }
 
@@ -475,7 +478,8 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        model = model,
                                        timeout_seconds = as.integer(cc$timeout_seconds %||% 60L),
                                        summary_prompt = session$compaction_prompt %||% NULL,
-                                       error_callback = function(e) summary_error <<- e)
+                                       error_callback = function(e) summary_error <<- e,
+                                       session = session)
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",

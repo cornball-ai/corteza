@@ -853,7 +853,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 review_result <- run_review(
                     ctx$session$provider %||% ctx$provider,
                     ctx$model, material$target,
-                    material$status, material$diff
+                    material$status, material$diff, session = ctx$session
                 )
                 if (inherits(review_result, "error")) {
                     cat(sprintf("%sReview failed: %s%s\n",

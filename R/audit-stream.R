@@ -2,7 +2,7 @@
 # journal commits; a failure here reports missing evidence and never retries work.
 .audit_runtime <- new.env(parent = emptyenv())
 .audit_runtime$counter <- 0
-.audit_runtime$noticed <- FALSE
+.audit_runtime$noticed <- list()
 
 .audit_now <- function() format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
 
@@ -13,12 +13,13 @@
             format(.audit_runtime$counter, scientific = FALSE, trim = TRUE))
 }
 
-.audit_notice <- function() {
-    if (isTRUE(.audit_runtime$noticed)) {
+.audit_notice <- function(text = "Corteza audit recording is failing; work continues with incomplete records.",
+                          kind = "write") {
+    if (isTRUE(.audit_runtime$noticed[[kind]])) {
         return(invisible(NULL))
     }
-    .audit_runtime$noticed <- TRUE
-    tryCatch(message("Corteza audit recording is failing; work continues with incomplete records."),
+    .audit_runtime$noticed[[kind]] <- TRUE
+    tryCatch(message(text),
              error = function(e) NULL)
     invisible(NULL)
 }
@@ -46,7 +47,19 @@
         isFALSE(session$config$audit$enabled)) {
         return(NULL)
     }
-    root <- .audit_root(session)
+    root <- path.expand(.audit_root(session))
+    if (!startsWith(root, "/") && !startsWith(root, "\\\\") && !grepl("^[A-Za-z]:", root)) {
+        root <- file.path(getwd(), root)
+    }
+    # Resolve symlinked ancestors only after the directory exists. Otherwise
+    # macOS's /var -> /private/var changes the root after the first write and
+    # the next auxiliary call silently starts a second writer.
+    if (!dir.exists(root)) {
+        mask <- Sys.umask("0077")
+        tryCatch(dir.create(root, recursive = TRUE, showWarnings = FALSE,
+                            mode = "0700"), finally = Sys.umask(mask))
+    }
+    root <- normalizePath(root, winslash = "/", mustWork = FALSE)
     old <- session$.audit_stream
     if (!is.null(old) && identical(old$root, root) &&
         identical(old$pid, Sys.getpid())) {
@@ -105,6 +118,11 @@
     }
     con <- file(state$path, "ab")
     tryCatch({ writeBin(bytes, con) ; flush(con) }, finally = close(con))
+    # Once bytes are committed, the stream file guards the identity. Keep a
+    # reservation only when a writer has not yet completed its first write.
+    if (!isTRUE(state$released)) {
+        state$released <- unlink(state$reservation, recursive = TRUE) == 0L
+    }
     TRUE
 }
 

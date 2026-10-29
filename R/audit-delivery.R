@@ -12,6 +12,7 @@
         if (is.null(session) && is.null(active)) {
             if (is.null(.audit_runtime$delivery)) {
                 .audit_runtime$delivery <- new.env(parent = emptyenv())
+                .audit_runtime$delivery$config <- load_config()
             }
             session <- .audit_runtime$delivery
         }

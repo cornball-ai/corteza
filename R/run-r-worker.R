@@ -396,12 +396,12 @@
 
     call_error <- tryCatch({
         worker$call(
-                    function(src, values) {
+                    function(src, values, audit) {
             evaluate <- get(".run_r_worker_child_eval",
                             envir = asNamespace("corteza"), inherits = FALSE)
-            evaluate(src, values)
+            get(".audit_tool_worker", asNamespace("corteza"))(audit, evaluate(src, values))
         },
-                    list(src = code, values = bindings)
+                    list(src = code, values = bindings, audit = .audit_safe(.audit_tool_worker_context(session)))
         )
         NULL
     }, error = function(e) e)
@@ -442,6 +442,14 @@
             ))
     }
     payload <- msg$result
+    .audit_safe({
+        audit <- session$.audit_turn
+        if (!is.null(audit) && !is.null(payload$audit_capture)) {
+            audit$payload_bytes <- (audit$payload_bytes %||% 0) + payload$audit_capture$bytes
+            .audit_append(audit$state, "tool_capture_child", turn_id = audit$id,
+                call_id = audit$current_call, capture = payload$audit_capture)
+        }
+    })
     if (timed_out || isTRUE(payload$interrupted)) {
         text <- sprintf(paste(
                               "run_r timed out after %s seconds.",
