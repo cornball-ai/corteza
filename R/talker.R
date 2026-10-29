@@ -42,7 +42,7 @@ TALKER_DEFAULT_MODELS <- list(anthropic = "claude-haiku-4-5-20251001",
 TALKER_TOOLS <- c("read_file", "skill_instructions", "grep_files",
                   "list_files", "git_status", "git_diff", "git_log",
                   "r_help", "read_handle", "fetch_url", "delegate",
-                  "job_status", "job_cancel")
+                  "job_status", "job_cancel", "job_resume")
 
 TALKER_GUIDANCE <- paste(
                          "## Talker mode",
@@ -79,7 +79,8 @@ TALKER_GUIDANCE <- paste(
                          "never paste an article, file contents, or long quoted text back into",
                          "the chat. Never guess or pre-empt the result; it arrives as its own",
                          "message when the work is done. Use `job_status` when asked how it is",
-                         "going and `job_cancel` to stop it.",
+                         "going and `job_cancel` to stop it. An incomplete job has stopped.",
+                         "Use `job_resume` only when the user explicitly asks to continue that job; never resume automatically.",
                          "When you need to know what was discussed or decided in another",
                          "room, use `ask_room` when available. It asks that room's conversation",
                          "and returns its answer here. Wait for the answer before relying on it.",
@@ -283,7 +284,7 @@ tool_job_cancel <- function(id, ctx = list()) {
     if (isTRUE(is_talker)) {
         return(tools)
     }
-    job_tools <- c("delegate", "job_status", "job_cancel")
+    job_tools <- c("delegate", "job_status", "job_cancel", "job_resume")
     keep <- vapply(tools, function(t) !(t$name %||% "") %in% job_tools,
                    logical(1))
     tools[keep]
@@ -298,8 +299,11 @@ format_job <- function(j, detail = FALSE) {
     }
     o <- j$outcome
     paste(c(line, if (!is.null(o$reason)) paste("reason:", o$reason),
+            if (!is.null(j$resume_of)) paste("resumes:", j$resume_of),
+            if (length(o$cumulative_usage)) paste("cumulative usage:",
+                as.character(jsonlite::toJSON(o$cumulative_usage, auto_unbox = TRUE))),
             if (!is.null(o$error)) paste("error:", o$error),
             job_outcome_notes(j),
-            if (!is.null(o$result) && nzchar(o$result)) c("", o$result)),
+            if (nzchar(job_result_body(j))) c("", job_result_body(j))),
           collapse = "\n")
 }

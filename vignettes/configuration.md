@@ -842,10 +842,38 @@ a stop marker does not change the job's status. Room and CLI notifications
 show the same outcome and retain the partial reply.
 
 An incomplete attempt releases its checkout lock and does not queue automatic
-review. Its outcome is immutable. The worker still tries to save its ordinary
-checkpoint, and reports a failed save, but that shared checkpoint can be
-overwritten by another job. No automatic continuation is started, and a
-dedicated job resume command is not yet available.
+review. Its outcome is immutable. It saves a separate private snapshot of its
+completed native history and restorable R workspace. Later jobs may overwrite
+the warm-worker checkpoint, but cannot replace this per-job resume point.
+Failures to save a usable snapshot are reported without advertising resume.
+
+Use `/job resume <id>` in the originating room, worker room, or CLI session,
+or explicitly ask a talker to continue that identified job with `job_resume`.
+Only the original requester or a configured bot operator may request a resume;
+seeing a job alone grants no such right. The worker conversation must be loaded
+for a cross-room request. Remote delegation and consultation jobs cannot be
+resumed through this local-worker command.
+CLI jobs remain owned by their launching process; a new CLI process does not
+automatically adopt an exited process's jobs. Bot identities survive restarts.
+
+Resume creates a new linked attempt, acquires the normal checkout lock, and
+restores the selected history in a fresh worker. It keeps the original tool
+restrictions, per-attempt limits, and review preference; approvals must be
+obtained again. The provider and model must match the snapshot. Checkout files
+are never restored: the worker is told to inspect newer changes before editing.
+Connections, external pointers, and transient tool handles are unavailable;
+omitted workspace objects are named in the continuation prompt. Missing or
+corrupt snapshots fail before a provider request.
+
+Queuing the requested continuation does not require another default approval.
+Explicit per-tool ask/deny settings and user policy still apply to `job_resume`;
+the host also enforces requester, operator, conversation and workspace checks.
+
+Each stopped attempt has at most one continuation. Repeating its resume command
+returns that continuation's ID, including after restart. If that continuation
+also stops incomplete, resume its ID. The ledger retains per-attempt usage and
+cumulative usage across the chain. No automatic continuation or new spending
+policy is enabled.
 
 ## Consulting another room
 

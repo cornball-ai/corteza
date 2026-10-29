@@ -165,6 +165,17 @@
     invisible(length(open))
 }
 
+.repl_cmd_job_resume <- function(ctx, parts) {
+    if (length(parts) != 3L || parts[2L] != "resume") {
+        cat("Usage: /job resume <id>\n")
+        return(invisible(NULL))
+    }
+    .repl_jobs_setup(ctx)
+    result <- tool_job_resume(parts[3L], ctx = list(session = ctx$session))
+    cat(paste(vapply(result$content, function(x) x$text %||% "", ""), collapse = "\n"), "\n")
+    invisible(NULL)
+}
+
 # /jobs [id]: pump, then list this session's jobs or show one.
 .repl_cmd_jobs <- function(ctx, parts) {
     if (!isTRUE(ctx$session$.repl_jobs_ready)) {

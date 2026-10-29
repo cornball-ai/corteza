@@ -296,6 +296,7 @@ chat_help_text <- function() {
           "  /copy                         Copy the last assistant response to the system clipboard.",
           "  /tasks [clear]                Show (or clear) the current task list.",
           "  /jobs [id]                    List delegated jobs (talker mode), or show one",
+          "  /job resume <id>              Continue an incomplete job as a new attempt",
           "  /cancel <id>                  Cancel a delegated job",
           "  /r <expr>                     Eval R expression locally (skips policy/dryrun); output staged for next prompt",
           "  ! <cmd>                       Run a shell command locally (skips policy/dryrun); output staged for next prompt",

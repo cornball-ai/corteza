@@ -265,6 +265,10 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 .repl_cmd_jobs(ctx, parts)
                 next
             }
+            if (cmd == "/job") {
+                .repl_cmd_job_resume(ctx, parts)
+                next
+            }
             if (cmd == "/cancel") {
                 .repl_cmd_cancel(ctx, parts)
                 next

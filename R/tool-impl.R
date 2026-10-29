@@ -1680,6 +1680,7 @@ register_builtin_skills <- function() {
     register_skill_from_fn("delegate", tool_delegate)
     register_skill_from_fn("job_status", tool_job_status)
     register_skill_from_fn("job_cancel", tool_job_cancel)
+    register_skill_from_fn("job_resume", tool_job_resume)
 
     # Plan mode: exit_plan_mode is registered always but exposed in the
     # tool list only when session$plan_mode is TRUE

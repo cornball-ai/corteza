@@ -2235,6 +2235,23 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             }
         }
 
+        resume_command <- bot_parse_job_resume(m$body)
+        if (!is.null(resume_command)) {
+            ack <- tryCatch({
+                if (!is.null(resume_command$error)) stop(resume_command$error, call. = FALSE)
+                next_id <- bot_job_resume(sessions, session, cfg, sender, m$id, resume_command$id)
+                paste("Continuation attempt", next_id, "for job", resume_command$id)
+            }, error = function(e) paste("Resume not started:", conditionMessage(e)))
+            sent_id <- bot_reply_send(chat_now(), m$channel, ack, thread = m$thread)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            .context_room_snapshot(session)
+            replied <- replied + 1L
+            next
+        }
+
         approval_mode <- bot_parse_approval_mode(m$body)
         if (!is.null(approval_mode)) {
             ack <- tryCatch({
@@ -2442,7 +2459,14 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # records its requester, and its result goes back to this room
         # or thread.
         session$job_requester <- sender
-        session$job_origin <- list(room = m$channel, thread = m$thread)
+        session$job_origin <- list(room = m$channel, thread = m$thread, event = m$id)
+        session$job_resume <- local({
+            request_session <- session
+            request_sender <- sender
+            request_event <- m$id
+            function(id) bot_job_resume(sessions, request_session, cfg,
+                request_sender, request_event, id)
+        })
         # What was asked, for a monitor ruling on a call this turn makes
         # itself (bot_supervisor_ask()). The message id marks where one
         # request's calls end and the next one's begin.
@@ -2473,6 +2497,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             bot_run_turn_in_cwd(ingest_content, session)
         }, cfg = cfg, thread = m$thread), finally = {
             session$job_handoff <- NULL
+            session$job_resume <- NULL
             session$ask_room <- NULL
             session$send_room_file <- NULL
         })
