@@ -437,6 +437,11 @@ class. Recording failure never retries a send. Reply, worker-progress and
 remote-control records link their originating turn where it is available;
 administrative sends without a turn retain a null reference. The existing
 conversation transcript still uses its last-event deduplication convention.
+
+New transcript and trace files are created with mode `0600` under private
+directories. Appending narrows an existing file to `0600` before writing. The
+trace remains a preview: rows carry `truncated` and separate argument/result
+flags with the character limits. Journals retain the original history.
 The terminal turn record owns usage. Transcript and job-outcome copies are
 marked derived and link to it; do not add these copies to turn totals. Unknown
 usage is `null`. Older transcript zero blocks cannot establish measured zero.

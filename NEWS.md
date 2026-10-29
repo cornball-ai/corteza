@@ -1,3 +1,9 @@
+# corteza 0.7.1.90
+
+- Create transcripts and traces with owner-only permissions before writing and
+  restrict existing files before appending. Mark trace truncation explicitly
+  for arguments and results, including nested and vector character values.
+
 # corteza 0.7.1.89
 
 - Persist room delivery attempts, failures and all returned event IDs without
