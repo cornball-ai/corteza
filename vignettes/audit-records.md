@@ -13,10 +13,14 @@ deliveries as linked events. Each writer owns its JSONL stream. A warm worker
 keeps its stream across jobs, with the job ID recorded on each applicable
 event. Child processes write separate streams and carry parent turn/call
 references. In-process summaries, reviews, refinements and memory flushes reuse
-their caller's writer and payload store, with separate turn IDs. Archival
-dispatch/exit records also reuse that writer; the archival subprocess owns its
-model-call stream. There is no
-global sequence and no shared-file append protocol. The initial reservation
+their caller's writer and payload store, with separate turn IDs. Synchronous
+archival (`archival.async: false`) also reuses that writer for dispatch/exit
+records; its model subprocess owns a separate stream. In the default async
+path, the background process writes dispatch/exit records to its own stream,
+and its model subprocess writes another. Those records link back through
+`origin`; the original parent stream has no forward dispatch pointer. Each
+async archival call therefore creates two new streams. There is no global
+sequence and no shared-file append protocol. The initial reservation
 directory is removed after the first successful write; the stream file then
 guards that identity. A crash before the first write can leave a reservation.
 

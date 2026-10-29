@@ -1,7 +1,8 @@
 # corteza 0.7.1.91
 
-- Reuse the caller's writer for archival dispatch/exit records while keeping
-  subprocess writers separate. Report write failures and quota omissions once
+- Reuse the caller's writer for synchronous archival dispatch/exit records;
+  async archival uses separate background and model-subprocess streams.
+  Report write failures and quota omissions once
   per kind per process so one warning does not suppress the other.
 - Preserve the reported `turn()$usage` total when request records are partial;
   terminal records retain both totals and identify the canonical choice.
