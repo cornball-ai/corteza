@@ -102,7 +102,7 @@ local({
     root <- tempfile("audit-quota-notice-")
     runtime <- corteza:::.audit_runtime
     noticed <- runtime$noticed
-    runtime$noticed <- FALSE
+    runtime$noticed <- list()
     on.exit({ runtime$noticed <- noticed; unlink(root, recursive = TRUE) }, add = TRUE)
     s <- new.env(parent = emptyenv())
     s$audit_dir <- root
@@ -122,4 +122,77 @@ local({
     expect_true(grepl("quota", notices, fixed = TRUE))
     rows <- corteza::audit_read(a$ref$stream)$records
     expect_length(Filter(function(x) identical(x$type, "payload_omitted"), rows), 2L)
+})
+
+# Write failures and quota omissions each notify once, regardless of order.
+local({
+    root <- tempfile("audit-notice-kinds-")
+    runtime <- corteza:::.audit_runtime
+    previous <- runtime$noticed
+    writer <- corteza:::.audit_write
+    on.exit({
+        runtime$noticed <- previous
+        utils::assignInNamespace(".audit_write", writer, "corteza")
+        unlink(root, recursive = TRUE)
+    }, add = TRUE)
+    blocked <- FALSE
+    utils::assignInNamespace(".audit_write", function(...) {
+        if (blocked) stop("fixture disk failure")
+        writer(...)
+    }, "corteza")
+    for (order in list(c("write", "quota"), c("quota", "write"))) {
+        runtime$noticed <- list()
+        s <- new.env(parent = emptyenv())
+        s$audit_dir <- root
+        s$config <- list(audit = list(limits = list(quota_bytes = 0)))
+        a <- corteza:::.audit_turn_begin(s)
+        notices <- character()
+        withCallingHandlers({
+            for (kind in rep(order, 2L)) {
+                if (kind == "write") {
+                    blocked <- TRUE
+                    corteza:::.audit_append(a$state, "fixture")
+                    blocked <- FALSE
+                } else {
+                    corteza:::.audit_payload_put(a, "fixture output", "request")
+                }
+            }
+            corteza:::.audit_append(a$state, "recovered")
+        }, message = function(m) {
+            notices <<- c(notices, conditionMessage(m))
+            invokeRestart("muffleMessage")
+        })
+        expect_length(notices, 2L)
+        expect_equal(sum(grepl("recording is failing", notices, fixed = TRUE)), 1L)
+        expect_equal(sum(grepl("quota reached", notices, fixed = TRUE)), 1L)
+    }
+})
+
+# Even an accidentally serialized parent writer cannot be claimed by a child.
+# Exercise the real process boundary; the model is a local stand-in.
+local({
+    root <- tempfile("audit-archival-child-")
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    s <- new.env(parent = emptyenv())
+    s$audit_dir <- root
+    a <- corteza:::.audit_turn_begin(s)
+    context <- corteza:::.audit_aux_context(s, "archival", share_writer = TRUE)
+    before <- readLines(a$ref$stream)
+    result <- callr::r(function(context) {
+        ns <- asNamespace("corteza")
+        s <- new.env(parent = emptyenv())
+        s$audit_dir <- context$root
+        s$.audit_stream <- context$writer
+        state <- get(".audit_state", ns)(s)
+        get(".audit_append", ns)(state, "child_dispatch")
+        model <- get(".audit_model_call", ns)(function(...) list(content = "fixture summary"),
+            list(provider = "openai", model = "fixture"), "archival", context = context)
+        list(dispatch = state$path, model = model$audit$stream, reply = model$content)
+    }, args = list(context = context), libpath = .libPaths())
+    expect_identical(result$reply, "fixture summary")
+    expect_false(identical(result$dispatch, a$ref$stream))
+    expect_false(identical(result$model, a$ref$stream))
+    expect_true(file.exists(result$dispatch))
+    expect_true(file.exists(result$model))
+    expect_identical(readLines(a$ref$stream), before)
 })

@@ -1,6 +1,6 @@
 # One canonical turn for a non-interactive model call. The caller's turn, if
 # present, links this child rather than adding its usage to its own total.
-.audit_aux_context <- function(session = NULL, role) {
+.audit_aux_context <- function(session = NULL, role, share_writer = FALSE) {
     active <- .audit_runtime$active
     list(root = if (is.environment(session)) {
             .audit_root(session)
@@ -13,6 +13,9 @@
             active$config
         },
          enabled = if (is.environment(session)) session$audit_enabled else NULL,
+         writer = if (isTRUE(share_writer)) .audit_safe({
+            if (is.environment(session)) .audit_state(session) else active$state
+        }),
          identity = if (is.environment(session)) {
             list(owner = session$job_owner,
                  session_key = job_worker_key(session),

@@ -350,12 +350,13 @@ archival_summarize <- function(history_slice, style = "structured",
     sys <- archival_summary_system_prompt(style)
     user <- sprintf("Summarize the following completed agent turn:\n\n%s",
                     archival_render_transcript(history_slice))
-    audit_context <- audit_context %||% .audit_aux_context(role = "archival")
+    audit_context <- audit_context %||% .audit_aux_context(role = "archival", share_writer = TRUE)
     dispatch <- .audit_safe({
         s <- new.env(parent = emptyenv())
         s$audit_dir <- audit_context$root
         s$config <- audit_context$config
         s$audit_enabled <- audit_context$enabled
+        s$.audit_stream <- audit_context$writer
         state <- .audit_state(s)
         id <- .audit_id()
         .audit_append(state, "auxiliary_dispatch", dispatch_id = id,
@@ -363,6 +364,9 @@ archival_summarize <- function(history_slice, style = "structured",
         list(state = state, id = id)
     })
     audit_context$origin$dispatch_id <- dispatch$id
+    # The parent owns dispatch/exit records. A subprocess must create its own
+    # writer; only serializable settings and causal references cross here.
+    audit_context$writer <- NULL
     answer <- tryCatch(
                         callr::r(
                                  function(prompt, system, model, provider, context) {
@@ -414,6 +418,7 @@ archival_summarize <- function(history_slice, style = "structured",
 archival_summarize_bg <- function(subagent_id, history_slice, style,
                                   provider, model, cwd = getwd(),
                                   timeout_seconds = 60L, audit_context = NULL) {
+    if (!is.null(audit_context)) audit_context$writer <- NULL
     callr::r_bg(
                 function(subagent_id, history_slice, style, provider, model,
                          cwd, timeout_seconds, audit_context) {
@@ -567,7 +572,7 @@ archival_archive_turn <- function(turn_session, prompt, history_slice,
 
     summary_model <- arc_cfg$summary$model %||% parent_model
     summary_style <- arc_cfg$summary$style %||% "structured"
-    audit_context <- .audit_aux_context(turn_session, "archival")
+    audit_context <- .audit_aux_context(turn_session, "archival", share_writer = TRUE)
     is_async <- isTRUE(arc_cfg$async %||% TRUE)
 
     if (is_async) {

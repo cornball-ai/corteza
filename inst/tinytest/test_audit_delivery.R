@@ -50,7 +50,7 @@ local({
     reply <- "$delivered-once"
     runtime <- corteza:::.audit_runtime
     noticed <- runtime$noticed
-    runtime$noticed <- FALSE
+    runtime$noticed <- list()
     on.exit(runtime$noticed <- noticed, add = TRUE)
     writer <- get(".audit_write", asNamespace("corteza"))
     on.exit(utils::assignInNamespace(".audit_write", writer, "corteza"), add = TRUE)

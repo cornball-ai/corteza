@@ -96,7 +96,7 @@ local({
     state <- corteza:::.audit_state(s)
     runtime <- corteza:::.audit_runtime
     old_notice <- runtime$noticed
-    runtime$noticed <- FALSE
+    runtime$noticed <- list()
     on.exit(runtime$noticed <- old_notice, add = TRUE)
     writer <- get(".audit_write", asNamespace("corteza"))
     on.exit(utils::assignInNamespace(".audit_write", writer, "corteza"), add = TRUE)

@@ -32,7 +32,7 @@
                 status = "stored")
     omit <- function(reason) {
         if (identical(reason, "quota")) .audit_notice(
-            "Corteza audit payload quota reached; work continues with incomplete payload records.")
+            "Corteza audit payload quota reached; work continues with incomplete payload records.", kind = "quota")
         ref$status <- "omitted"
         ref$reason <- reason
         .audit_append(audit$state, "payload_omitted", turn_id = audit$id,

@@ -2,7 +2,7 @@
 # journal commits; a failure here reports missing evidence and never retries work.
 .audit_runtime <- new.env(parent = emptyenv())
 .audit_runtime$counter <- 0
-.audit_runtime$noticed <- FALSE
+.audit_runtime$noticed <- list()
 
 .audit_now <- function() format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
 
@@ -13,11 +13,12 @@
             format(.audit_runtime$counter, scientific = FALSE, trim = TRUE))
 }
 
-.audit_notice <- function(text = "Corteza audit recording is failing; work continues with incomplete records.") {
-    if (isTRUE(.audit_runtime$noticed)) {
+.audit_notice <- function(text = "Corteza audit recording is failing; work continues with incomplete records.",
+                          kind = "write") {
+    if (isTRUE(.audit_runtime$noticed[[kind]])) {
         return(invisible(NULL))
     }
-    .audit_runtime$noticed <- TRUE
+    .audit_runtime$noticed[[kind]] <- TRUE
     tryCatch(message(text),
              error = function(e) NULL)
     invisible(NULL)

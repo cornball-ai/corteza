@@ -35,11 +35,12 @@ local({
     utils::assignInNamespace("agent", fake, "llm.api")
     timed_out <- FALSE
     utils::assignInNamespace("r", function(func, args, ...) {
+        expect_null(args$context$writer)
         if (timed_out) stop(structure(list(message = "fixture timeout", call = NULL),
             class = c("callr_timeout_error", "error", "condition")))
         do.call(func, args)
     }, "callr")
-    context <- corteza:::.audit_aux_context(parent, "archival")
+    context <- corteza:::.audit_aux_context(parent, "archival", share_writer = TRUE)
     summary <- corteza:::archival_summarize(list(list(role = "user", content = "fixture")),
         style = "paragraph", provider = "openai", model = "fixture", audit_context = context)
     expect_identical(as.character(summary), "summary")
@@ -55,6 +56,10 @@ local({
     expect_length(exits, 2L)
     expect_true(any(vapply(exits, function(x) "callr_timeout_error" %in% unlist(x$condition_classes), TRUE)))
     expect_true(any(vapply(exits, function(x) !is.null(x$child$turn_id), TRUE)))
+    parent_rows <- corteza::audit_read(result$audit$stream, FALSE)$records
+    expect_length(Filter(function(x) identical(x$type, "auxiliary_dispatch"), parent_rows), 2L)
+    expect_length(Filter(function(x) identical(x$type, "auxiliary_exit"), parent_rows), 2L)
+    expect_false(identical(exits[[1L]]$child$stream, result$audit$stream))
 })
 
 # Nested calls keep their parent's audit settings and known identity. The link
