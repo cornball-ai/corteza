@@ -15,7 +15,7 @@ local({
     mask <- Sys.umask("0000")
     on.exit(Sys.umask(mask), add = TRUE)
     first <- corteza:::.audit_state(s)
-    expect_equal(Sys.umask(), "0000")
+    expect_identical(as.integer(Sys.umask()), 0L)
     expect_true(corteza:::.audit_append(first, "before"))
     expect_identical(corteza:::.audit_state(s), first)
     expect_identical(first$root, normalizePath(s$audit_dir))
