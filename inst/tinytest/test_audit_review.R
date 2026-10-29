@@ -1,3 +1,33 @@
+# A missing root beneath a symlink has one identity before and after writing.
+# This also exercises the macOS temporary-directory alias on Linux.
+local({
+    if (.Platform$OS.type != "unix") return(invisible(NULL))
+    base <- tempfile("audit-symlink-")
+    dir.create(base)
+    on.exit(unlink(base, recursive = TRUE), add = TRUE)
+    target <- file.path(base, "target")
+    alias <- file.path(base, "alias")
+    dir.create(target)
+    expect_true(file.symlink(target, alias))
+    s <- new.env(parent = emptyenv())
+    s$audit_dir <- file.path(alias, "new", "audit")
+    expect_false(dir.exists(s$audit_dir))
+    mask <- Sys.umask("0000")
+    on.exit(Sys.umask(mask), add = TRUE)
+    first <- corteza:::.audit_state(s)
+    expect_equal(Sys.umask(), "0000")
+    expect_true(corteza:::.audit_append(first, "before"))
+    expect_identical(corteza:::.audit_state(s), first)
+    expect_identical(first$root, normalizePath(s$audit_dir))
+    expect_equal(as.integer(file.info(first$root)$mode), strtoi("700", 8L))
+    s$audit_dir <- file.path(target, "new", "audit")
+    expect_identical(corteza:::.audit_state(s), first)
+    expect_true(corteza:::.audit_append(first, "after"))
+    rows <- corteza::audit_read(first$path, FALSE)$records
+    expect_identical(vapply(rows, `[[`, "", "type"), c("before", "after"))
+    expect_length(list.files(first$root, "jsonl$"), 1L)
+})
+
 # Optional metadata errors leave the basic turn and terminal record intact.
 local({
     root <- tempfile("audit-metadata-")

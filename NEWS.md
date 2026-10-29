@@ -1,5 +1,7 @@
 # corteza 0.7.1.91
 
+- Keep one audit writer when a new storage directory is beneath a symlink,
+  including macOS temporary directories.
 - Reuse the caller's writer for synchronous archival dispatch/exit records;
   async archival uses separate background and model-subprocess streams.
   Report write failures and quota omissions once

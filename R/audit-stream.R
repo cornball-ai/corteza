@@ -51,6 +51,14 @@
     if (!startsWith(root, "/") && !startsWith(root, "\\\\") && !grepl("^[A-Za-z]:", root)) {
         root <- file.path(getwd(), root)
     }
+    # Resolve symlinked ancestors only after the directory exists. Otherwise
+    # macOS's /var -> /private/var changes the root after the first write and
+    # the next auxiliary call silently starts a second writer.
+    if (!dir.exists(root)) {
+        mask <- Sys.umask("0077")
+        tryCatch(dir.create(root, recursive = TRUE, showWarnings = FALSE,
+                            mode = "0700"), finally = Sys.umask(mask))
+    }
     root <- normalizePath(root, winslash = "/", mustWork = FALSE)
     old <- session$.audit_stream
     if (!is.null(old) && identical(old$root, root) &&
