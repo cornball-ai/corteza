@@ -456,7 +456,8 @@ chat_trace_observer <- function(session) {
                            elapsed_ms = round(event$elapsed_ms),
                            turn = event$turn_number,
                            auto_run_id = session$auto_run_id,
-                           call_id = event$call$call_id),
+                           call_id = event$call$call_id,
+                           turn_id = event$call$turn_id),
                  error = function(e) NULL
         )
     }

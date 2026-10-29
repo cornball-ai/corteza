@@ -195,6 +195,8 @@ supervisor_gate <- function(ask, cwd = getwd(), mode = "monitor",
         result <- list(action = action, reason = ans$reason %||% reason)
         if (is.function(on_decision)) {
             tryCatch(on_decision(list(
+                                      turn_id = call$turn_id,
+                                      call_id = call$call_id,
                                       tool = call$tool %||% "",
                                       brief = supervisor_brief(call),
                                       route = v$route,

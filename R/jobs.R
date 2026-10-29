@@ -159,7 +159,9 @@ job_create <- function(task, role = "doer", workspace = getwd(),
         tempfile(".resume-job-", tmpdir = job_root())
     }
     dir.create(dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
-    if (!is.null(resume_of)) on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+    if (!is.null(resume_of)) {
+        on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+    }
     # Content the delegator attached by reference (for example the message
     # a talker was acting on) is written beside the job rather than copied
     # into the task text, so a large paste does not have to pass through
@@ -200,7 +202,8 @@ job_create <- function(task, role = "doer", workspace = getwd(),
             resume_of = resume_of,
             resume_request = resume_request
         ))
-    if (!is.null(resume_of) && !isTRUE(suppressWarnings(file.rename(dir, destination)))) {
+    if (!is.null(resume_of) &&
+        !isTRUE(suppressWarnings(file.rename(dir, destination)))) {
         existing <- job_read(id)
         if (is.null(existing) || !identical(existing$resume_of, resume_of)) {
             stop("Could not publish resume attempt", call. = FALSE)
@@ -342,7 +345,8 @@ job_list <- function(status = NULL, origin_key = NULL, owner = NULL) {
 # not this process's to declare lost.
 job_recover <- function(live = character(), owner = "local") {
     open <- job_list(status = JOB_STATUSES_OPEN, owner = owner)
-    open <- Filter(function(j) !j$id %in% live && !identical(j$backend, "remote"), open)
+    open <- Filter(function(j) !j$id %in% live &&
+                   !identical(j$backend, "remote"), open)
     verdicts <- vapply(open, function(j) {
         if (identical(j$status, "queued")) {
             return("retryable")
@@ -470,6 +474,9 @@ job_approval_request <- function(id, call, decision, extra = list()) {
                 id = req,
                 job = id,
                 requested_at = job_now(),
+                turn_id = call$turn_id,
+                call_id = call$call_id,
+                audit_parent = call$audit,
                 tool = call$tool %||% call$name %||% "",
                 args = job_approval_args(call$args),
                 reason = decision$reason %||% "ask"

@@ -100,15 +100,19 @@ auto_log_append <- function(path, type, ...) {
 #' @noRd
 auto_log_read <- function(path) {
     if (!file.exists(path)) {
-        return(list(start = NULL, records = list(), end = NULL))
+        return(list(start = NULL, records = list(), end = NULL,
+                    n_malformed = 0L, malformed_lines = integer(),
+                    torn_tail = FALSE, interior_damage = FALSE))
     }
     lines <- readLines(path, warn = FALSE)
-    lines <- lines[nzchar(trimws(lines))]
     recs <- lapply(lines, function(l) {
         tryCatch(jsonlite::fromJSON(l, simplifyVector = FALSE),
                  error = function(e) NULL)
     })
-    recs <- recs[!vapply(recs, is.null, logical(1))]
+    valid <- vapply(recs, function(r) is.list(r) && is.character(r$type) &&
+                    length(r$type) == 1L && !is.na(r$type), logical(1))
+    malformed <- which(!valid)
+    recs <- recs[valid]
     types <- vapply(recs, function(r) r$type %||% "", character(1))
     list(start = if (any(types == "run_start")) {
             recs[[which(types == "run_start")[[1L]]]]
@@ -120,5 +124,7 @@ auto_log_read <- function(path) {
             recs[[utils::tail(which(types == "run_end"), 1L)]]
         } else {
             NULL
-        })
+        }, n_malformed = length(malformed), malformed_lines = malformed,
+         torn_tail = length(lines) %in% malformed,
+         interior_damage = any(malformed < length(lines)))
 }

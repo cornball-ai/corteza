@@ -217,6 +217,7 @@ local({
             context_compact_pct = 100, permissions = list(read_file = "allow"))
         utils::assignInNamespace(".agent_anthropic", function(messages, ...) {
             prompt <- corteza:::archival_history_entry_to_text(tail(messages, 1L)[[1L]])
+            if (grepl("kill fixture", prompt, fixed = TRUE)) Sys.sleep(30)
             finish <- grepl("finish fixture", prompt, fixed = TRUE)
             cancel <- grepl("cancel fixture", prompt, fixed = TRUE)
             call <- list(id = paste0("call-", length(messages)), name = "read_file",
@@ -246,6 +247,14 @@ local({
     expect_identical(j$status, "incomplete")
     expect_identical(j$outcome$termination$reason, "max_turns")
     expect_equal(j$outcome$usage$total_tokens, 5L)
+    expect_identical(j$outcome$usage_source, "derived")
+    audit_ref <- j$outcome$usage_turns[[1L]]
+    audit_rows <- corteza:::auto_log_read(audit_ref$stream)$records
+    audit_end <- Filter(function(x) identical(x$type, "turn_end") &&
+        identical(x$turn_id, audit_ref$turn_id), audit_rows)[[1L]]
+    expect_identical(audit_end$usage_source, "canonical")
+    expect_identical(audit_end$job_id, id)
+    expect_equal(audit_end$usage$total_tokens, j$outcome$usage$total_tokens)
     expect_true(j$outcome$checkpoint$ok)
     expect_null(j$outcome$review_job)
     expect_null(s$.job_current)
@@ -266,6 +275,9 @@ local({
 
     finished <- pump(corteza:::job_submit(s, "finish fixture"))
     expect_identical(finished$status, "done")
+    next_ref <- finished$outcome$usage_turns[[1L]]
+    expect_identical(next_ref$stream, audit_ref$stream)
+    expect_false(identical(next_ref$turn_id, audit_ref$turn_id))
     cancelled <- pump(corteza:::job_submit(s, "cancel fixture"))
     expect_identical(cancelled$status, "cancelled")
     expect_equal(cancelled$outcome$usage$total_tokens, 5L)
@@ -277,4 +289,31 @@ local({
     expect_false(failed_checkpoint$outcome$checkpoint$ok)
     expect_true(grepl("fixture disk failure", failed_checkpoint$outcome$reason, fixed = TRUE))
     expect_null(failed_checkpoint$outcome$review_job)
+
+    # A confirmed dead worker has no canonical completion. Its start remains
+    # attributable to the job, and pumping does not execute it a second time.
+    killed_id <- corteza:::job_submit(s, "kill fixture")
+    deadline <- Sys.time() + 15
+    killed_start <- NULL
+    repeat {
+        files <- list.files(file.path(root, "state", "workers"),
+            "[.]jsonl$", recursive = TRUE, full.names = TRUE)
+        for (file in files) {
+            rows <- corteza:::auto_log_read(file)$records
+            hit <- Filter(function(x) identical(x$type, "turn_start") &&
+                identical(x$job_id, killed_id), rows)
+            if (length(hit)) killed_start <- list(stream = file, turn_id = hit[[1]]$turn_id)
+        }
+        if (!is.null(killed_start)) break
+        if (Sys.time() > deadline) stop("worker did not write its audit start")
+        Sys.sleep(0.02)
+    }
+    s$.job_worker$kill()
+    dead <- pump(killed_id)
+    expect_identical(dead$status, "indeterminate")
+    rows <- corteza:::auto_log_read(killed_start$stream)$records
+    expect_length(Filter(function(x) identical(x$type, "turn_end") &&
+        identical(x$turn_id, killed_start$turn_id), rows), 0L)
+    corteza:::job_pump(s)
+    expect_identical(corteza:::job_read(killed_id)$status, "indeterminate")
 })
