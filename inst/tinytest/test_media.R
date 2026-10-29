@@ -148,7 +148,8 @@ local({
                                          "openai_codex")
     expect_inherits(out, "llm_content")
     expect_identical(length(out), 2L)
-    expect_identical(out[[1L]]$text, "[@alice:ex] look at this")
+    expect_true(startsWith(out[[1L]]$text, "[@alice:ex] look at this"))
+    expect_true(grepl("image supplied to model", out[[1L]]$text, fixed = TRUE))
     expect_inherits(out[[2L]], "llm_image")
     expect_identical(out[[2L]]$mime, "image/png")
     # The bytes are the ones the transport handed over, by value.
@@ -171,7 +172,8 @@ local({
         out <- corteza:::bot_message_content(fake_chat(), msg(att()),
                                              "hello", "ollama"),
         "not configured for vision")
-    expect_identical(out, "hello")
+    expect_true(startsWith(out, "hello"))
+    expect_true(grepl("contents unavailable", out, fixed = TRUE))
 })
 
 # A transport that reports no inbound media is not asked to download.
@@ -183,16 +185,14 @@ local({
                         writeBin(png_bytes, dest)
                         dest
                     })
-    expect_identical(
-        corteza:::bot_message_content(cl, msg(att()), "hello", "anthropic"),
-        "hello")
+    expect_true(grepl("transport cannot download attachments",
+        corteza:::bot_message_content(cl, msg(att()), "hello", "anthropic"), fixed = TRUE))
     expect_false(fetched)
 })
 
 # ---- One bad picture must not cost the room its message ----
 
-# An encrypted attachment is the common case: chat.api refuses those,
-# because the bytes behind the URL are ciphertext it cannot decrypt.
+# Transport failures remain visible without disclosing transport error text.
 local({
     cl <- fake_chat(on_download = function(a, dest) {
         stop("chat.api: attachment ", a$id, " is encrypted")
@@ -201,15 +201,14 @@ local({
         out <- corteza:::bot_message_content(cl, msg(att()), "hello",
                                              "anthropic"),
         "could not fetch")
-    expect_identical(out, "hello")
+    expect_true(grepl("contents unavailable", out, fixed = TRUE))
 })
 
 # A fetch that returns a path with nothing behind it is the same answer.
 local({
     cl <- fake_chat(on_download = function(a, dest) dest)
-    expect_identical(
-        corteza:::bot_message_content(cl, msg(att()), "hello", "anthropic"),
-        "hello")
+    expect_true(grepl("could not fetch attachment",
+        corteza:::bot_message_content(cl, msg(att()), "hello", "anthropic"), fixed = TRUE))
 })
 
 # A file that is oversized only after the download is caught there. The
@@ -226,7 +225,7 @@ local({
                                              "hello", "anthropic",
                                              cfg = list(image_max_bytes = 100)),
         "after download")
-    expect_identical(out, "hello")
+    expect_true(grepl("after download", out, fixed = TRUE))
 })
 
 # A 5.5 MB photo goes through on openai_codex and is refused on
@@ -249,7 +248,7 @@ local({
         small <- corteza:::bot_message_content(cl, m, "what is this",
                                                "anthropic"),
         "over the")
-    expect_identical(small, "what is this")
+    expect_true(grepl("contents unavailable", small, fixed = TRUE))
 })
 
 # The downloaded signature wins over a misleading filename AND MIME field.
@@ -270,7 +269,7 @@ local({
     })
     expect_message(out <- corteza:::bot_message_content(cl, msg(att()), "look", "anthropic"),
                    "unsupported or unreadable")
-    expect_identical(out, "look")
+    expect_true(grepl("unsupported or unreadable", out, fixed = TRUE))
 })
 
 # One good picture and one bad one leaves the good one in place.

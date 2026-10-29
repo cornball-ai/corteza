@@ -1009,6 +1009,15 @@ OPENAI_API_KEY=sk-...
 
 ## Room attachments
 
+Incoming attachments retain a quoted receipt with their filename, declared type
+and size, sender, source event, and readability status. The transcript and
+journal keep that receipt even when the file cannot be read. In an exchange
+the bot is answering, it posts an explicit notice for unsupported, oversized,
+or unreadable files. PDFs and other non-image files are acknowledged without
+downloading or extracting their contents. Successful images still reach the
+conversation model. Delegation with `attach_context = true` carries the text
+and receipt, and explicitly says that image bytes are absent from that text.
+
 Room conversations offer `send_room_file(path)` to configured bot operators.
 It sends an existing file to the current room using the host's chat identity;
 the model does not load credentials or select another destination. Tool policy

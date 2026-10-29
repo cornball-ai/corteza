@@ -1725,6 +1725,7 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
         # which is markdown, and a base64 image in it would be noise no
         # reader could use.
         expect_equal(length(s$transcript), 2L)
-        expect_equal(s$transcript[[1L]]$content, "IMG_0942.png")
+        expect_true(startsWith(s$transcript[[1L]]$content, "IMG_0942.png"))
+        expect_true(grepl("image supplied to model", s$transcript[[1L]]$content, fixed = TRUE))
     })
 }

@@ -1,3 +1,10 @@
+# corteza 0.7.1.86
+
+- Retain attributed attachment receipts in room context, transcripts, journals,
+  and delegated text. Acknowledge unsupported or unreadable contents explicitly
+  without exposing transport URLs or keys. Keep successful image ingestion;
+  non-image files are acknowledged without downloading or extracting them.
+
 # corteza 0.7.1.85
 
 - Allow diagnostic strings such as `cat("token:", value)` through remote
