@@ -61,7 +61,7 @@
                 if (file.exists(marker)) {
                     next
                 }
-                sent <- tryCatch(bot_reply_send(chat, accepted$room, chunks[[i]]),
+                sent <- tryCatch(bot_reply_send(chat, accepted$room, chunks[[i]], audit = record$audit),
                                  error = function(e) NULL)
                 if (!is.character(sent) || length(sent) != 1L || is.na(sent) ||
                     !nzchar(sent)) {

@@ -1,3 +1,10 @@
+# corteza 0.7.1.89
+
+- Persist room delivery attempts, failures and all returned event IDs without
+  requiring a vault. Link replies and progress to their originating turns and
+  hash posted text separately from generated text. Audit-write failures do not
+  cause duplicate sends or change transport error handling.
+
 # corteza 0.7.1.88
 
 - Record canonical turn accounting across interactive, room, voice and worker

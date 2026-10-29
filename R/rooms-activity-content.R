@@ -16,6 +16,7 @@ rooms_activity_preview <- function(text, lines = 5L, width = 160L) {
 }
 
 rooms_activity_record <- function(event) {
+    audit <- event$call$audit
     event <- event$display %||% .redact_object(event)
     kind <- event$outcome
     if (identical(kind, "progress")) {
@@ -31,7 +32,7 @@ rooms_activity_record <- function(event) {
         rooms_activity_preview(mc$assistant_text, lines = 12L, width = 240L)
     } else ""
     tool <- call$tool %||% event$tool %||% ""
-    record <- list(narration = narration,
+    record <- list(narration = narration, audit = audit,
                    turn_id = call$turn_id, call_id = call$call_id,
                    batch = paste(event$turn_number %||% mc$agent_turn %||% "", narration))
     if (!identical(kind, "start")) {
@@ -50,6 +51,7 @@ rooms_activity_add <- function(acc, record) {
     if (is.null(record)) {
         return(invisible(NULL))
     }
+    if (!is.null(record$audit)) acc$audit <- record$audit
     if (identical(acc$detail, FALSE)) {
         record$narration <- ""
         if (!is.null(record$tool)) {

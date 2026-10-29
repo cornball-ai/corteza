@@ -175,7 +175,9 @@ bot_call_pump <- function(session, chat) {
         bot_event_id(bot_reply_send(chat, room_id, text))
     },
                      edit = function(room_id, event_id, text) {
-        chat.api::chat_edit(chat, room_id, event_id, text)
+        .audit_delivery(room_id, text,
+            chat.api::chat_edit(chat, room_id, event_id, text),
+            operation = "edit", event_id = event_id)
     },
                      note = function(text) message("corteza call ", c0$room_id, ": ", text))
     if (!call_worker_alive(c0$worker)) {

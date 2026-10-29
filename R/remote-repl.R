@@ -163,7 +163,7 @@
     cat("Connected. Use the Matrix room; Ctrl+C here returns to the local prompt.\n")
     ctx$read_input <- function(prompt) .remote_input(ctx, prompt)
     ctx$render_reply <- function(reply) {
-        .remote_emit(ctx, reply)
+        .remote_emit(ctx, reply, audit = session$last_turn_audit)
         saved$render_reply(reply)
     }
     ctx$eof_message <- "Remote control ended.\n"
@@ -177,7 +177,8 @@
         if (!nzchar(frame$text)) {
             return(invisible(NULL))
         }
-        .remote_append(dir, "out", list(type = "text", text = frame$text))
+        .remote_append(dir, "out", list(type = "text", text = frame$text,
+            audit = acc$audit))
         acc <<- rooms_activity_new()
         last_flush <<- as.numeric(Sys.time())
         invisible(NULL)

@@ -52,7 +52,9 @@
         # quietly move a private thread's file to the main room timeline.
         return(err("File sending is currently available in the room's main conversation only."))
     }
-    ids <- chat.api::chat_send(chat, room, "", files = path)
+    ids <- .audit_delivery(room, "", chat.api::chat_send(chat, room, "", files = path),
+        session = session, attachment = list(name = basename(path), bytes = size$size,
+            hash = .audit_safe(digest::digest(file = path, algo = "sha256"))))
     ids <- as.character(unlist(ids, use.names = FALSE))
     if (!length(ids) || anyNA(ids) || any(!nzchar(ids))) {
         return(err("The transport returned no attachment event ID; delivery is unconfirmed."))

@@ -310,10 +310,11 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
     if (is.na(kind)) {
         kind <- msgtype
     }
-    bot_event_id(chat.api::chat_send(bot_chat_client(cfg), room_id,
-                                     .redact_text(text, .secret_values(cfg)),
+    posted <- .redact_text(text, .secret_values(cfg))
+    bot_event_id(.audit_delivery(room_id, posted,
+        chat.api::chat_send(bot_chat_client(cfg), room_id, posted,
                                      markup = bot_markup(markdown),
-                                     kind = kind))
+                                     kind = kind), generated = text))
 }
 
 # The poll loop's send. Everything goes through the transport contract,
@@ -333,8 +334,9 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
 # Returns the event id, or NULL when the homeserver reported none, which
 # is what every caller tests for.
 bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
-                           thread = NULL) {
-    text <- .redact_text(text, .chat_secrets(chat))
+                           thread = NULL, session = NULL, audit = NULL) {
+    generated <- text
+    text <- .redact_text(text, c(.chat_secrets(chat), session$secret_values))
     # A reply to a threaded message goes back into its thread, and only
     # where the transport can carry one: chat_send() refuses a threaded
     # send it cannot route, so asking first is what keeps a reply in an
@@ -348,9 +350,10 @@ bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
             thread <- NULL
         }
     }
-    bot_event_id(chat.api::chat_send(chat, room_id, text,
+    bot_event_id(.audit_delivery(room_id, text, chat.api::chat_send(chat, room_id, text,
                                      markup = bot_markup(markdown),
-                                     thread = thread))
+                                     thread = thread), session = session, thread = thread,
+        ref = audit, generated = generated))
 }
 
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
@@ -1630,8 +1633,9 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
     if (!length(approvers)) {
         # Say so in the room. A silent decline reads to the user as the
         # model changing its mind.
-        tryCatch(chat.api::chat_send(chat, room_id,
-                                     bot_no_approver_notice(call)),
+        notice <- bot_no_approver_notice(call)
+        tryCatch(.audit_delivery(room_id, notice,
+            chat.api::chat_send(chat, room_id, notice), ref = call$audit),
                  error = function(e) NULL)
         return(FALSE)
     }
@@ -1650,7 +1654,8 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
     since <- base$cursor
 
     msg <- bot_approval_prompt(call, decision, timeout_sec)
-    eid <- tryCatch(bot_event_id(chat.api::chat_send(chat, room_id, msg)),
+    eid <- tryCatch(bot_event_id(.audit_delivery(room_id, msg,
+        chat.api::chat_send(chat, room_id, msg), ref = call$audit)),
                     error = function(e) NULL)
     if (is.null(eid)) {
         return(FALSE)
@@ -2520,8 +2525,9 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             reply <- paste0(badge, "\n\n", reply)
         }
         sent_id <- tryCatch(
-                            bot_reply_send(chat, m$channel, .redact_text(reply, session$secret_values),
-                markdown = TRUE, thread = m$thread),
+                            bot_reply_send(chat, m$channel, reply,
+                markdown = TRUE, thread = m$thread, session = session,
+                audit = session$last_turn_audit),
                             error = function(e) NULL
         )
         if (!is.null(sent_id)) {
