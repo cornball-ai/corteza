@@ -1121,8 +1121,10 @@ observer_progress <- function() {
 #'   Pass explicit schemas when running against a remote skill source.
 #'
 #' @return A list with \code{reply} (character), \code{session} (the
-#'   updated session environment; also mutated in place), and \code{route}
-#'   (the actual model/provider and fallback credential mode).
+#'   updated session environment; also mutated in place), \code{route}
+#'   (the actual model/provider and fallback credential mode), and
+#'   \code{termination} (status \code{done}, \code{incomplete}, or
+#'   \code{cancelled}, with a machine-readable reason).
 #' @examples
 #' \dontrun{
 #' # Requires ANTHROPIC_API_KEY (or the configured provider's key) and
@@ -1456,10 +1458,12 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (exists("redacted_stream", inherits = FALSE)) {
         redacted_stream$flush()
     }
+    termination <- .turn_termination(response)
     list(
-         reply = .progress_reply(session, reply),
+         reply = .progress_reply(session, reply, termination),
          session = session,
          usage = response$usage,
+         termination = termination,
          route = response$corteza_route,
          raw = response
     )

@@ -642,10 +642,7 @@ bot_job_result_text <- function(job) {
     head <- sprintf("**Job %s %s**: %s", job$id, job$status,
                     job_title(job, max_chars = 120L))
     o <- job$outcome
-    body <- switch(job$status,
-                   done = o$result %||% "",
-                   failed = o$error %||% o$reason %||% "",
-                   o$reason %||% "")
+    body <- job_result_body(job)
     note <- if (identical(job$status, "done") && !is.null(o$reason)) {
         paste0("\n\n_", o$reason, "_")
     } else {

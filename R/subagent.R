@@ -458,7 +458,9 @@ subagent_seed_history <- function(history) {
 #'   containing status, findings, concerns, deviations, questions, and feedback.
 #' @return A list with `$reply` (character, the LLM reply text),
 #'   `$usage` (list with `input_tokens`, `output_tokens`, `total_tokens`,
-#'   and optionally `cost` -- provider-dependent), and, when
+#'   and optionally `cost` -- provider-dependent). `$termination` records
+#'   whether the turn finished, stopped incomplete, or was cancelled, with
+#'   a machine-readable reason. When
 #'   `return_name` is set, `$final` (the resolved value) or
 #'   `$final_note` (why nothing was returned). When `report = TRUE`,
 #'   `$report` is the validated structured handoff or `$report_error`
@@ -520,8 +522,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
                                   ignore = c("context_index", "context_edit_rejected"))) {
         slice <- journal_turn_slice(.subagent_state$session, mark, pre_len)
         if (length(slice) > 0L) {
-            max_turns_hit <- isTRUE(grepl("Max turns",
-                    as.character(result$reply %||% "")))
+            max_turns_hit <- identical(result$termination$reason, "max_turns")
             if (archival_should_trigger(arc_cfg, slice, depth = depth,
                                         max_turns_hit = max_turns_hit) &&
                 !archival_slice_has_unfinished_tool_use(slice)) {
@@ -614,6 +615,7 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
 
     list(reply = extracted$reply,
          usage = result$usage %||% list(),
+         termination = result$termination,
          final = final, final_found = final_found, final_note = final_note,
          report = extracted$report, report_error = extracted$report_error)
 }

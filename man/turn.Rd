@@ -20,8 +20,10 @@ Pass explicit schemas when running against a remote skill source.}
 }
 \value{
 A list with \code{reply} (character), \code{session} (the
-  updated session environment; also mutated in place), and \code{route}
-  (the actual model/provider and fallback credential mode).
+  updated session environment; also mutated in place), \code{route}
+  (the actual model/provider and fallback credential mode), and
+  \code{termination} (status \code{done}, \code{incomplete}, or
+  \code{cancelled}, with a machine-readable reason).
 }
 \description{
 Sends \code{prompt} to the configured LLM with tool use enabled. Every

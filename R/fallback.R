@@ -330,8 +330,7 @@
 # Run llm.api::agent with agent_args, walking the session's fallback
 # chain on limit errors. `.call` is the seam tests replace; production
 # leaves it at the real agent.
-.agent_with_fallback <- function(agent_args, session,
-                                 .call = function(args) do.call(llm.api::agent, args)) {
+.agent_with_fallback <- function(agent_args, session, .call = .agent_call) {
     previous_edit_provider <- session$context_edit_provider
     previous_edit_request <- session$context_edit_request
     on.exit({
@@ -342,6 +341,8 @@
     chain <- c(list(primary), .session_fallback(session))
     resume <- FALSE
     last_error <- NULL
+    recovered_usage <- list()
+    recovered_turns <- 0L
 
     for (i in seq_along(chain)) {
         cand <- chain[[i]]
@@ -415,9 +416,29 @@
             session$history <- args$history
         }
 
+        checkpoint_usage <- list()
+        checkpoint_turns <- 0L
+        checkpoint <- args$checkpoint_callback
+        if (is.function(checkpoint)) {
+            args$checkpoint_callback <- function(history, context) {
+                usage <- context$usage %||% list()
+                if (is.null(usage$total_tokens) &&
+                    is.numeric(usage$input_tokens) &&
+                    is.numeric(usage$output_tokens)) {
+                    usage$total_tokens <- usage$input_tokens + usage$output_tokens
+                }
+                checkpoint_usage <<- .turn_add_usage(checkpoint_usage, usage)
+                checkpoint_turns <<- max(checkpoint_turns, as.integer(context$agent_turn %||% 0L))
+                checkpoint(history, context)
+            }
+        }
         before <- length(session$history %||% list())
         result <- tryCatch(.call(args), error = function(e) e)
         if (!inherits(result, "error")) {
+            if (length(recovered_usage) || recovered_turns > 0L) {
+                result$usage <- .turn_add_usage(recovered_usage, result$usage)
+                result$turns <- recovered_turns + as.integer(result$turns %||% 0L)
+            }
             route <- .fallback_route(cand, i)
             result$corteza_route <- route
             session$last_route <- route
@@ -437,6 +458,10 @@
         if (!.is_limit_error(result)) {
             stop(result)
         }
+        # Completed batches before a failed request have already incurred
+        # usage. A later provider's successful response does not include it.
+        recovered_usage <- .turn_add_usage(recovered_usage, checkpoint_usage)
+        recovered_turns <- recovered_turns + checkpoint_turns
 
         deadline <- .fallback_deadline(session, primary = i == 1L)
         .fallback_mark_until(cand$provider, deadline)

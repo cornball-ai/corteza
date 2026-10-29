@@ -33,8 +33,8 @@
     notice
 }
 
-.progress_reply <- function(session, reply) {
-    if (!grepl("[Max turns reached]", reply, fixed = TRUE)) {
+.progress_reply <- function(session, reply, termination = NULL) {
+    if (!identical(termination$reason, "max_turns")) {
         return(reply)
     }
     p <- session$.progress
@@ -42,7 +42,11 @@
             if (!is.null(p$last_tool)) sprintf("Completed %d tool calls (%d failed). Latest: %s.",
                 p$completed, p$failed, p$last_tool),
             if (!is.null(p$commentary)) paste0("Last update:\n", p$commentary),
-            "Send `keep going`, or use /auto to continue under supervision."),
+            if (is.null(.job_worker_state$job_id)) {
+                if (identical(session$channel, "matrix")) {
+                    "Send `keep going` to continue."
+                } else "Send `keep going`, or use /auto to continue under supervision."
+            }),
           collapse = "\n\n")
 }
 

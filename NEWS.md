@@ -1,3 +1,10 @@
+# corteza 0.7.1.84
+
+- Record tool-turn and output limits as incomplete worker outcomes, preserving
+  partial results, termination reasons, and known usage across retries and
+  fallbacks. Release checkout locks without scheduling a reviewer or claiming
+  completion. Detect limits from the agent loop rather than quoted reply text.
+
 # corteza 0.7.1.83
 
 - Add `send_room_file(path)` for bot operators to send a requested attachment
