@@ -9,7 +9,9 @@
     result <- tryCatch({
         operators <- intersect(unlist(request$controllers), bot_operators(cfg))
         if (!length(operators)) stop("No configured operator may control this session.")
-        room <- chat.api::chat_resolve(chat, request$room)
+        managed <- is.null(request$room)
+        room <- if (managed) .remote_room(request, cfg, chat, operators) else
+            chat.api::chat_resolve(chat, request$room)
         if (!is.character(room) || length(room) != 1L ||
                        !nzchar(room)) stop("Room not found.")
         others <- Filter(function(x) !identical(x$id, request$id),
@@ -25,7 +27,8 @@
                                        owner = request$owner))) {
             stop("The room has delegated work in flight; finish it before attaching.")
         }
-        list(room = room, controllers = as.list(operators))
+        list(room = room, controllers = as.list(operators), managed = managed,
+             session_id = request$session_id)
     }, error = function(e) list(error = conditionMessage(e)))
     .remote_write(path, result)
     result
@@ -86,14 +89,14 @@
     invisible(NULL)
 }
 
-.remote_bot_route <- function(m, cfg) {
-    if (!is.null(m$thread)) {
-        return(FALSE)
-    }
+.remote_bot_route <- function(m, cfg, chat = NULL) {
     for (request in .remote_sessions(bot_job_owner(cfg))) {
         accepted <- .remote_read_file(file.path(request$dir, "accepted.json"))
         if (!identical(accepted$room, m$channel)) {
             next
+        }
+        if (!is.null(m$thread) && !isTRUE(accepted$managed)) {
+            return(FALSE)
         }
         if (!isTRUE(as.numeric(m$ts) >= request$created)) {
             return(TRUE)
@@ -134,7 +137,7 @@
         .remote_write(seen, list(id = m$id))
         return(TRUE)
     }
-    FALSE
+    .remote_room_offline(m, cfg, chat)
 }
 
 .remote_bot_safe <- function(cfg, chat, sessions = NULL) {

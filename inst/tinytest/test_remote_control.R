@@ -126,19 +126,22 @@ local({
         result
     }, "chat.api")
     # Feed transport messages as the human, not loopback's default self sender.
-    send_human <- function(text) {
+    human_room <- "next-room"
+    send_human <- function(text, thread = NULL) {
         id <- paste0("human-", length(cl$env$log) + 1L)
         cl$env$log[[length(cl$env$log) + 1L]] <- chat.api::chat_message(
-            id, "next-room", "@owner:example", text, Sys.time(), self = FALSE)
+            id, human_room, "@owner:example", text, Sys.time(), self = FALSE, thread = thread)
     }
     utils::assignInNamespace(".remote_wait", function(ctx, predicate, timeout = 60) {
         corteza::bot_poll(sessions = sessions, system = "fixture")
+        accepted <- corteza:::.remote_read_file(file.path(ctx$remote_dir, "accepted.json"))
+        human_room <<- accepted$room
         pending <- list.files(file.path(ctx$remote_dir, "approvals"), pattern = "[.]request$", full.names = TRUE)
         pending <- pending[!file.exists(sub("[.]request$", ".closed", pending))]
         if (length(pending)) {
             id <- sub("[.]request$", "", basename(tail(pending, 1L)))
             send_human(paste("/approve", id))
-        } else send_human("Continue the fixture")
+        } else send_human("Continue the fixture", thread = if (isTRUE(accepted$managed)) "thread-root" else NULL)
         corteza::bot_poll(sessions = sessions, system = "fixture")
         predicate()
     }, "corteza")
@@ -209,6 +212,62 @@ local({
     expect_identical(room_session$transcript, entries)
     expect_false(any(vapply(room_session$history %||% list(), function(x)
         is.character(x$content) && any(grepl("Continue the fixture", x$content, fixed = TRUE)), TRUE)))
+
+    # Run the full courier/REPL path with the default session destination,
+    # clear remotely, then disconnect from the new room. Approval and activity
+    # output must follow the new mailbox, and cleanup must close that mailbox.
+    turn_ids <- rooms <- character()
+    remote_dirs <- character()
+    ctx$new_session_fn <- function() {
+        fresh <- corteza:::session_new("ollama", "fixture", root)
+        list(session = fresh, sessionId = fresh$sessionId)
+    }
+    ctx$turn_fn <- function(prompt, session) {
+        turn_ids <<- c(turn_ids, ctx$disk_session$sessionId)
+        rooms <<- c(rooms, human_room)
+        remote_dirs <<- c(remote_dirs, ctx$remote_dir)
+        if (length(turn_ids) == 2L) expect_identical(session$history, list())
+        expect_true(session$approval_cb(list(tool = "write_file", args = list(path = "fixture")),
+            list(reason = "ask")))
+        corteza:::.fire_observers(session, list(outcome = "ran", success = TRUE,
+            call = list(tool = "read_file", args = list(path = "fixture")), result = "new activity"))
+        list(reply = paste("Reply", length(turn_ids)), usage = list())
+    }
+    ctx$render_reply <- function(text) {
+        send_human(if (length(turn_ids) == 1L) "/clear" else "/rc off")
+        corteza::bot_poll(sessions = sessions, system = "fixture")
+    }
+    out <- capture.output(corteza:::.remote_run(ctx, ""))
+    corteza::bot_poll(sessions = sessions, system = "fixture")
+    expect_identical(length(turn_ids), 2L)
+    expect_identical(length(unique(turn_ids)), 2L)
+    expect_identical(length(unique(rooms)), 2L)
+    expect_null(ctx$remote_dir)
+    expect_identical(ctx$session$approval_cb, saved_approval)
+    expect_true(all(file.exists(file.path(remote_dirs, "closed.json"))))
+    expect_identical(sum(vapply(ctx$session$on_tool, function(obs)
+        identical(attr(obs, "kind"), "tool_buffer"), TRUE)), 1L)
+    for (i in seq_along(rooms)) {
+        messages <- chat.api::chat_history(cl, rooms[[i]])$messages
+        bodies <- vapply(messages, function(m) m$body, "")
+        expect_true(paste("Reply", i) %in% bodies)
+        expect_null(messages[[which(bodies == paste("Reply", i))]]$thread)
+        expect_false(exists(corteza:::bot_session_key(rooms[[i]], "thread-root"), sessions,
+            inherits = FALSE))
+        expect_true(any(grepl("new activity", bodies, fixed = TRUE)))
+        expect_true(any(grepl("Approval needed", bodies, fixed = TRUE)))
+    }
+    expect_true(any(grepl("disconnected", bodies, fixed = TRUE)))
+
+    # A message after disconnect is handled without invoking a bot turn.
+    original_turn <- get("turn", ns)
+    utils::assignInNamespace("turn", function(...) stop("unexpected bot turn"), "corteza")
+    on.exit(utils::assignInNamespace("turn", original_turn, "corteza"), add = TRUE)
+    send_human("Are you still connected?")
+    expect_silent(corteza::bot_poll(sessions = sessions, system = "fixture"))
+    offline <- tail(chat.api::chat_history(cl, human_room)$messages, 1L)[[1L]]
+    expect_true(grepl("Resume it in the terminal", offline$body, fixed = TRUE))
+    utils::assignInNamespace("turn", original_turn, "corteza")
 
     # The real stop check prevents tool dispatch, with the request already
     # mirrored in history available to the REPL's normal interruption repair.

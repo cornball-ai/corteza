@@ -6,13 +6,13 @@
         parts <- parts[-c(1L, 2L)]
     }
     room <- trimws(paste(parts, collapse = " "))
-    if (!nzchar(room)) room <- ctx$config$remote_control$room %||%
-    paste0("~/", basename(ctx$cwd %||% getwd()))
+    if (!nzchar(room)) room <- ctx$config$remote_control$room
+    if (identical(room, "")) room <- NULL
     bots <- .remote_bots()
     if (!is.null(owner)) bots <- Filter(function(x) identical(x$owner, owner),
                                         bots)
     if (length(bots) != 1L) {
-        stop("Choose one running bot with /remote-control --bot @bot:server <room>. ",
+        stop("Choose one running bot with /remote-control --bot @bot:server [room]. ",
              "Available: ", paste(vapply(.remote_bots(), function(x) x$owner, ""), collapse = ", "),
              ". The bot must run this version and have configured operators.", call. = FALSE)
     }
@@ -85,6 +85,10 @@
             .remote_emit(ctx, paste("Connected to the live CLI in", ctx$cwd))
             next
         }
+        if (identical(prompt, "> ") && text %in% c("/clear", "/reset", "/new")) {
+            .remote_clear(ctx)
+            next
+        }
         if (identical(prompt, "> ") && !startsWith(text, "/")) {
             return(text)
         }
@@ -109,7 +113,7 @@
             .remote_emit(ctx, output)
         } else {
             .remote_emit(ctx, paste("Send a task, /auto [--exec] [goal], /auto status,",
-                                    "/job resume <id>, /max-tokens [N], /stop, or /remote-control off."))
+                                    "/job resume <id>, /max-tokens [N], /clear, /stop, or /remote-control off."))
         }
     }
 }
@@ -124,39 +128,33 @@
         return(invisible(NULL))
     }
     choice <- .remote_choose(ctx, text)
-    dir <- .remote_request(choice$bot$owner, choice$room,
-                           unlist(choice$bot$operators))
-    ctx$remote_dir <- dir
-    ctx$remote_consumed <- character()
     session <- ctx$session
+    remote_observer <- NULL
     saved <- list(read_input = ctx$read_input, render_reply = ctx$render_reply,
                   remote_flush = ctx$remote_flush,
                   eof_message = ctx$eof_message, approval_cb = session$approval_cb,
                   task_approval_cb = session$task_approval_cb, on_tool = session$on_tool)
-    session$remote_dir <- dir
     on.exit({
-        tryCatch({
-            .remote_emit(ctx, "Remote control disconnected. The CLI session remains open locally.")
-            .remote_write(file.path(dir, "closed.json"), list(closed = TRUE))
-        }, error = function(e) message("Remote control cleanup: ", conditionMessage(e)))
+        if (!is.null(ctx$remote_dir)) {
+            tryCatch(.remote_write(file.path(ctx$remote_dir, "closed.json"), list(closed = TRUE)),
+                error = function(e) message("Remote control close: ", conditionMessage(e)))
+            tryCatch(.remote_emit(ctx, "Remote control disconnected. The CLI session remains open locally."),
+                error = function(e) message("Remote control notice: ", conditionMessage(e)))
+        }
         ctx$read_input <- saved$read_input
         ctx$render_reply <- saved$render_reply
         ctx$eof_message <- saved$eof_message
         session$approval_cb <- saved$approval_cb
         session$task_approval_cb <- saved$task_approval_cb
-        session$on_tool <- saved$on_tool
+        if (!is.null(remote_observer)) {
+            session$on_tool <- Filter(function(obs) !identical(obs, remote_observer),
+                                      session$on_tool)
+        }
         session$remote_dir <- NULL
         ctx$remote_dir <- NULL
         ctx$remote_flush <- saved$remote_flush
     }, add = TRUE)
-    cat("Waiting for ", choice$bot$owner, " to attach ", choice$room, "...\n", sep = "")
-    accepted <- .remote_wait(ctx, function() .remote_read_file(file.path(dir, "accepted.json")))
-    if (is.null(accepted)) {
-        stop("Bot did not acknowledge within 60 seconds.", call. = FALSE)
-    }
-    if (!is.null(accepted$error)) {
-        stop(accepted$error, call. = FALSE)
-    }
+    .remote_attach(ctx, choice)
     .remote_emit(ctx, paste0("Remote control connected to the existing CLI session in ",
                              ctx$cwd, ". Send a task or /auto to continue. /stop stops at the next tool boundary; ",
                              "/remote-control off returns control to the terminal."))
@@ -177,16 +175,17 @@
         if (!nzchar(frame$text)) {
             return(invisible(NULL))
         }
-        .remote_append(dir, "out", list(type = "text", text = frame$text,
+        .remote_append(ctx$remote_dir, "out", list(type = "text", text = frame$text,
             audit = acc$audit))
         acc <<- rooms_activity_new()
         last_flush <<- as.numeric(Sys.time())
         invisible(NULL)
     }
-    session$on_tool <- c(saved$on_tool, list(function(event) {
+    remote_observer <- function(event) {
         rooms_activity_add(acc, rooms_activity_record(event))
         if (as.numeric(Sys.time()) - last_flush >= 15) ctx$remote_flush()
-    }))
+    }
+    session$on_tool <- c(session$on_tool, list(remote_observer))
     tryCatch(run_repl_loop(ctx, keep_jobs = TRUE), interrupt = function(e) invisible(NULL))
     invisible(NULL)
 }

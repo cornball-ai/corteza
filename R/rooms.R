@@ -68,6 +68,8 @@
 #            without the verb it cannot be updated, without rich it
 #            cannot be collapsed, and without kind the first edit turns
 #            the notice into an ordinary message that other bots answer.
+#   0.1.0.2  chat_channel_invite() lets /rc invite operators into the
+#            private room it creates for each CLI session.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
@@ -77,7 +79,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.1.0.1"
+.CHAT_API_MIN <- "0.1.0.2"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -2111,7 +2113,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         })) {
             next
         }
-        if (tryCatch(.remote_bot_route(m, cfg), error = function(e) {
+        if (tryCatch(.remote_bot_route(m, cfg, chat_now()), error = function(e) {
             message("remote control input: ", conditionMessage(e))
             TRUE
         })) {
