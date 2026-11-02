@@ -151,10 +151,24 @@ attached room, `/rc status` reports the connection and `/rc off` disconnects.
 Both processes must run a version with remote control, on the same machine
 under the same user. The bot must have an explicit `operators` list. With one
 available bot it is selected automatically; otherwise specify `--bot`. The
-default room name is `~/<working-directory-name>`. Set `remote_control.bot_id`
-and `remote_control.room` in Corteza config to choose other defaults. The room
-must already exist and be accessible to the bot. Rooms with delegated work in
-flight or another attached CLI are refused.
+default is a private room for the current CLI session, named `Corteza: <session-id>`.
+Creating session rooms requires `chat.api >= 0.1.0.2` on the courier.
+The courier invites its configured operators and enables room encryption before
+inviting them when its `e2ee` setting is on. Two CLI sessions in the same checkout
+get separate rooms. Reconnecting, including after `--session` or `--resume`,
+reuses the session's room on that bot. The working directory is room context,
+not its identity.
+
+Set `remote_control.bot_id` to select a default bot. An explicit `[room]` or
+`remote_control.room` still attaches an existing room accessible to the bot.
+Rooms with delegated work in flight or another attached CLI are refused.
+
+`/clear` (also `/reset` and `/new`) starts a fresh CLI conversation. While remote
+control is connected, it creates a new session room and posts its link in the
+old room. At the local prompt, the new room is created on the next `/rc`.
+The previous session and room remain available to resume. Disconnected session
+rooms ask you to resume the CLI and run `/rc`; they do not start a separate bot
+conversation. Explicitly attached existing rooms retain their normal bot behavior.
 
 In the room, send text tasks, `/auto [--exec] [goal]`, `/auto status`,
 `/auto resume`, or `/max-tokens [N|default]`. The bot relays model replies,
@@ -167,9 +181,11 @@ Attachments and other slash commands are currently unsupported.
 kill a running shell command or an in-flight model request. Send
 `/remote-control off` to stop at that boundary and return control to the
 terminal. Ctrl+C at the terminal also disconnects; a stopped turn retains the
-completed tool history. Only the room's main timeline is attached; threads
-keep their own bot sessions. Other senders cannot control the CLI, but room
-members can see its public output.
+completed tool history. In a managed session room, threaded messages enter the
+same CLI conversation, including approval and control commands; replies appear
+in the main timeline. In an explicitly attached existing room, only the main
+timeline is attached and threads keep their own bot sessions. Other senders
+cannot control the CLI, but room members can see its public output.
 
 Remote operators act with the CLI's channel policy. A Matrix session's
 supervisor gate is not added to the CLI; `/auto` still uses its own monitor.
@@ -184,6 +200,10 @@ the bot retries unsent output without resubmitting model work. An ambiguous
 send failure or crash before recording its event ID can duplicate a post.
 If the courier disappears, the CLI returns to its local prompt when it next
 waits for input or an approval.
+
+Session rooms accumulate: each `/clear` creates another room. Rooms, local room
+bindings, mailboxes, and delivery/deduplication markers are retained indefinitely.
+There is no automatic cleanup or grouping into Matrix spaces yet.
 
 ## Response output limits
 

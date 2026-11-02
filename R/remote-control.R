@@ -56,11 +56,12 @@
     }))
 }
 
-.remote_request <- function(owner, room, controllers) {
+.remote_request <- function(owner, room, controllers, session_id = NULL, cwd = NULL) {
     id <- job_new_id()
     dir <- file.path(.remote_root(), "sessions", id)
     .remote_write(file.path(dir, "request.json"), list(
             id = id, owner = owner, room = room, controllers = as.list(controllers),
+            session_id = session_id, cwd = cwd,
             pid = Sys.getpid(), host = Sys.info()[["nodename"]],
             created = as.numeric(Sys.time())))
     dir

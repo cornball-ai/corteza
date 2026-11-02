@@ -1,3 +1,19 @@
+# corteza (development version)
+
+- Close remote-control mailboxes before emitting disconnect notices, and drop
+  stale room-index entries whose binding is missing or unreadable.
+- `/rc` now creates a private Matrix room per CLI session by default and
+  reuses it when reconnecting or resuming. Explicit room overrides remain
+  available. The courier enables encryption before inviting operators when
+  configured for E2EE, and recovers rooms after interrupted creation/setup.
+- `/clear`, `/reset`, and `/new` in remote control start a fresh conversation
+  in a new room, leaving a link in the old room. Disconnected session rooms
+  ask for a CLI reconnect instead of starting an independent bot conversation.
+- Threaded messages in session rooms join the same CLI conversation. Room
+  lookups use a process-local index, and invitation retries check Matrix
+  membership before inviting again. New-room links include the bot's server
+  as a routing hint. Session-room creation requires chat.api 0.1.0.2 or later.
+
 # corteza 0.7.1.91
 
 - Keep one audit writer when a new storage directory is beneath a symlink,
