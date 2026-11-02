@@ -1,4 +1,4 @@
-# corteza (development version)
+# corteza 0.7.1.92
 
 - Close remote-control mailboxes before emitting disconnect notices, and drop
   stale room-index entries whose binding is missing or unreadable.
