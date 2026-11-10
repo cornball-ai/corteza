@@ -70,6 +70,7 @@
 #            the notice into an ordinary message that other bots answer.
 #   0.1.0.2  chat_channel_invite() lets /rc invite operators into the
 #            private room it creates for each CLI session.
+#   0.2.0    The CRAN release that carries all of the above.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
@@ -79,7 +80,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.1.0.2"
+.CHAT_API_MIN <- "0.2.0"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -108,8 +109,8 @@ bot_require_mx <- function(chat_api_version = NULL) {
     have <- chat_api_version %||% utils::packageVersion("chat.api")
     if (have < .CHAT_API_MIN) {
         stop("The room loop requires chat.api >= ", .CHAT_API_MIN,
-             ", but ", have, " is installed. Reinstall chat.api from the ",
-             "cornball-ai mirror.", call. = FALSE)
+             ", but ", have, " is installed. Update chat.api from CRAN.",
+             call. = FALSE)
     }
 }
 

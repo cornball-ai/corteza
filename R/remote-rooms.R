@@ -30,7 +30,7 @@
     caps <- chat.api::chat_capabilities(chat)
     if (!all(vapply(c("channel_create", "channel_invite", "set_state", "channels"),
                     function(x) isTRUE(caps[[x]]), TRUE))) {
-        stop("Session rooms need chat.api >= 0.1.0.2 and a transport with room creation, ",
+        stop("Session rooms need chat.api >= 0.2.0 and a transport with room creation, ",
              "invitations and state. Update the courier or specify an existing room.")
     }
     if (isTRUE(cfg$e2ee) && !isTRUE(caps$e2ee)) {
