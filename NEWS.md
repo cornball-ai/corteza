@@ -1,3 +1,12 @@
+# corteza 0.7.1.93
+
+- Require llm.api 0.2.0 and saber 0.8.0, both on CRAN, and drop the pinned
+  saber GitHub remote.
+- An interrupted turn on the OpenAI Responses wire (`openai_codex`, and
+  `openai` models that llm.api routes there) now closes its unfinished tool
+  calls with `function_call_output` entries. They were given Chat Completions
+  `role = "tool"` messages, which a Responses history does not accept.
+
 # corteza 0.7.1.92
 
 - Close remote-control mailboxes before emitting disconnect notices, and drop
