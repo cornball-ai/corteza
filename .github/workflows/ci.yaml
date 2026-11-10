@@ -125,8 +125,8 @@ jobs:
       # install_deps brings Imports only, and a check without the
       # VignetteBuilder is a WARNING ("Cannot process vignettes"), which
       # the gate above fails. These are the Suggests CRAN carries that
-      # the check and the vignettes read; the ones left out (livekitr,
-      # rgrpc, RProtoBuf) stay a NOTE under _R_CHECK_FORCE_SUGGESTS_=false
+      # the check and the vignettes read; the ones left out (rgrpc,
+      # RProtoBuf) stay a NOTE under _R_CHECK_FORCE_SUGGESTS_=false
       # and their tests keep skipping, as before.
       - name: Suggests from CRAN
         run: Rscript -e 'install.packages(c("clipr", "fortunes", "pensar", "rstudioapi", "simplermarkdown"), repos = "https://cloud.r-project.org")'
