@@ -1,46 +1,39 @@
 ## Submission summary
 
-Update of 'corteza' (0.7.0 -> 0.7.1), an agent runtime that lets Large
+Update of 'corteza' (0.7.1 -> 0.8.0), an agent runtime that lets Large
 Language Models (LLMs) drive an R session through a policy-gated
 tool-use loop. Three entry points: an interactive console
 read-eval-print-loop (`chat()`), a shell command-line interface
 (`corteza`), and a Model Context Protocol (MCP) server (`serve()`)
 for external clients like Claude Code or Codex.
 
-Patch release over the on-CRAN 0.7.0, batching the 0.7.0.1-0.7.0.9 dev
-cycles. Most of it is repair work: Matrix rooms were dropping messages
-the agent should have seen, running without their project context, and
-re-archiving their backfill on every restart. Alongside those it adds
-an `openai_compatible` provider, provider-native web search, and four
-optional configuration keys.
-
-No exported functions were added or removed. Four gained optional
-arguments with defaults preserving the previous behaviour (`chat()`,
-`matrix_configure()`, `new_session()`, `session_setup()`), so existing
-calls are unaffected.
+Minor release over the on-CRAN 0.7.1, batching the 0.7.1.1-0.7.1.94 dev
+cycles. No exported function was removed. Seventeen were added, and the
+four `matrix_*` functions remain as deprecated wrappers around their
+`bot_*` replacements, so existing calls are unaffected.
 
 Highlights:
 
-* New `openai_compatible` provider, reaching any OpenAI-compatible
-  gateway (OpenRouter, DeepSeek, a local proxy, a corporate gateway)
-  through a `base_url` config key or `--base-url` flag.
-* Provider-native web search in the agent loop, on by default for the
-  hosted providers that support it, with no third-party search key
-  required.
-* Matrix access control: the new `operators` key restricts one-on-one
-  conversations and invite acceptance to named accounts. Leaving it
-  unset preserves the previous behaviour.
-* Matrix reply gating counts humans rather than members, with a
-  declared `bots` list and a cached, refreshed membership view.
-* Archiving is keyed on Matrix event ids through a persisted per-room
-  ledger, fixing repeated re-archiving of the backfill tail on restart.
+* Chat rooms run on the 'chat.api' transport contract; the room
+  functions are renamed `bot_*`, with the `matrix_*` names deprecated.
+* Delegated jobs in rooms: supervised worker processes with a reviewer,
+  per-job approval, and resumable attempts.
+* Remote control of a command-line session from a private chat room.
+* Audit records of turns, tool decisions, and request payloads, read
+  with `audit_read()` and the `audit_payload_*()` functions.
+* A session journal of the provider-native history and opt-in context
+  editing.
+* `voice_serve()`, a gRPC service for one-to-one voice.
+* Provider fallback, bounded autonomous runs, and per-tool output caps.
 
 ## Dependency note
 
-`Imports: llm.api (>= 0.1.9)`. The `openai_compatible` provider applies
-its endpoint through `llm.api::llm_base()` scoped to each agent call,
-which needs that version. llm.api 0.1.9 was published on 2026-08-04 and
-is already on CRAN, so this dependency is satisfied.
+Every dependency is on CRAN; the package no longer declares
+`Additional_repositories`.
+
+* `Imports: llm.api (>= 0.2.0)` and `saber (>= 0.8.0)`, both published.
+* `Suggests: chat.api (>= 0.2.0)` and `mx.client (>= 0.3.0)`. This
+  submission follows those two releases, by the same maintainer.
 
 ## R CMD check results
 
@@ -48,11 +41,9 @@ is already on CRAN, so this dependency is satisfied.
 - 0 warnings
 - 0 notes
 
-`R CMD check --as-cran` is clean (Status: OK) on:
+`R CMD check --as-cran` (Status: OK) on:
 
-* Ubuntu 24.04 LTS, R 4.5.3
-* Windows 10, R 4.6.0
-* Windows 10, R-devel (2026-07-21 r90286 ucrt)
+* Ubuntu 24.04 LTS, R 4.6.1
 
 ## Notes
 
@@ -61,8 +52,10 @@ is already on CRAN, so this dependency is satisfied.
   The rest run, and write only to `tempdir()`.
 * The package reads API keys from environment variables only. No
   credentials are bundled, and nothing is written outside `tempdir()`
-  during checks.
-* Optional integrations (Matrix chat via 'mx.api'/'mx.client'/
-  'mx.crypto', knowledge-vault archiving via 'pensar', clipboard via
-  'clipr') are in Suggests and guarded at every call site, so the
-  package is fully functional without them.
+  during checks: the test runner redirects R's user cache, data, and
+  config directories into `tempdir()`.
+* Optional integrations (chat rooms via 'chat.api' and 'mx.client',
+  voice via 'rgrpc' and 'RProtoBuf', knowledge-vault archiving via
+  'pensar', clipboard via 'clipr') are in Suggests and guarded at every
+  call site, so the package is fully functional without them.
+* There are no reverse dependencies on CRAN.
