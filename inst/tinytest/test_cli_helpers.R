@@ -122,7 +122,8 @@ expect_identical(out$content, "No findings.")
 expect_true(grepl("Git diff target: HEAD", captured$prompt, fixed = TRUE))
 expect_true(grepl(" M R/foo.R", captured$prompt, fixed = TRUE))
 expect_true(grepl("diff body", captured$prompt, fixed = TRUE))
-expect_identical(captured$model, "claude-sonnet-4-6")
+expect_identical(captured$model,
+                 llm.api::provider_default_model("anthropic"))
 
 # do_compact with a stubbed chat_fn proves it assembles the summary
 # prompt and returns the structured result without hitting the

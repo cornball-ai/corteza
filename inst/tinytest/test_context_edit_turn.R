@@ -54,8 +54,11 @@ local({
     assignInNamespace("agent", fake, "llm.api")
     for (provider in c("anthropic", "openai")) {
         for (channel in c("cli", "console", "matrix")) {
+            # Name a Chat Completions model: llm.api's openai default may be
+            # one it routes to Responses, where context editing is unsupported.
             s <- corteza::new_session(provider = provider, channel = channel,
                 system = "KEEP THIS INSTRUCTION", web_search = FALSE,
+                model_map = if (provider == "openai") list(cloud = "gpt-4o"),
                 context_edit = list(enabled = TRUE, cadence = "always"))
             s$config <- list(context_compact_pct = 1000)
             s$context_window <- 100000L
@@ -119,6 +122,7 @@ local({
     for (provider in c("anthropic", "openai")) {
         s <- corteza::new_session(provider = provider, channel = "matrix",
             system = "Fixture", web_search = FALSE,
+            model_map = if (provider == "openai") list(cloud = "gpt-4o"),
             context_edit = list(enabled = TRUE, cadence = "always"))
         s$config <- list(context_compact_pct = 1000)
         s$context_window <- 100000L
@@ -353,6 +357,7 @@ local({
         }
         assignInNamespace(if (provider == "anthropic") ".agent_anthropic" else ".agent_openai", fake, "llm.api")
         s <- corteza::new_session(provider = provider, system = "instructions", web_search = FALSE,
+            model_map = if (provider == "openai") list(cloud = "gpt-4o"),
             thinking_budget_tokens = if (provider == "anthropic") 1024L else NULL,
             context_edit = list(enabled = TRUE, cadence = "always"))
         s$config <- list(context_compact_pct = 1000)
