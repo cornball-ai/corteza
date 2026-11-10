@@ -237,9 +237,8 @@ voice_speaker_text <- function(text, speaker = NULL) {
 
 # Truncate a recorded turn's room post to the `heard` code points of
 # it. Returns the text the room now holds. Refuses (voice_refuse, with
-# a status the gRPC handler maps and the call worker reads as an
-# error) when the turn is unknown, was never posted, or cannot be
-# edited. A second report of the same turn answers what the first
+# a status the gRPC handler maps) when the turn is unknown, was never
+# posted, or cannot be edited. A second report of the same turn answers what the first
 # stored, with no second edit: the first report decided.
 voice_turn_report <- function(state, room_id, turns, turn_id, heard) {
     turn <- if (is.character(turn_id) && length(turn_id) == 1L &&
