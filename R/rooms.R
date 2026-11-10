@@ -95,8 +95,8 @@ bot_require_mx <- function(chat_api_version = NULL) {
     if (!requireNamespace("chat.api", quietly = TRUE)) {
         stop("The room loop requires the 'chat.api' package (it is the ",
              "transport contract, whichever transport a config names). ",
-             "Install it from the cornball-ai GitHub mirror, or from the ",
-             "cornball drat, before calling room functions.", call. = FALSE)
+             "Install it from CRAN before calling room functions.",
+             call. = FALSE)
     }
     # requireNamespace() checks presence, not version, and a Suggests
     # floor is a resolution hint rather than a runtime guarantee: a
@@ -2060,18 +2060,6 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         bot_accept_invites(chat_now(), invites)
     }
 
-    # A call button posts a membership event and nothing else, so this
-    # is the bot's one signal that someone started or left a call in a
-    # room it is in. Not on the baseline sync: a membership that was in
-    # the room before the bot started is not an invitation to join now.
-    joined_calls <- 0L
-    if (!first_run && length(res$calls)) {
-        joined_calls <- bot_calls_notice(res$calls, sessions, cfg, chat_now(),
-            system = system, model = model,
-            provider = provider,
-            tools_filter = tools_filter)
-    }
-
     if (first_run) {
         message("bot_poll: baseline established, no history processed")
         return(invisible(0L))
@@ -2104,7 +2092,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         sessions <- bot_new_session_registry()
     }
 
-    replied <- joined_calls
+    replied <- 0L
     bots <- bot_known_bots(cfg, self_id)
     for (m in msgs) {
         if (tryCatch(.delegation_route(m, cfg, chat, sessions), error = function(e) {
@@ -2344,23 +2332,6 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             next
         }
 
-        call_cmd <- bot_parse_call_command(m$body)
-        if (!is.null(call_cmd)) {
-            ack <- bot_call_command(session, cfg, chat_now(), m$channel, call_cmd)
-            sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
-                                error = function(e) NULL
-            )
-            if (!is.null(sent_id)) {
-                session$seen_event_ids <- bot_remember_event(
-                    session$seen_event_ids, sent_id
-                )
-                bot_transcript_add(session, sent_id, "assistant", ack)
-            }
-            replied <- replied + 1L
-            next
-        }
-
         model_cmd <- bot_parse_model_command(m$body)
         if (!is.null(model_cmd)) {
             ack <- bot_apply_model_command(session, model_cmd, cfg = cfg)
@@ -2382,9 +2353,6 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_clear_command(m$body)) {
-            # A call belongs to the session being discarded; left here,
-            # its worker would run on with nothing pumping it.
-            bot_call_stop(session, chat_now())
             # The segment title reads the transcript, so it must be
             # taken before the archive drains it.
             seg_title <- bot_segment_title(session)
@@ -2871,11 +2839,6 @@ bot_run_step <- function(state, timeout = 30000L) {
     if (bot_monitor_waiting(state$sessions)) {
         timeout <- min(timeout, BOT_MONITOR_POLL_MS)
     }
-    # A call worker's requests (a reply to post) wait on this loop, so
-    # the long poll is cut short while a room is in a call.
-    if (bot_calls_active(state$sessions)) {
-        timeout <- min(timeout, BOT_CALL_POLL_MS)
-    }
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions,
@@ -2902,11 +2865,6 @@ bot_run_step <- function(state, timeout = 30000L) {
     # bounded. After the pump, so a worker whose job just ended is
     # counted as idle from now. Needs no client.
     bot_retire_workers(state$sessions)
-    if (bot_calls_active(state$sessions)) {
-        call_chat <- tryCatch(bot_chat_client(bot_load_config()),
-                              error = function(e) NULL)
-        bot_calls_pump(state$sessions, call_chat)
-    }
     # Out-of-band archive trigger: another process (e.g. a cornelius
     # systemd timer) drops `archive.signal` to ask the bot to flush
     # all in-memory room sessions to the pensar vault. The bot owns

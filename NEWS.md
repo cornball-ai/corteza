@@ -1,3 +1,12 @@
+# corteza 0.7.1.94
+
+- Call mode is removed until livekitr is on CRAN: the bot no longer joins a
+  room's call, `/call` and `/hangup` are gone, and the `voice.stt`,
+  `voice.tts`, and `voice.call` settings are no longer read. The code is kept
+  on the `livekitr-calls` branch. AgentVoice (`voice_serve()`) is unchanged.
+- Every dependency now comes from CRAN: livekitr is dropped from Suggests and
+  `Additional_repositories` is removed.
+
 # corteza 0.7.1.93
 
 - Require llm.api 0.2.0 and saber 0.8.0, both on CRAN, and drop the pinned
