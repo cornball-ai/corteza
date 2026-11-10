@@ -1,5 +1,6 @@
 # Two identities on an offline chat.api loopback bus. All ledgers, workers,
 # approval files and configuration live in a fresh temporary state directory.
+if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
 local({
     root <- tempfile("delegation-")
     dir.create(root)

@@ -1,7 +1,9 @@
 # One bot, two independent conversations. Fake model calls and transport;
 # real durable jobs, child processes, tool policy, snapshots, and polling.
+# At top level: exit_file() ends the file between expressions, so inside
+# local() the rest of the block would still run.
+if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
 local({
-    if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
     root <- tempfile("room-consult-")
     dir.create(root)
     old <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
