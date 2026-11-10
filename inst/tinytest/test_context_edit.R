@@ -41,7 +41,10 @@ ce_result <- function(id = "edit", provider = "anthropic", text = "queued") {
 }
 
 ce_session <- function(provider = "anthropic", history = ce_history(provider)) {
+    # Name a Chat Completions model: llm.api's openai default may be one it
+    # routes to Responses, where context editing is unsupported.
     s <- corteza::new_session(provider = provider, system = "PINNED INSTRUCTIONS", web_search = FALSE,
+        model_map = if (provider == "openai") list(cloud = "gpt-4o"),
         context_edit = list(enabled = TRUE, cadence = "always"))
     s$config <- list(context_compact_pct = 1000, context_warn_pct = 75)
     s$context_window <- 100000L

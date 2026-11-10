@@ -387,3 +387,26 @@ local({
         expect_true(nchar(text) < nchar(long_blob))
     })
 })
+
+# --- Responses: an unfinished function_call gets a function_call_output,
+# never a Chat Completions role = "tool" message.
+local({
+    history <- list(list(role = "user", content = "prompt"),
+                    list(type = ".openai_codex_output", output = list(
+                        list(type = "function_call", call_id = "call_1",
+                             name = "echo", arguments = "{\"x\":1}"))))
+    out <- corteza:::.append_responses_tool_results(
+        history, list(list(id = "call_1", name = "echo")), "[stopped]")
+    expect_equal(length(out), 3L)
+    expect_identical(out[[3L]], list(type = "function_call_output",
+                                     call_id = "call_1", output = "[stopped]"))
+
+    repaired <- corteza:::repair_interrupted_tool_history(
+        history = history, provider = "openai", marker = "[Interrupted]",
+        prompt = "prompt", pre_turn_len = 0L)
+    roles <- vapply(repaired, function(m) m$role %||% "", character(1))
+    expect_false("tool" %in% roles)
+    expect_equal(repaired[[length(repaired)]]$content, "[Interrupted]")
+    expect_identical(repaired[[3L]]$type, "function_call_output")
+    expect_identical(repaired[[3L]]$call_id, "call_1")
+})
