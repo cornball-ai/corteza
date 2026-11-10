@@ -39,11 +39,26 @@ Every dependency is on CRAN; the package no longer declares
 
 - 0 errors
 - 0 warnings
-- 0 notes
+- 1 note
 
-`R CMD check --as-cran` (Status: OK) on:
+`R CMD check --as-cran` (Status: 1 NOTE) on:
 
 * Ubuntu 24.04 LTS, R 4.6.1
+
+The NOTE:
+
+```
+Found the following assignments to the global environment:
+File 'corteza/R/job-resume-snapshot.R':
+  assign(name, values[[name]], globalenv())
+File 'corteza/R/job-worker.R':
+  assign(name, values[[name]], envir = globalenv())
+```
+
+Both run only inside a worker R process that the package itself starts
+for a delegated job, never in the user's session. They restore that
+worker's own workspace checkpoint when a job resumes, so the code the
+job runs next finds the objects its earlier attempt created.
 
 ## Notes
 
