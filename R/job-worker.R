@@ -387,7 +387,10 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                       timeout = .job_worker_state$approval_timeout %||% 600)
 }
 
-.job_worker_child_restore <- function(state_dir, identity) {
+# `workspace` is the environment the worker's run_r code evaluates in, which
+# in a worker process is that process's global environment.
+.job_worker_child_restore <- function(state_dir, identity,
+                                      workspace = globalenv()) {
     marker <- file.path(state_dir, "checkpoint.json")
     if (!file.exists(marker)) {
         return(list(restored = FALSE))
@@ -402,9 +405,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     env <- new.env(parent = emptyenv())
     load(file.path(state_dir, "workspace.RData"), envir = env)
     values <- .workspace_checkpoint_values(
-        get(.run_r_worker_checkpoint_key, envir = env), globalenv())
+        get(.run_r_worker_checkpoint_key, envir = env), workspace)
     for (name in names(values)) {
-        assign(name, values[[name]], envir = globalenv())
+        assign(name, values[[name]], envir = workspace)
     }
     for (pkg in info$packages %||% character()) {
         suppressPackageStartupMessages(

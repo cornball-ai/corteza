@@ -99,7 +99,9 @@ job_resume_snapshot <- function(id, identity) {
     info
 }
 
-.job_resume_restore <- function(id, spec, session) {
+# `env` is the worker's workspace: the environment its run_r code evaluates
+# in, which in a worker process is that process's global environment.
+.job_resume_restore <- function(id, spec, session, env = globalenv()) {
     info <- job_resume_snapshot(id, spec$identity)
     if (!identical(info$provider, session$provider) ||
         !identical(info$model, .resolve_model(session))) {
@@ -110,11 +112,11 @@ job_resume_snapshot <- function(id, identity) {
     if (!is.list(history) || !length(history)) {
         stop("Invalid resume history", call. = FALSE)
     }
-    env <- new.env(parent = emptyenv())
-    load(file.path(path, "workspace.RData"), env)
+    loaded <- new.env(parent = emptyenv())
+    load(file.path(path, "workspace.RData"), loaded)
     values <- .workspace_checkpoint_values(get(.run_r_worker_checkpoint_key,
-            env),
-        globalenv())
+            loaded),
+        env)
     for (pkg in unlist(info$packages, use.names = FALSE)) {
         suppressPackageStartupMessages(library(pkg, character.only = TRUE))
     }
@@ -123,7 +125,7 @@ job_resume_snapshot <- function(id, identity) {
     journal_rewrite(session, session$history %||% list(), history, reason = "job_resume")
     session$history <- history
     for (name in names(values)) {
-        assign(name, values[[name]], globalenv())
+        assign(name, values[[name]], envir = env)
     }
     paste0("Continue the incomplete job from the completed history above. ",
            "Do not repeat completed tools merely to reconstruct the conversation. ",
