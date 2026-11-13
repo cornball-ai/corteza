@@ -10,6 +10,7 @@ matrix_poll(
   tools_filter = NULL,
   timeout = 0L,
   sessions = NULL,
+  crypto = NULL,
   hooks = NULL
 )
 }
@@ -27,6 +28,9 @@ immediately.}
 
 \item{sessions}{Environment from \code{bot_new_session_registry()}
 keyed by room_id, or NULL to build fresh sessions each call.}
+
+\item{crypto}{Ignored. Kept so calls written for corteza 0.7.1 still
+run; the chat transport handles encryption now.}
 
 \item{hooks}{Named list of functions or NULL, as validated by
 \code{\link{bot_run_init}}; see its Hooks section. NULL asks the

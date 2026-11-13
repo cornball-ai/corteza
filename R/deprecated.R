@@ -52,6 +52,8 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
 
 #' Deprecated: use bot_poll()
 #' @inheritParams bot_poll
+#' @param crypto Ignored. Kept so calls written for corteza 0.7.1 still
+#'   run; the chat transport handles encryption now.
 #' @return See \code{\link{bot_poll}}.
 #' @seealso \code{\link{bot_poll}}
 #' @examples
@@ -61,7 +63,7 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                         tools_filter = NULL, timeout = 0L, sessions = NULL,
-                        hooks = NULL) {
+                        crypto = NULL, hooks = NULL) {
     .Deprecated("bot_poll")
     bot_poll(system = system, model = model, provider = provider,
              tools_filter = tools_filter, timeout = timeout,
@@ -116,6 +118,8 @@ matrix_run_step <- function(state, timeout = 30000L) {
 
 #' Deprecated: use bot_archive_all()
 #' @inheritParams bot_archive_all
+#' @param mx_sess Ignored. Kept so calls written for corteza 0.7.1 still
+#'   run; pass \code{chat} to look up room names.
 #' @return See \code{\link{bot_archive_all}}.
 #' @seealso \code{\link{bot_archive_all}}
 #' @examples
@@ -123,7 +127,7 @@ matrix_run_step <- function(state, timeout = 30000L) {
 #' matrix_archive_all(sessions)  # use bot_archive_all()
 #' }
 #' @export
-matrix_archive_all <- function(sessions, chat = NULL) {
+matrix_archive_all <- function(sessions, mx_sess = NULL, chat = NULL) {
     .Deprecated("bot_archive_all")
     bot_archive_all(sessions = sessions, chat = chat)
 }
