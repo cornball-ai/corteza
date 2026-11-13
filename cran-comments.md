@@ -11,7 +11,12 @@ Minor release over the on-CRAN 0.7.1, batching the 0.7.1.1-0.7.1.94 dev
 cycles. No exported function was removed. Seventeen were added, and the
 eight `matrix_*` functions remain as deprecated wrappers around their
 `bot_*` replacements and accept every argument they took in 0.7.1, so
-existing calls are unaffected.
+existing calls still run. Two arguments are accepted and ignored:
+
+* `matrix_poll(crypto = )` no longer controls the handling of encrypted
+  events; the chat transport's configuration does.
+* `matrix_archive_all(mx_sess = )` no longer supplies room names for
+  archives; the `chat` argument does.
 
 Highlights:
 
