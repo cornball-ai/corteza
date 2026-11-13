@@ -96,6 +96,32 @@ expect_false(corteza:::.path_within("/home/u/secret", "/home/u/proj"))
 # A sibling directory sharing a name prefix is not inside.
 expect_false(corteza:::.path_within("/home/u/proj-evil/x", "/home/u/proj"))
 
+# A Windows drive is its own root. These are text, so they hold on every
+# platform: "/D:/proj" is not a path Windows can find D:/proj by.
+expect_equal(corteza:::.normalize_lexical("D:\\proj\\R\\..\\x.R"), "D:/proj/x.R")
+expect_equal(corteza:::.normalize_lexical("d:/proj/./R"), "D:/proj/R")
+expect_equal(corteza:::.normalize_lexical("D:/../.."), "D:/")
+expect_equal(corteza:::.normalize_lexical(corteza:::.normalize_lexical("D:/proj")),
+             "D:/proj")
+expect_equal(corteza:::.resolve_against("R/foo.R", "D:\\proj"), "D:/proj/R/foo.R")
+expect_equal(corteza:::.resolve_against("..\\secret", "D:/proj"), "D:/secret")
+expect_true(corteza:::.path_within("D:/proj/R/x.R", "D:\\proj"))
+expect_false(corteza:::.path_within("D:/proj-evil/x", "D:/proj"))
+expect_false(corteza:::.path_within("E:/proj/x", "D:/proj"))
+# A doubled leading slash is a share on Windows and the root elsewhere.
+expect_equal(corteza:::.normalize_lexical("//etc/passwd"),
+             if (.Platform$OS.type == "windows") "//etc/passwd" else "/etc/passwd")
+
+# What someone types to name a directory rather than a room.
+for (p in c("~/proj", "/srv/proj", "./proj", "C:/proj", "c:\\proj")) {
+    expect_true(corteza:::bot_path_like(p), info = p)
+}
+for (p in c("corteza", "C:", "proj/sub", "!room:ex")) {
+    expect_false(corteza:::bot_path_like(p), info = p)
+}
+expect_identical(corteza:::bot_parse_topic("C:\\proj | the project")$cwd, "C:\\proj")
+expect_true(corteza:::r_path_like("C:/Users/x/.ssh/id_rsa"))
+
 # ---- get_auto_config ----
 
 d <- corteza:::get_auto_config(list())

@@ -40,7 +40,7 @@ bot_vault_path <- function(ref) {
         return(NULL)
     }
     p <- as.character(ref)[[1L]]
-    if (startsWith(p, "/")) {
+    if (.is_absolute_path(p)) {
         return(p)
     }
     root <- tryCatch(getExportedValue("pensar", "default_vault")(),

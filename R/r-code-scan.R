@@ -132,6 +132,10 @@ r_path_like <- function(s) {
     if (grepl("^~(/|$)", s) || grepl("^\\.\\.(/|$)", s)) {
         return(TRUE)
     }
+    # A Windows drive path ("C:/Users/x", "C:\\Users\\x") is a place.
+    if (grepl("^[A-Za-z]:[/\\\\]", s)) {
+        return(TRUE)
+    }
     if (!startsWith(s, "/")) {
         return(FALSE)
     }
