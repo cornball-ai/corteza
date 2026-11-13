@@ -44,8 +44,14 @@ Every dependency is on CRAN; the package no longer declares
 `R CMD check --as-cran` (Status: OK) on:
 
 * Ubuntu 24.04 LTS, R 4.6.1
+* Windows 10, R 4.6.0
+* win-builder, R-release and R-devel
 
 ## Notes
+
+* Thirteen slow test files, which start worker processes, are skipped on
+  CRAN to keep the check near 5 minutes on Windows. Continuous
+  integration runs every file.
 
 * Every example that would contact a live LLM endpoint, start a
   subprocess, or write outside `tempdir()` is wrapped in `\dontrun{}`.
