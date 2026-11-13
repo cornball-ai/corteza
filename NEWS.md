@@ -1,3 +1,40 @@
+# corteza 0.8.0
+
+CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.
+
+## New features
+
+- Chat rooms run on the chat.api transport contract. The room functions are
+  renamed `bot_configure()`, `bot_send()`, `bot_poll()`, `bot_run()`,
+  `bot_run_init()`, `bot_run_step()`, `bot_request_flush()` and
+  `bot_archive_all()`; the `matrix_*` names still work and are deprecated.
+- Delegated jobs in rooms: a talker answers while supervised worker
+  processes do the work, with a reviewer, per-job approval, resumable
+  attempts, and `tool_delegate()`, `tool_job_status()`, `tool_job_cancel()`
+  and `tool_job_resume()`. Unattended tool calls pass through rules in code,
+  an optional monitor, and a person.
+- Remote control: `/rc` gives each CLI session a private room from which it
+  can be driven.
+- Audit records: turns, tool decisions, room deliveries and request payloads
+  are recorded, and read with `audit_read()` and the `audit_payload_*()`
+  functions.
+- A session journal keeps the full provider-native history through every
+  rewrite, and opt-in context editing lets the model drop or shorten
+  completed entries.
+- `voice_serve()` runs the AgentVoice gRPC service for one-to-one voice.
+- Provider fallback when the primary hits a limit, bounded and narrated
+  `/auto` runs, a continual harness of approved lessons, per-tool output
+  caps, and an opt-in supervised `run_r` worker.
+- `/model` lists models and sets reasoning effort; images in a room are
+  passed to the model as images.
+
+## Changes
+
+- Requires llm.api 0.2.0 and saber 0.8.0. The optional room transport
+  requires chat.api 0.2.0 and mx.client 0.3.0. Every dependency is on CRAN.
+- `run_r` returns what the code prints along with its value.
+- No exported function was removed.
+
 # corteza 0.7.1.94
 
 - Call mode is removed until livekitr is on CRAN: the bot no longer joins a

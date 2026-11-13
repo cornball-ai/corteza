@@ -70,6 +70,7 @@
 #            the notice into an ordinary message that other bots answer.
 #   0.1.0.2  chat_channel_invite() lets /rc invite operators into the
 #            private room it creates for each CLI session.
+#   0.2.0    The CRAN release that carries all of the above.
 #
 # The floor is checked at runtime, not just declared: a Suggests bound is
 # a resolution hint, and an installed copy loads however old it is.
@@ -79,7 +80,7 @@
 # sed whose pattern no longer matched, so the constant sat three
 # versions behind while the tests asserting it were edited by the same
 # non-matching pattern and went on passing.
-.CHAT_API_MIN <- "0.1.0.2"
+.CHAT_API_MIN <- "0.2.0"
 
 # One dependency, checked once. corteza used to require mx.api and
 # mx.client here too, and carry its own mx.client version floor, because
@@ -108,8 +109,8 @@ bot_require_mx <- function(chat_api_version = NULL) {
     have <- chat_api_version %||% utils::packageVersion("chat.api")
     if (have < .CHAT_API_MIN) {
         stop("The room loop requires chat.api >= ", .CHAT_API_MIN,
-             ", but ", have, " is installed. Reinstall chat.api from the ",
-             "cornball-ai mirror.", call. = FALSE)
+             ", but ", have, " is installed. Update chat.api from CRAN.",
+             call. = FALSE)
     }
 }
 
@@ -1382,10 +1383,16 @@ bot_default_cwd <- function(cfg) {
     dir
 }
 
+# TRUE when text someone typed names a directory rather than a room: it
+# starts with "~/", "/" or "./", or with a Windows drive ("C:/", "C:\").
+bot_path_like <- function(x) {
+    grepl("^(~/|/|\\./)", x) || grepl("^[A-Za-z]:[/\\\\]", x)
+}
+
 # Parse a topic string into its cwd + description parts. The
-# convention is "<path> | <description>" where <path> starts with
-# "~/", "/", or "./". A leading segment that does not look like a
-# path is treated as pure description (cwd = NULL).
+# convention is "<path> | <description>" where <path> looks like a
+# directory (bot_path_like()). A leading segment that does not look like
+# a path is treated as pure description (cwd = NULL).
 bot_parse_topic <- function(topic) {
     if (is.null(topic)) {
         return(list(cwd = NULL, description = NULL))
@@ -1396,7 +1403,7 @@ bot_parse_topic <- function(topic) {
     }
 
     parts <- strsplit(topic, "\\s*\\|\\s*", perl = TRUE)[[1]]
-    if (length(parts) >= 2L && grepl("^(~/|/|\\./)", parts[1L])) {
+    if (length(parts) >= 2L && bot_path_like(parts[1L])) {
         list(cwd = parts[1L], description = paste(parts[-1L], collapse = " | "))
     } else {
         list(cwd = NULL, description = topic)

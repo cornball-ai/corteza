@@ -5,6 +5,11 @@ library(tinytest)
 # surfaces say. The workers' init and run functions are replaced, so no
 # provider is called.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 state <- tempfile("job-review-state")
 dir.create(state)
 old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
@@ -640,7 +645,9 @@ probe$job_worker_spec <- list(run_fn = function(task) {
     list(reply = paste(
         identical(st$session$tools_filter, corteza:::JOB_REVIEWER_TOOLS),
         isFALSE(st$session$web_search),
-        identical(getOption("corteza.allowed_paths"), getwd()),
+        identical(normalizePath(getOption("corteza.allowed_paths"),
+                                winslash = "/"),
+                  normalizePath(getwd(), winslash = "/")),
         identical(st$session$reasoning_effort, "high"),
         sep = " "))
 })

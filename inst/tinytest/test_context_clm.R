@@ -1,5 +1,10 @@
 # Offline coverage of the two policies: doers retain the journal only;
 # talkers file retired context before the journal commits the removal.
+
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
 local({
     ns <- asNamespace("corteza")
     f <- function(name) get(name, ns)

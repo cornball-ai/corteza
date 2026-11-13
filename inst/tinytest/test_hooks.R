@@ -5,6 +5,10 @@ library(tinytest)
 # own, under corteza's own gates; a bare bot (no hooks) archives and
 # resets. Nothing here reaches a homeserver or a model.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
 if (!requireNamespace("chat.api", quietly = TRUE)) {
     exit_file("chat.api not installed")
 }

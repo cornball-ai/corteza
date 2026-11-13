@@ -195,7 +195,9 @@ local({
     on.exit(utils::assignInNamespace(".remote_read_file", original_read, "corteza"), add = TRUE)
     reads <- 0L
     utils::assignInNamespace(".remote_read_file", function(path) {
-        if (identical(dirname(path), file.path(root, "rooms"))) reads <<- reads + 1L
+        # Compare as the OS names them: Windows mixes the two slashes.
+        norm <- function(p) normalizePath(p, winslash = "/", mustWork = FALSE)
+        if (identical(norm(dirname(path)), norm(file.path(root, "rooms")))) reads <<- reads + 1L
         original_read(path)
     }, "corteza")
     m <- list(channel = "!ordinary", id = "event")

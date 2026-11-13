@@ -70,6 +70,12 @@ supervisor_route <- function(call, decision, cwd = getwd(), mode = "monitor",
         sx <- scan_new(root, cwd, write_roots)
         paths <- call$paths %||% resolve_paths(call)
         for (p in paths) {
+            # A tool's path argument is a path, where the scan reads shell
+            # words: on Windows its backslashes are separators, and the scan
+            # would take them for the start of a glob.
+            if (.Platform$OS.type == "windows") {
+                p <- gsub("\\", "/", p, fixed = TRUE)
+            }
             # A tool this file does not know may write what it names.
             if (identical(op, "read")) {
                 scan_read(sx, p)

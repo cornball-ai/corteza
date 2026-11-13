@@ -4,6 +4,11 @@ library(tinytest)
 # tool calls. Its model is replaced by a function that answers from the
 # text of the request, so nothing here reaches a provider.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 state <- tempfile("job-monitor-state")
 dir.create(state)
 old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)

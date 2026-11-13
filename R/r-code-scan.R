@@ -132,6 +132,10 @@ r_path_like <- function(s) {
     if (grepl("^~(/|$)", s) || grepl("^\\.\\.(/|$)", s)) {
         return(TRUE)
     }
+    # A Windows drive path ("C:/Users/x", "C:\\Users\\x") is a place.
+    if (grepl("^[A-Za-z]:[/\\\\]", s)) {
+        return(TRUE)
+    }
     if (!startsWith(s, "/")) {
         return(FALSE)
     }
@@ -199,6 +203,11 @@ r_code_scan <- function(sx, code, depth = 0L) {
         grepl("(^|/)\\.git(/|$)|(^|/)\\.corteza/config\\.json$", s)
         if (!r_path_like(s) && !internal) {
             next
+        }
+        # A string in R code is a path as R reads it, where the scan reads
+        # shell words: on Windows its backslashes are separators.
+        if (.Platform$OS.type == "windows") {
+            s <- gsub("\\", "/", s, fixed = TRUE)
         }
         p <- scan_resolve(sx, s)
         if (is.null(p)) {

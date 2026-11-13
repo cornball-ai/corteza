@@ -5,6 +5,8 @@ on:
 
 env:
   _R_CHECK_FORCE_SUGGESTS_: "false"
+  # The slowest test files skip on CRAN for check time and run here.
+  NOT_CRAN: "true"
   # run.sh's own gate: R CMD check exits 0 on a WARNING and run_tests
   # passes that through, so a check ending "Status: 1 WARNING" is a
   # green tick; the non-ASCII WARNING sat under one here for months.

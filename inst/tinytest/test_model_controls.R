@@ -134,8 +134,10 @@ if ("list_models" %in% getNamespaceExports("llm.api")) local({
 
 # A room command is dispatched without an LLM turn, and its receipt is
 # recorded in the room transcript. No Matrix connection is opened.
+# The guard sits at top level: exit_file() ends the file between
+# expressions, so inside local() the rest of the block would still run.
+if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
 local({
-    if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
     saved <- list()
     patch <- function(name, fn, package = "corteza") {
         saved[[length(saved) + 1L]] <<- list(name = name, package = package,

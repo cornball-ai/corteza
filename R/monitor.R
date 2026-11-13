@@ -223,6 +223,10 @@ parse_monitor_verdict <- function(text, allowed = .MONITOR_VERDICTS_PROGRESS,
             next
         }
         if (identical(part, "..")) {
+            if (absolute && length(out) == 1L && grepl("^[A-Za-z]:$", out)) {
+                # ".." at a drive root stays at the drive root.
+                next
+            }
             if (length(out) > 0L && !identical(out[[length(out)]], "..")) {
                 out <- out[-length(out)]
             } else if (!absolute) {
@@ -233,11 +237,26 @@ parse_monitor_verdict <- function(text, allowed = .MONITOR_VERDICTS_PROGRESS,
         out <- c(out, part)
     }
     joined <- paste(out, collapse = "/")
-    if (absolute) {
-        paste0("/", joined)
-    } else {
-        joined
+    if (!absolute) {
+        return(joined)
     }
+    # A Windows drive root is its own root: "D:/x", never "/D:/x", which
+    # Windows reads as a path on the current drive. The letter is upper-cased
+    # so "d:/x" and "D:/x" compare equal.
+    if (length(out) > 0L && grepl("^[A-Za-z]:$", out[[1L]])) {
+        out[[1L]] <- toupper(out[[1L]])
+        if (length(out) == 1L) {
+            return(paste0(out, "/"))
+        }
+        return(paste(out, collapse = "/"))
+    }
+    # On Windows a network share keeps its double slash: "//host/share/x".
+    # Elsewhere "//etc" is "/etc", and must compare equal to it.
+    if (.Platform$OS.type == "windows" && startsWith(p, "//") &&
+        !startsWith(p, "///")) {
+        return(paste0("//", joined))
+    }
+    paste0("/", joined)
 }
 
 #' Resolve a tool-supplied path to an absolute, lexically normal form.
@@ -283,6 +302,17 @@ parse_monitor_verdict <- function(text, allowed = .MONITOR_VERDICTS_PROGRESS,
         return(lex)
     }
     real <- normalizePath(cur, winslash = "/", mustWork = FALSE)
+    # Windows reads a rooted path with no drive ("/etc/hosts") as one on the
+    # current drive, and normalizePath() says so ("D:/etc/hosts"). Keep the
+    # path as it was written: it must still compare with roots written the
+    # same way, and one that only seems to leave the project goes to a person.
+    if (!grepl("^[A-Za-z]:", lex) && grepl("^[A-Za-z]:/", real)) {
+        real <- substring(real, 3L)
+    }
+    # A root ("/", "C:/") already ends in the separator the join adds.
+    if (length(tail) > 0L && endsWith(real, "/")) {
+        real <- substring(real, 1L, nchar(real) - 1L)
+    }
     if (length(tail) > 0L) {
         real <- paste(c(real, tail), collapse = "/")
     }

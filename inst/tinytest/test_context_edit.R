@@ -164,6 +164,23 @@ run_context_edit_tests <- function() {
         expect_equal(length(raw$after_refs), length(s$history))
         expect_equal(raw$edits[[1]]$op, "drop")
         expect_identical(corteza:::journal_load(s$journal_dir)$segments[[2]]$history, before)
+        # Entry names are short enough for a room's journal path on Windows.
+        expect_true(all(nchar(unlist(raw$after_refs)) == 32L))
+        # A segment written with full digests as names still loads.
+        loaded <- corteza:::journal_load(s$journal_dir)$segments[[2]]
+        seg_path <- file.path(s$journal_dir, "segment-0002.json")
+        entry_file <- function(id) {
+            file.path(s$journal_dir, "entries", paste0(id, ".json"))
+        }
+        for (id in unique(unlist(raw$after_refs))) {
+            expect_true(file.copy(entry_file(id), entry_file(paste0(id, id))))
+        }
+        raw$after_refs <- lapply(raw$after_refs, function(id) paste0(id, id))
+        writeLines(jsonlite::toJSON(raw, auto_unbox = TRUE, null = "null", digits = NA),
+                   seg_path)
+        reloaded <- corteza:::journal_load(s$journal_dir)$segments[[2]]
+        expect_identical(reloaded$history, loaded$history)
+        expect_identical(reloaded$after, loaded$after)
 
         # Replacement keeps the first invocation paired, removes the other,
         # and never overwrites human text or the current batch.

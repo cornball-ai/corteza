@@ -152,7 +152,7 @@ Both processes must run a version with remote control, on the same machine
 under the same user. The bot must have an explicit `operators` list. With one
 available bot it is selected automatically; otherwise specify `--bot`. The
 default is a private room for the current CLI session, named `Corteza: <session-id>`.
-Creating session rooms requires `chat.api >= 0.1.0.2` on the courier.
+Creating session rooms requires `chat.api >= 0.2.0` on the courier.
 The courier invites its configured operators and enables room encryption before
 inviting them when its `e2ee` setting is on. Two CLI sessions in the same checkout
 get separate rooms. Reconnecting, including after `--session` or `--resume`,

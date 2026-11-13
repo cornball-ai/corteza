@@ -22,6 +22,10 @@ library(tinytest)
 # supplied through chat_matrix()'s .sync/.extract seams, reached via
 # bot_chat_client()'s `...`.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
 if (!requireNamespace("mx.client", quietly = TRUE)) {
     exit_file("mx.client not available")
 }

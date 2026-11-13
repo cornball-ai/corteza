@@ -1,5 +1,9 @@
 library(tinytest)
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
 expect_true(is.function(corteza::session_setup))
 
 # Require an API key for the selected provider.

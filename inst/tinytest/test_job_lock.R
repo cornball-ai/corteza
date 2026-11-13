@@ -4,6 +4,11 @@ library(tinytest)
 # the job ends, and taken over when its holder is gone. Every check runs
 # against a private state directory.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 state <- tempfile("job-lock-state")
 dir.create(state)
 old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
@@ -18,8 +23,11 @@ repo <- tempfile("lockrepo")
 dir.create(file.path(repo, "sub", "deeper"), recursive = TRUE)
 if (nzchar(Sys.which("git"))) {
     system2("git", c("-C", shQuote(repo), "init", "-q"))
-    expect_identical(corteza:::job_checkout(file.path(repo, "sub", "deeper")),
-                     normalizePath(repo))
+    # git names the toplevel by its real path, which R cannot always
+    # reproduce (a junction on Windows), so compare what git says of both.
+    top <- corteza:::job_checkout(file.path(repo, "sub", "deeper"))
+    expect_identical(top, corteza:::job_checkout(repo))
+    expect_identical(basename(top), basename(repo))
 }
 plain <- tempfile("plaindir")
 dir.create(plain)

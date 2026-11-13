@@ -33,7 +33,7 @@
     cwd <- session$cwd %||% getwd()
     path <- .resolve_real(path, cwd)
     size <- file.info(path)
-    if (nrow(size) != 1L || is.na(size$size) || !file_test("-f", path)) {
+    if (nrow(size) != 1L || is.na(size$size) || !utils::file_test("-f", path)) {
         return(err("The attachment is not an existing file."))
     }
     if (scan_sensitive(path) || .path_within(path, file.path(cwd, ".git")) ||

@@ -436,7 +436,7 @@ bot_rooms_near <- function(rooms, want) {
 bot_room_unclaimed_dir <- function(rooms, want) {
     want <- trimws(want)
     cwds <- vapply(rooms, function(r) r$cwd, "")
-    found <- if (grepl("^(~/|/|\\./)", want)) {
+    found <- if (bot_path_like(want)) {
         path.expand(want)
     } else {
         file.path(unique(dirname(cwds)), want)
@@ -488,7 +488,7 @@ bot_resolve_room <- function(rooms, want) {
     want <- trimws(want)
     lower <- tolower(want)
     norm <- function(p) normalizePath(path.expand(p), mustWork = FALSE)
-    as_path <- grepl("^(~/|/|\\./)", want)
+    as_path <- bot_path_like(want)
     readings <- list(function(r) identical(r$id, want),
                      function(r) identical(tolower(bot_room_label(r)), lower),
                      function(r) as_path && identical(norm(r$cwd), norm(want)),

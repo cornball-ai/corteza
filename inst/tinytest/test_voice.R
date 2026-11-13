@@ -671,7 +671,8 @@ local({
     expect_error(corteza:::.voice_http("GET", paste0("file://", big)),
                  "failed")
     small <- tempfile(fileext = ".txt")
-    writeLines("ok", small)
+    # Bytes, since writeLines() ends the line with CRLF on Windows.
+    writeBin(charToRaw("ok\n"), small)
     expect_equal(corteza:::.voice_http("GET",
                                        paste0("file://", small))$body,
                  "ok\n")

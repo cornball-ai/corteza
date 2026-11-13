@@ -1,5 +1,7 @@
+# At top level: exit_file() ends the file between expressions, so inside
+# local() the rest of the block would still run.
+if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
 local({
-    if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")
     f <- function(name) get(name, asNamespace("corteza"))
     root <- tempfile("room-media-")
     dir.create(root)
