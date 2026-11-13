@@ -3,13 +3,16 @@
 \alias{matrix_archive_all}
 \title{Deprecated: use bot_archive_all()}
 \usage{
-matrix_archive_all(sessions, chat = NULL)
+matrix_archive_all(sessions, mx_sess = NULL, chat = NULL)
 }
 \arguments{
 \item{sessions}{A registry environment built by
 \code{bot_run}/\code{bot_poll}. Keys are room IDs, values
 are session environments carrying \code{$transcript}, the
 Matrix-visible event ledger.}
+
+\item{mx_sess}{Ignored. Kept so calls written for corteza 0.7.1 still
+run; pass \code{chat} to look up room names.}
 
 \item{chat}{Optional chat.api client for room-name lookups. When
 NULL, the room ID is used as the source identifier.}

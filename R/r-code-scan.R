@@ -144,6 +144,12 @@ r_path_like <- function(s) {
     length(parts) > 1L || (length(parts) == 1L && file.exists(s))
 }
 
+# A path with the separators the scan reads. Only Windows takes a
+# backslash for a separator; elsewhere it is a character in a name.
+r_path_slashes <- function(s, windows = .Platform$OS.type == "windows") {
+    if (windows) gsub("\\", "/", s, fixed = TRUE) else s
+}
+
 # Read R code: what it calls, where its string constants point, and the
 # shell commands it runs.
 r_code_scan <- function(sx, code, depth = 0L) {
@@ -197,17 +203,17 @@ r_code_scan <- function(sx, code, depth = 0L) {
     }
     writes <- any(calls %in% R_WRITE_CALLS)
     for (s in unique(st$strings)) {
+        # A string in R code is a path as R reads it, where the scan reads
+        # shell words: on Windows its backslashes are separators. Convert
+        # them before deciding whether the string is a path at all, or
+        # "..\\x" and ".git\\config" pass unread.
+        s <- r_path_slashes(s)
         # A relative path stays in the project, so only two are worth
         # resolving: git's own files and the project's corteza config.
         internal <- writes && !grepl("[[:space:]]", s) && nchar(s) < 400L &&
         grepl("(^|/)\\.git(/|$)|(^|/)\\.corteza/config\\.json$", s)
         if (!r_path_like(s) && !internal) {
             next
-        }
-        # A string in R code is a path as R reads it, where the scan reads
-        # shell words: on Windows its backslashes are separators.
-        if (.Platform$OS.type == "windows") {
-            s <- gsub("\\", "/", s, fixed = TRUE)
         }
         p <- scan_resolve(sx, s)
         if (is.null(p)) {

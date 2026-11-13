@@ -22,12 +22,66 @@ for (old in deprecated) {
 # Every wrapper's signature matches the function it forwards to,
 # argument for argument and default for default. A wrapper that quietly
 # dropped an argument would look like the caller's option was ignored,
-# which is the failure mode a rename is supposed to have none of.
+# which is the failure mode a rename is supposed to have none of. Two
+# wrappers also keep an argument corteza 0.7.1 had and the new function
+# does not, in its old position.
+legacy <- list(matrix_poll = "crypto", matrix_archive_all = "mx_sess")
 for (old in deprecated) {
     new <- sub("^matrix_", "bot_", old)
-    expect_identical(formals(get(old, envir = ns)),
-                     formals(get(new, envir = ns)), info = old)
+    have <- as.list(formals(get(old, envir = ns)))
+    expect_identical(have[setdiff(names(have), legacy[[old]])],
+                     as.list(formals(get(new, envir = ns))), info = old)
 }
+
+# The 0.7.1 signatures, argument for argument: a call written against
+# the CRAN release, by name or by position, still matches.
+released <- list(
+    matrix_configure = c("server", "user", "password", "room", "model",
+                         "provider", "tools_filter", "auto_approve_asks",
+                         "bots", "models"),
+    matrix_send = c("text", "room_id", "msgtype", "markdown"),
+    matrix_poll = c("system", "model", "provider", "tools_filter",
+                    "timeout", "sessions", "crypto"),
+    matrix_run = c("timeout", "system", "model", "provider",
+                   "tools_filter"),
+    matrix_run_init = c("system", "model", "provider", "tools_filter"),
+    matrix_run_step = c("state", "timeout"),
+    matrix_archive_all = c("sessions", "mx_sess"),
+    matrix_request_flush = character()
+)
+for (old in deprecated) {
+    have <- as.character(names(formals(get(old, envir = ns))))
+    expect_identical(have[seq_along(released[[old]])], released[[old]],
+                     info = old)
+}
+
+# The two legacy arguments are accepted and the rest forwarded.
+local({
+    seen <- NULL
+    orig_poll <- corteza:::bot_poll
+    orig_arch <- corteza:::bot_archive_all
+    assignInNamespace("bot_poll", function(...) {
+        seen <<- list(...)
+        invisible(0L)
+    }, ns = "corteza")
+    assignInNamespace("bot_archive_all", function(...) {
+        seen <<- list(...)
+        invisible(0L)
+    }, ns = "corteza")
+    on.exit({
+        assignInNamespace("bot_poll", orig_poll, ns = "corteza")
+        assignInNamespace("bot_archive_all", orig_arch, ns = "corteza")
+    }, add = TRUE)
+    reg <- new.env()
+    suppressWarnings(corteza::matrix_poll(timeout = 5L, sessions = reg,
+                                          crypto = NULL))
+    expect_identical(seen$timeout, 5L)
+    expect_identical(seen$sessions, reg)
+    expect_false("crypto" %in% names(seen))
+    suppressWarnings(corteza::matrix_archive_all(reg, mx_sess = NULL))
+    expect_identical(seen$sessions, reg)
+    expect_false("mx_sess" %in% names(seen))
+})
 
 # And each one warns rather than moving silently, so a caller finds out
 # before 1.0.0 removes it.
