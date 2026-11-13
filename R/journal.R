@@ -388,7 +388,11 @@ journal_history <- function(dir) {
         entry_dir <- file.path(state$dir, "entries")
         dir.create(entry_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
         envelope$after_refs <- lapply(after, function(entry) {
-            id <- digest::digest(entry, algo = "sha256")
+            # Half a SHA-256 names an entry: 128 bits is ample within one
+            # session, and a room's journal path with the full digest runs
+            # past the 260 characters Windows allows. A segment records the
+            # ids it uses, so older segments with full digests still load.
+            id <- substr(digest::digest(entry, algo = "sha256"), 1L, 32L)
             path <- file.path(entry_dir, paste0(id, ".json"))
             if (!file.exists(path)) .journal_write_json(entry, path)
             id
