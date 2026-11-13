@@ -18,8 +18,11 @@ repo <- tempfile("lockrepo")
 dir.create(file.path(repo, "sub", "deeper"), recursive = TRUE)
 if (nzchar(Sys.which("git"))) {
     system2("git", c("-C", shQuote(repo), "init", "-q"))
-    expect_identical(corteza:::job_checkout(file.path(repo, "sub", "deeper")),
-                     normalizePath(repo))
+    # git names the toplevel by its real path, which R cannot always
+    # reproduce (a junction on Windows), so compare what git says of both.
+    top <- corteza:::job_checkout(file.path(repo, "sub", "deeper"))
+    expect_identical(top, corteza:::job_checkout(repo))
+    expect_identical(basename(top), basename(repo))
 }
 plain <- tempfile("plaindir")
 dir.create(plain)
