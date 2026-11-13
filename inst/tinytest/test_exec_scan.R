@@ -81,7 +81,7 @@ caught <- list(
     c("ssh host uptime", "another machine"),
     c("printenv", "environment"),
     # The test project is under the temp directory, not under home.
-    c("rm -rf ~", "outside the project"),
+    c("rm -rf ~", "outside the project|one above it"),
     c(sprintf("rm -rf %s", dirname(root)), "project directory or one above"),
     c("rm -rf /", "project directory or one above"),
     c("rm -rf .", "project directory or one above"),
@@ -130,9 +130,10 @@ caught <- list(
     c("find ~ -name x -exec rm {} \\;", "outside the project"),
     c("bash -c 'git push'", "pushes"),
     c("echo \"$(cat ~/.netrc)\"", "credential"),
-    c("nohup sh -c 'sleep 1; rm -rf ~' &", "outside the project"),
+    # Where the temp directory is under home (Windows), home is "above".
+    c("nohup sh -c 'sleep 1; rm -rf ~' &", "outside the project|one above it"),
     c("r -e 'tinypkgr::submit_cran()'", "publishes"),
-    c("Rscript -e 'unlink(\"~/Documents\", recursive = TRUE)'", "outside the project"))
+    c("Rscript -e 'unlink(\"~/Documents\", recursive = TRUE)'", "outside the project|one above it"))
 for (case in caught) {
     expect_true(flagged(sh(case[[1L]]), case[[2L]]),
                 info = paste(case[[1L]], "->", paste(sh(case[[1L]])$flags, collapse = "; ")))
@@ -200,7 +201,9 @@ expect_true(clean(rr("lock$release()")))
 expect_true(any(grepl("does not parse", rr("this is (not R")$notes)))
 
 # --- Places outside the project that may be written ---
-home_notes <- file.path(path.expand("~"), "scan-test-notes-root")
+# Forward slashes: in a shell command a backslash is an escape.
+home_notes <- file.path(gsub("\\", "/", path.expand("~"), fixed = TRUE),
+                        "scan-test-notes-root")
 expect_true(flagged(sh(sprintf("touch %s/a.md", home_notes)), "outside the project"))
 expect_true(clean(sh(sprintf("touch %s/a.md", home_notes),
                      write_roots = home_notes)))

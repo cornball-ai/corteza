@@ -318,7 +318,10 @@ local({
         vapply(x$diagnostics, function(d) d$code, character(1L))
     }
 
-    if (isTRUE(made_alias) && isTRUE(made_deep) && isTRUE(made_inner)) {
+    # An alias is recognized by Sys.readlink(), which reports nothing on
+    # Windows even where a link could be made.
+    if (isTRUE(made_alias) && isTRUE(made_deep) && isTRUE(made_inner) &&
+        nzchar(Sys.readlink(file.path(hub, "remote")))) {
         # The default walk still refuses every escape.
         plain <- corteza:::instruction_walk_root(hub)
         expect_false(any(grepl("remote", plain$skills, fixed = TRUE)))
@@ -337,8 +340,9 @@ local({
 
         global_config <- corteza:::corteza_config_path("config.json")
         dir.create(dirname(global_config), recursive = TRUE, showWarnings = FALSE)
-        writeLines(sprintf('{"instruction_roots": {"hub": "%s"}}', hub),
-                   global_config)
+        # toJSON, since a Windows path's backslashes are not valid in JSON.
+        writeLines(jsonlite::toJSON(list(instruction_roots = list(hub = hub)),
+                                    auto_unbox = TRUE), global_config)
         catalog <- corteza:::build_instruction_catalog(project)
         ids <- names(catalog$entries)
         expect_true("hub:remote" %in% ids)
@@ -360,8 +364,9 @@ local({
 
         # When the package root is configured as well, the more specific root
         # owns the single entry.
-        writeLines(sprintf('{"instruction_roots": {"hub": "%s", "pkg": "%s"}}',
-                           hub, pkg), global_config)
+        writeLines(jsonlite::toJSON(list(instruction_roots = list(hub = hub,
+                                                                  pkg = pkg)),
+                                    auto_unbox = TRUE), global_config)
         both <- corteza:::build_instruction_catalog(project)
         expect_true("pkg:remote" %in% names(both$entries))
         expect_false("hub:remote" %in% names(both$entries))

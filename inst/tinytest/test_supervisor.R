@@ -54,7 +54,7 @@ expect_identical(route("replace_in_file", list(path = "R/x.R"))$route, "monitor"
 # climbing out of it has to reach the filesystem root to be "outside".
 # How deep the temp directory is depends on the runner: R CMD check
 # nests one Rtmp inside another, so the climb is counted, not written.)
-climb <- paste(rep("..", length(strsplit(root, "/", fixed = TRUE)[[1L]])),
+climb <- paste(rep("..", length(strsplit(root, "[/\\\\]")[[1L]])),
                collapse = "/")
 expect_identical(route("write_file",
                        list(path = file.path(climb, "etc", "elsewhere.txt")))$route,
@@ -65,7 +65,8 @@ expect_identical(v$route, "human")
 expect_true(any(grepl("names no path", v$flags)))
 # A symlink out of the project is where it points.
 link <- file.path(root, "outlink")
-if (isTRUE(file.symlink(path.expand("~"), link))) {
+# (Not on Windows: R resolves no link there, so the scan cannot follow one.)
+if (isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
     expect_identical(route("write_file", list(path = file.path(link, "x.txt")))$route,
                      "human")
 }

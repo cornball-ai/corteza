@@ -442,7 +442,10 @@ local({
     expect_false(grepl("project40", txt))
     # The project exists and no room works in it: say so, and how the
     # work can still be done.
-    expect_true(grepl(file.path(base, "hacer"), txt, fixed = TRUE))
+    # Compared with one kind of slash: Windows reports the directory with
+    # forward slashes and tempfile() names it with backslashes.
+    fwd <- function(x) gsub("\\", "/", x, fixed = TRUE)
+    expect_true(grepl(fwd(file.path(base, "hacer")), fwd(txt), fixed = TRUE))
     expect_true(grepl("no room works in it", txt))
     expect_true(grepl("delegate without `room`", txt, fixed = TRUE))
     # Named as a path, the same.

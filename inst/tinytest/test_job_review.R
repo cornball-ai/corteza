@@ -645,7 +645,9 @@ probe$job_worker_spec <- list(run_fn = function(task) {
     list(reply = paste(
         identical(st$session$tools_filter, corteza:::JOB_REVIEWER_TOOLS),
         isFALSE(st$session$web_search),
-        identical(getOption("corteza.allowed_paths"), getwd()),
+        identical(normalizePath(getOption("corteza.allowed_paths"),
+                                winslash = "/"),
+                  normalizePath(getwd(), winslash = "/")),
         identical(st$session$reasoning_effort, "high"),
         sep = " "))
 })

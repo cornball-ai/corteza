@@ -158,12 +158,19 @@ expect_equal(call_worker(s, "exists('must_not_run', inherits = FALSE)")$content[
 generation <- s$.run_r_worker_generation
 timed <- call_worker(s, "partial_value <- 7L; repeat {}", timeout = 0.2)
 expect_true(timed$isError)
-expect_equal(timed$execution$status, "timeout")
-expect_true(timed$execution$state_retained)
-expect_equal(s$.run_r_worker_generation, generation)
-after <- call_worker(s, "partial_value")
-expect_equal(after$content[[1L]]$text, "[1] 7")
-expect_equal(s$.run_r_worker_generation, generation)
+if (.Platform$OS.type == "windows" &&
+    identical(timed$execution$status, "killed")) {
+    # A Windows process with no console cannot be sent an interrupt, so the
+    # worker is terminated: the documented fallback, with the state lost.
+    expect_false(timed$execution$state_retained)
+} else {
+    expect_equal(timed$execution$status, "timeout")
+    expect_true(timed$execution$state_retained)
+    expect_equal(s$.run_r_worker_generation, generation)
+    after <- call_worker(s, "partial_value")
+    expect_equal(after$content[[1L]]$text, "[1] 7")
+    expect_equal(s$.run_r_worker_generation, generation)
+}
 
 # In-process remains the default and an explicit timeout is not falsely
 # represented as enforceable there.
