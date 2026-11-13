@@ -7,6 +7,10 @@ library(tinytest)
 # metacharacters, option-looking refs, another repository, a glob that
 # climbs, and symlinks.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
 if (!nzchar(Sys.which("git"))) {
     exit_file("git not available")
 }
