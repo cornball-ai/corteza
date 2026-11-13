@@ -22,6 +22,21 @@
 # doesn't hit the Ollama API on every call.
 .local_model_cache <- new.env(parent = emptyenv())
 
+# Names of the models the local Ollama server has, or an error. Bounded:
+# every new_session() without a model map waits on this once per process,
+# and a machine that drops the connection instead of refusing it would
+# otherwise hold the caller for as long as the system's own timeout
+# (94 seconds on one Windows host).
+.ollama_model_names <- function(base_url = "http://localhost:11434",
+                                connect_timeout = 1L, timeout = 3L) {
+    h <- curl::new_handle(connecttimeout = connect_timeout, timeout = timeout)
+    resp <- curl::curl_fetch_memory(paste0(base_url, "/api/tags"), handle = h)
+    if (resp$status_code >= 400L) {
+        stop("Ollama API error (", resp$status_code, ")", call. = FALSE)
+    }
+    as.character(jsonlite::fromJSON(rawToChar(resp$content))$models$name)
+}
+
 #' Detect the preferred local Ollama model
 #'
 #' Walks \code{getOption("corteza.local_models")} (default
@@ -42,10 +57,7 @@ default_local_model <- function() {
     }
     candidates <- getOption("corteza.local_models",
                             c("gpt-oss:120b", "gpt-oss:20b"))
-    available <- tryCatch(
-                          llm.api::list_ollama_models()$name,
-                          error = function(e) character()
-    )
+    available <- tryCatch(.ollama_model_names(), error = function(e) character())
     pick <- NULL
     for (m in candidates) {
         if (m %in% available) {

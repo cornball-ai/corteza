@@ -38,6 +38,37 @@ local({
     expect_null(first)
 })
 
+# The probe is bounded. A listener that accepts and never answers stands
+# in for a machine that leaves the request hanging: the probe gives up
+# at its timeout instead of holding new_session() for the system's.
+local({
+    port <- 0L
+    srv <- NULL
+    for (candidate in sample(20000:40000, 20L)) {
+        srv <- tryCatch(serverSocket(candidate), error = function(e) NULL)
+        if (!is.null(srv)) {
+            port <- candidate
+            break
+        }
+    }
+    if (!is.null(srv)) {
+        on.exit(close(srv), add = TRUE)
+        took <- system.time(
+            res <- tryCatch(corteza:::.ollama_model_names(
+                sprintf("http://127.0.0.1:%d", port),
+                connect_timeout = 1L, timeout = 1L),
+                error = function(e) "timed out")
+        )[["elapsed"]]
+        expect_identical(res, "timed out")
+        expect_true(took < 10)
+    }
+})
+# Nothing listening: an error, which default_local_model() reads as no
+# local model.
+expect_error(corteza:::.ollama_model_names("http://127.0.0.1:1",
+                                           connect_timeout = 1L,
+                                           timeout = 2L))
+
 # If at_home and Ollama is serving gpt-oss, detection should succeed.
 if (at_home()) {
     reset_cache()
