@@ -204,6 +204,11 @@ r_code_scan <- function(sx, code, depth = 0L) {
         if (!r_path_like(s) && !internal) {
             next
         }
+        # A string in R code is a path as R reads it, where the scan reads
+        # shell words: on Windows its backslashes are separators.
+        if (.Platform$OS.type == "windows") {
+            s <- gsub("\\", "/", s, fixed = TRUE)
+        }
         p <- scan_resolve(sx, s)
         if (is.null(p)) {
             next

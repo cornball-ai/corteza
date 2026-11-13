@@ -309,6 +309,10 @@ parse_monitor_verdict <- function(text, allowed = .MONITOR_VERDICTS_PROGRESS,
     if (!grepl("^[A-Za-z]:", lex) && grepl("^[A-Za-z]:/", real)) {
         real <- substring(real, 3L)
     }
+    # A root ("/", "C:/") already ends in the separator the join adds.
+    if (length(tail) > 0L && endsWith(real, "/")) {
+        real <- substring(real, 1L, nchar(real) - 1L)
+    }
     if (length(tail) > 0L) {
         real <- paste(c(real, tail), collapse = "/")
     }
