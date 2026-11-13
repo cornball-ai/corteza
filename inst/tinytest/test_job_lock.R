@@ -4,6 +4,11 @@ library(tinytest)
 # the job ends, and taken over when its holder is gone. Every check runs
 # against a private state directory.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 state <- tempfile("job-lock-state")
 dir.create(state)
 old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)

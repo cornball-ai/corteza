@@ -5,6 +5,11 @@ library(tinytest)
 # stopped on exit. Driven through run_repl_loop() with scripted input,
 # against a private state directory. No provider is called.
 
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 state <- tempfile("repl-jobs-state")
 dir.create(state)
 old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
