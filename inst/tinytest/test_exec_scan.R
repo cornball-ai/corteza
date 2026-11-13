@@ -210,8 +210,31 @@ expect_true(clean(sh(sprintf("touch %s/a.md", home_notes),
 # A write root does not open a credential path under it.
 expect_true(flagged(sh("cat ~/.ssh/config", write_roots = "~"), "credential"))
 
+# --- Backslash paths in R code, as Windows reads them ---
+expect_identical(corteza:::r_path_slashes("..\\x", windows = TRUE), "../x")
+expect_identical(corteza:::r_path_slashes("a\\b", windows = FALSE), "a\\b")
+# The conversion comes before the scan decides what is a path. Checked
+# on every platform by reading separators the way Windows does.
+local({
+    orig <- corteza:::r_path_slashes
+    assignInNamespace("r_path_slashes",
+                      function(s, windows = TRUE) orig(s, windows = TRUE),
+                      ns = "corteza")
+    on.exit(assignInNamespace("r_path_slashes", orig, ns = "corteza"),
+            add = TRUE)
+    # Far enough up to leave the temporary directory, which is scratch.
+    depth <- length(strsplit(root, "[/\\\\]")[[1L]])
+    up <- paste(rep("..", depth), collapse = "\\\\")
+    expect_true(flagged(rr(sprintf("writeLines('x', '%s\\\\outside.txt')", up)),
+                        "outside the project"))
+    expect_true(flagged(rr("writeLines('x', '.git\\\\config')"), "may write"))
+    expect_true(flagged(rr("writeLines('x', '.corteza\\\\config.json')"),
+                        "may write"))
+    expect_true(clean(rr("writeLines('x', 'R\\\\notes.txt')")))
+})
+
 # --- Limits ---
-long <- paste(rep("echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;", 1000L), collapse = " ")
+long <-paste(rep("echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;", 1000L), collapse = " ")
 expect_true(flagged(sh(long), "too long"))
 # Other tools are not this file's to read.
 expect_identical(corteza:::exec_scan("read_file", list(path = "~/.ssh/x"), root)$flags,
