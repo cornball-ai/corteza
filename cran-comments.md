@@ -9,8 +9,9 @@ for external clients like Claude Code or Codex.
 
 Minor release over the on-CRAN 0.7.1, batching the 0.7.1.1-0.7.1.94 dev
 cycles. No exported function was removed. Seventeen were added, and the
-four `matrix_*` functions remain as deprecated wrappers around their
-`bot_*` replacements, so existing calls are unaffected.
+eight `matrix_*` functions remain as deprecated wrappers around their
+`bot_*` replacements and accept every argument they took in 0.7.1, so
+existing calls are unaffected.
 
 Highlights:
 
