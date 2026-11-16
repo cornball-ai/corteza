@@ -37,8 +37,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: macos-latest}
-          - {os: ubuntu-latest}
+          # other_dirs_exclude: see the Test step.
+          - {os: macos-latest, other_dirs_exclude: "^/(private/)?var/folders/"}
+          - {os: ubuntu-latest, other_dirs_exclude: ""}
 
     runs-on: ${{ matrix.os }}
 
@@ -143,7 +144,15 @@ jobs:
       - name: Suggests from CRAN
         run: Rscript -e 'install.packages(c("clipr", "fortunes", "pensar", "rstudioapi", "simplermarkdown"), repos = "https://cloud.r-project.org")'
 
+      # On macOS the temp root is a folder every process of the user
+      # shares, and system services make folders in it while the check
+      # runs: 4 on this gate's first run, none of them the package's.
+      # The pattern drops that folder from the comparison there. The
+      # home directory is still compared, and so is R's own session
+      # temp directory. Empty on Linux, where nothing is dropped.
       - name: Test
+        env:
+          _R_CHECK_THINGS_IN_OTHER_DIRS_EXCLUDE_: ${{ matrix.other_dirs_exclude }}
         run: ./run.sh run_tests
 
       # A NOTE does not fail the Test step. This fails on the three that
