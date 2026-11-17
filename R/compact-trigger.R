@@ -127,7 +127,7 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
 }
 
 # How long a provider keeps this session's prompt cache, in minutes. 0
-# for a session that sets none.
+# for a session that has none (.session_cache()).
 .cache_minutes <- function(session) {
     cache <- tryCatch(.session_cache(session), error = function(e) NULL)
     switch(cache %||% "none", `5m` = 5, `1h` = 60, 0)

@@ -102,8 +102,15 @@ providers only. Must be at least 1024 and below
 \item{cache}{Character or NULL. Anthropic prompt-cache TTL:
 \code{"none"}, \code{"5m"} or \code{"1h"}. Anthropic-only, and
 dropped for other providers so they never see a field their wire
-rejects. NULL falls back to \code{config$cache}, then llm.api's
-default (\code{"none"}). Caching is a billing setting, not a
+rejects. NULL falls back to \code{config$cache}. Where neither
+sets one, a session on an Anthropic provider caches for 5 minutes
+(\code{"5m"}), except a session that edits its own context
+(\code{context_edit}), which has no cache unless one is set.
+\code{"none"} turns the cache off. A 5-minute write is billed at
+1.25 times an uncached input token and a read at a tenth or less:
+a request with none before it in the last 5 minutes costs a quarter
+more on its input, and each request after it in that time costs
+far less. Caching is a billing setting, not a
 behavioural one: the model receives byte-identical input either
 way, so turning it on cannot change a result. llm.api (>= 0.1.9.6,
 the Imports floor) marks both the system prompt and the tail of the
@@ -113,7 +120,8 @@ for what was appended since; on a long tool loop that is most of
 the input bill. The floor is there because an older llm.api marks
 the system prompt alone and would silently deliver a fraction of
 that with this set. \code{turn()$usage} reports what was read and
-written.}
+written. Anthropic leaves cached input out of \code{input_tokens};
+\code{total_tokens} counts it.}
 
 \item{compaction_prompt}{Character or NULL. Optional domain-specific
 instructions for summarizing older history during context compaction.

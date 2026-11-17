@@ -239,10 +239,16 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 rendered <- format_task_list_display(
                     ctx$session$tasks %||% list(),
                     palette = ctx$palette)
-                if (is.null(rendered)) {
-                    cat("No tasks.\n")
-                } else {
+                if (!is.null(rendered)) {
                     cat(rendered, "\n", sep = "")
+                }
+                # A resumed session can hold tasks from before the list
+                # was off. They print, and the note says the model does
+                # not see them.
+                if (!.task_list_on(ctx$session)) {
+                    cat(.task_list_off_note(), "\n", sep = "")
+                } else if (is.null(rendered)) {
+                    cat("No tasks.\n")
                 }
                 next
             }
@@ -1110,7 +1116,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         compact_system <- task_compose_system(
             .plan_mode_compose_system(ctx$session$system,
                                       isTRUE(ctx$session$plan_mode)),
-            ctx$session$tasks %||% list(), channel = ctx$session$channel,
+            ctx$session$tasks %||% list(), on = .task_list_on(ctx$session),
             auto = !is.null(ctx$session$auto_run_id))
         comp <- .repl_interruptible(
                                     tryCatch(maybe_compact_turn_session(

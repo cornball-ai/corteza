@@ -182,12 +182,31 @@ format_task_list_prompt <- function(tasks) {
     !is.null(channel) && (channel %in% .TASK_SUPPORTED_CHANNELS)
 }
 
-#' Strip task_create / task_update from the tool list on channels
-#' that don't support the approval flow, so the LLM never sees them
-#' in its tool payload.
+#' Whether a session has the task list. 2 things must hold: its channel
+#' has the approval prompt, and its config turns the list on
+#' (`task_list_enabled`, off by default). A session that carries no
+#' config has no task list.
 #' @noRd
-.task_filter_tools <- function(tools, channel) {
-    if (.task_channel_supports_tasks(channel)) {
+.task_list_on <- function(session) {
+    .task_channel_supports_tasks(session$channel) &&
+    isTRUE(session$config$task_list_enabled)
+}
+
+#' What `/tasks` adds for a session with no task list: how to turn it
+#' on. The config is read when a session starts.
+#' @noRd
+.task_list_off_note <- function() {
+    sprintf(paste("The task list is off. Set \"task_list_enabled\": true",
+                  "in %s and start a new session to turn it on."),
+            corteza_config_path("config.json"))
+}
+
+#' Strip task_create / task_update from the tool list of a session
+#' that has no task list, so the LLM never sees them in its tool
+#' payload. `on` is `.task_list_on()` of the session.
+#' @noRd
+.task_filter_tools <- function(tools, on) {
+    if (isTRUE(on)) {
         return(tools)
     }
     is_task <- vapply(tools, function(t) {
@@ -198,13 +217,12 @@ format_task_list_prompt <- function(tasks) {
 }
 
 #' Compose the system prompt for this turn. Appends the static "how
-#' to use task tools" addendum and any active task list only on
-#' channels that actually expose the task tools, so Matrix sessions
-#' aren't told to call tools that aren't there.
+#' to use task tools" addendum and any active task list only for a
+#' session that has the task list (`on`, `.task_list_on()` of the
+#' session), so no session is told to call tools that aren't there.
 #' @noRd
-task_compose_system <- function(base_system, tasks, channel = NULL,
-                                auto = FALSE) {
-    if (!.task_channel_supports_tasks(channel)) {
+task_compose_system <- function(base_system, tasks, on = FALSE, auto = FALSE) {
+    if (!isTRUE(on)) {
         return(base_system)
     }
     parts <- c(if (!is.null(base_system) && nzchar(base_system)) base_system,
@@ -344,6 +362,12 @@ task_tool_intercept <- function(session, name, args) {
     if (!.task_channel_supports_tasks(session$channel)) {
         return(sprintf("[task error: %s is not available on the '%s' channel]",
                        name, session$channel %||% "<unknown>"))
+    }
+    # The same where the config leaves the task list off: a history from
+    # an earlier session may still hold calls the model repeats.
+    if (!.task_list_on(session)) {
+        return(sprintf("[task error: %s is not available: %s]", name,
+                       "the task list is off (task_list_enabled)"))
     }
     palette <- ansi_colors()
     tryCatch({

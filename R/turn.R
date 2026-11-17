@@ -140,8 +140,15 @@ default_local_model <- function() {
 #' @param cache Character or NULL. Anthropic prompt-cache TTL:
 #'   \code{"none"}, \code{"5m"} or \code{"1h"}. Anthropic-only, and
 #'   dropped for other providers so they never see a field their wire
-#'   rejects. NULL falls back to \code{config$cache}, then llm.api's
-#'   default (\code{"none"}). Caching is a billing setting, not a
+#'   rejects. NULL falls back to \code{config$cache}. Where neither
+#'   sets one, a session on an Anthropic provider caches for 5 minutes
+#'   (\code{"5m"}), except a session that edits its own context
+#'   (\code{context_edit}), which has no cache unless one is set.
+#'   \code{"none"} turns the cache off. A 5-minute write is billed at
+#'   1.25 times an uncached input token and a read at a tenth or less:
+#'   a request with none before it in the last 5 minutes costs a quarter
+#'   more on its input, and each request after it in that time costs
+#'   far less. Caching is a billing setting, not a
 #'   behavioural one: the model receives byte-identical input either
 #'   way, so turning it on cannot change a result. llm.api (>= 0.1.9.6,
 #'   the Imports floor) marks both the system prompt and the tail of the
@@ -151,7 +158,8 @@ default_local_model <- function() {
 #'   the input bill. The floor is there because an older llm.api marks
 #'   the system prompt alone and would silently deliver a fraction of
 #'   that with this set. \code{turn()$usage} reports what was read and
-#'   written.
+#'   written. Anthropic leaves cached input out of \code{input_tokens};
+#'   \code{total_tokens} counts it.
 #' @param compaction_prompt Character or NULL. Optional domain-specific
 #'   instructions for summarizing older history during context compaction.
 #'   NULL uses corteza's general coding-agent summary brief. The prompt
@@ -396,11 +404,33 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                             "session/config reasoning_effort")
 }
 
+# The prompt cache of a session that sets none, on an Anthropic
+# provider. A 5-minute write costs 1.25 times an uncached token and a
+# read a tenth or less, so it pays from the second request that starts
+# inside 5 minutes of the one before it, which every tool loop has.
+.cache_default <- "5m"
+
 # Resolve the prompt-cache TTL: explicit session field wins, then
-# config. NULL means "llm.api's default", which is "none".
+# config ("none" turns the cache off). Where neither sets one, a
+# session on an Anthropic provider gets .cache_default and any other
+# gets NULL, which leaves llm.api's default ("none") in place.
+#
+# A session that edits its own context sets none either way. A cache
+# entry holds the exact text sent up to its marker, and such a session
+# writes ids into entries it has already sent (.context_edit_index()),
+# so a request there may find no entry to read and pay the write price
+# for the whole history. Its operator can set a cache and measure.
 .session_cache <- function(session) {
-    .check_cache(session$cache %||% session$config$cache,
-                 "session/config cache")
+    set <- .check_cache(session$cache %||% session$config$cache,
+                        "session/config cache")
+    if (!is.null(set)) {
+        return(set)
+    }
+    if (!(session$provider %||% "") %in% .anthropic_providers ||
+        .context_edit_enabled(session)) {
+        return(NULL)
+    }
+    .cache_default
 }
 
 # Resolve the Anthropic extended-thinking budget. llm.api enforces the
@@ -1224,7 +1254,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         tools <- skills_as_api_tools(session$tools_filter)
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
-    tools <- .task_filter_tools(tools, session$channel)
+    tools <- .task_filter_tools(tools, .task_list_on(session))
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .context_edit_tools(tools, session)
     tools <- .delegation_tools(tools, session)
@@ -1247,7 +1277,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     system <- .plan_mode_compose_system(session$system,
                                         isTRUE(session$plan_mode))
     system <- task_compose_system(system, session$tasks %||% list(),
-                                  channel = session$channel,
+                                  on = .task_list_on(session),
                                   auto = !is.null(session$auto_run_id))
     session$context_edit_base_system <- system
     system <- .context_edit_system(system, session)
