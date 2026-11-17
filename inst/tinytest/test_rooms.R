@@ -941,21 +941,44 @@ local({
     prev_user_cache_dir <- Sys.getenv("R_USER_CACHE_DIR", unset = NA)
     cache <- tempfile("matrix-room-context-cache-")
     Sys.setenv(R_USER_CACHE_DIR = cache)
+    # A room's project is read where its directory is trusted
+    # (R/trust.R). The list of those is the user's, so this block gets a
+    # config directory of its own before it adds the room's directory.
+    prev_user_config_dir <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+    config <- tempfile("matrix-room-context-config-")
+    Sys.setenv(R_USER_CONFIG_DIR = config)
     on.exit({
         unlink(tmp, recursive = TRUE)
         unlink(cache, recursive = TRUE)
+        unlink(config, recursive = TRUE)
         if (is.na(prev_user_cache_dir)) {
             Sys.unsetenv("R_USER_CACHE_DIR")
         } else {
             Sys.setenv(R_USER_CACHE_DIR = prev_user_cache_dir)
         }
+        if (is.na(prev_user_config_dir)) {
+            Sys.unsetenv("R_USER_CONFIG_DIR")
+        } else {
+            Sys.setenv(R_USER_CONFIG_DIR = prev_user_config_dir)
+        }
     }, add = TRUE)
 
-    bundle <- corteza:::bot_room_context_bundle(
-        list(user_id = "@bot:x", user = "Troy"),
-        cwd = tmp,
-        room_name = "~/project",
-        description = "topic")
+    room_bundle <- function() {
+        corteza:::bot_room_context_bundle(
+            list(user_id = "@bot:x", user = "Troy"),
+            cwd = tmp,
+            room_name = "~/project",
+            description = "topic")
+    }
+    # Untrusted, the room has its own header and corteza's guidance, and
+    # nothing of the project's.
+    sys <- room_bundle()$system
+    expect_true(grepl("You are @bot:x", sys, fixed = TRUE))
+    expect_true(grepl("Corteza Runtime Environment", sys, fixed = TRUE))
+    expect_false(grepl("saber-context-sentinel", sys, fixed = TRUE))
+
+    corteza:::project_trust_add(tmp)
+    bundle <- room_bundle()
     sys <- bundle$system
 
     expect_true(grepl("You are @bot:x", sys, fixed = TRUE))

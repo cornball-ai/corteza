@@ -221,9 +221,10 @@ bot_notices_retry <- function(chat, sessions, owner, now = Sys.time()) {
 }
 
 # The `jobs` block that applies to the bot itself: the global corteza
-# config, with the project config of the bot's `cwd` over it. A bot with
-# no directory has the global config alone. The scratch folder is not
-# read for a project config: a room's tools can write there.
+# config, with the project config of the bot's `cwd` over it where that
+# directory is trusted (R/trust.R). A bot with no directory has the
+# global config alone. The scratch folder is not read for a project
+# config: a room's tools can write there.
 bot_jobs_config <- function(cfg) {
     dir <- bot_configured_cwd(cfg)
     if (is.null(dir)) {

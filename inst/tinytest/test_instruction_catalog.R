@@ -107,6 +107,24 @@ local({
                project_config
     )
 
+    # A project's skills folder and its config load from a trusted
+    # directory only (R/trust.R). Untrusted, the catalog is the user's
+    # own: the project's folder is no root, and its config adds no root,
+    # replaces none and disables nothing.
+    stranger <- corteza:::build_instruction_catalog(project)
+    stranger_ids <- names(stranger$entries)
+    expect_true("shared:shared/audit" %in% stranger_ids)
+    expect_true("replace:old" %in% stranger_ids)
+    expect_false("replace:new" %in% stranger_ids)
+    expect_false(any(grepl("^(project|narrow):", stranger_ids)))
+    expect_false("project:disabled" %in% stranger$disabled)
+    expect_false(grepl("PROJECT-BODY-SENTINEL|Log analyst",
+                       corteza:::format_instruction_catalog(stranger)))
+    expect_error(corteza:::instruction_catalog_read(
+            stranger, "project:analysis/logs"
+        ), pattern = "not in this session catalog")
+    corteza:::project_trust_add(project)
+
     catalog <- corteza:::build_instruction_catalog(project)
     ids <- names(catalog$entries)
     expect_true(inherits(catalog, "corteza_instruction_catalog"))
@@ -182,6 +200,7 @@ local({
     other <- file.path(root, "other")
     .write_instruction(file.path(other, ".corteza", "skills", "only-b"),
                        "Only B", "Belongs to B.", "B-BODY")
+    corteza:::project_trust_add(other)
     other_catalog <- corteza:::build_instruction_catalog(other)
     expect_true("project:only-b" %in% names(other_catalog$entries))
     expect_false("project:only-b" %in% names(catalog$entries))

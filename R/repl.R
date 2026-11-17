@@ -457,6 +457,14 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 cat(res$text, "\n")
                 next
             }
+            if (cmd == "/trust") {
+                # Where this directory stands, and `/trust yes` to add it
+                # to the user's trusted directories. The session's prompt
+                # and tools were fixed when it started, so a new answer
+                # applies from the next start.
+                cat(trust_command(ctx$cwd %||% getwd(), parts[-1]), sep = "\n")
+                next
+            }
             if (cmd == "/auto") {
                 # Re-entrant on purpose: run_auto_loop() drives this same
                 # loop with an injected read_input, so we nest one level
@@ -568,6 +576,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                                     model = sprintf("%s @ %s", disp_model,
                         ctx$session$provider %||% ctx$provider),
                                     dir = ctx$cwd,
+                                    trusted = trust_status_word(
+                        ctx$session$project_trusted,
+                        project_trusted(ctx$cwd)),
                                     session = ctx$disk_session$session$sessionKey %||%
                                     ctx$disk_session$session$sessionId %||% "(unset)"
                 )
@@ -586,6 +597,11 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                         palette = ctx$palette,
                         status_info = status_info
                     ), "\n", sep = "")
+                left <- trust_left_alone(ctx$session, ctx$cwd)
+                if (length(left)) {
+                    cat(left, sep = "\n")
+                    cat("\n")
+                }
                 next
             }
             if (cmd == "/compact") {
