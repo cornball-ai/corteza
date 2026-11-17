@@ -148,6 +148,20 @@ Key fields: `provider`, `port` (default 7850), `context_warn_pct` /
 `context_high_pct` / `context_crit_pct` / `context_compact_pct`,
 `context_files`, `approval_mode`, `dangerous_tools`, `permissions`.
 
+**When a session compacts** (`R/compact-trigger.R`): at the smaller of
+`context_compact_pct` of the model's window and `context_compact_tokens`
+(200,000), or ahead of a turn after `context_idle_minutes` (60) with
+`context_idle_tokens` (100,000) of context. A session that edits its
+own context (`context_edit` with `strategy: "clm"`, which a bot's
+talker config can set) is never compacted, so none of these numbers
+reach it. `context_trigger()` is the one resolver: the compactor
+decides with it and `/context` prints it, so add a display through it
+and not through `context_limit_for_model()`.
+The windows are a table in `R/context-budget.R`; each row cites the
+provider's page, and `context_window` in the config overrides it.
+`test_compact_trigger.R` fails when a default model of llm.api has no
+row.
+
 ## Tool execution model: `run_r` vs `run_r_script`
 
 `run_r` is **stateful**. `tool_run_r` calls
