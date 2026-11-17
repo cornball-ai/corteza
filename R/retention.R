@@ -3,9 +3,8 @@
 # CRAN lets a package keep files under tools::R_user_dir() on condition
 # that they stay small and are "actively managed (including removing
 # outdated material)". Up to 0.8.0 corteza removed nothing. A session's
-# journal (R/journal.R) keeps every history a rewrite replaced, and on a
-# machine with a few busy rooms the journals were nine tenths of the
-# data directory.
+# journal (R/journal.R) keeps every history a rewrite replaced, and it
+# stayed on disk however long ago the session was last used.
 #
 # What goes: the journal and the tool trace of a session nobody has used
 # for `session_days`. What stays: every transcript, the session stores,
