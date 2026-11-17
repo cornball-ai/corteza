@@ -279,16 +279,22 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #'   error before NULL is returned.
 #' @param session Optional session supplying audit settings, identity and the
 #'   parent turn reference.
+#' @param max_total_chars How many characters of the rendered slice the
+#'   request may hold. Past it the oldest entries are left out and the
+#'   summarizer is told how many. The compactor passes a budget that
+#'   follows the model's window.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
                                     model = NULL, timeout_seconds = 60L,
                                     summary_prompt = NULL,
-                                    error_callback = NULL, session = NULL) {
+                                    error_callback = NULL, session = NULL,
+                                    max_total_chars = .compact_max_total_chars) {
     if (length(slice) == 0L) {
         return(NULL)
     }
     rendered <- vapply(slice, .compact_render_entry, character(1L))
-    conv_text <- paste(.compact_trim_total(rendered), collapse = "\n\n")
+    kept <- .compact_trim_total(rendered, max_total = max_total_chars)
+    conv_text <- paste(kept, collapse = "\n\n")
     instructions <- summary_prompt %||% .compact_summary_prompt
     prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s",
                       instructions, conv_text)
@@ -512,7 +518,8 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        timeout_seconds = as.integer(cc$timeout_seconds %||% 60L),
                                        summary_prompt = session$compaction_prompt %||% NULL,
                                        error_callback = function(e) summary_error <<- e,
-                                       session = session)
+                                       session = session,
+                                       max_total_chars = .compact_summary_chars(limit, byte_limit))
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",

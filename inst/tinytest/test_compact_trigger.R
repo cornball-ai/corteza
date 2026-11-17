@@ -618,6 +618,120 @@ local({
 })
 
 # ---------------------------------------------------------------
+# What the summary reads: a budget that follows the model's window.
+# ---------------------------------------------------------------
+
+# 120,000 characters at the fallback window, and the same share of a
+# larger one. A smaller window, and one that is no number, keep 120,000.
+expect_equal(corteza:::.compact_summary_chars(128000L), 120000)
+expect_equal(corteza:::.compact_summary_chars(1000000L), 937500)
+expect_equal(corteza:::.compact_summary_chars(200000L), 187500)
+expect_equal(corteza:::.compact_summary_chars(32000L), 120000)
+# A window as the table holds it, an integer, and as a config file
+# gives it, a double: the same budget, and no integer overflow.
+expect_equal(corteza:::.compact_summary_chars(1000000), 937500)
+expect_silent(corteza:::.compact_summary_chars(1048576L))
+expect_equal(corteza:::.compact_summary_chars(1048576L), 983040)
+for (bad in list(NULL, "1000000", 0, NA_real_)) {
+    expect_equal(corteza:::.compact_summary_chars(bad), 120000,
+                 info = paste(deparse(bad), collapse = ""))
+}
+# A context at the default cap is 800,000 characters, and a model with
+# a 1M window reads all of it, on OpenAI's input limit too.
+expect_true(corteza:::.compact_summary_chars(922000L) >=
+            4 * corteza:::CONTEXT_COMPACT_TOKENS)
+# A limit on a request's bytes bounds the budget at a quarter of it, in
+# characters, and never under 120,000.
+expect_equal(corteza:::.compact_summary_chars(272000L, 900000), 225000)
+expect_equal(corteza:::.compact_summary_chars(272000L, 2000000), 255000)
+expect_equal(corteza:::.compact_summary_chars(272000L, 200000), 120000)
+expect_equal(corteza:::.compact_summary_chars(272000L, NA_real_), 255000)
+
+# 40 turns that can be told apart, 320,000 characters in all.
+numbered_history <- function(turns = 40L, chars = 4000L) {
+    h <- list()
+    for (i in seq_len(turns)) {
+        h[[length(h) + 1L]] <- list(
+            role = "user",
+            content = paste0("ask-", i, " ", strrep("u", chars)))
+        h[[length(h) + 1L]] <- list(
+            role = "assistant",
+            content = paste0("answer-", i, " ", strrep("a", chars)))
+    }
+    h
+}
+
+# One compaction with the provider's call replaced, so the summarizer
+# itself runs. Returns whether it compacted and the prompt it sent.
+summary_prompt_for <- function(session, config, ...) {
+    original <- get("chat", envir = asNamespace("llm.api"))
+    on.exit(assignInNamespace("chat", original, ns = "llm.api"), add = TRUE)
+    seen <- NULL
+    assignInNamespace("chat", function(prompt, ...) {
+        seen <<- prompt
+        list(content = "earlier work", usage = list())
+    }, ns = "llm.api")
+    done <- corteza:::maybe_compact_turn_session(
+        session, config, tools = list(), system = "", ...)
+    list(done = isTRUE(done), prompt = seen)
+}
+has <- function(prompt, what) grepl(what, prompt, fixed = TRUE)
+
+# A 1M window: the summary reads every turn it replaces. The newest
+# turn is the kept tail and is not in it.
+local({
+    s <- trigger_session()
+    s$history <- numbered_history()
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
+    expect_true(got$done)
+    expect_true(nchar(got$prompt) > 300000L)
+    expect_false(has(got$prompt, "elided to fit"))
+    expect_true(has(got$prompt, "ask-1 "))
+    expect_true(has(got$prompt, "answer-39 "))
+    expect_false(has(got$prompt, "ask-40 "))
+})
+
+# A model with no row has the fallback window and the budget it always
+# had: the newest 120,000 characters, and a line for the 49 entries
+# left out.
+local({
+    s <- trigger_session("no-such-model-9")
+    s$history <- numbered_history()
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
+    expect_true(got$done)
+    expect_true(has(got$prompt,
+                    "[49 earlier message(s) elided to fit the compaction budget]"))
+    expect_false(has(got$prompt, "ask-1 "))
+    expect_false(has(got$prompt, "ask-25 "))
+    expect_true(has(got$prompt, "answer-25 "))
+    expect_true(has(got$prompt, "ask-26 "))
+    expect_true(has(got$prompt, "answer-39 "))
+})
+
+# The Codex backend limits a request's bytes (900,000 by default), so
+# its 272,000 window reads 225,000 characters and not 255,000.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- numbered_history()
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
+    expect_true(got$done)
+    expect_true(has(got$prompt, "elided to fit"))
+    expect_false(has(got$prompt, "ask-12 "))
+    expect_true(has(got$prompt, "answer-12 "))
+    expect_true(has(got$prompt, "ask-13 "))
+    # With no limit on bytes the window alone decides: 255,000.
+    s2 <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s2$history <- numbered_history()
+    got <- summary_prompt_for(s2,
+                              trigger_config(context_compact_tokens = 10000L),
+                              byte_limit = Inf)
+    expect_true(got$done)
+    expect_false(has(got$prompt, "ask-8 "))
+    expect_true(has(got$prompt, "answer-8 "))
+    expect_true(has(got$prompt, "ask-9 "))
+})
+
+# ---------------------------------------------------------------
 # The idle trigger, with a clock the test holds.
 # ---------------------------------------------------------------
 

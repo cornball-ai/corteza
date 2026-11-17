@@ -167,6 +167,33 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     gap
 }
 
+# How much of a conversation one summary request may hold, in
+# characters of rendered text. The summary replaces every turn in front
+# of the kept tail, so it should read as many of them as its model can
+# take, and that model is the session's own. .compact_max_total_chars
+# (120,000) is the budget at the fallback window, and a larger window
+# gets the same share of itself: 937,500 characters at 1M tokens, which
+# holds a context at the default cap (200,000 tokens is 800,000
+# characters). A smaller window keeps 120,000, as before. Past the
+# budget .compact_trim_total() drops the oldest turns and says how
+# many.
+#
+# `byte_limit` is the session's limit on a request's bytes, NA where
+# it has none (maybe_compact_turn_session()). llm.api sends UTF-8, in
+# which a character is at most 4 bytes, so a quarter of the limit in
+# characters keeps the summary's own request under it.
+.compact_summary_chars <- function(window, byte_limit = NA_real_) {
+    window <- .window_value(window) %||% CONTEXT_LIMIT_FALLBACK
+    # The division comes first: the product of 2 integers this large is
+    # NA in R.
+    chars <- .compact_max_total_chars * (as.numeric(window) /
+        CONTEXT_LIMIT_FALLBACK)
+    if (!is.na(byte_limit)) {
+        chars <- min(chars, byte_limit / 4)
+    }
+    floor(max(.compact_max_total_chars, chars))
+}
+
 # What /context prints under its bar: where compaction starts and why
 # there, one short line for each thing that applies.
 .context_trigger_lines <- function(trigger) {

@@ -10,7 +10,8 @@ compact_summarize_slice(
   timeout_seconds = 60L,
   summary_prompt = NULL,
   error_callback = NULL,
-  session = NULL
+  session = NULL,
+  max_total_chars = .compact_max_total_chars
 )
 }
 \arguments{
@@ -31,6 +32,11 @@ error before NULL is returned.}
 
 \item{session}{Optional session supplying audit settings, identity and the
 parent turn reference.}
+
+\item{max_total_chars}{How many characters of the rendered slice the
+request may hold. Past it the oldest entries are left out and the
+summarizer is told how many. The compactor passes a budget that
+follows the model's window.}
 }
 \description{
 Returns the summary text on success or NULL on any error

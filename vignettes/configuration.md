@@ -277,6 +277,21 @@ Each size is corteza's estimate, about 1 token per 4 characters. A provider
 counts with its own tokenizer and can count more, so a context that corteza
 puts at 200,000 tokens can be billed as a larger one.
 
+### What the summary reads
+
+The session's own model writes the summary, in one request, from the turns
+the summary replaces. That request holds a budget of text that follows the
+model's window: 120,000 characters at a window of 128,000 tokens or less, and
+the same share of a larger one, which is 937,500 characters at 1M. With the
+default `context_compact_tokens`, a model with a 1M window reads every turn it
+summarizes. Where the turns do not fit, the oldest are left out and the
+summarizer is told how many. On the Codex transport the budget is also held
+to a quarter of `context_compact_bytes`, counted in characters.
+
+The summarizer has 60 seconds to answer
+(`subagents.context_compaction.timeout_seconds`). When it fails, the
+conversation stays as it was and the turn goes on.
+
 ### The model's window
 
 corteza reads a model's window from a table in the package

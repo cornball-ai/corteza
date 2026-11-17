@@ -160,7 +160,10 @@ and not through `context_limit_for_model()`.
 The windows are a table in `R/context-budget.R`; each row cites the
 provider's page, and `context_window` in the config overrides it.
 `test_compact_trigger.R` fails when a default model of llm.api has no
-row.
+row. The summary is written from the newest part of the turns it
+replaces, up to `.compact_summary_chars()` characters: 120,000 at a
+128,000-token window and the same share of a larger one, so raise the
+cap's default only with that budget in mind.
 
 ## Tool execution model: `run_r` vs `run_r_script`
 
