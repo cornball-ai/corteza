@@ -110,6 +110,14 @@ local({
     r <- run_clear(hooks = NULL)
     expect_true(corteza:::bot_is_scratch(r$after$cwd))
     expect_true(grepl("no project directory", r$after$system, fixed = TRUE))
+    # The session's own spelling of the path still reads as the scratch
+    # folder once the folder is gone, which is when a turn has to make
+    # it again. A path that does not exist normalizes to itself, so a
+    # session that stored a resolved path would fail this where the
+    # temp root is a symlink (macOS).
+    unlink(r$after$cwd, recursive = TRUE)
+    expect_false(dir.exists(r$after$cwd))
+    expect_true(corteza:::bot_is_scratch(r$after$cwd))
 })
 
 # The hook is called once, with the documented arguments, and what it
