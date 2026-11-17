@@ -510,11 +510,18 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     }
     summary_usage <- attr(summary, "usage", exact = TRUE)
     summary <- as.character(summary)
-    rewritten <- compact_rewrite_history(history, cut, summary)
+    # The kept tail's thinking blocks were signed with the summarized
+    # turns in front of them, and a provider that checks refuses them
+    # now. They come out here, ahead of the event, so a host's hook sees
+    # the history the session will hold (R/history-replace.R).
+    stripped <- history_normalize(session,
+                                  compact_rewrite_history(history, cut, summary))
+    rewritten <- stripped$history
     event <- list(
                   summary = summary,
                   history_before = history,
                   history_after = rewritten,
+                  thinking_removed = stripped$removed,
                   cut = cut,
                   tokens_before = used,
                   request_bytes = request_bytes,
@@ -540,15 +547,15 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     # for every surface (R/journal.R). After the host hook, so a host
     # that refuses leaves the journal untouched; before the rewrite, so
     # its own failure costs the compaction and not the record.
-    journal_rewrite(session, history, rewritten, reason = reason,
+    history_replace(session, rewritten, reason = reason, before = history,
                     summary = summary)
-    session$history <- rewritten
     session$last_compaction <- event
     session$compaction_count <- as.integer(session$compaction_count %||% 0L) +
     1L
     log_event("subagent_compact_applied",
               before_len = length(history),
               after_len = length(session$history),
+              thinking_removed = stripped$removed,
               threshold_pct = threshold,
               pre_pct = pct,
               kind = kind %||% if (isTRUE(session$is_subagent)) {

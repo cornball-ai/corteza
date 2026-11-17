@@ -79,7 +79,9 @@ default_local_model <- function() {
 #' calling \code{\link{turn}}.
 #'
 #' @param channel Character, one of "cli", "console", "matrix".
-#' @param history List of prior messages, or NULL.
+#' @param history List of prior messages, or NULL. Thinking blocks are
+#'   removed from it: a provider accepts one only in the conversation
+#'   that produced it.
 #' @param model_map Named list with \code{cloud} and \code{local} model
 #'   names. Defaults to configured defaults.
 #' @param provider LLM provider passed to \code{llm.api::agent}.
@@ -189,7 +191,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 
     s <- new.env(parent = emptyenv())
     s$channel <- channel
-    s$history <- history
+    # A history handed to a new session came from another conversation,
+    # with its own system text and tools, so its thinking blocks would be
+    # refused here (R/history-replace.R).
+    s$history <- if (!is.null(history)) {
+        history_strip_thinking(history)$history
+    }
     s$model_map <- model_map
     s$provider <- provider
     s$tools_filter <- tools_filter
@@ -1298,8 +1305,15 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
                        verbose = session$verbose,
                        history = session$history
     )
+    # Whether llm.api has handed a history back in this turn. It has once
+    # the model's first reply is in, and from then on session$history
+    # holds the prompt and the result of every tool that ran. A recovery
+    # reads this, never the history's length: a compaction inside the
+    # loop makes a longer run shorter.
+    turn_mirrored <- FALSE
     if ("history_callback" %in% names(formals(llm.api::agent))) {
         agent_args$history_callback <- function(history) {
+            turn_mirrored <<- TRUE
             session$history <- history
             .context_room_record(session)
             # The journal's live snapshot follows the mirror, so what the
@@ -1431,43 +1445,70 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         attempt_checkpoint_turns <<- 0L
         tryCatch(.agent_with_fallback(args, session), error = function(e) e)
     }
+    # A provider that enforces preserved thinking refuses a request that
+    # replays a thinking block after the system text, the tool set or an
+    # earlier message changed, and refuses every retry of it. The answer
+    # is to remove the thinking blocks for good and go on
+    # (R/history-replace.R). Once a turn: a second refusal has another
+    # cause, and is raised.
+    thinking_recovered <- FALSE
     call_agent_request_safe <- function(args) {
         recovered_usage <- list()
         recovered_turns <- 0L
         request_buffer_retries <- 0L
+        thinking_removed <- 0L
         max_turns <- as.integer(args$max_turns)
         response <- call_agent(args)
-        while (inherits(response, "error") &&
-            .is_request_buffer_error(response)) {
-            if (request_buffer_retries >= max_request_buffer_retries) {
-                stop(response)
-            }
-            if (!compact_session_history(session$history, force = TRUE,
-                    reason = "request_buffer_overflow")) {
+        while (inherits(response, "error")) {
+            if (.is_request_buffer_error(response)) {
+                if (request_buffer_retries >= max_request_buffer_retries) {
+                    stop(response)
+                }
+                if (!compact_session_history(session$history, force = TRUE,
+                        reason = "request_buffer_overflow")) {
+                    stop(response)
+                }
+                request_buffer_retries <- request_buffer_retries + 1L
+            } else if (!thinking_recovered &&
+                .is_bound_thinking_error(response)) {
+                thinking_removed <- .bound_thinking_recover(session, response)
+                if (thinking_removed == 0L) {
+                    stop(response)
+                }
+                thinking_recovered <<- TRUE
+            } else {
                 stop(response)
             }
             recovered_usage <- .turn_add_usage(recovered_usage,
                 attempt_checkpoint_usage)
             recovered_turns <- recovered_turns + attempt_checkpoint_turns
-            request_buffer_retries <- request_buffer_retries + 1L
-            # Preserve a named NULL: llm.api treats it as continuation and
-            # does not append the original user prompt a second time.
-            args["prompt"] <- list(NULL)
+            # Continue, never replay: the model call wraps the whole agent
+            # loop, so sending the prompt again after tools have run would
+            # run them again. Once llm.api has mirrored a history, the
+            # prompt and every result are in session$history, and a named
+            # NULL prompt tells llm.api to go on from there. Before that,
+            # nothing has run and the history holds no prompt, so the
+            # prompt goes out as it is.
+            if (turn_mirrored) {
+                args["prompt"] <- list(NULL)
+            }
             args$history <- session$history
             args$max_turns <- max(1L, max_turns - recovered_turns)
             response <- call_agent(args)
         }
-        if (inherits(response, "error")) {
-            stop(response)
-        }
-        if (request_buffer_retries > 0L) {
+        if (request_buffer_retries > 0L || thinking_removed > 0L) {
             response$usage <- .turn_add_usage(recovered_usage, response$usage)
             response$turns <- recovered_turns +
             as.integer(response$turns %||% 0L)
+        }
+        if (request_buffer_retries > 0L) {
             response$corteza_request_buffer_retries <-
             request_buffer_retries
             response$corteza_overflow_retry <- TRUE
             response$corteza_overflow_recovered <- TRUE
+        }
+        if (thinking_removed > 0L) {
+            response$corteza_thinking_removed <- thinking_removed
         }
         response
     }
@@ -1515,6 +1556,10 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             as.integer(overflow_response$corteza_request_buffer_retries %||%
                        0L) +
             as.integer(response$corteza_request_buffer_retries %||% 0L)
+            if (!is.null(overflow_response$corteza_thinking_removed)) {
+                response$corteza_thinking_removed <-
+                overflow_response$corteza_thinking_removed
+            }
             response$corteza_overflow_retry <- TRUE
             response$corteza_overflow_recovered <- !(
                 isTRUE(response$truncated) &&

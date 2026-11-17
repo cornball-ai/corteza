@@ -317,8 +317,8 @@
     before <- session$history %||% list()
     after <- .context_edit_index(session, before, length(before) + 1L)
     if (!identical(before, after)) {
-        journal_rewrite(session, before, after, "context_index", edits = list())
-        session$history <- after
+        history_replace(session, after, "context_index", before = before,
+                        edits = list())
     }
 }
 
@@ -651,15 +651,18 @@
     if (is.null(journal_dir(session))) {
         stop("Context editing requires a session journal", call. = FALSE)
     }
-    tryCatch(journal_rewrite(session, before, after,
+    # An edit changes text that later thinking blocks were signed after,
+    # so the history that replaces this one holds none
+    # (R/history-replace.R). `after` is what the session holds from here.
+    after <- tryCatch(history_replace(session, after,
             if (!is.null(rewritten)) {
                 "context_edit"
             } else if (length(pending)) {
                 "context_edit_rejected"
             } else {
                 "context_index"
-            }, edits = ops),
-             error = function(e) {
+            }, before = before, edits = ops),
+                      error = function(e) {
         if (length(pending)) {
             .context_edit_publish(session, list(ops = ops,
                     ids = unlist(lapply(ops, `[[`, "ids"), use.names = FALSE),
@@ -670,7 +673,6 @@
         }
         stop(e)
     })
-    session$history <- after
     committed <- TRUE
     if (!is.null(rewritten)) {
         state$note <- rewritten$note

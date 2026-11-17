@@ -42,7 +42,11 @@
     if (!isTRUE(meta$room_context)) {
         return(invisible(FALSE))
     }
-    session$history <- saved$history %||% list()
+    # A restored history goes into a process that built its system text
+    # anew, so its thinking blocks come out (R/history-replace.R). The
+    # journal is installed after this, and its rollover segment then
+    # holds the saved history as it was.
+    history_replace(session, saved$history %||% list(), "restore")
     session$seen_event_ids <- as.character(unlist(meta$seen_event_ids,
             use.names = FALSE))
     session$transcript <- meta$transcript %||% list()
@@ -56,7 +60,6 @@
         return(invisible(NULL))
     }
     .context_room_record(session)
-    journal_rewrite(session, session$history, list(), "clear")
-    session$history <- list()
+    history_replace(session, list(), "clear")
     invisible(NULL)
 }

@@ -27,7 +27,9 @@ new_session(
 \arguments{
 \item{channel}{Character, one of "cli", "console", "matrix".}
 
-\item{history}{List of prior messages, or NULL.}
+\item{history}{List of prior messages, or NULL. Thinking blocks are
+removed from it: a provider accepts one only in the conversation
+that produced it.}
 
 \item{model_map}{Named list with \code{cloud} and \code{local} model
 names. Defaults to configured defaults.}
