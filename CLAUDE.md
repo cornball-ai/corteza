@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Corteza is an R-native AI agent runtime: a CLI binary
-(`inst/bin/corteza`, installed as `~/bin/corteza`) plus an in-R
+(`inst/bin/corteza`, copied into place by `install_cli()`) plus an in-R
 `corteza::chat()`, both backed by a CRAN-installable package. This
 file is what an agent (LLM or human) needs to know to work in this
 codebase effectively. `AGENTS.md` is a symlink to this file so both

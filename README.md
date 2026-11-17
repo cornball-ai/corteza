@@ -15,7 +15,7 @@
 ## Quick Start
 
 ```bash
-# Install the CLI
+# Install the CLI. It prints the line that puts it in your PATH.
 r -e 'corteza::install_cli()'
 
 # Start the agent
@@ -208,8 +208,11 @@ corteza searches the web two ways:
 ### CLI (Optional)
 
 ```r
-# Install the corteza CLI to ~/bin
+# Install the corteza CLI under R's user data directory
 corteza::install_cli()
+
+# Or into a directory already in your PATH
+corteza::install_cli("~/bin")
 ```
 
 -----
