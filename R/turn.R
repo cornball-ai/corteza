@@ -1314,6 +1314,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if ("history_callback" %in% names(formals(llm.api::agent))) {
         agent_args$history_callback <- function(history) {
             turn_mirrored <<- TRUE
+            # What the idle trigger measures from (R/compact-trigger.R).
+            session$last_response_at <- Sys.time()
             session$history <- history
             .context_room_record(session)
             # The journal's live snapshot follows the mirror, so what the

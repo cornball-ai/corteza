@@ -358,6 +358,11 @@ compact_rewrite_history <- function(history, cut, summary) {
 #'   - Compaction mode off → return invisibly without checking.
 #'   - History shorter than `min_messages` → skip (nothing to gain).
 #'   - Live token usage and serialized request size below thresholds → skip.
+#'     The token threshold is the smaller of `context_compact_pct` of the
+#'     window and `context_compact_tokens`. Ahead of a turn's first
+#'     request, a session idle for `context_idle_minutes` with
+#'     `context_idle_tokens` of context compacts below it
+#'     (R/compact-trigger.R).
 #'   - No safe cut available (e.g. open tool_use) → skip.
 #'   - Summarizer fails → log and leave history intact.
 #'
@@ -382,11 +387,16 @@ compact_rewrite_history <- function(history, cut, summary) {
 #'   uses its configured value; forced overflow recovery may lower this because
 #'   a few individual entries can themselves exceed the context window.
 #' @param reason Short lifecycle marker recorded in the compaction event.
+#'   `"preflight"`, the check ahead of a turn's first request, is also
+#'   where a session back from an idle gap compacts; the event then
+#'   carries the reason `"idle"`.
+#' @param now The time the idle gap is measured to. A test passes its
+#'   own.
 #' @keywords internal
 maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        tools = NULL, system = NULL,
                                        threshold, byte_limit, min_messages,
-                                       reason = "threshold") {
+                                       reason = "threshold", now = Sys.time()) {
     if (identical(kind, "archive_holder") || .context_edit_pure(session)) {
         return(invisible(FALSE))
     }
@@ -441,17 +451,28 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     request_bytes <- .estimate_live_request_bytes(
         list(history = history), system_prompt = system_for_estimate,
         tools = tools_for_estimate)
-    limit <- session$context_window %||% config$context_window %||%
-    context_limit_for_model(model, provider = session$provider)
+    # The window, the cap and the idle numbers, as /context shows them
+    # (R/compact-trigger.R).
+    size <- context_trigger(session, config, model = model, pct = threshold)
+    limit <- size$window
     if (is.null(limit) || limit <= 0L) {
         pct <- 0
     } else {
         pct <- 100 * used / limit
     }
-    token_pressure <- pct >= threshold
+    # On a 1M window the percentage is far off, and the cap decides.
+    token_pressure <- pct >= threshold ||
+    (!is.null(size$cap) && used >= size$cap)
     byte_pressure <- !is.na(byte_limit) && !is.na(request_bytes) &&
     request_bytes >= byte_limit
-    if (!token_pressure && !byte_pressure) {
+    # Asked only ahead of a turn's first request, and only where
+    # automatic compaction is on at all (a memory flush turns it off
+    # for its own session).
+    idle_gap <- if (!token_pressure && !byte_pressure &&
+        identical(reason, "preflight") && !identical(size$rule, "off")) {
+        .compact_idle_gap(session, size, used, now = now)
+    }
+    if (!token_pressure && !byte_pressure && is.null(idle_gap)) {
         return(invisible(FALSE))
     }
     forced_reason <- reason %in% c("context_overflow", "request_buffer_overflow")
@@ -459,8 +480,13 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
         "forced"
     } else if (byte_pressure) {
         "request_bytes"
-    } else {
+    } else if (token_pressure) {
         "tokens"
+    } else {
+        "idle"
+    }
+    if (identical(trigger, "idle")) {
+        reason <- "idle"
     }
     cut <- compact_find_cut(history,
                             keep_recent_turns = cc$keep_recent_turns %||% 1L,
@@ -472,6 +498,13 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
         return(invisible(FALSE))
     }
     slice <- history[seq_len(cut)]
+    if (identical(trigger, "idle")) {
+        # The summary is a request of its own ahead of the reply, and a
+        # person waiting should be told what the wait is.
+        message(sprintf(
+                        "context: idle for %s with about %s tokens of context; summarizing the older turns first",
+                        format_age(idle_gap * 60), format_tokens(used)))
+    }
     summary_error <- NULL
     summary <- compact_summarize_slice(
                                        slice, provider = session$provider %||% "anthropic",
@@ -528,6 +561,8 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                   byte_limit = byte_limit,
                   trigger = trigger,
                   threshold_pct = threshold,
+                  trigger_tokens = size$tokens,
+                  idle_minutes = idle_gap,
                   context_pct = pct,
                   context_window = limit,
                   provider = session$provider,

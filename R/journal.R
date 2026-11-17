@@ -104,6 +104,38 @@ journal_dir <- function(session) {
     file.path(sessions_dir(agent_id), paste0(id, ".journal"))
 }
 
+#' When a session's history last changed before this process took its
+#' journal over: the modification time of the live snapshot an earlier
+#' process, or an earlier life of a resumed session, left behind. The
+#' rollover replaces that file, so the time is read when the journal's
+#' state is set up and kept there. For a journal not yet set up the
+#' file is still the earlier one, and is read where it lies.
+#'
+#' @param session A session environment from new_session().
+#' @return A POSIXct, or NULL for a session with no journal or no
+#'   earlier snapshot.
+#' @noRd
+journal_previous_update <- function(session) {
+    dir <- journal_dir(session)
+    if (is.null(dir)) {
+        return(NULL)
+    }
+    state <- session$.journal
+    if (is.environment(state) && identical(state$dir, dir)) {
+        return(state$previous_update)
+    }
+    .journal_live_mtime(dir)
+}
+
+.journal_live_mtime <- function(dir) {
+    at <- suppressWarnings(file.mtime(file.path(dir, JOURNAL_LIVE)))
+    if (length(at) != 1L || is.na(at)) {
+        NULL
+    } else {
+        at
+    }
+}
+
 #' Is journaling on for this session? Config `journal_enabled` (default
 #' TRUE) and a per-session override, either set to FALSE turns it off.
 #' @noRd
@@ -330,6 +362,11 @@ journal_history <- function(dir) {
     previous <- .journal_read_live(dir, repair = TRUE)
     state$seq <- as.integer(previous$seq %||% 0L)
     state$inherited <- 0L
+    # When that snapshot was written, read now: the rollover below
+    # replaces the file (journal_previous_update()).
+    if (!is.null(previous)) {
+        state$previous_update <- .journal_live_mtime(dir)
+    }
     # A live snapshot already here belongs to an earlier process or an
     # earlier life of a resumed session. Keep it as a segment rather
     # than overwrite it; the history this session starts with is then

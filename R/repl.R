@@ -556,10 +556,11 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 total_tok <- as.integer(sys_tok + tools_tok + hist_tok)
                 disp_model <- ctx$model %||% ctx$session$model_map$cloud %||%
                 "(default)"
-                limit <- context_limit_for_model(
-                    disp_model,
-                    provider = ctx$session$provider %||% ctx$provider
-                )
+                # The window and the trigger the compactor will use
+                # (R/compact-trigger.R): a context_window in the config
+                # and the cap both show here.
+                trig <- context_trigger(ctx$session, ctx$config)
+                limit <- trig$window
                 # Codex-style header: corteza version, model, dir,
                 # session id. /status is now an alias of /context
                 # showing the same block.
@@ -577,14 +578,15 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                         breakdown = list(system = sys_tok,
                             tools = tools_tok,
                             history = hist_tok),
-                        compact_pct = ctx$config$context_compact_pct %||% 90L,
+                        compact_pct = trig$effective_pct,
                         warn_pct = ctx$config$context_warn_pct %||% 75L,
                         high_pct = ctx$config$context_high_pct %||% 90L,
                         crit_pct = ctx$config$context_crit_pct %||% 95L,
                         files = files,
                         sources = sources,
                         palette = ctx$palette,
-                        status_info = status_info
+                        status_info = status_info,
+                        note = .context_trigger_lines(trig)
                     ), "\n", sep = "")
                 next
             }
@@ -1084,22 +1086,19 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         tools_tok <- estimate_tool_tokens(compact_tools)
         hist_tok <- estimate_history_tokens(ctx$session$history %||% list())
         used <- as.integer(sys_tok + tools_tok + hist_tok)
-        # A model-less chat() session (no explicit model, model_map$cloud
-        # still the placeholder) resolves to the provider default so the
-        # meter shows the real limit; context_limit_for_model tolerates a
-        # NULL here regardless.
-        model <- ctx$model %||% ctx$session$model_map$cloud %||%
-        default_provider_model(ctx$session$provider)
-        limit <- context_limit_for_model(
-            model,
-            provider = ctx$session$provider %||% ctx$provider
-        )
+        # The window and the trigger come from the resolver the
+        # compactor uses (R/compact-trigger.R), so the meter shows a
+        # context_window from the config and the percentage at which
+        # the cap starts a compaction. A model-less chat() session
+        # resolves to the provider default there.
+        trig <- context_trigger(ctx$session, ctx$config)
+        limit <- trig$window
         if (!is.null(limit) && limit > 0L) {
             pct <- 100 * used / limit
         } else {
             pct <- 0
         }
-        compact_pct <- ctx$config$context_compact_pct %||% 90
+        compact_pct <- trig$effective_pct
         cat(.repl_context_indicator(
                                     used, limit, ctx$palette,
                                     list(warn = ctx$config$context_warn_pct %||% 75,

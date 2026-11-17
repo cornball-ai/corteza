@@ -14,31 +14,110 @@
 
 #' Model context limits in tokens.
 #'
-#' Table of context window sizes for known models. Used by
-#' [context_limit_for_model()]. Add new entries here as providers
-#' ship them.
+#' The largest input each known model takes: the provider's published
+#' input limit where it has one, else its context window. Used by
+#' [context_limit_for_model()]. Each group names the page its numbers
+#' were read from and the day. A model that is not here gets the
+#' fallback, 128,000, and compacts early, so add a row when a provider
+#' ships a model. `test_compact_trigger.R` fails when a default model of
+#' llm.api has no row.
 #' @keywords internal
 MODEL_CONTEXT_LIMITS <- list(
-                             # Anthropic — short-form IDs (claude-<family>-<minor>)
-                             "claude-opus-4-7" = 200000L,
-                             "claude-sonnet-4-6" = 200000L,
+                             # Anthropic, 2026-11-17.
+                             # https://platform.claude.com/docs/en/build-with-claude/context-windows
+                             # names these as having "a 1M-token context
+                             # window", and says "1M is the default: you
+                             # don't need a beta header".
+                             "claude-fable-5-2" = 1000000L,
+                             "claude-fable-5-1" = 1000000L,
+                             "claude-fable-5" = 1000000L,
+                             "claude-mythos-5-2" = 1000000L,
+                             "claude-mythos-5-1" = 1000000L,
+                             "claude-mythos-5" = 1000000L,
+                             "claude-opus-5-5" = 1000000L,
+                             "claude-opus-5" = 1000000L,
+                             "claude-opus-4-8" = 1000000L,
+                             "claude-opus-4-7" = 1000000L,
+                             "claude-opus-4-6" = 1000000L,
+                             "claude-sonnet-5-5" = 1000000L,
+                             "claude-sonnet-5" = 1000000L,
+                             "claude-sonnet-4-6" = 1000000L,
+                             "claude-haiku-5-5" = 1000000L,
+                             # The same page: "Other Claude models ... have
+                             # a 200k-token context window." The table at
+                             # https://platform.claude.com/docs/en/about-claude/models/overview
+                             # lists these at 200K.
                              "claude-haiku-4-5" = 200000L,
-                             # Anthropic — date-stamped IDs
+                             "claude-opus-4-5" = 200000L,
+                             "claude-sonnet-4-5" = 200000L,
+                             "claude-opus-4-1" = 200000L,
                              "claude-sonnet-4-20250514" = 200000L,
                              "claude-opus-4-20250514" = 200000L,
+                             # Retired by the provider. Kept for a gateway
+                             # that still answers to the name.
                              "claude-3-5-sonnet-20241022" = 200000L,
                              "claude-3-opus-20240229" = 200000L,
                              "claude-3-haiku-20240307" = 200000L,
-                             # OpenAI
-                             "gpt-5.6-sol" = 1050000L,
-                             "gpt-5.6-terra" = 1050000L,
-                             "gpt-5.6-luna" = 1050000L,
+                             # OpenAI, 2026-11-17. Each model's page at
+                             # https://developers.openai.com/api/docs/models/<id>
+                             # says "1,050,000 context window" and "Maximum
+                             # input tokens: 922,000". The input limit is
+                             # the one a request can break.
+                             "gpt-6.1-sol" = 922000L,
+                             "gpt-6.1-terra" = 922000L,
+                             "gpt-6-astra" = 922000L,
+                             "gpt-6-sol" = 922000L,
+                             "gpt-6-luna" = 922000L,
+                             "gpt-5.6-sol" = 922000L,
+                             "gpt-5.6-terra" = 922000L,
+                             "gpt-5.6-luna" = 922000L,
+                             # OpenAI, older. Not read again in 2026.
                              "gpt-4o" = 128000L,
                              "gpt-4o-mini" = 128000L,
                              "gpt-4-turbo" = 128000L,
                              "gpt-4" = 8192L,
                              "gpt-3.5-turbo" = 16385L,
-                             # Ollama (varies by quantization)
+                             # Google, 2026-11-17. Each model's page at
+                             # https://aistudio.google.com/docs/models/<id>
+                             # says "Input token limit 1,048,576"; the 3
+                             # Gemini 4 pages say "Context window (unified
+                             # input and output token limit) 1,048,576".
+                             # gemini-3.5-flash is deprecated there and
+                             # "automatically routed to gemini-3.6-flash".
+                             "gemini-4-carbon" = 1048576L,
+                             "gemini-4-argon" = 1048576L,
+                             "gemini-4-hydrogen" = 1048576L,
+                             "gemini-3.8-flash" = 1048576L,
+                             "gemini-3.6-flash" = 1048576L,
+                             "gemini-3.5-flash" = 1048576L,
+                             "gemini-3.5-flash-lite" = 1048576L,
+                             "gemini-3.1-pro-preview" = 1048576L,
+                             "gemini-3.1-flash-lite" = 1048576L,
+                             "gemini-3-flash-preview" = 1048576L,
+                             # Moonshot, 2026-11-17.
+                             # https://platform.kimi.ai/docs/pricing/chat
+                             # says "All K3 series models support a
+                             # 1,048,576-token context window" and "All K2
+                             # series models support a 262,144-token
+                             # context window". It names no model id, so
+                             # each row stands for its series: kimi-k3.1-pro
+                             # resolves to the first, kimi-k2.5 and
+                             # kimi-k2.6 to the second.
+                             "kimi-k3" = 1048576L,
+                             "kimi-k2" = 262144L,
+                             # Ollama. The server sets the window in use,
+                             # not the model (OLLAMA_CONTEXT_LENGTH; by
+                             # default 4k, 32k or 256k by VRAM,
+                             # https://docs.ollama.com/context-length), so
+                             # these rows are guesses and `context_window`
+                             # in the config is the number to set.
+                             # qwen3.5 supports a "256K context window"
+                             # (https://ollama.com/library/qwen3.5/tags,
+                             # 2026-11-17). Its row holds what the model
+                             # got before it had one, the fallback: a
+                             # guess too low compacts early, and one too
+                             # high sends more than the server reads.
+                             "qwen3.5" = 128000L,
                              "llama3.2" = 128000L,
                              "llama3.1" = 128000L,
                              "mistral" = 32000L,
@@ -47,14 +126,23 @@ MODEL_CONTEXT_LIMITS <- list(
 )
 
 # Product endpoints can expose a smaller working window than the public API
-# model. The ChatGPT Codex model catalog currently advertises 272K for
-# gpt-5.6-sol, while the public API model advertises 1.05M. Keep that
-# distinction explicit instead of pretending a model name alone identifies a
-# request budget.
+# model. Keep that distinction explicit instead of pretending a model name
+# alone identifies a request budget.
+#
+# openai_codex, 2026-11-17: `context_window` of each model in the Codex
+# CLI's own catalog,
+# https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json
+# The public page of gpt-6.1-sol says it "uses a default context window of
+# 500K tokens in Codex"; the catalog says 272000, and the smaller is here.
 PROVIDER_MODEL_CONTEXT_LIMITS <- list(
-                                      openai_codex = list("gpt-5.6-sol" = 272000L, "gpt-5.6-terra" = 272000L,
-        "gpt-5.6-luna" = 272000L)
+                                      openai_codex = list("gpt-6.1-sol" = 272000L, "gpt-6.1-terra" = 500000L,
+        "gpt-6-astra" = 272000L, "gpt-6-sol" = 272000L,
+        "gpt-6-luna" = 272000L, "gpt-5.6-sol" = 272000L,
+        "gpt-5.6-terra" = 272000L, "gpt-5.6-luna" = 272000L)
 )
+
+# What an unknown model gets.
+CONTEXT_LIMIT_FALLBACK <- 128000L
 
 #' Provider-specific default model name.
 #'
@@ -75,9 +163,11 @@ default_provider_model <- function(provider) {
 
 #' Look up the context window for a given model.
 #'
-#' Tries exact match, then prefix match either direction (so
-#' `"claude-3-5-sonnet"` resolves to the dated entry, and a longer
-#' model id with a known prefix also resolves).
+#' Tries the model's own row, then the longest row name the id starts
+#' with (so a dated or suffixed id resolves to its family), then the
+#' rows whose names start with the id (so `"claude-3-haiku"` resolves to
+#' the dated entry). An id cut short can mean several rows, and it gets
+#' the smallest limit among them.
 #' @param model Model name (character).
 #' @param provider Optional provider/product endpoint. Provider-specific
 #'   limits take precedence over the public model limit.
@@ -86,12 +176,18 @@ default_provider_model <- function(provider) {
 #' @keywords internal
 #' @export
 context_limit_for_model <- function(model, provider = NULL) {
+    .context_limit_row(model, provider) %||% CONTEXT_LIMIT_FALLBACK
+}
+
+# The table's row for a model, or NULL when it has none. Apart from
+# context_limit_for_model() so a test can tell a row from the fallback.
+.context_limit_row <- function(model, provider = NULL) {
     # No model named (NULL, length-0, NA, or empty) -> fall through to
     # the default rather than indexing MODEL_CONTEXT_LIMITS[[model]],
     # which errors on a zero-length or NA subscript. A function with an
     # "unknown model" fallback must not crash on "no model".
     if (length(model) != 1L || is.na(model) || !nzchar(model)) {
-        return(128000L)
+        return(NULL)
     }
     provider_limits <- if (length(provider) == 1L && !is.na(provider) &&
         nzchar(provider)) {
@@ -99,25 +195,31 @@ context_limit_for_model <- function(model, provider = NULL) {
     } else {
         NULL
     }
-    if (!is.null(provider_limits)) {
-        if (!is.null(provider_limits[[model]])) {
-            return(provider_limits[[model]])
-        }
-        for (name in names(provider_limits)) {
-            if (startsWith(model, name) || startsWith(name, model)) {
-                return(provider_limits[[name]])
-            }
-        }
+    .context_limit_match(model, provider_limits) %||%
+    .context_limit_match(model, MODEL_CONTEXT_LIMITS)
+}
+
+# One table's row for a model id, or NULL. The table holds windows of
+# 200K and 1M within one family, so neither prefix rule may depend on
+# the order of its rows: the longest name wins where the id is the
+# longer, and the smallest limit where the id is the shorter.
+.context_limit_match <- function(model, limits) {
+    if (!length(limits)) {
+        return(NULL)
     }
-    if (!is.null(MODEL_CONTEXT_LIMITS[[model]])) {
-        return(MODEL_CONTEXT_LIMITS[[model]])
+    if (!is.null(limits[[model]])) {
+        return(limits[[model]])
     }
-    for (name in names(MODEL_CONTEXT_LIMITS)) {
-        if (startsWith(model, name) || startsWith(name, model)) {
-            return(MODEL_CONTEXT_LIMITS[[name]])
-        }
+    rows <- names(limits)
+    family <- rows[startsWith(model, rows)]
+    if (length(family)) {
+        return(limits[[family[which.max(nchar(family))]]])
     }
-    128000L
+    longer <- rows[startsWith(rows, model)]
+    if (length(longer)) {
+        return(min(unlist(limits[longer], use.names = FALSE)))
+    }
+    NULL
 }
 
 #' Format a token count for display (K / M suffixes).
