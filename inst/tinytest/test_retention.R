@@ -225,6 +225,66 @@ local({
                       fixed = TRUE))
 })
 
+# ---- A room's kept attachments ----
+# A chat room's session keeps the pictures people send it beside its
+# journal, in `<id>.attachments/` (R/media.R). They go with its journal
+# and trace once the session has gone unused, and only the files
+# corteza named there.
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    room <- make_session(fx, "room", agent = "matrix", transcript = FALSE)
+    att <- sub("[.]journal$", ".attachments", room$journal)
+    dir.create(att)
+    kept <- file.path(att, "0123456789ab-cornball2.png")
+    writeBin(as.raw(1:64), kept)
+    mine <- file.path(att, "notes.txt")
+    writeLines("a person's own file", mine)
+    found <- corteza:::retention_scan(90, now = fx$later)
+    expect_identical(sort(found$kind), c("attachments", "journal", "trace"))
+    expect_equal(found$bytes[found$kind == "attachments"], 64)
+    found <- corteza:::retention_prune(90, now = fx$later)
+    expect_true(all(found$removed))
+    expect_false(file.exists(kept))
+    expect_true(file.exists(mine))
+    expect_true(dir.exists(att))
+    expect_true(grepl(paste("^Removed 1 journal, 1 trace and 1 folder of",
+                            "attachments of sessions unused for 90 days"),
+                      corteza:::retention_summary(found, 90, FALSE)))
+})
+
+# A picture kept the day before is a use of the session: nothing goes.
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    room <- make_session(fx, "room", agent = "matrix", transcript = FALSE)
+    att <- sub("[.]journal$", ".attachments", room$journal)
+    dir.create(att)
+    kept <- file.path(att, "0123456789ab-new.png")
+    writeBin(as.raw(1:8), kept)
+    used(kept, fx$later - DAY)
+    found <- corteza:::retention_prune(90, now = fx$later)
+    expect_identical(nrow(found), 0L)
+    expect_true(file.exists(kept))
+    expect_true(file.exists(file.path(room$journal, "live.json")))
+})
+
+# A session with kept pictures and no journal, as with `journal_enabled:
+# false`, still goes by their age, and its emptied folder with it.
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    att <- file.path(fx$data, "agents", "matrix", "sessions",
+                     "nojournal.attachments")
+    dir.create(att, recursive = TRUE)
+    kept <- file.path(att, "0123456789ab-a.png")
+    writeBin(as.raw(1:8), kept)
+    found <- corteza:::retention_prune(90, now = fx$later)
+    expect_identical(found$kind, "attachments")
+    expect_true(found$removed)
+    expect_false(dir.exists(att))
+})
+
 # ---- Links ----
 # A link is never removed, and nothing behind one is.
 if (.Platform$OS.type != "windows") local({

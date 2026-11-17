@@ -2319,7 +2319,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
         media <- bot_message_media(chat_now(), m, ingest_body,
-                                   session$provider, cfg = cfg)
+                                   session$provider, cfg = cfg,
+                                   save_dir = bot_attachments_dir(cfg, skey))
         ingest_content <- media$content
         ingest_body <- media$text
         # Ledger the incoming event once, before the gate, so both the

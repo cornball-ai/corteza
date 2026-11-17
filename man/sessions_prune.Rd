@@ -10,11 +10,13 @@ sessions_prune(dry_run = FALSE, days = NULL)
 go.}
 
 \item{days}{Sessions unused for at least this many days lose their
-journal and trace. Default: \code{retention$session_days} from the
-user's config. 0 removes nothing.}
+journal, trace and attachments. Default:
+\code{retention$session_days} from the user's config. 0 removes
+nothing.}
 }
 \value{
-A data frame with one row per journal or trace, invisibly:
+A data frame with one row per journal, trace or attachments
+  folder, invisibly:
   \code{agent}, \code{session}, \code{kind}, \code{path},
   \code{last_use}, \code{idle_days}, \code{bytes} and \code{removed}.
 }
@@ -23,8 +25,9 @@ corteza keeps its sessions under
 \code{tools::R_user_dir("corteza", "data")}. For every session that
 has not been used for \code{days}, this removes its journal (in
 \code{<id>.journal/}: the provider-native record of the live history
-and of every history a compaction replaced) and its tool trace
-(\code{<id>_trace.jsonl}).
+and of every history a compaction replaced), its tool trace
+(\code{<id>_trace.jsonl}), and the files a chat room's session kept of
+what people sent it (\code{<id>.attachments/}).
 }
 \details{
 Transcripts, session stores, workspaces, config, audit records and
@@ -36,8 +39,9 @@ A session's audit records are kept in its journal folder, under
 \code{audit/}. They stay, and so does the folder that holds them:
 see \code{\link{audit_payload_expire}}.
 
-A session was last used when its journal, its trace or its transcript
-last changed, whichever is newest. A symbolic link is never removed.
+A session was last used when its journal, its trace, its transcript or
+its attachments last changed, whichever is newest. A symbolic link is
+never removed.
 
 corteza runs this itself at most once a day: when a terminal session
 starts, and while a chat bot runs. The session a terminal has open is

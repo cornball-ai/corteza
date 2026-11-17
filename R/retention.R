@@ -6,11 +6,12 @@
 # journal (R/journal.R) keeps every history a rewrite replaced, and it
 # stayed on disk however long ago the session was last used.
 #
-# What goes: the journal and the tool trace of a session nobody has used
-# for `session_days`. What stays: every transcript, the session stores,
-# workspaces, config, audit records and crypto state. A session whose
-# journal is gone still opens from its transcript. A room that restores
-# its context from its journal starts fresh.
+# What goes: the journal, the tool trace and the kept attachments of a
+# session nobody has used for `session_days`. What stays: every
+# transcript, the session stores, workspaces, config, audit records and
+# crypto state. A session whose journal is gone still opens from its
+# transcript. A room that restores its context from its journal starts
+# fresh.
 #
 # A session's audit records are kept inside its journal folder
 # (`<id>.journal/audit/`, R/audit-stream.R) and have their own expiry,
@@ -67,8 +68,9 @@ retention_config <- function() {
 #' \code{tools::R_user_dir("corteza", "data")}. For every session that
 #' has not been used for \code{days}, this removes its journal (in
 #' \code{<id>.journal/}: the provider-native record of the live history
-#' and of every history a compaction replaced) and its tool trace
-#' (\code{<id>_trace.jsonl}).
+#' and of every history a compaction replaced), its tool trace
+#' (\code{<id>_trace.jsonl}), and the files a chat room's session kept of
+#' what people sent it (\code{<id>.attachments/}).
 #'
 #' Transcripts, session stores, workspaces, config, audit records and
 #' crypto state are never removed. A session whose journal is gone still
@@ -79,8 +81,9 @@ retention_config <- function() {
 #' \code{audit/}. They stay, and so does the folder that holds them:
 #' see \code{\link{audit_payload_expire}}.
 #'
-#' A session was last used when its journal, its trace or its transcript
-#' last changed, whichever is newest. A symbolic link is never removed.
+#' A session was last used when its journal, its trace, its transcript or
+#' its attachments last changed, whichever is newest. A symbolic link is
+#' never removed.
 #'
 #' corteza runs this itself at most once a day: when a terminal session
 #' starts, and while a chat bot runs. The session a terminal has open is
@@ -91,10 +94,12 @@ retention_config <- function() {
 #' @param dry_run If \code{TRUE}, remove nothing and report what would
 #'   go.
 #' @param days Sessions unused for at least this many days lose their
-#'   journal and trace. Default: \code{retention$session_days} from the
-#'   user's config. 0 removes nothing.
+#'   journal, trace and attachments. Default:
+#'   \code{retention$session_days} from the user's config. 0 removes
+#'   nothing.
 #'
-#' @return A data frame with one row per journal or trace, invisibly:
+#' @return A data frame with one row per journal, trace or attachments
+#'   folder, invisibly:
 #'   \code{agent}, \code{session}, \code{kind}, \code{path},
 #'   \code{last_use}, \code{idle_days}, \code{bytes} and \code{removed}.
 #' @export
@@ -183,13 +188,26 @@ retention_remove <- function(path, kind) {
     files <- path
     if (kind == "journal") {
         files <- retention_journal_files(path)
+    } else if (kind == "attachments") {
+        files <- retention_attachment_files(path)
     }
     # expand = FALSE: a name is a name, never a pattern.
     unlink(files, recursive = TRUE, expand = FALSE)
-    if (kind == "journal") {
+    if (kind %in% c("journal", "attachments")) {
         retention_rmdir(path)
     }
     !any(file.exists(files))
+}
+
+# What a room's session keeps of what people sent it (bot_keep_attachment(),
+# R/media.R): each file named by a 12-character digest and a dash, and
+# the partial copy one is written through. Anything else in the folder is
+# someone else's.
+retention_attachment_files <- function(dir) {
+    names <- list.files(dir, all.files = TRUE, no.. = TRUE)
+    own <- grepl("^[0-9a-f]{12}-", names)
+    files <- file.path(dir, names[own])
+    files[!dir.exists(files)]
 }
 
 # What the journal's writer makes in a journal folder (R/journal.R): the
@@ -234,11 +252,18 @@ retention_summary <- function(found, days, dry_run) {
         gone <- found[found$removed,, drop = FALSE]
         verb <- "Removed"
     }
-    line <- sprintf("%s %s and %s of sessions unused for %s or more (%.1f MB).",
-                    verb,
-                    retention_count(sum(gone$kind == "journal"), "journal"),
-                    retention_count(sum(gone$kind == "trace"), "trace"),
-                    retention_days(days), sum(gone$bytes) / 1024 ^ 2)
+    what <- c(retention_count(sum(gone$kind == "journal"), "journal"),
+              retention_count(sum(gone$kind == "trace"), "trace"))
+    folders <- sum(gone$kind == "attachments")
+    if (folders > 0L) {
+        what <- c(what, retention_count(folders, "folder of attachments",
+                                        "folders of attachments"))
+    }
+    what <- paste(paste(what[-length(what)], collapse = ", "),
+                  what[length(what)], sep = " and ")
+    line <- sprintf("%s %s of sessions unused for %s or more (%.1f MB).",
+                    verb, what, retention_days(days),
+                    sum(gone$bytes) / 1024 ^ 2)
     left <- nrow(found) - nrow(gone)
     if (left > 0L) {
         line <- paste(line, sprintf("%d left in place.", left))
@@ -246,11 +271,11 @@ retention_summary <- function(found, days, dry_run) {
     line
 }
 
-retention_count <- function(n, noun) {
+retention_count <- function(n, noun, plural = paste0(noun, "s")) {
     if (n == 1L) {
         return(paste(n, noun))
     }
-    sprintf("%d %ss", as.integer(n), noun)
+    sprintf("%d %s", as.integer(n), plural)
 }
 
 retention_days <- function(days) {
@@ -283,13 +308,14 @@ retention_scan <- function(days, now = Sys.time()) {
 }
 
 # One agent's sessions folder. A session is its id: `<id>.journal/`,
-# `<id>_trace.jsonl` and `<id>.jsonl` stand or fall together, so a trace
-# is not removed from under a session whose transcript was written
-# yesterday.
+# `<id>_trace.jsonl`, `<id>.attachments/` and `<id>.jsonl` stand or fall
+# together, so a trace is not removed from under a session whose
+# transcript was written yesterday.
 retention_scan_dir <- function(dir, agent, days, now) {
     names <- list.files(dir, all.files = TRUE, no.. = TRUE)
     ids <- unique(c(retention_ids(names, "[.]journal$"),
-                    retention_ids(names, "_trace[.]jsonl$")))
+                    retention_ids(names, "_trace[.]jsonl$"),
+                    retention_ids(names, "[.]attachments$")))
     rows <- list()
     for (id in ids) {
         used <- retention_last_use(dir, id)
@@ -301,7 +327,7 @@ retention_scan_dir <- function(dir, agent, days, now) {
             next
         }
         paths <- retention_paths(dir, id)
-        for (kind in c("journal", "trace")) {
+        for (kind in c("journal", "trace", "attachments")) {
             path <- paths[[kind]]
             if (!retention_removable(path, kind)) {
                 next
@@ -323,18 +349,22 @@ retention_ids <- function(names, suffix) {
 retention_paths <- function(dir, id) {
     list(journal = file.path(dir, paste0(id, ".journal")),
          trace = file.path(dir, paste0(id, "_trace.jsonl")),
-         transcript = file.path(dir, paste0(id, ".jsonl")))
+         transcript = file.path(dir, paste0(id, ".jsonl")),
+         attachments = file.path(dir, paste0(id, ".attachments")))
 }
 
 # When a session was last used: the newest change among its journal
-# folder, what lies directly in it, its trace and its transcript. NA
-# when none of them exists.
+# folder and its attachments folder, what lies directly in each, its
+# trace and its transcript. NA when none of them exists.
 retention_last_use <- function(dir, id) {
     p <- retention_paths(dir, id)
     paths <- unlist(p, use.names = FALSE)
-    if (dir.exists(p$journal)) {
-        paths <- c(paths, list.files(p$journal, all.files = TRUE,
-                                     no.. = TRUE, full.names = TRUE))
+    for (folder in c(p$journal, p$attachments)) {
+        if (dir.exists(folder)) {
+            inside <- list.files(folder, all.files = TRUE, no.. = TRUE,
+                                 full.names = TRUE)
+            paths <- c(paths, inside)
+        }
     }
     times <- file.info(paths, extra_cols = FALSE)$mtime
     times <- times[!is.na(times)]
@@ -354,6 +384,10 @@ retention_removable <- function(path, kind) {
     }
     if (kind == "journal") {
         return(dir.exists(path) && length(retention_journal_files(path)) > 0L)
+    }
+    if (kind == "attachments") {
+        return(dir.exists(path) &&
+               length(retention_attachment_files(path)) > 0L)
     }
     file.exists(path) && !dir.exists(path)
 }
@@ -406,7 +440,9 @@ retention_same_path <- function(a, b) {
 
 retention_bytes <- function(path, kind) {
     files <- path
-    if (kind == "journal") {
+    if (kind == "attachments") {
+        files <- retention_attachment_files(path)
+    } else if (kind == "journal") {
         own <- retention_journal_files(path)
         files <- c(own, list.files(own[dir.exists(own)], all.files = TRUE,
                                    no.. = TRUE, full.names = TRUE,
