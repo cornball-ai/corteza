@@ -1244,7 +1244,7 @@ subagent_accumulate_usage <- function(info, usage) {
         }
     }
     info$cumulative_input_tokens <- add_int(info$cumulative_input_tokens %||% 0L,
-        usage$input_tokens)
+        .spend_input_tokens(usage))
     info$cumulative_output_tokens <- add_int(info$cumulative_output_tokens %||% 0L,
         usage$output_tokens)
     # Normalized, not the raw field, for the same reason as the main

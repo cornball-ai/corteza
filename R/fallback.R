@@ -431,6 +431,12 @@
         checkpoint <- args$checkpoint_callback
         if (is.function(checkpoint)) {
             args$checkpoint_callback <- function(history, context) {
+                # This candidate's provider says how its usage counts
+                # cached input (.usage_count_cached()). The callback
+                # under this one adds the same usage up, so it gets the
+                # corrected one.
+                context$usage <- .usage_count_cached(context$usage,
+                    cand$provider)
                 usage <- context$usage %||% list()
                 if (is.null(usage$total_tokens) &&
                     is.numeric(usage$input_tokens) &&
@@ -445,6 +451,8 @@
         before <- length(session$history %||% list())
         result <- tryCatch(.call(args), error = function(e) e)
         if (!inherits(result, "error")) {
+            # Before another candidate's usage is added to it.
+            result$usage <- .usage_count_cached(result$usage, cand$provider)
             if (length(recovered_usage) || recovered_turns > 0L) {
                 result$usage <- .turn_add_usage(recovered_usage, result$usage)
                 result$turns <- recovered_turns + as.integer(result$turns %||% 0L)
