@@ -37,7 +37,8 @@ expect_error(corteza:::bot_hooks("on_clear"), "named list")
 run_clear <- function(hooks, body = "/clear", thread = NULL,
                       transcript = list(list(role = "user",
                                              content = "fold formula?")),
-                      archived = file.path(tempdir(), "seg.md")) {
+                      archived = file.path(tempdir(), "seg.md"),
+                      cwd = NULL) {
     saved <- list()
     patch <- function(name, fn, package = "corteza") {
         saved[[length(saved) + 1L]] <<- list(name = name, package = package,
@@ -78,7 +79,8 @@ run_clear <- function(hooks, body = "/clear", thread = NULL,
         paste0("receipt-", length(replies))
     })
     n <- corteza::bot_poll(sessions = sessions, timeout = 0, hooks = hooks,
-                           model = "qwen3:8b", provider = "ollama")
+                           model = "qwen3:8b", provider = "ollama",
+                           cwd = cwd)
     list(n = n, replies = replies, chat = chat, cfg = cfg, before = s,
          after = get(key, envir = sessions))
 }
@@ -89,6 +91,25 @@ local({
     expect_equal(r$n, 1L)
     expect_identical(r$replies, "Cleared. Starting a fresh session.")
     expect_false(identical(r$before, r$after))
+})
+
+# The session a poll builds works where the poll was told to: the
+# fixture room's topic names no directory. Told nothing, it works in the
+# scratch folder, where it used to make ~/fixture-bot.
+local({
+    d <- tempfile("poll-cwd-")
+    dir.create(d)
+    on.exit({
+        corteza:::bot_run_cwd_set(NULL)
+        unlink(d, recursive = TRUE)
+    })
+    r <- run_clear(hooks = NULL, cwd = d)
+    expect_identical(normalizePath(r$after$cwd), normalizePath(d))
+    expect_true(grepl(paste("Working directory:", r$after$cwd), r$after$system,
+                      fixed = TRUE))
+    r <- run_clear(hooks = NULL)
+    expect_true(corteza:::bot_is_scratch(r$after$cwd))
+    expect_true(grepl("no project directory", r$after$system, fixed = TRUE))
 })
 
 # The hook is called once, with the documented arguments, and what it
