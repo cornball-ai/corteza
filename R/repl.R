@@ -137,6 +137,13 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     # The session journal (R/journal.R) follows ctx$session$sessionId,
     # so a /clear moves it with the new on-disk session.
     journal_install(ctx$session, agent_id = DEFAULT_AGENT_ID)
+    # Once a day, what old sessions no longer need goes (R/retention.R).
+    # Said here because files were removed. The session this loop has
+    # open is left alone.
+    pruned <- retention_tick(keep = as.character(ctx$session$sessionId))
+    if (!is.null(pruned)) {
+        cat(ctx$palette$dim, pruned, ctx$palette$reset, "\n", sep = "")
+    }
     .repl_jobs_setup(ctx)
     # Covers exits by error or interrupt; /quit and EOF call it directly
     # so its message comes before "Bye.". A second call is a no-op.

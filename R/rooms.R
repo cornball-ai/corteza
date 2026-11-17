@@ -2882,6 +2882,12 @@ bot_run_step <- function(state, timeout = 30000L) {
     flush_chat <- tryCatch(bot_chat_client(bot_load_config()),
                            error = function(e) NULL)
     bot_handle_flush_signal(state$flush_signal, state$sessions, flush_chat)
+    # Once a day, what old sessions no longer need goes (R/retention.R).
+    # It looks at the clock on most steps and does nothing else.
+    pruned <- retention_tick()
+    if (!is.null(pruned)) {
+        message("retention: ", pruned)
+    }
     invisible(replied)
 }
 
