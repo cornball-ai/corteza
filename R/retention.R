@@ -274,7 +274,8 @@ retention_scan <- function(days, now = Sys.time()) {
     }
     for (agent in list.files(root)) {
         dir <- file.path(root, agent, "sessions")
-        if (dir.exists(dir)) {
+        # A folder reached through a link is not read at all.
+        if (dir.exists(dir) && retention_within(dir)) {
             found <- rbind(found, retention_scan_dir(dir, agent, days, now))
         }
     }
@@ -343,18 +344,42 @@ retention_last_use <- function(dir, id) {
     max(times)
 }
 
-# Only what corteza's own writers make: a real folder with journal files
-# in it, a real file for a trace. A symbolic link is left alone,
-# whatever it points at.
+# Only what corteza's own writers make, where they make it: a real
+# folder with journal files in it, a real file for a trace, under the
+# data directory. A symbolic link is left alone, whatever it points at,
+# and so is everything reached through one.
 retention_removable <- function(path, kind) {
-    link <- Sys.readlink(path)
-    if (is.na(link) || nzchar(link)) {
+    if (!retention_within(path)) {
         return(FALSE)
     }
     if (kind == "journal") {
         return(dir.exists(path) && length(retention_journal_files(path)) > 0L)
     }
     file.exists(path) && !dir.exists(path)
+}
+
+# TRUE when `path` lies under corteza's data directory with no link on
+# the way: neither the path nor a folder between it and the data
+# directory is one. The data directory itself may be a link. On Windows
+# Sys.readlink() sees no link, so the real path must lie under the data
+# directory's real path as well.
+retention_within <- function(path, root = corteza_data_dir()) {
+    prefix <- paste0(root, "/")
+    if (!startsWith(path, prefix)) {
+        return(FALSE)
+    }
+    here <- root
+    for (part in strsplit(substring(path, nchar(prefix) + 1L), "/",
+                          fixed = TRUE)[[1L]]) {
+        here <- file.path(here, part)
+        link <- Sys.readlink(here)
+        if (is.na(link) || nzchar(link)) {
+            return(FALSE)
+        }
+    }
+    real <- normalizePath(path, winslash = "/", mustWork = FALSE)
+    real_root <- normalizePath(root, winslash = "/", mustWork = FALSE)
+    startsWith(real, paste0(real_root, "/"))
 }
 
 retention_bytes <- function(path, kind) {

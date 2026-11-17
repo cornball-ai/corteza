@@ -251,6 +251,102 @@ if (.Platform$OS.type != "windows") local({
                      c("live.json", "trace.jsonl"))
 })
 
+# A link on the way: an agent's folder, or its sessions folder. Nothing
+# behind it is listed or removed, and a real session beside it still
+# goes.
+if (.Platform$OS.type != "windows") local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    # Sessions kept outside the data directory, as make_session() would
+    # lay them out under another one.
+    far <- make_session(list(data = file.path(fx$root, "away")), "far",
+                        agent = "a")
+    far2 <- make_session(list(data = file.path(fx$root, "away2")), "far2",
+                         agent = "b")
+    near <- make_session(fx, "near")
+    agents <- file.path(fx$data, "agents")
+    expect_true(file.symlink(file.path(fx$root, "away", "agents", "a"),
+                             file.path(agents, "linked")))
+    dir.create(file.path(agents, "b"))
+    expect_true(file.symlink(dirname(far2$trace),
+                             file.path(agents, "b", "sessions")))
+    outside <- c(far$trace, far$transcript, far2$trace, far2$transcript,
+                 file.path(far$journal, "live.json"),
+                 file.path(far2$journal, "live.json"))
+
+    # A link that points back inside: the same sessions under a second
+    # name. They are reached once, by their real folder.
+    expect_true(file.symlink(file.path(agents, "main"),
+                             file.path(agents, "alias")))
+
+    # The scan does not go into a folder behind a link.
+    read <- character()
+    orig <- corteza:::retention_scan_dir
+    assignInNamespace("retention_scan_dir", function(dir, ...) {
+        read <<- c(read, dir)
+        orig(dir, ...)
+    }, ns = "corteza")
+    found <- corteza:::retention_scan(90, now = fx$later)
+    assignInNamespace("retention_scan_dir", orig, ns = "corteza")
+    expect_identical(read, file.path(agents, "main", "sessions"))
+    expect_identical(unique(found$session), "near")
+    expect_identical(unique(found$agent), "main")
+
+    found <- corteza:::retention_prune(90, now = fx$later)
+    expect_identical(unique(found$session), "near")
+    expect_true(all(found$removed))
+    expect_false(dir.exists(near$journal))
+    expect_true(all(file.exists(outside)))
+    # Asked about one of them directly, removal still refuses.
+    via_link <- file.path(agents, "linked", "sessions", "far_trace.jsonl")
+    expect_true(file.exists(via_link))
+    expect_false(corteza:::retention_remove(via_link, "trace"))
+    expect_true(file.exists(far$trace))
+})
+
+# The real path decides as well, for a link Sys.readlink() cannot see
+# (Windows). Here ".." stands in for one: no part of the path is a link,
+# and it still leads out of the data directory.
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    make_session(fx, "here")
+    beside <- file.path(dirname(fx$data), "beside")
+    dir.create(beside)
+    writeLines("{}", file.path(beside, "x_trace.jsonl"))
+    out <- file.path(fx$data, "agents", "..", "..", "beside",
+                     "x_trace.jsonl")
+    expect_true(file.exists(out))
+    expect_false(corteza:::retention_within(out))
+    expect_false(corteza:::retention_remove(out, "trace"))
+    expect_true(file.exists(file.path(beside, "x_trace.jsonl")))
+    expect_true(corteza:::retention_within(file.path(fx$data, "agents",
+                                                     "main", "sessions",
+                                                     "here_trace.jsonl")))
+    # Not under the data directory by name: refused before anything is
+    # read.
+    expect_false(corteza:::retention_within(file.path(fx$root, "x")))
+})
+
+# The data directory itself may be a link, as when a person moves it to
+# another disk: what lies under it is corteza's.
+if (.Platform$OS.type != "windows") local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    real <- file.path(fx$root, "realdata")
+    dir.create(real)
+    expect_true(file.symlink(real, file.path(fx$root, "linkdata")))
+    Sys.setenv(R_USER_DATA_DIR = file.path(fx$root, "linkdata"))
+    moved <- fx
+    moved$data <- corteza:::corteza_data_dir()
+    old <- make_session(moved, "old")
+    found <- corteza:::retention_prune(90, now = fx$later)
+    expect_identical(unique(found$session), "old")
+    expect_true(all(found$removed))
+    expect_false(dir.exists(old$journal))
+    expect_true(file.exists(old$transcript))
+})
+
 # ---- A name is a name ----
 # unlink() reads its argument as a pattern unless told otherwise, and
 # "a[12]" as a pattern is the session "a1".
