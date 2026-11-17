@@ -162,13 +162,21 @@ jobs:
       - name: Nothing left behind
         run: tools/check_left_behind.sh corteza.Rcheck/00check.log
 
-      # A second check, from an empty home directory in a bare
+      # Two more checks, each from an empty home directory in a bare
       # environment. The step above cannot see everything: R CMD check
       # does not compare ~/.local/share, where corteza keeps its data,
       # and it reports only what is new, on a runner whose home is not
-      # empty to begin with. Runs even when the step above fails, so one
-      # run shows both results.
-      - name: Empty home
+      # empty to begin with. Once as CRAN runs the package and once with
+      # the test files CRAN skips: on 0.8.0 the first made 1 directory
+      # in the home and the second 4. Each runs even when a step above
+      # fails, so one run shows every result.
+      - name: Empty home, as CRAN runs it
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        env:
+          CLEAN_HOME_PARENT: ${{ runner.temp }}
+        run: env -u NOT_CRAN tools/check_clean_home.sh
+
+      - name: Empty home, every test file
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         env:
           CLEAN_HOME_PARENT: ${{ runner.temp }}

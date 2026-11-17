@@ -25,6 +25,10 @@
 #   CLEAN_HOME_WORK    an existing directory to build and check in. It is
 #                      kept afterwards, for reading the logs. Default: a
 #                      temporary directory, removed on exit.
+#   NOT_CRAN           passed through when set, so the run includes the
+#                      test files CRAN skips. Unset, the run is the one
+#                      CRAN makes. The two differ: on 0.8.0 the first
+#                      made 4 directories in the home and the second 1.
 #
 # Exit status 0 when the check ran without an ERROR, R CMD check found
 # nothing left behind, and the home directory is still empty.
@@ -76,6 +80,7 @@ mkdir "$work/tmp" 2>/dev/null || true
 run() {
   env -i HOME="$home" PATH="$PATH" LANG="${LANG:-C.UTF-8}" R_LIBS="$libs" \
     TMPDIR="$work/tmp" \
+    ${NOT_CRAN:+NOT_CRAN="$NOT_CRAN"} \
     _R_CHECK_THINGS_IN_OTHER_DIRS_=true \
     _R_CHECK_THINGS_IN_TEMP_DIR_=true \
     _R_CHECK_THINGS_IN_CHECK_DIR_=true \
@@ -96,7 +101,12 @@ if [ -z "$tarball" ]; then
   exit 1
 fi
 
-echo "checking: $(basename "$tarball"), home: $home"
+if [ -n "${NOT_CRAN:-}" ]; then
+  tests="every test file (NOT_CRAN=$NOT_CRAN)"
+else
+  tests="the tests CRAN runs"
+fi
+echo "checking: $(basename "$tarball"), $tests, home: $home"
 (cd "$work" && run R CMD check --as-cran --run-donttest --no-manual \
   "$tarball" >check.log 2>&1)
 
