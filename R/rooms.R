@@ -222,6 +222,12 @@ bot_save_config <- function(cfg) {
 #'   or \code{openai} is labeled as billable usage prominently in the reply.
 #'   \code{reasoning_effort}, when configured, applies to every candidate.
 #'   NULL (default) means a limit error is reported like any other error.
+#' @param cwd Character or NULL. The directory a room works in when its
+#'   topic names none. It must exist: corteza does not create it. NULL
+#'   (default) saves none, and such a room then works in a scratch folder
+#'   under the session's temporary directory, which is deleted when the
+#'   process ends. Up to 0.8.0 the default was \code{~/<bot name>},
+#'   created on first use.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -241,9 +247,12 @@ bot_configure <- function(server, user, password, room, model = NULL,
                           auto_approve_asks = FALSE, bots = NULL,
                           models = NULL,
                           model_badge = c("never", "non_default", "always"),
-                          display_name = NULL, fallback = NULL) {
+                          display_name = NULL, fallback = NULL, cwd = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
+    # Before the transport is asked for anything: a directory that is
+    # not there should not cost a login.
+    cwd <- bot_check_cwd(cwd)
     bot_require_mx()
     provider <- match.arg(provider, providers)
     model_badge <- match.arg(model_badge)
@@ -278,7 +287,7 @@ bot_configure <- function(server, user, password, room, model = NULL,
                      auto_approve_asks = isTRUE(auto_approve_asks),
                      bots = bots, models = models, fallback = fallback,
                      model_badge = model_badge,
-                     display_name = display_name))
+                     display_name = display_name, cwd = cwd))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
     invisible(bot_plain_cfg(cfg))
 }
@@ -1313,7 +1322,9 @@ bot_default_system <- function(cfg, room_id = NULL, cwd = NULL,
         }
     }
 
-    if (!is.null(cwd) && nzchar(cwd)) {
+    if (bot_is_scratch(cwd)) {
+        parts <- c(parts, bot_scratch_notice(cwd))
+    } else if (!is.null(cwd) && nzchar(cwd)) {
         parts <- c(parts,
                    sprintf("Working directory: %s", cwd),
                    "Use this as your scope unless the user asks for something else.")
@@ -1364,23 +1375,126 @@ bot_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
                             room_name = room_name)$system
 }
 
-# Agent name for path-building: the Matrix localpart, unchanged.
-# "@cornelius:cornball.ai" -> "cornelius", which is also the instance
-# directory cerebro runs the bot from. Capitalising it produced a second,
-# empty ~/Cornelius next to ~/cornelius.
-bot_agent_name <- function(cfg) {
-    local <- sub("^@", "", sub(":.*$", "", cfg$user_id %||% ""))
-    if (!nzchar(local)) {
-        return("agent")
+# A bot's directory is given to it, never made for it. Up to 0.8.0 a room
+# with no directory in its topic worked in ~/<localpart>, which this file
+# created on first use: a test config for "@bot:ex" left ~/bot in the
+# home directory of whoever ran the checks, CRAN included. Making a
+# bot's directory is the job of whoever sets the bot up, and of nobody
+# who was not asked.
+
+# Check a `cwd` argument. NULL passes through. Anything else has to name
+# a directory that exists, and comes back as an absolute path.
+bot_check_cwd <- function(cwd) {
+    if (is.null(cwd)) {
+        return(NULL)
     }
-    local
+    if (!is.character(cwd) || length(cwd) != 1L || is.na(cwd) || !nzchar(cwd)) {
+        stop("`cwd` must be one directory path, or NULL.", call. = FALSE)
+    }
+    if (!dir.exists(path.expand(cwd))) {
+        stop("`cwd` must name an existing directory. corteza does not ",
+             "create it: ", cwd, call. = FALSE)
+    }
+    normalizePath(path.expand(cwd), winslash = "/", mustWork = TRUE)
 }
 
-# Default agent workspace: ~/<localpart>. Created on first use.
-bot_default_cwd <- function(cfg) {
-    dir <- path.expand(file.path("~", bot_agent_name(cfg)))
-    dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+# The directory a run was given: bot_run_init(cwd = ) or bot_poll(cwd = ).
+# It is kept here, beside the config, because a run reads its config
+# again and again (each poll, a rename, the job pump, an approval
+# prompt), and a value set on one copy would be missing from the next.
+# One bot runs in a process, so there is one value. Each bot_run_init()
+# and bot_poll() call sets it, NULL included, so the value in force is
+# the last call's.
+.bot_run <- new.env(parent = emptyenv())
+
+bot_run_cwd <- function() {
+    .bot_run$cwd
+}
+
+bot_run_cwd_set <- function(cwd) {
+    .bot_run$cwd <- cwd
+    invisible(cwd)
+}
+
+# The saved `cwd`, checked when a run starts. bot_configure() checked it
+# when it was saved, and the directory may have been removed since.
+# Stopping here puts the fault where the operator sees it. An empty
+# string in a config edited by hand counts as unset.
+bot_check_saved_cwd <- function(cfg) {
+    saved <- cfg$cwd
+    if (is.null(saved) || identical(saved, "")) {
+        return(invisible(NULL))
+    }
+    bot_check_cwd(saved)
+    invisible(NULL)
+}
+
+# The directory the bot was given, or NULL: the run's `cwd`, else the
+# saved one, when it names a directory that exists. One that has gone
+# missing while the bot runs is reported once and not used.
+bot_configured_cwd <- function(cfg) {
+    dir <- bot_run_cwd() %||% cfg$cwd
+    if (!is.character(dir) || length(dir) != 1L || is.na(dir) || !nzchar(dir)) {
+        return(NULL)
+    }
+    dir <- path.expand(dir)
+    if (!dir.exists(dir)) {
+        if (!identical(.bot_run$reported_missing, dir)) {
+            .bot_run$reported_missing <- dir
+            message(sprintf(paste("matrix: the bot's cwd %s does not",
+                                  "exist; a room with no directory of its",
+                                  "own works in a scratch folder"), dir))
+        }
+        return(NULL)
+    }
     dir
+}
+
+# Where a room works when nobody gave it a directory: one folder under
+# the session's temp directory, made on first use and gone with the
+# process. bot_default_system() tells the room so.
+bot_scratch_path <- function() {
+    file.path(tempdir(), "corteza-unbound")
+}
+
+bot_scratch_cwd <- function() {
+    dir <- bot_scratch_path()
+    if (!dir.exists(dir)) {
+        dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+    }
+    dir
+}
+
+# TRUE when `cwd` is the scratch folder and not a directory a person
+# named.
+bot_is_scratch <- function(cwd) {
+    if (!is.character(cwd) || length(cwd) != 1L || is.na(cwd) || !nzchar(cwd)) {
+        return(FALSE)
+    }
+    identical(normalizePath(cwd, winslash = "/", mustWork = FALSE),
+              normalizePath(bot_scratch_path(), winslash = "/", mustWork = FALSE))
+}
+
+# What a room in the scratch folder is told. The path is there because
+# its tools run in it. The rest is what to say when someone asks for
+# work that needs a place to keep files.
+bot_scratch_notice <- function(cwd) {
+    c("This room has no project directory.",
+        sprintf(paste("Working directory: %s, a scratch folder that is",
+                      "deleted when the bot stops. Keep nothing there that",
+                      "should last."), cwd),
+        paste("When someone asks for work that needs a project, say that",
+              "the room has no directory and how to give it one: put the",
+              "path of an existing directory at the start of the room",
+              "topic, as in \"~/project | what the room is for\", then",
+              "send /clear. The bot's operator can also set a default",
+              "directory for every room (`cwd`). corteza creates neither."))
+}
+
+# Where a room works when its topic names no directory: the bot's `cwd`,
+# else the scratch folder.
+bot_default_cwd <- function(cfg) {
+    bot_configured_cwd(cfg) %||% bot_scratch_cwd()
 }
 
 # TRUE when text someone typed names a directory rather than a room: it
@@ -1410,26 +1524,27 @@ bot_parse_topic <- function(topic) {
     }
 }
 
-# Effective cwd for a room: topic-supplied path if present and valid,
-# otherwise the agent's default workspace. Never returns a non-
-# existent directory.
+# Effective cwd for a room: the directory its topic names when that
+# exists, else the bot's `cwd`, else the scratch folder. Never returns a
+# directory that does not exist, and creates none outside the session's
+# temp directory.
 # Takes the topic rather than fetching one. bot_new_session() already
 # has it -- name and topic arrive together from a single
 # chat_channel_info() call -- and re-reading it here was the third state
 # lookup for one session, which is the round trip this verb exists to
 # save.
 bot_room_cwd <- function(cfg, topic = NULL) {
-    default_dir <- bot_default_cwd(cfg)
     if (is.null(topic)) {
-        return(default_dir)
+        return(bot_default_cwd(cfg))
     }
     parsed <- bot_parse_topic(topic)
     if (is.null(parsed$cwd)) {
-        return(default_dir)
+        return(bot_default_cwd(cfg))
     }
 
     candidate <- path.expand(parsed$cwd)
     if (!dir.exists(candidate)) {
+        default_dir <- bot_default_cwd(cfg)
         message(sprintf(
                         "matrix: topic cwd %s does not exist; falling back to %s",
                         candidate, default_dir
@@ -1991,6 +2106,11 @@ bot_accept_invites <- function(chat, invites) {
 #' @param hooks Named list of functions or NULL, as validated by
 #'   \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
 #'   host nothing.
+#' @param cwd Character or NULL. The directory a room works in when its
+#'   topic names none, for this call. It must exist: corteza does not
+#'   create it. NULL (default) uses the \code{cwd} saved by
+#'   \code{\link{bot_configure}}. With neither, such a room works in a
+#'   scratch folder under the session's temporary directory.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples
@@ -2001,8 +2121,10 @@ bot_accept_invites <- function(chat, invites) {
 #' @export
 bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                      tools_filter = NULL, timeout = 0L, sessions = NULL,
-                     hooks = NULL) {
+                     hooks = NULL, cwd = NULL) {
+    cwd <- bot_check_cwd(cwd)
     bot_require_mx()
+    bot_run_cwd_set(cwd)
     cfg <- bot_load_config()
 
     # Receive over the transport contract. The adapter self-heals an
@@ -2658,18 +2780,48 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
 # turn() errors. Matrix tool calls (bash, run_r) use getwd() for
 # relative paths, so this is what actually makes the room's cwd take
 # effect.
+#
+# A turn that cannot enter its directory does not run. Run anyway, it
+# would work wherever the service was started: its tools resolve
+# relative paths against getwd(), while the supervisor reads them
+# against session$cwd.
 bot_run_turn_in_cwd <- function(prompt, session) {
     target <- session$cwd
     orig_wd <- getwd()
-    if (!is.null(target) && nzchar(target) && dir.exists(target)) {
-        tryCatch(setwd(target), error = function(e) NULL)
+    if (bot_is_scratch(target)) {
+        # The scratch folder is under the temp directory, which a cleaner
+        # may empty while the bot runs.
+        bot_scratch_cwd()
     }
     on.exit(tryCatch(setwd(orig_wd), error = function(e) NULL), add = TRUE)
+    if (!bot_enter_dir(target)) {
+        return(bot_cwd_unavailable(target))
+    }
 
     tryCatch(
              turn(prompt, session)$reply,
              error = function(e) sprintf("(agent error: %s)", conditionMessage(e))
     )
+}
+
+# TRUE once getwd() is `dir`; FALSE when `dir` is not one existing
+# directory or setwd() refuses it.
+bot_enter_dir <- function(dir) {
+    if (!is.character(dir) || length(dir) != 1L || is.na(dir) ||
+        !nzchar(dir) || !dir.exists(dir)) {
+        return(FALSE)
+    }
+    !inherits(tryCatch(setwd(dir), error = function(e) e), "error")
+}
+
+# The reply when a turn cannot enter its directory.
+bot_cwd_unavailable <- function(dir) {
+    if (!is.character(dir) || length(dir) != 1L || is.na(dir) || !nzchar(dir)) {
+        return("(agent error: this room has no working directory, so nothing ran.)")
+    }
+    sprintf(paste("(agent error: cannot enter the working directory %s;",
+                  "it is missing, is not a directory, or cannot be",
+                  "opened. Nothing ran.)"), dir)
 }
 
 #' Initialize the Matrix long-poll state
@@ -2698,6 +2850,13 @@ bot_run_turn_in_cwd <- function(prompt, session) {
 #'   the host about; see Hooks. NULL, the default, means a bare bot:
 #'   \code{/clear} archives and resets without filing anything, and a
 #'   thread reply starts from the thread's own history.
+#' @param cwd Character or NULL. The directory a room works in when its
+#'   topic names none, for this run. It must exist: corteza does not
+#'   create it, and the run stops at its start when this directory, or
+#'   the one saved by \code{\link{bot_configure}}, is missing. NULL
+#'   (default) uses the saved one. With neither, such a room works in a
+#'   scratch folder under the session's temporary directory, which is
+#'   deleted when the process ends.
 #'
 #' @section Hooks:
 #' corteza runs a conversation. What becomes of one once it ends, and
@@ -2736,9 +2895,13 @@ bot_run_turn_in_cwd <- function(prompt, session) {
 #' }
 #' @export
 bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                         tools_filter = NULL, hooks = NULL) {
+                         tools_filter = NULL, hooks = NULL, cwd = NULL) {
+    cwd <- bot_check_cwd(cwd)
     bot_require_mx()
     hooks <- bot_hooks(hooks)
+    # Before the backfill below builds a session: each takes the bot's
+    # directory when its room's topic names none.
+    bot_run_cwd_set(cwd)
     sessions <- bot_new_session_registry()
     chat <- NULL
 
@@ -2748,6 +2911,9 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
     # invite was issued the long-poll loop will never see it.
     cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
     if (!is.null(cfg)) {
+        if (is.null(cwd)) {
+            bot_check_saved_cwd(cfg)
+        }
         chat <- tryCatch(bot_chat_client(cfg), error = function(e) NULL)
         if (!is.null(chat)) {
             # chat_pending(), not a raw no-since sync. An invitation is
@@ -2809,7 +2975,7 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
                      provider = provider, tools_filter = tools_filter,
-                     hooks = hooks))
+                     hooks = hooks, cwd = cwd))
 }
 
 #' One Matrix long-poll iteration
@@ -2849,7 +3015,7 @@ bot_run_step <- function(state, timeout = 30000L) {
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions,
-                        hooks = o$hooks)
+                        hooks = o$hooks, cwd = o$cwd)
     # Advance every room's jobs: start queued ones, post results, raise
     # approval prompts. Never blocks on a worker. Client derived now, as
     # for the flush below.
@@ -2899,6 +3065,8 @@ bot_run_step <- function(state, timeout = 30000L) {
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
 #' @param tools_filter Character vector or NULL. Tool filter override.
+#' @param cwd Character or NULL. The directory a room works in when its
+#'   topic names none; see \code{\link{bot_run_init}}.
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
@@ -2917,10 +3085,10 @@ bot_run_step <- function(state, timeout = 30000L) {
 #' }
 #' @export
 bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
-                    provider = NULL, tools_filter = NULL) {
+                    provider = NULL, tools_filter = NULL, cwd = NULL) {
     state <- bot_run_init(system = system, model = model,
                           provider = provider, tools_filter = tools_filter,
-                          hooks = NULL)
+                          hooks = NULL, cwd = cwd)
     message("bot_run: starting long-poll loop")
     message("bot_run: flush signal at ", state$flush_signal)
     repeat {
