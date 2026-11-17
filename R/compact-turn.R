@@ -302,8 +302,8 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #'   follows the model's window.
 #' @param max_request_bytes The most bytes the serialized request may
 #'   take, its framing included, or NA for no limit. Past it the oldest
-#'   entries are left out as well, and a request that cannot fit is not
-#'   sent.
+#'   entries are left out as well. A request that cannot fit is not sent,
+#'   nor one with room for no entry of the slice.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
                                     model = NULL, timeout_seconds = 60L,
@@ -348,6 +348,27 @@ compact_summarize_slice <- function(slice, provider = "anthropic",
                       level = "warn")
             return(NULL)
         }
+    }
+    # Not one message fits. The request would hold the note about what
+    # was left out and nothing else, and its reply would still replace
+    # the history. The history stays as it is.
+    if (identical(attr(kept, "dropped"), length(rendered))) {
+        newest <- rendered[[length(rendered)]]
+        limit <- if (nchar(newest) + 2L > max_total_chars) {
+            sprintf("%s characters", format(max_total_chars, big.mark = ","))
+        } else {
+            sprintf("%s bytes", format(max_request_bytes, big.mark = ","))
+        }
+        e <- simpleError(sprintf(paste("not one message fits in the summary",
+                                       "request: the newest alone is over its limit of %s"),
+                                 limit))
+        if (is.function(error_callback)) {
+            error_callback(e)
+        }
+        log_event("subagent_compact_failed",
+                  reason = "summary_request_no_message",
+                  messages = length(rendered), level = "warn")
+        return(NULL)
     }
     setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)

@@ -41,8 +41,8 @@ follows the model's window.}
 
 \item{max_request_bytes}{The most bytes the serialized request may
 take, its framing included, or NA for no limit. Past it the oldest
-entries are left out as well, and a request that cannot fit is not
-sent.}
+entries are left out as well. A request that cannot fit is not sent,
+nor one with room for no entry of the slice.}
 }
 \description{
 Returns the summary text on success or NULL on any error

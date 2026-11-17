@@ -457,6 +457,9 @@ compact_message_text <- function(text,
                           dropped),
                   kept)
     }
+    # How many were left out, so a caller can tell a result that holds
+    # the note alone.
+    attr(kept, "dropped") <- dropped
     kept
 }
 

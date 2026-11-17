@@ -848,6 +848,54 @@ local({
                       s$last_compaction_failure$error, fixed = TRUE))
 })
 
+# A limit the framing fits under with no room for one turn of 4,000
+# characters. The request would hold only the note that 78 messages were
+# left out, and its reply would replace them all. Nothing is sent, and
+# the history stays as it was.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- numbered_history()
+    before <- s$history
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L,
+                                                context_compact_bytes = 8000L))
+    expect_false(got$done)
+    expect_equal(got$calls, 0L)
+    expect_identical(s$history, before)
+    expect_true(grepl("not one message fits",
+                      s$last_compaction_failure$error, fixed = TRUE))
+    expect_true(grepl("over its limit of 8,000 bytes",
+                      s$last_compaction_failure$error, fixed = TRUE))
+})
+
+# With room for a few turns the summary reads them, as before: the
+# newest turns of the slice and the note for the rest.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- numbered_history()
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L,
+                                                context_compact_bytes = 20000L))
+    expect_true(got$done)
+    expect_equal(got$calls, 1L)
+    expect_true(has(got$prompt, "answer-39 "))
+    expect_true(has(got$prompt, "elided to fit"))
+    expect_false(has(got$prompt, "ask-1 "))
+    expect_true(codex_body_bytes(got) <= 20000)
+})
+
+# The trim says how many it left out, all of them when the note is all
+# that is left.
+local({
+    kept <- corteza:::.compact_trim_total(c(strrep("a", 500), "b"),
+                                          max_total = 120000L, max_bytes = 300)
+    expect_equal(attr(kept, "dropped"), 1L)
+    expect_identical(kept[-1L], "b")
+    kept <- corteza:::.compact_trim_total(strrep("a", 500),
+                                          max_total = 120000L, max_bytes = 300)
+    expect_equal(attr(kept, "dropped"), 1L)
+    expect_equal(length(kept), 1L)
+    expect_true(grepl("elided", kept[[1L]], fixed = TRUE))
+})
+
 # A summary that fails costs the larger request once. The session's
 # next summary reads the budget every model had, 120,000 characters,
 # and one that succeeds brings the window's share back.
