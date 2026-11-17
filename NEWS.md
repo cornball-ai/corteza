@@ -1,3 +1,18 @@
+# corteza 0.8.0.3
+
+- corteza now removes what old sessions no longer need. Once a day, when a
+  terminal session starts and while a bot runs, the journal and the tool
+  trace of every session unused for 90 days are removed. Transcripts, session
+  stores, workspaces and audit records stay, and a session whose journal is
+  gone still resumes. Set `retention$session_days` in the user's config to
+  change the number of days; 0 keeps everything.
+  `sessions_prune(dry_run = TRUE)` reports what a run would remove. Nothing
+  reached through a link is removed.
+- A room that restores its context from its journal, and has been silent for
+  90 days, starts its next conversation fresh.
+- A journal removed while its session is running starts again from nothing.
+  Before, the session's next compaction was refused.
+
 # corteza 0.8.0.2
 
 - `install_cli()` no longer writes to `~/bin` by default. With no `path`, the

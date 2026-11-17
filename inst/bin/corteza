@@ -539,6 +539,11 @@ run_agent <- function(opts) {
     } else {
       # Resuming existing session
       cat(sprintf("%sResuming session: %s%s\n", color$dim, opts$session, color$reset))
+      # Read before the resume writes to the session (R/retention.R).
+      resume_note <- corteza:::retention_resume_note(session$sessionId)
+      if (!is.null(resume_note)) {
+        cat(color$dim, resume_note, color$reset, "\n", sep = "")
+      }
       route <- corteza:::.session_model_pair(opts$provider, opts$model,
                                              config, saved = session)
       # Restore workspace

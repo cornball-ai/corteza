@@ -199,9 +199,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     route <- .session_model_pair(provider, model, config)
     disk_session <- resolve_disk_session(session_arg, route$provider,
         route$model, cwd)
+    resume_note <- NULL
     if (isTRUE(disk_session$resumed)) {
         route <- .session_model_pair(provider, model, config,
                                      saved = disk_session$session)
+        # Read before the resume writes to the session (R/retention.R).
+        resume_note <- retention_resume_note(disk_session$sessionId)
     }
     history <- disk_session$history %||% list()
     resumed_count <- length(history)
@@ -284,6 +287,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         sprintf("  %ssession %s%s\n",
                 color$dim, disk_session$sessionId, color$reset)
     }
+    retention_line <- NULL
+    if (!is.null(resume_note)) {
+        retention_line <- sprintf("  %s%s%s\n", color$dim, resume_note,
+                                  color$reset)
+    }
     cat(corteza_startup_banner(
                                version = as.character(utils::packageVersion("corteza")),
                                model = display_model,
@@ -291,6 +299,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         ),
         "\n\n",
         session_line,
+        retention_line,
         "\n",
         sep = "")
 

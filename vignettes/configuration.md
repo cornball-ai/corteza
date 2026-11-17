@@ -530,6 +530,35 @@ These keys are read from the user's config file only. A project's
 | `supervisor.max_turns` | integer | `6` | Model turns the monitor may take on one call |
 | `supervisor.write_roots` | string[] | `[]` | Directories outside the project that may be written without asking a person, such as a notes directory |
 
+### Retention
+
+corteza keeps its sessions under `tools::R_user_dir("corteza", "data")`.
+Once a day, when a terminal session starts and while a chat bot runs, it
+removes the journal and the tool trace of every session that has gone
+unused for `retention.session_days`. A session was last used when its
+journal, its trace or its transcript last changed. The terminal says
+what it removed.
+
+Transcripts, session stores, workspaces, config and audit records stay.
+A session whose journal is gone still resumes from its transcript, and
+says what is gone. A room that restores its context from its journal
+starts its next conversation fresh.
+
+A session's audit records are kept in its journal folder, under
+`audit/`. Retention leaves them and the folder in place:
+`audit_payload_expire()` removes audit payloads, and only when called.
+
+`sessions_prune(dry_run = TRUE)` reports what a run would remove.
+`sessions_prune()` runs one now.
+
+This key is read from the user's config file only. A project's
+`.corteza/config.json` cannot set it. A config file that does not parse,
+or a value that is not one non-negative number, turns retention off.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed. `0` keeps everything |
+
 ### Skills
 
 | Key | Type | Default | Description |

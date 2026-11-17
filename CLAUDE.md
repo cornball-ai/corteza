@@ -238,6 +238,26 @@ no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
 has no journal, so bare sessions in tests see no change.
 `journal_enabled: false` turns it off.
 
+## Retention (`R/retention.R`)
+
+Once a day, from `run_repl_loop()` and `bot_run_step()`,
+`retention_tick()` removes the journal and the tool trace of every
+session unused for `retention$session_days` (default 90, 0 for off).
+The setting is read from the user's config only (`retention_config()`),
+and a value it cannot read turns retention off. Transcripts always stay.
+`sessions_prune()` is the exported form.
+
+Two things to keep in mind when changing it or the journal:
+
+- A session's audit records live in its journal folder
+  (`<id>.journal/audit/`, `.audit_root()`), and their expiry never runs
+  by itself. So a journal is removed file by file
+  (`retention_journal_files()`), never as a folder.
+- The process that holds a session may outlive its journal. A journal
+  whose live snapshot is gone starts again from nothing
+  (`.journal_removed()`), and a mark taken on the old one counts as
+  before every segment of the new (`.journal_mark_seq()`).
+
 ## Test conventions and gotchas
 
 - `corteza:::env[[key]] <- value` doesn't parse the way you'd expect
@@ -338,6 +358,7 @@ R/
 ├── matrix.R           # Matrix channel adapter (mx.api)
 ├── config.R           # Config file loading + defaults
 ├── session.R          # Session persistence (transcripts, metadata)
+├── retention.R        # What leaves the data directory, and when
 ├── archival.R         # Retroactive-extraction runtime (opt-in)
 ├── log.R              # Structured JSON logging
 ├── tasks.R            # Task-tracker intercept in turn()
