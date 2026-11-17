@@ -234,6 +234,77 @@ local({
     expect_true(same_dir(getwd(), before))
 })
 
+# --- A turn that cannot enter its directory does not run ---
+# Run anyway, it would work wherever the service was started.
+local({
+    ran <- 0L
+    orig <- corteza::turn
+    assignInNamespace("turn", function(prompt, session) {
+        ran <<- ran + 1L
+        list(reply = "ok")
+    }, ns = "corteza")
+    on.exit(assignInNamespace("turn", orig, ns = "corteza"), add = TRUE)
+    before <- getwd()
+    s <- new.env()
+
+    # A directory a person bound, gone since.
+    s$cwd <- tempfile("gone-")
+    reply <- corteza:::bot_run_turn_in_cwd("hi", s)
+    expect_identical(ran, 0L)
+    expect_true(grepl("cannot enter the working directory", reply,
+                      fixed = TRUE))
+    expect_true(grepl(basename(s$cwd), reply, fixed = TRUE))
+    expect_true(grepl("Nothing ran.", reply, fixed = TRUE))
+    expect_true(same_dir(getwd(), before))
+
+    # A file where the scratch folder should be: it cannot be made.
+    scratch <- corteza:::bot_scratch_path()
+    unlink(scratch, recursive = TRUE)
+    writeLines("in the way", scratch)
+    on.exit(unlink(scratch), add = TRUE)
+    s$cwd <- scratch
+    reply <- corteza:::bot_run_turn_in_cwd("hi", s)
+    expect_identical(ran, 0L)
+    expect_true(grepl("cannot enter the working directory", reply,
+                      fixed = TRUE))
+    expect_false(dir.exists(scratch))
+    expect_true(same_dir(getwd(), before))
+    unlink(scratch)
+
+    # No directory at all.
+    s$cwd <- NULL
+    expect_identical(corteza:::bot_run_turn_in_cwd("hi", s),
+                     "(agent error: this room has no working directory, so nothing ran.)")
+    expect_identical(ran, 0L)
+
+    # A directory setwd() refuses. Unix only, and not as root, who may
+    # enter it anyway.
+    locked <- tempfile("locked-")
+    dir.create(locked)
+    on.exit({
+        Sys.chmod(locked, "0700")
+        unlink(locked, recursive = TRUE)
+    }, add = TRUE)
+    Sys.chmod(locked, "0000")
+    refused <- .Platform$OS.type == "unix" &&
+        inherits(tryCatch(setwd(locked), error = function(e) e), "error")
+    setwd(before)
+    if (refused) {
+        s$cwd <- locked
+        reply <- corteza:::bot_run_turn_in_cwd("hi", s)
+        expect_identical(ran, 0L)
+        expect_true(grepl("cannot enter the working directory", reply,
+                          fixed = TRUE))
+        expect_true(same_dir(getwd(), before))
+    }
+
+    # The directory exists again: the turn runs there.
+    s$cwd <- scratch
+    expect_identical(corteza:::bot_run_turn_in_cwd("hi", s), "ok")
+    expect_identical(ran, 1L)
+    expect_true(dir.exists(scratch))
+})
+
 # --- The bot's own jobs settings ---
 # From the project config of its cwd, over the global config. A bot with
 # no directory has the global config alone: the scratch folder is not
