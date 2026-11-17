@@ -1212,6 +1212,41 @@ if ("chat_invite" %in% getNamespaceExports("chat.api")) {
         expect_true(any(grepl("refusing invite", msgs)))
     })
 
+    # A bot with no operators joins nothing, whoever sent the invite,
+    # and its log says what would change that. Up to 0.8.0 it joined.
+    local({
+        iso <- isolate_config(base_cfg())
+        on.exit(restore_config(iso), add = TRUE)
+        joined <- character()
+        seams <- list(
+            .sync = function(client, timeout = 0L, save = TRUE, ...) {
+                sync_saved(client, save)
+                client$sync_token <- "s2"
+                list(sync = list(rooms = list(invite = list(
+                         `!new:example` = list(invite_state = list(events = list(
+                             list(type = "m.room.member",
+                                  state_key = "@bot:example",
+                                  sender = "@troy:example",
+                                  content = list(membership = "invite")))))))),
+                     client = client, first_run = FALSE)
+            },
+            .extract = function(...) list(),
+            .join = function(session, room_id) {
+                joined <<- c(joined, room_id)
+                room_id
+            })
+        expect_identical(
+            corteza:::bot_operators(corteza:::bot_load_config()), character())
+        msgs <- capture.output(with_seamed_client(
+            seams, corteza::bot_poll(timeout = 0L,
+                                        sessions = seeded_sessions(character()))),
+            type = "message")
+        expect_identical(joined, character())
+        expect_true(any(grepl("refusing invite to !new:example", msgs,
+                              fixed = TRUE)))
+        expect_true(any(grepl("has no operators", msgs, fixed = TRUE)))
+    })
+
     # A join that fails does not take the others with it: one revoked
     # invite must not stop the loop or the rooms beside it.
     local({
