@@ -1,3 +1,22 @@
+# corteza 0.8.0.4
+
+- `corteza --resume`, `corteza --list`, `/sessions` and
+  `chat(session = TRUE)` look at the sessions started in the current
+  directory. `--all`, or `/sessions all`, covers every directory.
+  `corteza --resume --all` is what `--resume` did before.
+- A session's entry in `sessions.json` records its directory, where it runs
+  and a title, the first prompt cut to 100 characters. A list shows the
+  title. Sessions from earlier versions get their directory from the
+  transcript the first time sessions are listed.
+- A session started with `--session <key>` is listed. Only keys beginning
+  with `corteza:` were.
+- A Matrix room's session has an entry too, under agent `matrix`.
+- `vignette("configuration")` has a "Session records" section that states
+  the fields for programs that read the file.
+- `sessions.json` is written through a temporary file with mode 0600, and a
+  store that cannot be read is set aside as `sessions.json.unreadable` where
+  it used to be replaced by the entry being written.
+
 # corteza 0.8.0.3
 
 - corteza now removes what old sessions no longer need. Once a day, when a

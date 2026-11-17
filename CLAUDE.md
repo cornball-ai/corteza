@@ -258,6 +258,30 @@ Two things to keep in mind when changing it or the journal:
   (`.journal_removed()`), and a mark taken on the old one counts as
   before every segment of the new (`.journal_mark_seq()`).
 
+## Session records (`R/session.R`)
+
+`sessions.json` is each agent's index of conversations, and other
+programs read it (`vignette("configuration")`, "Session records"): add
+fields, never rename one.
+
+- A session belongs to the directory it was started in. `session_list()`
+  and `session_latest()` take `cwd` and `all`, and every surface
+  (`--resume`, `--list`, `/sessions`, `chat(session = TRUE)`) asks for
+  its own directory unless told otherwise. Compare directories through
+  `session_cwd()`, never as strings.
+- `session_new()` writes `cwd` and `surface`, `session_title_once()`
+  writes `title` from the first prompt, and `session_save()` leaves all
+  3 alone. An entry from before 0.8.1 gets its `cwd` from the
+  transcript's header the first time sessions are listed.
+- A Matrix room's session has a journal and no transcript. Its entry is
+  under agent `matrix`, keyed by the journal folder's name
+  (`bot_session_record()`).
+- `store_save()` writes beside the store and renames. Every session of
+  an agent shares the file: keep it that way, and go through
+  `store_update()` so an unreadable store is set aside, not replaced.
+  2 processes can still each read, change and write it, and the later
+  write wins.
+
 ## Test conventions and gotchas
 
 - `corteza:::env[[key]] <- value` doesn't parse the way you'd expect

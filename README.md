@@ -54,7 +54,7 @@ The primary interface. A terminal agent with session management and context comp
 
 ```bash
 corteza                          # Start agent
-corteza --resume                 # Resume last session
+corteza --resume                 # Resume this directory's last session
 corteza --provider ollama        # Use local models
 corteza --provider moonshot --model kimi-k2
 corteza --provider openai_codex  # ChatGPT subscription (log in once, see API Keys)
