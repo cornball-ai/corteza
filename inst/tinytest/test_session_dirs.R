@@ -112,7 +112,8 @@ expect_null(corteza:::session_title(character()))
 # ---- a directory as recorded ----
 expect_equal(corteza:::session_cwd(paste0(dir_a, "/")), dir_a)
 expect_equal(corteza:::session_cwd(paste0(dir_a, "///")), dir_a)
-expect_equal(corteza:::session_cwd("/"), "/")
+# The root keeps its slash: "/", or a drive's root on Windows ("C:/").
+expect_true(grepl("^([A-Za-z]:)?/$", corteza:::session_cwd("/")))
 expect_null(corteza:::session_cwd(NULL))
 expect_null(corteza:::session_cwd(""))
 expect_null(corteza:::session_cwd(NA_character_))
