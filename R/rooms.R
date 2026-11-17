@@ -2100,7 +2100,7 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     s
 }
 
-# Auto-join any rooms the bot has been invited to.
+# Join the rooms whose invites bot_allowed_invites() let through.
 #
 # Best-effort per room: one room the bot cannot join -- a server that
 # has since revoked the invite, a room it was kicked from between the
@@ -2129,7 +2129,9 @@ bot_accept_invites <- function(chat, invites) {
 #' One iteration of sync-and-reply
 #'
 #' Fetches new messages across all joined rooms and runs \code{\link{turn}}
-#' against each. Auto-joins any pending invites the bot has received.
+#' against each. Joins a room the bot is invited to when one of its
+#' operators sent the invite (see \code{\link{bot_configure}}); every
+#' other invite is refused and reported.
 #' Replies are sent back to the originating room. On first run there is
 #' no saved sync token, so this call establishes a baseline and returns
 #' without processing history.

@@ -671,9 +671,10 @@ corteza::bot_configure(
 
 A bot with no operators accepts no invites. It works in the room it was
 configured with and in rooms it has already joined. Where such a room has
-one person in it, that person is answered and answers the approval prompts;
-where it has more, nobody answers them. Each invite the bot refuses is
-reported in its log, with what would change that.
+one person in it, that person is answered and answers the approval prompts.
+Where it has more, the bot answers when it is mentioned and nobody can
+approve, so a call that needs approval is declined. Each invite the bot
+refuses is reported in its log, with what would change that.
 
 Up to 0.8.0 a bot with no operators accepted every invite, which gave a
 session with tools to anyone who could invite it. A bot that should go on
