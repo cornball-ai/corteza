@@ -254,6 +254,20 @@ local({
     }, logical(1L))))
 })
 
+# R for Windows cannot remove a directory link: unlink() and file.remove()
+# both fail on one, and the session's temp folder then stays behind with
+# it. cmd's rmdir removes the link and leaves its target.
+remove_dir_link <- function(path) {
+    if (.Platform$OS.type == "windows") {
+        win <- gsub("/", "\\\\",
+                    file.path(normalizePath(dirname(path), winslash = "/"),
+                              basename(path)))
+        system2("cmd", c("/c", "rmdir", shQuote(win, type = "cmd")),
+                stdout = FALSE, stderr = FALSE)
+    }
+    invisible(NULL)
+}
+
 local({
     root <- tempfile("instruction-symlink-")
     inside <- file.path(root, "inside")
@@ -278,6 +292,12 @@ local({
             identical(x$code, "directory_cycle")
         }, logical(1L))))
     }
+    if (isTRUE(made_escape)) {
+        remove_dir_link(file.path(inside, "escape-link"))
+    }
+    if (isTRUE(made_cycle)) {
+        remove_dir_link(file.path(inside, "cycle"))
+    }
     unlink(root, recursive = TRUE)
     unlink(outside, recursive = TRUE)
 })
@@ -299,10 +319,15 @@ local({
     writeLines("REMOTE-REF", file.path(pkg, "remote", "reference.md"))
     .write_instruction(file.path(hub, "local"), "Local", "Hub-owned.", "LOCAL")
     dir.create(file.path(hub, "nested"))
-    made_alias <- file.symlink(file.path(pkg, "remote"), file.path(hub, "remote"))
-    made_deep <- file.symlink(file.path(pkg, "remote"),
-                              file.path(hub, "nested", "deep"))
-    made_inner <- file.symlink(root, file.path(pkg, "remote", "outward"))
+    # Unix only. The checks below need Sys.readlink(), which reports
+    # nothing on Windows, and there the links would outlast the session.
+    unix <- .Platform$OS.type == "unix"
+    made_alias <- unix &&
+        file.symlink(file.path(pkg, "remote"), file.path(hub, "remote"))
+    made_deep <- unix && file.symlink(file.path(pkg, "remote"),
+                                      file.path(hub, "nested", "deep"))
+    made_inner <- unix &&
+        file.symlink(root, file.path(pkg, "remote", "outward"))
 
     old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA_character_)
     Sys.setenv(R_USER_CONFIG_DIR = cfg_home)
