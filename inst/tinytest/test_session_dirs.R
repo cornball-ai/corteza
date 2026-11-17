@@ -167,9 +167,11 @@ expect_equal(attr(first, "elsewhere"), 1L)
 
 # A session keeps the directory it was started in when it is saved
 # from another.
-old_wd <- setwd(dir_b)
-corteza:::session_save(a_old, agent)
-setwd(old_wd)
+local({
+    old_wd <- setwd(dir_b)
+    on.exit(setwd(old_wd))
+    corteza:::session_save(a_old, agent)
+})
 expect_equal(entry_of(agent, a_old$sessionKey)$cwd, dir_a)
 date_session(agent, a_old$sessionKey, 1000)
 
@@ -184,10 +186,11 @@ in_a <- corteza:::session_list(agent, cwd = dir_a)
 expect_equal(keys_of(in_a), c(a_new$sessionKey, a_old$sessionKey, "work"))
 expect_equal(attr(in_a, "elsewhere"), 1L)
 
-# A link to a directory is that directory.
-if (.Platform$OS.type == "unix") {
-    link <- file.path(root, "link-to-a")
-    expect_true(file.symlink(dir_a, link))
+# A link to a directory is that directory. Where the file system makes
+# no links there is nothing to test.
+link <- file.path(root, "link-to-a")
+if (.Platform$OS.type == "unix" &&
+    isTRUE(suppressWarnings(file.symlink(dir_a, link)))) {
     expect_equal(keys_of(corteza:::session_list(agent, cwd = link)),
                  c(a_new$sessionKey, a_old$sessionKey, "work"))
     via_link <- new_session(agent, link, 4000, "through the link")
@@ -291,12 +294,13 @@ if (.Platform$OS.type == "unix") {
     # for the file as it was still reads whole afterwards, which is what
     # a process that had it open would read.
     was <- file.path(root, "store-as-it-was.json")
-    expect_true(file.link(store_file(agent), was))
-    old_text <- readLines(was)
-    date_session(agent, one$sessionKey, 1500)
-    expect_identical(readLines(was), old_text)
-    expect_false(identical(readLines(store_file(agent)), old_text))
-    unlink(was)
+    if (isTRUE(suppressWarnings(file.link(store_file(agent), was)))) {
+        old_text <- readLines(was)
+        date_session(agent, one$sessionKey, 1500)
+        expect_identical(readLines(was), old_text)
+        expect_false(identical(readLines(store_file(agent)), old_text))
+        unlink(was)
+    }
 }
 
 # A store that cannot be read is not written over. 0.8.0 took it for
