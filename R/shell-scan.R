@@ -338,7 +338,8 @@ shell_scan_git <- function(sx, args) {
         if (is.null(where)) {
             scan_note(sx, "runs git ", sub,
                       " in a directory this check could not resolve")
-        } else if (!where$zone %in% c("project", "git", "scratch", "write_root")) {
+        } else if (!where$zone %in% c("project", "git", "control", "scratch",
+                                      "write_root")) {
             scan_flag(sx, "changes a git repository outside the project (",
                       where$abs, ")")
         }
@@ -449,7 +450,8 @@ shell_scan_rm <- function(sx, verb, args) {
         } else if (identical(p$zone, "git")) {
             scan_flag(sx, "deletes git's own files (", p$abs, ")")
         } else if (identical(p$zone, "control")) {
-            scan_flag(sx, "deletes the project's corteza config")
+            scan_flag(sx, "deletes from the project's corteza folder (",
+                      p$abs, ")")
         }
     }
     invisible(NULL)
@@ -608,7 +610,7 @@ scan_script <- function(sx, tok, kind, depth) {
             "other"
         }
     }
-    readable <- p$zone %in% c("project", "scratch", "write_root") &&
+    readable <- p$zone %in% c("project", "control", "scratch", "write_root") &&
     kind %in% c("r", "shell") && depth < 3L && file.exists(p$abs) &&
     !dir.exists(p$abs) && isTRUE(file.size(p$abs) < 200000)
     if (!readable) {
