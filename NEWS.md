@@ -1,3 +1,25 @@
+# corteza 0.8.0.2
+
+- `install_cli()` no longer writes to `~/bin` by default. With no `path`, the
+  command goes to `tools::R_user_dir("corteza", "data")/bin` on every system,
+  as it already did on Windows, and the function prints the line that puts
+  that directory on `PATH`. A named directory works as before. An install
+  made by 0.8.0 or earlier stays in `~/bin`: `install_cli()` and
+  `uninstall_cli()` say so and leave it alone, and
+  `install_cli("~/bin", force = TRUE)` refreshes it.
+
+# corteza 0.8.0.1
+
+- corteza no longer creates a directory in the home directory for a chat bot.
+  Up to 0.8.0 a room whose topic named no directory worked in `~/<bot name>`,
+  created on first use; a test did the same on CRAN's check machine. Such a
+  room now works in the bot's `cwd`, a new last argument of `bot_configure()`,
+  `bot_run()`, `bot_run_init()` and `bot_poll()`, and of the `matrix_*` names
+  that forward to them. It must name an existing directory. With no `cwd`,
+  the room works in a scratch folder under the session's temporary directory
+  and is told it has no project directory. A bot that relied on
+  `~/<bot name>` now needs `cwd`.
+
 # corteza 0.8.0
 
 CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.

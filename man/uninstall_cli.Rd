@@ -7,8 +7,10 @@ uninstall_cli(path = NULL)
 }
 \arguments{
 \item{path}{Directory where corteza is installed. Default matches
-\code{install_cli()}: \code{~/bin} on Unix,
-\code{tools::R_user_dir("corteza", "data")/bin} on Windows.}
+\code{install_cli()}:
+\code{tools::R_user_dir("corteza", "data")/bin}. An install made by
+0.8.0 or earlier on Unix is in \code{~/bin}; remove it with
+\code{uninstall_cli("~/bin")}.}
 }
 \value{
 TRUE if removed, FALSE if not found, invisibly.
@@ -17,7 +19,8 @@ TRUE if removed, FALSE if not found, invisibly.
 Remove the \code{corteza} command-line tool.
 }
 \examples{
-\dontrun{
-uninstall_cli()
-}
+bin <- file.path(tempdir(), "corteza-bin")
+install_cli(bin)
+uninstall_cli(bin)
+unlink(bin, recursive = TRUE)
 }

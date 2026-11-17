@@ -18,6 +18,16 @@ env:
   # pandoc and the Suggests step installs simplermarkdown.
   R_BUILD_ARGS: "--no-manual"
   R_CHECK_ARGS: "--no-manual --as-cran"
+  # 0.8.0 was archived because a test made ~/bot on CRAN's check machine.
+  # With the first of these set, R CMD check compares what the user owns
+  # at the top of the home directory and of the temp root, and under
+  # /dev/shm and ~/.cache, before and after, and reports a new file as a
+  # NOTE. --as-cran already switches on the other two; they are set here
+  # so the gate does not hang on that flag. NOTEs pass the WARNING gate
+  # above, so the "Nothing left behind" step reads the three results.
+  _R_CHECK_THINGS_IN_OTHER_DIRS_: "true"
+  _R_CHECK_THINGS_IN_TEMP_DIR_: "true"
+  _R_CHECK_THINGS_IN_CHECK_DIR_: "true"
 
 jobs:
   ci:
@@ -27,8 +37,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: macos-latest}
-          - {os: ubuntu-latest}
+          # other_dirs_exclude: see the Test step.
+          - {os: macos-latest, other_dirs_exclude: "^/(private/)?var/folders/"}
+          - {os: ubuntu-latest, other_dirs_exclude: ""}
 
     runs-on: ${{ matrix.os }}
 
@@ -133,8 +144,43 @@ jobs:
       - name: Suggests from CRAN
         run: Rscript -e 'install.packages(c("clipr", "fortunes", "pensar", "rstudioapi", "simplermarkdown"), repos = "https://cloud.r-project.org")'
 
+      # On macOS the temp root is a folder every process of the user
+      # shares, and system services make folders in it while the check
+      # runs: 4 on this gate's first run, none of them the package's.
+      # The pattern drops that folder from the comparison there. The
+      # home directory is still compared, and so is R's own session
+      # temp directory. Empty on Linux, where nothing is dropped.
       - name: Test
+        env:
+          _R_CHECK_THINGS_IN_OTHER_DIRS_EXCLUDE_: ${{ matrix.other_dirs_exclude }}
         run: ./run.sh run_tests
+
+      # A NOTE does not fail the Test step. This fails on the three that
+      # say the check left something behind, and on a log without them:
+      # a check that is switched off prints nothing, and a gate that
+      # cannot see the check has not passed it.
+      - name: Nothing left behind
+        run: tools/check_left_behind.sh corteza.Rcheck/00check.log
+
+      # Two more checks, each from an empty home directory in a bare
+      # environment. The step above cannot see everything: R CMD check
+      # does not compare ~/.local/share, where corteza keeps its data,
+      # and it reports only what is new, on a runner whose home is not
+      # empty to begin with. Once as CRAN runs the package and once with
+      # the test files CRAN skips: on 0.8.0 the first made 1 directory
+      # in the home and the second 4. Each runs even when a step above
+      # fails, so one run shows every result.
+      - name: Empty home, as CRAN runs it
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        env:
+          CLEAN_HOME_PARENT: ${{ runner.temp }}
+        run: env -u NOT_CRAN tools/check_clean_home.sh
+
+      - name: Empty home, every test file
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        env:
+          CLEAN_HOME_PARENT: ${{ runner.temp }}
+        run: tools/check_clean_home.sh
 
       # R CMD check prints the last 13 lines of a failed test run, which
       # for this suite is the warnings that trail the real failure. The
