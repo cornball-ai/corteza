@@ -1,3 +1,13 @@
+# corteza 0.8.0.2
+
+- `install_cli()` no longer writes to `~/bin` by default. With no `path`, the
+  command goes to `tools::R_user_dir("corteza", "data")/bin` on every system,
+  as it already did on Windows, and the function prints the line that puts
+  that directory on `PATH`. A named directory works as before. An install
+  made by 0.8.0 or earlier stays in `~/bin`: `install_cli()` and
+  `uninstall_cli()` say so and leave it alone, and
+  `install_cli("~/bin", force = TRUE)` refreshes it.
+
 # corteza 0.8.0.1
 
 - corteza no longer creates a directory in the home directory for a chat bot.
