@@ -138,6 +138,58 @@ local({
     fresh <- ns$session_load("corteza:fresh-fixture")
     expect_equal(c(fresh$provider, fresh$model), c("anthropic", "claude-config"))
 
+    # A session belongs to the directory it was started in. From another
+    # directory --list and --resume find none and say how many there are,
+    # and --all reaches them.
+    elsewhere <- file.path(root, "elsewhere")
+    dir.create(elsewhere)
+    setwd(elsewhere)
+    run_cli <- function(...) {
+        flags <- c(...)
+        cli$commandArgs <- function(...) flags
+        capture.output(cli$run_agent(cli$parse_args()))
+    }
+    said <- function(out, text) any(grepl(text, out, fixed = TRUE))
+    started_here <- c("corteza:resume-fixture", "corteza:fresh-fixture")
+
+    before <- loops
+    out <- run_cli("--list")
+    expect_true(said(out, paste("No session was started in this directory.",
+                                "2 are elsewhere (corteza --list --all).")))
+    expect_false(said(out, "corteza:resume-fixture"))
+    out <- run_cli("--list", "--all")
+    expect_true(said(out, "corteza:resume-fixture"))
+    expect_true(said(out, "corteza:fresh-fixture"))
+    # Listing starts no conversation.
+    expect_equal(loops, before)
+
+    # --resume --all takes the latest there is, and says where it is from.
+    out <- run_cli("--resume", "--all")
+    expect_equal(seen$disk_session$session$sessionKey, "corteza:fresh-fixture")
+    expect_true(said(out, sprintf("This session was started in %s.",
+                                  ns$session_dir_show(ns$session_cwd(root)))))
+    # So does a session named by its key.
+    out <- run_cli("--session", "corteza:resume-fixture")
+    expect_equal(seen$disk_session$session$sessionKey, "corteza:resume-fixture")
+    expect_true(said(out, "This session was started in "))
+
+    # --resume alone starts fresh here, as the terminal's own session.
+    out <- run_cli("--resume")
+    expect_true(said(out, paste("No session was started in this directory.",
+                                "2 are elsewhere (corteza --resume --all).",
+                                "Starting fresh.")))
+    made_key <- seen$disk_session$session$sessionKey
+    expect_false(made_key %in% started_here)
+    made <- ns$store_load()[[made_key]]
+    expect_equal(made$surface, "cli")
+    expect_equal(made$cwd, ns$session_cwd(elsewhere))
+    # And the next --resume here finds that one, with nothing to add.
+    out <- run_cli("--resume")
+    expect_equal(seen$disk_session$session$sessionKey, made_key)
+    expect_false(said(out, "This session was started in "))
+    expect_false(said(out, "No session was started"))
+    setwd(root)
+
     # Shared setup must not reintroduce the unrelated config model, including
     # a gateway that has no built-in model default.
     for (provider in c("openai", "openai_compatible")) {

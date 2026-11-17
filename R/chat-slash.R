@@ -291,7 +291,7 @@ chat_help_text <- function() {
           "  /last [N]                     Show tool output (1=most recent)",
           "  /outputs                      List recent tool outputs",
           "  /refine [list|rollback <id>|promote <id>]  Review the conversation into one-line lessons (continual harness)",
-          "  /sessions                     List sessions for this directory",
+          "  /sessions [all]               List this directory's sessions, or every directory's",
           "  /trace [N]                    Show last N tool executions (default 20)",
           "  /permissions [allow|ask|deny] Show, or switch, tool approval for this session",
           "  /auto [--exec] [goal]         Continue the current task unattended, or start a new goal",
@@ -332,7 +332,7 @@ chat_help_text <- function() {
           "Keys:",
           "  Esc                           Interrupt the current turn and return to the prompt.",
           "                                (RStudio's console intercepts Ctrl+C for copy. In the",
-          "                                terminal ~/bin/corteza CLI the split is reversed:",
+          "                                terminal corteza CLI the split is reversed:",
           "                                Ctrl+C interrupts, Esc does nothing.)",
           "",
           sep = "\n"

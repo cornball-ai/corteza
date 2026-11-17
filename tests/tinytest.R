@@ -8,5 +8,13 @@ if (requireNamespace("tinytest", quietly = TRUE)) {
   Sys.setenv(R_USER_CACHE_DIR  = tempfile("corteza_cache_"),
              R_USER_DATA_DIR   = tempfile("corteza_data_"),
              R_USER_CONFIG_DIR = tempfile("corteza_config_"))
+  # corteza's own overrides come next. Two of them replace a default
+  # that the lines above have just sent to the temp directory, and the
+  # third names a Matrix config to read. A developer who has one set,
+  # say in a bot's service environment, would otherwise run these tests
+  # against live state. Unset rather than pointed elsewhere, so the
+  # tests take the default path; a test that needs one sets it itself.
+  Sys.unsetenv(c("CORTEZA_STATE_DIR", "CORTEZA_REMOTE_DIR",
+                 "CORTEZA_MATRIX_CONFIG"))
   tinytest::test_package("corteza")
 }

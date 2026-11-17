@@ -15,7 +15,7 @@
 ## Quick Start
 
 ```bash
-# Install the CLI
+# Install the CLI. It prints the line that puts it in your PATH.
 r -e 'corteza::install_cli()'
 
 # Start the agent
@@ -54,7 +54,7 @@ The primary interface. A terminal agent with session management and context comp
 
 ```bash
 corteza                          # Start agent
-corteza --resume                 # Resume last session
+corteza --resume                 # Resume this directory's last session
 corteza --provider ollama        # Use local models
 corteza --provider moonshot --model kimi-k2
 corteza --provider openai_codex  # ChatGPT subscription (log in once, see API Keys)
@@ -208,8 +208,11 @@ corteza searches the web two ways:
 ### CLI (Optional)
 
 ```r
-# Install the corteza CLI to ~/bin
+# Install the corteza CLI under R's user data directory
 corteza::install_cli()
+
+# Or into a directory already in your PATH
+corteza::install_cli("~/bin")
 ```
 
 -----
