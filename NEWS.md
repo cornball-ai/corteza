@@ -1,3 +1,13 @@
+# corteza 0.8.0.5
+
+- **A bot with no `operators` accepts no invites.** Up to 0.8.0 it accepted
+  every one, which gave a session with tools to anyone who could invite it.
+  Rooms it is already in work as before. Each refused invite is reported in
+  the log with what would change it.
+- `bot_configure()` gains `operators`: the people a bot answers to, each by
+  a full Matrix id. Before, the key could only be added to the bot config by
+  hand. A bot that should go on accepting invites needs it.
+
 # corteza 0.8.0.4
 
 - `corteza --resume`, `corteza --list`, `/sessions` and
