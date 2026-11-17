@@ -501,21 +501,6 @@ expect_error(
   pattern = "Matrix ID"
 )
 
-# Agent name is the localpart as written, so the default workspace matches
-# the instance directory (~/cornelius, not ~/Cornelius).
-expect_equal(
-  corteza:::bot_agent_name(list(user_id = "@cornelius:cornball.ai")),
-  "cornelius"
-)
-expect_equal(
-  corteza:::bot_agent_name(list(user_id = "@cloptimus:example")),
-  "cloptimus"
-)
-expect_equal(
-  corteza:::bot_agent_name(list(user_id = "")),
-  "agent"
-)
-
 # Topic parser.
 expect_equal(
   corteza:::bot_parse_topic("~/To_Do | todo management"),

@@ -8,7 +8,8 @@ matrix_run_init(
   model = NULL,
   provider = NULL,
   tools_filter = NULL,
-  hooks = NULL
+  hooks = NULL,
+  cwd = NULL
 )
 }
 \arguments{
@@ -24,6 +25,14 @@ matrix_run_init(
 the host about; see Hooks. NULL, the default, means a bare bot:
 \code{/clear} archives and resets without filing anything, and a
 thread reply starts from the thread's own history.}
+
+\item{cwd}{Character or NULL. The directory a room works in when its
+topic names none, for this run. It must exist: corteza does not
+create it, and the run stops at its start when this directory, or
+the one saved by \code{\link{bot_configure}}, is missing. NULL
+(default) uses the saved one. With neither, such a room works in a
+scratch folder under the session's temporary directory, which is
+deleted when the process ends.}
 }
 \value{
 See \code{\link{bot_run_init}}.

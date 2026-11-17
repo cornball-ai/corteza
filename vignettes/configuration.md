@@ -658,6 +658,31 @@ corteza::bot_configure(
 )
 ```
 
+#### Where a room works
+
+A room works in the first of these that exists:
+
+1. The directory at the start of its topic, written `<path> | <description>`,
+   as in `~/project | release notes`. A room reads its topic when its
+   conversation starts, so send `/clear` after changing it.
+2. The bot's `cwd`. `bot_configure(cwd = )` saves one. `bot_run(cwd = )`,
+   `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
+   wins over the saved one.
+3. A scratch folder under the session's temporary directory, deleted when the
+   process ends. The room is told it has no project directory.
+
+corteza creates neither of the first 2. A `cwd` that does not exist is an
+error where it is given, and a run stops at its start when the saved one has
+been removed. Up to 0.8.0 the last step was `~/<bot name>`, created on first
+use. A bot that relied on that directory now needs `cwd`:
+
+```r
+corteza::bot_run(cwd = "~/mybot")
+```
+
+`voice_serve()` sessions resolve their directory the same way. In a process
+of their own they use the saved `cwd`.
+
 ### Legacy memory
 
 | Key | Type | Default | Description |
