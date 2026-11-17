@@ -1,3 +1,15 @@
+# corteza 0.8.0.1
+
+- corteza no longer creates a directory in the home directory for a chat bot.
+  Up to 0.8.0 a room whose topic named no directory worked in `~/<bot name>`,
+  created on first use; a test did the same on CRAN's check machine. Such a
+  room now works in the bot's `cwd`, a new last argument of `bot_configure()`,
+  `bot_run()`, `bot_run_init()` and `bot_poll()`, and of the `matrix_*` names
+  that forward to them. It must name an existing directory. With no `cwd`,
+  the room works in a scratch folder under the session's temporary directory
+  and is told it has no project directory. A bot that relied on
+  `~/<bot name>` now needs `cwd`.
+
 # corteza 0.8.0
 
 CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.
