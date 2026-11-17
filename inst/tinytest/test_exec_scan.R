@@ -245,9 +245,13 @@ for (cmd in c("git -C .corteza add skills/x.R",
               "cd .corteza && git commit -m 'skills'")) {
     expect_true(clean(sh(cmd)), info = cmd)
 }
-# The zone itself, which the file tools' rules read too.
+# The zone itself, which the file tools' rules read too. It compares
+# resolved paths, so the path is resolved as scan_resolve() resolves a
+# word. Joined to `root` as this file holds it, the path has backslashes
+# on Windows and every zone below came back "outside".
 zone <- function(rel) {
-    corteza:::scan_zone(corteza:::scan_new(root), file.path(root, rel))
+    sx <- corteza:::scan_new(root)
+    corteza:::scan_zone(sx, corteza:::.resolve_real(rel, sx$cwd))
 }
 expect_identical(zone(".corteza"), "control")
 expect_identical(zone(".corteza/config.json"), "control")
