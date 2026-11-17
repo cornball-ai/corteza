@@ -229,9 +229,15 @@ preview. The journal is the full provider-native record:
 `<id>.journal/live.json` is the live history as last mirrored (written
 after every `history_callback`), and `segment-NNNN.json` holds the
 exact history a rewrite replaced, written before the rewrite so a
-failed write blocks it. `journal_rewrite()` is the one call every
-rewrite site makes (compaction in `compact-turn.R`, archival); nothing
-replaces `session$history` without it. `journal_turn_slice()` returns
+failed write blocks it. `history_replace()` (`R/history-replace.R`) is
+the one call every rewrite site makes (compaction, context edits,
+archival, the provider bridge, restores, a resumed job): it removes the
+thinking blocks from the replacement, calls `journal_rewrite()`, then
+installs the history. Nothing else replaces `session$history`, and
+`test_history_replace.R` fails on an assignment to a history that its
+table does not list. A provider accepts a thinking block only in the
+conversation that produced it; `turn()` answers a refusal by removing
+them all and continuing once. `journal_turn_slice()` returns
 the entries a turn added even when a compaction inside the turn rewrote
 the live history; do not slice by before/after length. A session with
 no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
