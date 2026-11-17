@@ -304,6 +304,113 @@ if (.Platform$OS.type != "windows") local({
     expect_true(file.exists(far$trace))
 })
 
+# A link whose target stays inside the data directory: an agent's folder
+# pointing at a backup kept there, and a sessions folder pointing at
+# another. Nothing behind either is listed or removed. Run twice, the
+# second time as Windows sees links: Sys.readlink() reports none there,
+# so the real path alone has to catch them.
+if (.Platform$OS.type != "windows") local({
+    for (windows_like in c(FALSE, TRUE)) local({
+        fx <- retention_fixture()
+        on.exit(fx$restore(), add = TRUE)
+        if (windows_like) {
+            orig_link <- corteza:::retention_is_link
+            assignInNamespace("retention_is_link", function(path) FALSE,
+                              ns = "corteza")
+            on.exit(assignInNamespace("retention_is_link", orig_link,
+                                      ns = "corteza"), add = TRUE)
+        }
+        why <- if (windows_like) "as on Windows" else "with Sys.readlink()"
+        near <- make_session(fx, "near")
+        kept <- make_session(list(data = file.path(fx$data, "backup")),
+                             "kept", agent = "a")
+        kept2 <- make_session(list(data = file.path(fx$data, "backup2")),
+                              "kept2", agent = "b")
+        agents <- file.path(fx$data, "agents")
+        expect_true(file.symlink(file.path(fx$data, "backup", "agents", "a"),
+                                 file.path(agents, "linked")), info = why)
+        dir.create(file.path(agents, "c"))
+        expect_true(file.symlink(dirname(kept2$trace),
+                                 file.path(agents, "c", "sessions")),
+                    info = why)
+        inside <- c(kept$trace, kept$transcript, kept2$trace,
+                    kept2$transcript, file.path(kept$journal, "live.json"),
+                    file.path(kept2$journal, "live.json"))
+
+        read <- character()
+        orig_dir <- corteza:::retention_scan_dir
+        assignInNamespace("retention_scan_dir", function(dir, ...) {
+            read <<- c(read, dir)
+            orig_dir(dir, ...)
+        }, ns = "corteza")
+        found <- corteza:::retention_scan(90, now = fx$later)
+        assignInNamespace("retention_scan_dir", orig_dir, ns = "corteza")
+        expect_identical(read, file.path(agents, "main", "sessions"),
+                         info = why)
+        expect_identical(unique(found$session), "near", info = why)
+
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_identical(unique(found$session), "near", info = why)
+        expect_false(dir.exists(near$journal), info = why)
+        expect_true(all(file.exists(inside)), info = why)
+        via_link <- file.path(agents, "linked", "sessions",
+                              basename(kept$trace))
+        expect_true(file.exists(via_link), info = why)
+        expect_false(corteza:::retention_within(via_link), info = why)
+        expect_false(corteza:::retention_remove(via_link, "trace"),
+                     info = why)
+        expect_true(file.exists(kept$trace), info = why)
+        # The same file by its own path is under the data directory with
+        # no link on the way.
+        expect_true(corteza:::retention_within(kept$trace), info = why)
+    })
+})
+
+# A link to itself resolves nowhere, so its real path cannot give it
+# away. Sys.readlink() does.
+if (.Platform$OS.type != "windows") local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    make_session(fx, "near")
+    loop <- file.path(fx$data, "agents", "loop")
+    expect_true(file.symlink("loop", loop))
+    expect_false(corteza:::retention_within(file.path(loop, "sessions",
+                                                      "x_trace.jsonl")))
+    found <- corteza:::retention_scan(90, now = fx$later)
+    expect_identical(unique(found$session), "near")
+})
+
+# On Windows, a junction to a folder inside the data directory, which
+# Sys.readlink() does not see and no one needs a privilege to make.
+if (.Platform$OS.type == "windows") local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    near <- make_session(fx, "near")
+    kept <- make_session(list(data = file.path(fx$data, "backup")), "kept",
+                         agent = "a")
+    link <- file.path(fx$data, "agents", "linked")
+    if (isTRUE(Sys.junction(file.path(fx$data, "backup", "agents", "a"),
+                            link))) {
+        # R for Windows cannot remove a link (unlink() and file.remove()
+        # both fail on one), and the link has to go before its folders.
+        on.exit({
+            win <- gsub("/", "\\\\", normalizePath(dirname(link),
+                                                   winslash = "/"))
+            system2("cmd", c("/c", "rmdir",
+                             shQuote(paste0(win, "\\linked"), type = "cmd")),
+                    stdout = FALSE, stderr = FALSE)
+        }, add = TRUE, after = FALSE)
+        via_link <- file.path(link, "sessions", basename(kept$trace))
+        expect_true(file.exists(via_link))
+        expect_identical(Sys.readlink(link), "")
+        expect_false(corteza:::retention_within(via_link))
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_identical(unique(found$session), "near")
+        expect_true(file.exists(kept$trace))
+        expect_true(file.exists(file.path(kept$journal, "live.json")))
+    }
+})
+
 # The real path decides as well, for a link Sys.readlink() cannot see
 # (Windows). Here ".." stands in for one: no part of the path is a link,
 # and it still leads out of the data directory.

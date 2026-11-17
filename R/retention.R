@@ -360,26 +360,48 @@ retention_removable <- function(path, kind) {
 
 # TRUE when `path` lies under corteza's data directory with no link on
 # the way: neither the path nor a folder between it and the data
-# directory is one. The data directory itself may be a link. On Windows
-# Sys.readlink() sees no link, so the real path must lie under the data
-# directory's real path as well.
+# directory is one, wherever the link points. The data directory itself
+# may be a link.
+#
+# Each part is tested 2 ways, since Windows hides a link from the first.
+# Sys.readlink() names a link on Unix and gives "" for every path on
+# Windows. The real path tells on both: a part that is no link resolves
+# to its parent's real path and its own name, and a link resolves to its
+# target, inside the data directory or out of it. So does "..".
 retention_within <- function(path, root = corteza_data_dir()) {
     prefix <- paste0(root, "/")
     if (!startsWith(path, prefix)) {
         return(FALSE)
     }
     here <- root
+    real <- normalizePath(root, winslash = "/", mustWork = FALSE)
     for (part in strsplit(substring(path, nchar(prefix) + 1L), "/",
                           fixed = TRUE)[[1L]]) {
         here <- file.path(here, part)
-        link <- Sys.readlink(here)
-        if (is.na(link) || nzchar(link)) {
+        if (retention_is_link(here)) {
             return(FALSE)
         }
+        real_here <- normalizePath(here, winslash = "/", mustWork = FALSE)
+        if (!retention_same_path(real_here, paste0(real, "/", part))) {
+            return(FALSE)
+        }
+        real <- real_here
     }
-    real <- normalizePath(path, winslash = "/", mustWork = FALSE)
-    real_root <- normalizePath(root, winslash = "/", mustWork = FALSE)
-    startsWith(real, paste0(real_root, "/"))
+    TRUE
+}
+
+retention_is_link <- function(path) {
+    link <- Sys.readlink(path)
+    is.na(link) || nzchar(link)
+}
+
+# Windows file names ignore case, so a real path there may differ from
+# the expected one in case alone.
+retention_same_path <- function(a, b) {
+    if (.Platform$OS.type == "windows") {
+        return(identical(tolower(a), tolower(b)))
+    }
+    identical(a, b)
 }
 
 retention_bytes <- function(path, kind) {
