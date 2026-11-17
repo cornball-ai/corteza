@@ -2819,24 +2819,48 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
 # turn() errors. Matrix tool calls (bash, run_r) use getwd() for
 # relative paths, so this is what actually makes the room's cwd take
 # effect.
+#
+# A turn that cannot enter its directory does not run. Run anyway, it
+# would work wherever the service was started: its tools resolve
+# relative paths against getwd(), while the supervisor reads them
+# against session$cwd.
 bot_run_turn_in_cwd <- function(prompt, session) {
     target <- session$cwd
     orig_wd <- getwd()
     if (bot_is_scratch(target)) {
         # The scratch folder is under the temp directory, which a cleaner
-        # may empty while the bot runs. Without the folder the turn would
-        # run wherever the service was started.
+        # may empty while the bot runs.
         bot_scratch_cwd()
     }
-    if (!is.null(target) && nzchar(target) && dir.exists(target)) {
-        tryCatch(setwd(target), error = function(e) NULL)
-    }
     on.exit(tryCatch(setwd(orig_wd), error = function(e) NULL), add = TRUE)
+    if (!bot_enter_dir(target)) {
+        return(bot_cwd_unavailable(target))
+    }
 
     tryCatch(
              turn(prompt, session)$reply,
              error = function(e) sprintf("(agent error: %s)", conditionMessage(e))
     )
+}
+
+# TRUE once getwd() is `dir`; FALSE when `dir` is not one existing
+# directory or setwd() refuses it.
+bot_enter_dir <- function(dir) {
+    if (!is.character(dir) || length(dir) != 1L || is.na(dir) ||
+        !nzchar(dir) || !dir.exists(dir)) {
+        return(FALSE)
+    }
+    !inherits(tryCatch(setwd(dir), error = function(e) e), "error")
+}
+
+# The reply when a turn cannot enter its directory.
+bot_cwd_unavailable <- function(dir) {
+    if (!is.character(dir) || length(dir) != 1L || is.na(dir) || !nzchar(dir)) {
+        return("(agent error: this room has no working directory, so nothing ran.)")
+    }
+    sprintf(paste("(agent error: cannot enter the working directory %s;",
+                  "it is missing, is not a directory, or cannot be",
+                  "opened. Nothing ran.)"), dir)
 }
 
 #' Initialize the Matrix long-poll state
