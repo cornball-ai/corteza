@@ -246,3 +246,154 @@ expect_equal(length(ctx_compact$session$spend$segments), 1L)
 expect_equal(ctx_compact$session$spend$segments[[1L]]$input_tokens, 12L)
 expect_equal(ctx_compact$session$spend$segments[[1L]]$output_tokens, 3L)
 expect_equal(ctx_compact$session$spend$segments[[1L]]$cost, 0.01)
+
+# 12. An automatic compaction runs the memory flush first only where
+# the config turns it on (memory_flush_enabled, off by default). The
+# flush is replaced by a counter: this is about whether the hook calls
+# it, and nothing is sent.
+local({
+    flush <- corteza:::run_memory_flush
+    flushes <- 0L
+    utils::assignInNamespace("run_memory_flush", function(ctx) {
+        flushes <<- flushes + 1L
+        list(content = "NO_REPLY", history = list(),
+             usage = list(input_tokens = 5L, output_tokens = 1L,
+                          total_tokens = 6L, cost = 0.001))
+    }, "corteza")
+    on.exit(utils::assignInNamespace("run_memory_flush", flush, "corteza"),
+            add = TRUE)
+
+    fire <- function(config, reason) {
+        ctx <- base_ctx(character())
+        ctx$config <- config
+        ctx$disk_session <- NULL
+        ctx$session <- new.env(parent = emptyenv())
+        ctx$session$sessionId <- "flush-test"
+        corteza:::.repl_install_compaction_hook(ctx)
+        before <- flushes
+        said <- capture.output(ctx$session$on_compaction(list(
+            reason = reason, summary = "older work summarized",
+            usage = list(input_tokens = 12L, output_tokens = 3L,
+                         total_tokens = 15L, cost = 0.01))))
+        list(ran = flushes - before,
+             said = any(grepl("Flushing memories", said, fixed = TRUE)),
+             spent = ctx$session$spend$segments[[1L]]$input_tokens)
+    }
+    for (why in c("threshold", "preflight", "checkpoint", "idle",
+                  "context_overflow")) {
+        # No key, and the key set to false: no flush and no line about
+        # one. The session is charged the summary's 12 input tokens.
+        for (cfg in list(list(), list(memory_flush_enabled = FALSE),
+                         list(memory_flush_enabled = "true"))) {
+            got <- fire(cfg, why)
+            expect_identical(got$ran, 0L)
+            expect_false(got$said)
+            expect_equal(got$spent, 12)
+        }
+        # On: the flush runs first, and its 5 are charged with the 12.
+        got <- fire(list(memory_flush_enabled = TRUE), why)
+        expect_identical(got$ran, 1L)
+        expect_true(got$said)
+        expect_equal(got$spent, 17)
+    }
+    # A compaction asked for by hand never ran the flush, on or off.
+    got <- fire(list(memory_flush_enabled = TRUE), "manual")
+    expect_identical(got$ran, 0L)
+    expect_false(got$said)
+})
+
+# 13. /tasks. With the task list off (the default) it says how to turn
+# the list on, after any tasks the session still holds from before.
+# With it on it lists them, or says there are none.
+local({
+    tasks_out <- function(enabled, tasks = list()) {
+        ctx <- base_ctx(c("/tasks"))
+        ctx$session <- new.env(parent = emptyenv())
+        ctx$session$channel <- "cli"
+        ctx$session$config <- list(task_list_enabled = enabled)
+        ctx$session$tasks <- tasks
+        capture.output(corteza:::run_repl_loop(ctx))
+    }
+    held <- list(list(text = "kept from before", status = "pending"))
+    off_note <- "The task list is off."
+    has <- function(out, text) any(grepl(text, out, fixed = TRUE))
+
+    out <- tasks_out(FALSE)
+    expect_true(has(out, off_note))
+    expect_true(has(out, "\"task_list_enabled\": true"))
+    expect_true(has(out, corteza:::corteza_config_path("config.json")))
+    expect_false(has(out, "No tasks."))
+
+    out <- tasks_out(FALSE, held)
+    expect_true(has(out, "kept from before"))
+    expect_true(has(out, off_note))
+    # The list prints first, the note after it. A line that is missing
+    # gives NA here, which fails the assertion without stopping the file.
+    first <- function(text) grep(text, out, fixed = TRUE)[1L]
+    expect_true(isTRUE(first("kept from before") < first(off_note)))
+
+    out <- tasks_out(TRUE)
+    expect_true(has(out, "No tasks."))
+    expect_false(has(out, off_note))
+
+    out <- tasks_out(TRUE, held)
+    expect_true(has(out, "kept from before"))
+    expect_false(has(out, off_note))
+    expect_false(has(out, "No tasks."))
+
+    # A session with no config at all, as a caller's own ctx may build.
+    ctx <- base_ctx(c("/tasks"))
+    ctx$session <- new.env(parent = emptyenv())
+    ctx$session$channel <- "console"
+    expect_true(has(capture.output(corteza:::run_repl_loop(ctx)), off_note))
+})
+
+# 14. The compaction check after a reply measures the system text the
+# next request sends: with the task list off it holds no task text,
+# and with it on it does. The check itself is replaced by a recorder.
+local({
+    old_data <- Sys.getenv("R_USER_DATA_DIR", unset = NA)
+    Sys.setenv(R_USER_DATA_DIR = file.path(tempdir(), "repl_test_data"))
+    on.exit(if (is.na(old_data)) {
+        Sys.unsetenv("R_USER_DATA_DIR")
+    } else {
+        Sys.setenv(R_USER_DATA_DIR = old_data)
+    }, add = TRUE)
+    compact <- corteza:::maybe_compact_turn_session
+    measured <- NULL
+    utils::assignInNamespace("maybe_compact_turn_session",
+        function(session, config, ..., system = NULL) {
+            measured <<- system
+            FALSE
+        }, "corteza")
+    on.exit(utils::assignInNamespace("maybe_compact_turn_session", compact,
+                                     "corteza"), add = TRUE)
+
+    after_reply <- function(enabled) {
+        measured <<- NULL
+        ctx <- base_ctx(c("hello"))
+        ctx$provider <- "ollama"
+        ctx$model <- "llama3.2"
+        ctx$config <- list()
+        ctx$session <- new.env(parent = emptyenv())
+        ctx$session$channel <- "cli"
+        ctx$session$system <- "BASE"
+        ctx$session$config <- list(task_list_enabled = enabled)
+        ctx$session$history <- list()
+        ctx$session$tasks <- list()
+        ctx$session$tasks_dirty <- FALSE
+        sess <- corteza:::session_new("ollama", "llama3.2", getwd())
+        ctx$disk_session <- list(session = sess, sessionId = sess$sessionId,
+                                 resumed = FALSE)
+        ctx$render_reply <- function(txt) invisible(NULL)
+        ctx$turn_fn <- function(prompt, session) {
+            list(reply = "ok", usage = NULL)
+        }
+        capture.output(corteza:::run_repl_loop(ctx))
+        measured
+    }
+    expect_identical(after_reply(FALSE), "BASE")
+    with_list <- after_reply(TRUE)
+    expect_true(startsWith(with_list, "BASE"))
+    expect_true(grepl("task_create", with_list, fixed = TRUE))
+})

@@ -152,7 +152,8 @@ local({
     ctx <- new.env(parent = emptyenv())
     ctx$cwd <- root
     ctx$ws_enabled <- FALSE
-    ctx$config <- list(context_compact_pct = 100)
+    # The task list is on: the turn below sends a plan to the room for approval.
+    ctx$config <- list(context_compact_pct = 100, task_list_enabled = TRUE)
     ctx$provider <- "ollama"
     ctx$model <- "fixture"
     ctx$session <- corteza::new_session("cli", provider = "ollama")
