@@ -228,6 +228,14 @@ bot_save_config <- function(cfg) {
 #'   under the session's temporary directory, which is deleted when the
 #'   process ends. Up to 0.8.0 the default was \code{~/<bot name>},
 #'   created on first use.
+#' @param operators Character vector or NULL. The people the bot answers
+#'   to, each a full Matrix id such as \code{"@you:example.org"}. The bot
+#'   accepts an invite only from one of them, answers a room with one
+#'   person in it only when that person is one of them, and takes its
+#'   approvals from them. NULL (default) saves none. A bot with no
+#'   operators accepts no invites: it works in the room it was configured
+#'   with and in rooms it has already joined. Up to 0.8.0 it accepted
+#'   every invite.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -247,12 +255,15 @@ bot_configure <- function(server, user, password, room, model = NULL,
                           auto_approve_asks = FALSE, bots = NULL,
                           models = NULL,
                           model_badge = c("never", "non_default", "always"),
-                          display_name = NULL, fallback = NULL, cwd = NULL) {
+                          display_name = NULL, fallback = NULL, cwd = NULL,
+                          operators = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     # Before the transport is asked for anything: a directory that is
-    # not there should not cost a login.
+    # not there should not cost a login, and neither should an operator
+    # written without a server.
     cwd <- bot_check_cwd(cwd)
+    operators <- bot_check_operators(operators)
     bot_require_mx()
     provider <- match.arg(provider, providers)
     model_badge <- match.arg(model_badge)
@@ -287,8 +298,12 @@ bot_configure <- function(server, user, password, room, model = NULL,
                      auto_approve_asks = isTRUE(auto_approve_asks),
                      bots = bots, models = models, fallback = fallback,
                      model_badge = model_badge,
-                     display_name = display_name, cwd = cwd))
+                     display_name = display_name, cwd = cwd,
+                     operators = operators))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
+    if (is.null(operators)) {
+        message(bot_no_operators_note())
+    }
     invisible(bot_plain_cfg(cfg))
 }
 
@@ -1255,19 +1270,48 @@ bot_should_respond <- function(msg, self_id, members, bots = character(),
 }
 
 # Matrix ids permitted to open a private conversation with this bot and
-# to have their invites auto-accepted. Empty means unrestricted, which
-# is the pre-existing behavior.
+# to have their invites auto-accepted. With none the bot accepts no
+# invite (bot_allowed_invites()). A room it is already in works as it
+# did up to 0.8.0: its one human is answered (bot_should_respond()) and
+# answers the approval prompts (bot_approvers()).
 bot_operators <- function(cfg) {
     ops <- as.character(cfg$operators %||% character())
     ops[!is.na(ops) & nzchar(ops)]
 }
 
+# The `operators` argument as the config holds it: full Matrix ids, or
+# NULL for none. A name written without its server matches nobody, and
+# the bot would refuse its owner's invites with nothing wrong to see.
+bot_check_operators <- function(operators) {
+    if (is.null(operators)) {
+        return(NULL)
+    }
+    operators <- unique(as.character(operators))
+    bad <- operators[is.na(operators) | !grepl("^@.+:.+", operators)]
+    if (length(bad)) {
+        stop("operators must be full Matrix IDs like '@name:example.org': ",
+             paste(bad, collapse = ", "), call. = FALSE)
+    }
+    if (!length(operators)) {
+        return(NULL)
+    }
+    operators
+}
+
+# What a bot with no operators does about invites, and what changes it.
+bot_no_operators_note <- function() {
+    paste0("This bot has no operators, so it accepts no invites. Name who ",
+           "may invite it: bot_configure(operators = \"@you:example.org\"), ",
+           "or `operators` in its config.")
+}
+
 # Which pending invites to accept, from chat.api's invite records.
 #
-# With operators configured, an invite is only accepted when an operator
-# issued it. Auto-joining anyone's invite hands a stranger a session
-# with a tool-using agent, and refusing at the door is cheaper than
-# staying silent once inside.
+# An invite is accepted only when an operator issued it. Auto-joining
+# anyone's invite hands a stranger a session with a tool-using agent,
+# and refusing at the door is cheaper than staying silent once inside.
+# So a bot with no operators accepts none, and each refusal says what
+# would change that. Up to 0.8.0 such a bot accepted every invite.
 #
 # An invite whose sender cannot be determined is refused too, and
 # reported differently. chat_invite() carries NA for that, which is not
@@ -1283,9 +1327,6 @@ bot_allowed_invites <- function(invites, operators = character()) {
         return(character())
     }
     rooms <- vapply(invites, function(i) as.character(i$channel), character(1))
-    if (!length(operators)) {
-        return(rooms)
-    }
     who <- vapply(invites, function(i) {
         v <- i$inviter
         if (is.null(v) || !length(v)) NA_character_ else as.character(v)[[1L]]
@@ -1295,6 +1336,10 @@ bot_allowed_invites <- function(invites, operators = character()) {
         message(sprintf("matrix: refusing invite to %s from %s (not an operator)",
                         rooms[[i]],
                 if (is.na(who[[i]])) "an unknown sender" else who[[i]]))
+    }
+    # Once per batch: the refusals above have 1 cause and 1 fix.
+    if (!length(operators)) {
+        message("matrix: ", bot_no_operators_note())
     }
     rooms[keep]
 }
