@@ -292,6 +292,9 @@ and `/context` says so.
 { "context_window": 64000 }
 ```
 
+It takes a number above 0. Anything else, a quoted `"64000"` included, is
+ignored and the table answers.
+
 Set it for a local model. An Ollama server decides the window when it loads a
 model (`OLLAMA_CONTEXT_LENGTH`, or 4k, 32k or 256k tokens by the memory of
 the GPU), so the table's row for an Ollama model is a guess, and your server

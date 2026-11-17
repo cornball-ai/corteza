@@ -241,6 +241,24 @@ expect_equal(tses$window, 30000L)
 expect_equal(tses$source, "session")
 expect_equal(tses$tokens, 27000)
 
+# A window that is not one number above 0 is no window: the next
+# source answers. A string in the config used to stop every turn.
+for (bad in list("64000", 0, -5, NA_real_, c(1, 2), Inf, TRUE)) {
+    what <- paste(deparse(bad), collapse = "")
+    got <- corteza:::context_trigger(trigger_session(),
+                                     trigger_config(context_window = bad))
+    expect_equal(got$window, 1000000L, info = what)
+    expect_equal(got$source, "table", info = what)
+    s_bad <- trigger_session()
+    s_bad$context_window <- bad
+    got <- corteza:::context_trigger(s_bad,
+                                     trigger_config(context_window = 50000L))
+    expect_equal(got$window, 50000L, info = what)
+    expect_equal(got$source, "config", info = what)
+}
+expect_null(corteza:::.window_value(NULL))
+expect_equal(corteza:::.window_value(64000), 64000)
+
 # A model with no row: the fallback, and said so.
 tfall <- corteza:::context_trigger(trigger_session("no-such-model-9"),
                                    trigger_config())
@@ -587,6 +605,16 @@ local({
     expect_true(compact_once(s3, trigger_config(context_window = 500000L,
                                                 context_compact_pct = 80L))$result)
     expect_equal(s3$last_compaction$context_window, 20000L)
+    # A window typed wrong does not stop the check ahead of a turn: the
+    # table's 1M answers, and this history is far under 90% of it.
+    for (bad in list("64000", NA_real_, c(1, 2), 0)) {
+        s4 <- trigger_session()
+        s4$history <- trigger_history()
+        got <- compact_once(s4, trigger_config(context_window = bad),
+                            reason = "preflight")
+        expect_false(got$result, info = paste(deparse(bad), collapse = ""))
+        expect_equal(got$calls, 0L)
+    }
 })
 
 # ---------------------------------------------------------------

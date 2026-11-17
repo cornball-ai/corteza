@@ -30,6 +30,17 @@ CONTEXT_IDLE_TOKENS <- 100000L
     as.numeric(default)
 }
 
+# A window a session or a config names: one finite number above 0,
+# else NULL, and the next source answers. A string there used to stop
+# every turn at its preflight.
+.window_value <- function(value) {
+    if (is.numeric(value) && length(value) == 1L && !is.na(value) &&
+        is.finite(value) && value > 0) {
+        return(value)
+    }
+    NULL
+}
+
 # The cap on the trigger, or NULL when the config turns it off with 0.
 .compact_cap <- function(config) {
     cap <- .config_count(config$context_compact_tokens, CONTEXT_COMPACT_TOKENS)
@@ -63,10 +74,10 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
         model <- session$model_map$cloud %||%
         default_provider_model(session$provider)
     }
-    window <- session$context_window
+    window <- .window_value(session$context_window)
     source <- "session"
     if (is.null(window)) {
-        window <- config$context_window
+        window <- .window_value(config$context_window)
         source <- "config"
     }
     if (is.null(window)) {
@@ -87,7 +98,7 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     # A session that edits its own context is never compacted
     # (maybe_compact_turn_session()), whatever its numbers say.
     sized <- !is.null(pct) && is.finite(pct) && !.context_edit_pure(session)
-    if (sized && window > 0) {
+    if (sized) {
         by_pct <- pct / 100 * window
     } else {
         by_pct <- Inf
@@ -103,7 +114,7 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     }
     list(window = window, source = source, pct = pct, cap = cap,
          tokens = tokens, rule = rule,
-         effective_pct = if (is.finite(tokens) && window > 0) {
+         effective_pct = if (is.finite(tokens)) {
             100 * tokens / window
         } else {
             100
