@@ -370,7 +370,10 @@ compact_rewrite_history <- function(history, cut, summary) {
 #'     `context_idle_tokens` of context compacts below it
 #'     (R/compact-trigger.R).
 #'   - No safe cut available (e.g. open tool_use) → skip.
-#'   - Summarizer fails → log and leave history intact.
+#'   - Summarizer fails → log and leave history intact. The session's
+#'     next summary then reads the smaller budget of 120,000 characters,
+#'     until one succeeds. So does a summary made after the provider
+#'     refused a request for its size (R/compact-trigger.R).
 #'
 #' On success, mutates `session$history` in place. Returns invisibly
 #' TRUE if compaction ran successfully, FALSE otherwise.
@@ -512,6 +515,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                         format_age(idle_gap * 60), format_tokens(used)))
     }
     summary_error <- NULL
+    summary_chars <- .compact_summary_budget(session, limit, byte_limit, reason)
     summary <- compact_summarize_slice(
                                        slice, provider = session$provider %||% "anthropic",
                                        model = model,
@@ -519,7 +523,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        summary_prompt = session$compaction_prompt %||% NULL,
                                        error_callback = function(e) summary_error <<- e,
                                        session = session,
-                                       max_total_chars = .compact_summary_chars(limit, byte_limit))
+                                       max_total_chars = summary_chars)
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",
@@ -528,6 +532,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
             } else {
                 conditionMessage(summary_error)
             },
+                        summary_chars = summary_chars,
                         tokens_before = used,
                         request_bytes = request_bytes,
                         byte_limit = byte_limit,
@@ -563,6 +568,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                   history_after = rewritten,
                   thinking_removed = stripped$removed,
                   cut = cut,
+                  summary_chars = summary_chars,
                   tokens_before = used,
                   request_bytes = request_bytes,
                   byte_limit = byte_limit,

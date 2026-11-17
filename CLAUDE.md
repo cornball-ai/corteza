@@ -163,7 +163,9 @@ provider's page, and `context_window` in the config overrides it.
 row. The summary is written from the newest part of the turns it
 replaces, up to `.compact_summary_chars()` characters: 120,000 at a
 128,000-token window and the same share of a larger one, so raise the
-cap's default only with that budget in mind.
+cap's default only with that budget in mind. After a summary that
+failed, and in a recovery from a request refused for its size, a
+summary reads 120,000 (`.compact_summary_budget()`).
 
 ## Tool execution model: `run_r` vs `run_r_script`
 

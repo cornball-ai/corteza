@@ -61,7 +61,10 @@ request, a session idle for `context_idle_minutes` with
 `context_idle_tokens` of context compacts below it
 (R/compact-trigger.R).
 - No safe cut available (e.g. open tool_use) → skip.
-- Summarizer fails → log and leave history intact.
+- Summarizer fails → log and leave history intact. The session's
+next summary then reads the smaller budget of 120,000 characters,
+until one succeeds. So does a summary made after the provider
+refused a request for its size (R/compact-trigger.R).
 }
 \details{
 On success, mutates `session$history` in place. Returns invisibly

@@ -663,12 +663,17 @@ numbered_history <- function(turns = 40L, chars = 4000L) {
 
 # One compaction with the provider's call replaced, so the summarizer
 # itself runs. Returns whether it compacted and the prompt it sent.
-summary_prompt_for <- function(session, config, ...) {
+# With `fail` the provider's call raises an error once it has the
+# prompt.
+summary_prompt_for <- function(session, config, ..., fail = FALSE) {
     original <- get("chat", envir = asNamespace("llm.api"))
     on.exit(assignInNamespace("chat", original, ns = "llm.api"), add = TRUE)
     seen <- NULL
     assignInNamespace("chat", function(prompt, ...) {
         seen <<- prompt
+        if (fail) {
+            stop("no answer in time")
+        }
         list(content = "earlier work", usage = list())
     }, ns = "llm.api")
     done <- corteza:::maybe_compact_turn_session(
@@ -689,6 +694,8 @@ local({
     expect_true(has(got$prompt, "ask-1 "))
     expect_true(has(got$prompt, "answer-39 "))
     expect_false(has(got$prompt, "ask-40 "))
+    # The event says how much the summary was allowed to read.
+    expect_equal(s$last_compaction$summary_chars, 937500)
 })
 
 # A model with no row has the fallback window and the budget it always
@@ -699,6 +706,7 @@ local({
     s$history <- numbered_history()
     got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
     expect_true(got$done)
+    expect_equal(s$last_compaction$summary_chars, 120000)
     expect_true(has(got$prompt,
                     "[49 earlier message(s) elided to fit the compaction budget]"))
     expect_false(has(got$prompt, "ask-1 "))
@@ -715,6 +723,7 @@ local({
     s$history <- numbered_history()
     got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
     expect_true(got$done)
+    expect_equal(s$last_compaction$summary_chars, 225000)
     expect_true(has(got$prompt, "elided to fit"))
     expect_false(has(got$prompt, "ask-12 "))
     expect_true(has(got$prompt, "answer-12 "))
@@ -729,6 +738,101 @@ local({
     expect_false(has(got$prompt, "ask-8 "))
     expect_true(has(got$prompt, "answer-8 "))
     expect_true(has(got$prompt, "ask-9 "))
+})
+
+# A summary that fails costs the larger request once. The session's
+# next summary reads the budget every model had, 120,000 characters,
+# and one that succeeds brings the window's share back.
+local({
+    config <- trigger_config(context_compact_tokens = 10000L)
+    s <- trigger_session()
+    s$history <- numbered_history()
+    expect_equal(corteza:::.compact_summary_budget(s, 1000000L), 937500)
+    got <- summary_prompt_for(s, config, fail = TRUE)
+    expect_false(got$done)
+    expect_true(has(got$prompt, "ask-1 "))
+    expect_equal(length(s$history), 80L)
+    expect_equal(s$last_compaction_failure$summary_chars, 937500)
+    # The next try reads the newest 120,000 characters.
+    expect_equal(corteza:::.compact_summary_budget(s, 1000000L), 120000)
+    got <- summary_prompt_for(s, config)
+    expect_true(got$done)
+    expect_true(has(got$prompt,
+                    "[49 earlier message(s) elided to fit the compaction budget]"))
+    expect_false(has(got$prompt, "ask-25 "))
+    expect_true(has(got$prompt, "answer-25 "))
+    expect_equal(s$last_compaction$summary_chars, 120000)
+    expect_null(s$last_compaction_failure)
+    # That one succeeded, so the summary after it reads every turn again.
+    s$history <- numbered_history()
+    got <- summary_prompt_for(s, config)
+    expect_true(got$done)
+    expect_true(has(got$prompt, "ask-1 "))
+    expect_false(has(got$prompt, "elided to fit"))
+    expect_equal(s$last_compaction$summary_chars, 937500)
+})
+
+# 2 failures in a row: the second was already the smaller request, and
+# the third try is still the smaller one.
+local({
+    config <- trigger_config(context_compact_tokens = 10000L)
+    s <- trigger_session()
+    s$history <- numbered_history()
+    summary_prompt_for(s, config, fail = TRUE)
+    got <- summary_prompt_for(s, config, fail = TRUE)
+    expect_false(got$done)
+    expect_false(has(got$prompt, "ask-1 "))
+    expect_true(has(got$prompt, "elided to fit"))
+    expect_equal(s$last_compaction_failure$summary_chars, 120000)
+    expect_equal(corteza:::.compact_summary_budget(s, 1000000L), 120000)
+})
+
+# The Codex backend after a failure: 120,000 as well, under its byte
+# bound of 225,000.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    expect_equal(corteza:::.compact_summary_budget(s, 272000L, 900000), 225000)
+    s$last_compaction_failure <- list(reason = "summarizer_error")
+    expect_equal(corteza:::.compact_summary_budget(s, 272000L, 900000), 120000)
+})
+
+# A recovery after the provider refused a request for its size reads
+# the smaller budget at once: the refusal says corteza's count of the
+# conversation ran low, and the summary's own request has to fit.
+local({
+    s <- trigger_session()
+    for (why in c("context_overflow", "request_buffer_overflow")) {
+        expect_equal(
+            corteza:::.compact_summary_budget(s, 1000000L, reason = why),
+            120000, info = why)
+    }
+    for (why in list(NULL, "preflight", "checkpoint", "manual", "threshold")) {
+        expect_equal(
+            corteza:::.compact_summary_budget(s, 1000000L, reason = why),
+            937500, info = paste(why, collapse = ""))
+    }
+    # Through the compactor, as turn() calls it for a recovery.
+    for (why in c("context_overflow", "request_buffer_overflow")) {
+        s <- trigger_session()
+        s$history <- numbered_history()
+        got <- summary_prompt_for(
+            s, trigger_config(context_compact_tokens = 10000L),
+            threshold = 0, min_messages = 2L, reason = why)
+        expect_true(got$done, info = why)
+        expect_true(has(got$prompt, "elided to fit"), info = why)
+        expect_false(has(got$prompt, "ask-25 "), info = why)
+        expect_true(has(got$prompt, "answer-25 "), info = why)
+        expect_equal(s$last_compaction$summary_chars, 120000, info = why)
+        expect_equal(s$last_compaction$reason, why, info = why)
+    }
+    # A manual compaction is no recovery: it reads the window's share.
+    s <- trigger_session()
+    s$history <- numbered_history()
+    got <- summary_prompt_for(
+        s, trigger_config(context_compact_tokens = 10000L), reason = "manual")
+    expect_true(got$done)
+    expect_true(has(got$prompt, "ask-1 "))
+    expect_equal(s$last_compaction$summary_chars, 937500)
 })
 
 # ---------------------------------------------------------------

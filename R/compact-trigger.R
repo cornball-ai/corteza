@@ -194,6 +194,30 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     floor(max(.compact_max_total_chars, chars))
 }
 
+# The budget of this session's next summary: the window's share, or in
+# 2 cases .compact_max_total_chars, the smaller budget every model had
+# before it followed the window.
+#   - The provider has just refused the session's request for its size
+#     (`reason` names an overflow). The window's share rests on
+#     corteza's count of 4 characters to a token, and the refusal says
+#     that count ran low for this conversation, as it does for text in
+#     Chinese or Japanese. The summary's own request has to fit.
+#   - The session's last summary failed. The smaller budget holds until
+#     a summary succeeds (maybe_compact_turn_session() clears the
+#     failure then), so a summarizer that cannot answer the larger
+#     request, inside its time limit or at all, costs that request
+#     once.
+.COMPACT_OVERFLOW_REASONS <- c("context_overflow", "request_buffer_overflow")
+
+.compact_summary_budget <- function(session, window, byte_limit = NA_real_,
+                                    reason = NULL) {
+    overflow <- (reason %||% "") %in% .COMPACT_OVERFLOW_REASONS
+    if (overflow || !is.null(session$last_compaction_failure)) {
+        return(as.numeric(.compact_max_total_chars))
+    }
+    .compact_summary_chars(window, byte_limit)
+}
+
 # What /context prints under its bar: where compaction starts and why
 # there, one short line for each thing that applies.
 .context_trigger_lines <- function(trigger) {

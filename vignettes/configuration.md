@@ -290,7 +290,15 @@ to a quarter of `context_compact_bytes`, counted in characters.
 
 The summarizer has 60 seconds to answer
 (`subagents.context_compaction.timeout_seconds`). When it fails, the
-conversation stays as it was and the turn goes on.
+conversation stays as it was and the turn goes on. The session's next summary
+then reads 120,000 characters whatever the window, the smaller request, and a
+summary that succeeds brings the larger budget back. A model too slow for the
+larger request wants a longer `timeout_seconds`.
+
+A summary made because the provider refused a request for its size reads
+120,000 characters too. The larger budget rests on corteza's count of 4
+characters to a token, and such a refusal says the count ran low for this
+conversation, as it does for text in Chinese or Japanese.
 
 ### The model's window
 
