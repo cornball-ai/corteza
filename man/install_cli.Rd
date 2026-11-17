@@ -6,8 +6,11 @@
 install_cli(path = NULL, force = FALSE)
 }
 \arguments{
-\item{path}{Directory to install to. Default is \code{~/bin} on
-Unix, \code{tools::R_user_dir("corteza", "data")/bin} on Windows.}
+\item{path}{Directory to install to. Default is
+\code{tools::R_user_dir("corteza", "data")/bin}, created when
+missing. To put the command in a directory already in your PATH,
+name it, as in \code{install_cli("~/bin")}. Up to 0.8.0 the default
+on Unix was \code{~/bin}.}
 
 \item{force}{Overwrite existing installation.}
 }
@@ -15,10 +18,10 @@ Unix, \code{tools::R_user_dir("corteza", "data")/bin} on Windows.}
 The installed script path, invisibly.
 }
 \description{
-Install the \code{corteza} command-line tool to a directory in your
-PATH. On Unix (Linux, macOS) installs the Rscript shebang binary.
-On Windows installs a \code{.cmd} wrapper alongside the script so
-\code{corteza} works from cmd.exe / PowerShell.
+Install the \code{corteza} command-line tool. On Unix (Linux, macOS)
+installs the Rscript shebang binary. On Windows installs a
+\code{.cmd} wrapper alongside the script so \code{corteza} works from
+cmd.exe / PowerShell.
 }
 \details{
 Requires:
@@ -29,13 +32,20 @@ Requires:
   \item The \code{corteza} package itself
 }
 
-After installation, run \code{corteza} from any terminal (you may
-need to add the install directory to PATH; the function prints the
-PATH hint if it isn't already there).
+After installation, run \code{corteza} from any terminal. The
+default directory is not in PATH, and the function prints the line
+that adds it.
+
+An install made by 0.8.0 or earlier stays in \code{~/bin} until you
+replace it (\code{install_cli("~/bin", force = TRUE)}) or remove it
+(\code{uninstall_cli("~/bin")}). A shell that finds that copy first
+keeps running it, so both functions say when one is there.
 }
 \examples{
-\dontrun{
-install_cli()
-install_cli("/usr/local/bin")
-}
+# Into a directory of your choosing, here a throwaway one. With no
+# argument the command goes to R's user data directory.
+bin <- file.path(tempdir(), "corteza-bin")
+install_cli(bin)
+uninstall_cli(bin)
+unlink(bin, recursive = TRUE)
 }

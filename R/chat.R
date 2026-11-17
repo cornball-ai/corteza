@@ -200,9 +200,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     route <- .session_model_pair(provider, model, config)
     disk_session <- resolve_disk_session(session_arg, route$provider,
         route$model, cwd)
+    resume_note <- NULL
     if (isTRUE(disk_session$resumed)) {
         route <- .session_model_pair(provider, model, config,
                                      saved = disk_session$session)
+        # Read before the resume writes to the session (R/retention.R).
+        resume_note <- retention_resume_note(disk_session$sessionId)
     }
     history <- disk_session$history %||% list()
     resumed_count <- length(history)
@@ -285,6 +288,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         sprintf("  %ssession %s%s\n",
                 color$dim, disk_session$sessionId, color$reset)
     }
+    retention_line <- NULL
+    if (!is.null(resume_note)) {
+        retention_line <- sprintf("  %s%s%s\n", color$dim, resume_note,
+                                  color$reset)
+    }
     # Why nothing was resumed, or where what was resumed comes from.
     directory_line <- ""
     if (!is.null(disk_session$note)) {
@@ -298,6 +306,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         ),
         "\n\n",
         session_line,
+        retention_line,
         directory_line,
         "\n",
         sep = "")

@@ -1,3 +1,28 @@
+# corteza 0.8.0.3
+
+- corteza now removes what old sessions no longer need. Once a day, when a
+  terminal session starts and while a bot runs, the journal and the tool
+  trace of every session unused for 90 days are removed. Transcripts, session
+  stores, workspaces and audit records stay, and a session whose journal is
+  gone still resumes. Set `retention$session_days` in the user's config to
+  change the number of days; 0 keeps everything.
+  `sessions_prune(dry_run = TRUE)` reports what a run would remove. Nothing
+  reached through a link is removed.
+- A room that restores its context from its journal, and has been silent for
+  90 days, starts its next conversation fresh.
+- A journal removed while its session is running starts again from nothing.
+  Before, the session's next compaction was refused.
+
+# corteza 0.8.0.2
+
+- `install_cli()` no longer writes to `~/bin` by default. With no `path`, the
+  command goes to `tools::R_user_dir("corteza", "data")/bin` on every system,
+  as it already did on Windows, and the function prints the line that puts
+  that directory on `PATH`. A named directory works as before. An install
+  made by 0.8.0 or earlier stays in `~/bin`: `install_cli()` and
+  `uninstall_cli()` say so and leave it alone, and
+  `install_cli("~/bin", force = TRUE)` refreshes it.
+
 # corteza 0.8.0.1
 
 - corteza no longer creates a directory in the home directory for a chat bot.
