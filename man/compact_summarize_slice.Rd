@@ -11,7 +11,8 @@ compact_summarize_slice(
   summary_prompt = NULL,
   error_callback = NULL,
   session = NULL,
-  max_total_chars = .compact_max_total_chars
+  max_total_chars = .compact_max_total_chars,
+  max_request_bytes = NA_real_
 )
 }
 \arguments{
@@ -37,6 +38,11 @@ parent turn reference.}
 request may hold. Past it the oldest entries are left out and the
 summarizer is told how many. The compactor passes a budget that
 follows the model's window.}
+
+\item{max_request_bytes}{The most bytes the serialized request may
+take, its framing included, or NA for no limit. Past it the oldest
+entries are left out as well, and a request that cannot fit is not
+sent.}
 }
 \description{
 Returns the summary text on success or NULL on any error
