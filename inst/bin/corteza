@@ -7,7 +7,9 @@
 #   --model      model name (default: provider-specific)
 #   --port       MCP server port (default: 7850)
 #   --session    Session key (resume if exists, create if not)
-#   --list       List sessions
+#   --resume     Resume the latest session started in this directory
+#   --list       List the sessions started in this directory
+#   --all        With --resume or --list: every directory
 #
 
 # Load .Renviron explicitly (littler may not load it automatically)
@@ -73,6 +75,9 @@ parse_args <- function() {
     } else if (arg == "--list") {
       opts$list <- TRUE
       i <- i + 1
+    } else if (arg == "--all") {
+      opts$all <- TRUE
+      i <- i + 1
     } else if (arg == "--tools" && i < length(args)) {
       opts$tools <- strsplit(args[i + 1], ",")[[1]]
       i <- i + 2
@@ -111,8 +116,10 @@ Options:
   --web-search    Provider-native web search, on by default for hosted providers
   --no-web-search Disable provider-native web search (e.g. to rely on the Tavily tool)
   --session, -s   Session key (resume if exists, create if not)
-  --resume, -r    Resume the most recent session (including its provider/model)
-  --list          List sessions
+  --resume, -r    Resume the latest session started in this directory
+                  (including its provider/model)
+  --list          List the sessions started in this directory
+  --all           With --resume or --list: every directory
   --help, -h      Show this help
 
 Commands (in chat):
@@ -140,7 +147,7 @@ Commands (in chat):
   /cancel <id>   Cancel a delegated job.
   /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
-  /sessions      List sessions
+  /sessions [all]  List this directory's sessions, or every directory's
   /model [name]  List models or switch by name/number
   /effort [level | default]  Show or set reasoning effort
   /provider <p>  Switch provider
@@ -208,7 +215,7 @@ Commands:
   /cancel <id>   Cancel a delegated job.
   /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
-  /sessions      List sessions for this directory
+  /sessions [all]  List this directory's sessions, or every directory's
   /context       Show live context usage and loaded context files
   /context-edit on|off|status  Control conversation context editing
   /spent, /cost  Approximate USD spent this run (main-agent turns)
@@ -506,21 +513,29 @@ run_agent <- function(opts) {
   cwd <- getwd()
   config <- corteza:::load_config(cwd)
 
+  # --list and --resume look at the sessions started in this directory;
+  # --all lifts that.
+  every <- isTRUE(opts$all)
+
   # Handle --list (exit early)
   if (isTRUE(opts$list)) {
-    sessions <- corteza:::session_list()
-    cat(corteza:::format_session_list(sessions), "\n")
+    sessions <- corteza:::session_list(cwd = cwd, all = every)
+    cat(corteza:::format_session_list(sessions, how = "corteza --list --all"), "\n")
     return(invisible(NULL))
   }
 
   # Handle --resume: find latest session key
   if (isTRUE(opts$resume) && is.null(opts$session)) {
-    latest <- corteza:::session_latest()
+    latest <- corteza:::session_latest(cwd = cwd, all = every)
     if (!is.null(latest)) {
       opts$session <- latest$sessionKey
       cat(sprintf("%sResuming latest session: %s%s\n", color$dim, latest$sessionKey, color$reset))
     } else {
-      cat(sprintf("%sNo sessions to resume. Starting fresh.%s\n", color$dim, color$reset))
+      none <- "No sessions found."
+      if (!every) {
+        none <- corteza:::session_none_note(cwd, how = "corteza --resume --all")
+      }
+      cat(sprintf("%s%s Starting fresh.%s\n", color$dim, none, color$reset))
     }
   }
 
@@ -535,10 +550,16 @@ run_agent <- function(opts) {
     if (is.null(session)) {
       # Create new session with specified key
       cat(sprintf("%sCreating session: %s%s\n", color$dim, opts$session, color$reset))
-      session <- corteza:::session_new(route$provider, route$model, cwd, session_key = opts$session)
+      session <- corteza:::session_new(route$provider, route$model, cwd,
+                                       session_key = opts$session, surface = "cli")
     } else {
       # Resuming existing session
       cat(sprintf("%sResuming session: %s%s\n", color$dim, opts$session, color$reset))
+      # The paths in its history belong to the directory it was started in.
+      elsewhere <- corteza:::session_elsewhere_note(session, cwd)
+      if (!is.null(elsewhere)) {
+        cat(color$dim, elsewhere, color$reset, "\n", sep = "")
+      }
       route <- corteza:::.session_model_pair(opts$provider, opts$model,
                                              config, saved = session)
       # Restore workspace
@@ -551,7 +572,7 @@ run_agent <- function(opts) {
     }
   } else {
     # No session key specified - create new session
-    session <- corteza:::session_new(route$provider, route$model, cwd)
+    session <- corteza:::session_new(route$provider, route$model, cwd, surface = "cli")
     # Scan globalenv for existing objects
     if (ws_enabled && isTRUE(config$workspace$scan_globalenv)) {
       registered <- corteza:::ws_scan_globalenv(
@@ -832,7 +853,7 @@ run_agent <- function(opts) {
     # Read provider/model from ctx (not captured locals): /model and
     # /provider mutate ctx, so a later /clear must spin up the fresh
     # session with the current model/provider.
-    fresh <- corteza:::session_new(ctx$provider, ctx$model, cwd)
+    fresh <- corteza:::session_new(ctx$provider, ctx$model, cwd, surface = "cli")
     list(session = fresh, sessionId = fresh$sessionId, resumed = FALSE)
   }
   ctx$handle_copy <- corteza:::chat_handle_copy

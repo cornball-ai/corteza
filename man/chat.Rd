@@ -26,8 +26,9 @@ Categories: file, code, r, data, web, git, chat, memory.
 Use "core" for file+code+git, "all" for everything (default).}
 
 \item{session}{Session resume control. NULL (default) starts fresh,
-TRUE resumes the latest session, or a character session key to
-resume a specific session.}
+TRUE resumes the latest session started in the current directory,
+or a character session key to resume a specific session from any
+directory.}
 
 \item{max_turns}{Integer or NULL. Maximum LLM turns per user prompt
 before the loop stops with \code{[Max turns reached]}. NULL (default)

@@ -1875,6 +1875,44 @@ bot_journal_dir <- function(cfg, key) {
     file.path(sessions_dir("matrix"), paste0(name, ".journal"))
 }
 
+# A room or thread session's entry in the session store (R/session.R),
+# under agent "matrix". A room has a journal and no transcript, so
+# nothing else says which room a journal folder belongs to or where
+# that room works. The key is the journal folder's name, which already
+# tells 2 bots in 1 room apart. How recently the room was used is the
+# age of the journal's live snapshot: this entry is written when the
+# bot builds the session, never per turn.
+# The directory is recorded only when a person named one. The scratch
+# folder is gone with the process.
+bot_session_record <- function(cfg, s, journal_key, dir, room_name = NULL) {
+    name <- sub("[.]journal$", "", basename(dir))
+    entry <- list(sessionId = name, surface = "matrix",
+                  bot = bot_job_owner(cfg), room = s$room_id, journal = dir)
+    key_parts <- strsplit(journal_key, "\r", fixed = TRUE)[[1L]]
+    if (length(key_parts) > 1L) {
+        entry$thread <- key_parts[[2L]]
+    }
+    if (startsWith(journal_key, "voice:")) {
+        entry$voice <- TRUE
+    }
+    # Named even when NULL, so a room that lost its directory loses the
+    # one recorded for it.
+    cwd <- NULL
+    if (!bot_is_scratch(s$cwd)) {
+        cwd <- session_cwd(s$cwd)
+    }
+    entry["cwd"] <- list(cwd)
+    entry$title <- session_title(room_name)
+    # A record for lists. Failing to write one must not cost the room
+    # its session.
+    tryCatch(store_update(name, entry, agent_id = "matrix"),
+             error = function(e) {
+        log_event("session_record_failed", level = "warn",
+                  error = conditionMessage(e))
+        NULL
+    })
+}
+
 # Build a fresh corteza session from a Matrix config. Does not fetch any
 # room history; in-memory history accumulates across turn() calls made
 # inside one bot_run process.
@@ -1944,6 +1982,7 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
         dir <- bot_journal_dir(cfg, journal_key)
         .context_room_restore(s, dir, cfg)
         journal_install(s, dir = dir)
+        bot_session_record(cfg, s, journal_key, dir, room_name = info$name)
     }
     bot_supervise_session(s, cfg, room_id)
     if (!is.null(context_manifest)) {

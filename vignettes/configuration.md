@@ -104,8 +104,9 @@ corteza [options]
 | `--base-url <url>` | Endpoint for `--provider openai_compatible` | config / env |
 | `--tools <filter>` | Tool filter: `core`, `file`, `code`, `git`, `r`, `data`, `web`, `chat` | all |
 | `--session <key>` | Session key; resumes if exists | none |
-| `--resume` | Resume most recent session | `false` |
-| `--list` | List sessions and exit | `false` |
+| `--resume` | Resume the latest session started in this directory | `false` |
+| `--list` | List the sessions started in this directory and exit | `false` |
+| `--all` | With `--resume` or `--list`: every directory | `false` |
 | `--dry-run` | Preview tool calls without executing | `false` |
 | `--context-edit` | Enable conversation context editing for this session | `false` |
 | `--trace` | Print structured tool-call events to stderr | `false` |
@@ -118,6 +119,14 @@ has changed. Explicit `--provider` and `--model` flags still override that pair.
 Changing only the provider uses its matching configured model or its default;
 it does not carry the old provider's model across. The same rules apply to
 `chat(session = ...)` and its `provider` and `model` arguments.
+
+A session belongs to the directory it was started in. `--resume`, `--list`,
+`/sessions` and `chat(session = TRUE)` look at the current directory's
+sessions, and say how many there are elsewhere when it has none. `--all` and
+`/sessions all` cover every directory. `--session <key>` and
+`chat(session = "<key>")` resume that session from anywhere, and say so when
+it was started somewhere else: the paths in its history belong to that
+directory.
 
 ## Unattended work
 
@@ -707,7 +716,7 @@ In-chat commands prefixed with `/`.
 | `/permissions` | Tool approval and sandbox settings |
 | `/clear` | Clear conversation (keeps session) |
 | `/compact` | Summarize conversation to free context |
-| `/sessions` | List sessions |
+| `/sessions [all]` | List this directory's sessions, or every directory's |
 | `/context` | Live context usage and loaded files |
 | `/model` | List current/configured models and the active provider's catalog |
 | `/model <name> [provider]` or `/model <number>` | Switch model, optionally provider; numbers select from the last displayed list |
@@ -874,6 +883,61 @@ The session is an environment that carries history, the active provider/model, a
 | `approval_cb` | function or null | null | Called when policy returns `"ask"`. Default denies. |
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
+
+## Session records
+
+Each agent keeps one index of its conversations, a JSON object keyed by
+session key:
+
+```
+tools::R_user_dir("corteza", "data")/agents/<agent>/sessions/sessions.json
+```
+
+The terminal and `chat()` write under agent `main`, a Matrix bot under agent
+`matrix`. Another program may read these files. Fields are added in later
+versions and never renamed, and a reader should skip an entry or a field it
+does not know. The file is replaced whole on every write, so it is always
+complete when read.
+
+A terminal or console session, keyed `corteza:<id>` or by the key given with
+`--session`:
+
+| Field | Meaning |
+|-------|---------|
+| `sessionId` | Names the session's files in the same folder: `<id>.jsonl` (the transcript), `<id>_trace.jsonl`, `<id>.journal/` |
+| `cwd` | The directory the session was started in, resolved, with forward slashes |
+| `title` | The first prompt on one line, cut to 100 characters |
+| `updatedAt` | When the entry was last written, in milliseconds since 1970 |
+| `surface` | `cli` or `console` |
+| `sessionFile`, `createdAt`, `modelProvider`, `model` | The transcript's path, the creation time, and the provider and model last used |
+
+Entries keyed `agent:<id>:subagent:<uuid>` in the same file belong to
+subagents and are not conversations a person started.
+
+Sessions made before 0.8.1 have no `cwd` and no `title` in the index. corteza
+records a session's directory, from the first line of its transcript, the
+first time its sessions are listed, and its title the first time the session
+is shown in a list. `surface` is absent on those. A session that never got a
+prompt has no `title`.
+
+A room or a thread a Matrix bot answers in:
+
+| Field | Meaning |
+|-------|---------|
+| `sessionId` | The entry's key. The session's journal is `<sessionId>.journal/` in the same folder |
+| `surface` | `matrix` |
+| `bot` | The bot's Matrix user id. 2 bots in 1 room have 1 entry each |
+| `room` | The room id |
+| `thread` | The thread's root event id, when the conversation is a thread |
+| `voice` | `true` for the room's voice session |
+| `cwd` | The directory the room works in. Absent for a room with no directory |
+| `title` | The room's name |
+| `journal` | The journal folder's path |
+| `updatedAt` | When the bot last built the session: at its first message after a start or a `/clear` |
+
+A room has no transcript. How recently it was used is the modification time
+of `live.json` in its journal folder, a file that is not there before the
+session's first turn.
 
 ## Incomplete worker jobs
 
