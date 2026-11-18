@@ -276,6 +276,10 @@ subagent_seed_history <- function(history) {
     if (is.null(.subagent_state$session)) {
         stop("Subagent turn session not initialized", call. = FALSE)
     }
+    # The slice was produced under the parent's system text and tools,
+    # so its thinking blocks would be refused in this conversation
+    # (R/history-replace.R). The entries keep their count.
+    history <- history_strip_thinking(history)$history
     .subagent_state$session$history <- history
     # Mark this child as an archive holder: its seeded history is the
     # whole point of the subagent, so context compaction must not
@@ -556,20 +560,15 @@ subagent_turn_prompt <- function(prompt, return_name = NULL, report = FALSE) {
                     # Journal first (R/journal.R). A failed write keeps
                     # the turn and releases the holder nothing would
                     # reference.
-                    journaled <- tryCatch({
-                        journal_rewrite(.subagent_state$session, live,
-                                        collapsed, reason = "archival",
+                    tryCatch({
+                        history_replace(.subagent_state$session, collapsed,
+                                        reason = "archival", before = live,
                                         summary = archived$summary)
-                        TRUE
                     }, error = function(e) {
                         log_event("archival_failed", phase = "journal",
                                   error = conditionMessage(e), level = "warn")
                         try(subagent_kill(archived$subagent_id), silent = TRUE)
-                        FALSE
                     })
-                    if (journaled) {
-                        .subagent_state$session$history <- collapsed
-                    }
                 }
             }
         }

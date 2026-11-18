@@ -312,6 +312,32 @@ If recovery ends with a partial reply, the rendered text is kept in conversation
 history and the journal. A later turn can refer to what the user actually saw;
 unfinished tool calls are still discarded.
 
+## Thinking blocks after a rewrite
+
+A Claude model that thinks by default signs each thinking block against the
+conversation that produced it: the system text, the tools and every earlier
+message. Where the provider checks that signature, a request that replays a
+block after any of the three changed returns `API error (400)` with "bound to
+a different conversation", and so does every retry.
+
+corteza removes the thinking blocks from a history whenever it replaces one: a
+compaction, a context edit, an archived turn, a move to another provider, a
+conversation restored after a restart, and a job resumed in a new worker. Text
+and tool calls stay, and the journal keeps the history as the model wrote it.
+Appending removes nothing, so the tool rounds of a turn go back with their
+thinking.
+
+A session that sets `thinking_budget_tokens` keeps its blocks when its own
+history is replaced. The models that accept a budget do not run the check, and
+they expect an open tool round to keep the thinking it started with. A history
+passed to `new_session()` comes from another conversation and loses its blocks
+whatever the session's settings.
+
+When a provider refuses replayed thinking anyway, the turn removes every
+thinking block from the history, records that in the journal, and continues
+once. Tools that already ran in the turn do not run again. A second refusal in
+the same turn is raised as the provider's error.
+
 ## Conversation context editing
 
 Context editing is experimental and off by default. Enable it in the global
@@ -1004,7 +1030,7 @@ The session is an environment that carries history, the active provider/model, a
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `channel` | string | `"cli"` | `"cli"`, `"console"`, `"matrix"` |
-| `history` | list or null | null | Prior messages; resumes mid-conversation |
+| `history` | list or null | null | Prior messages; resumes mid-conversation. Thinking blocks are removed |
 | `model_map` | list or null | null | `list(cloud = ..., local = ...)`; falls back to `corteza.model_map` option |
 | `provider` | string | `"anthropic"` | LLM provider |
 | `tools_filter` | string[] or null | null | Restrict available tools |

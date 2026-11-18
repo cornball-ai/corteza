@@ -122,8 +122,7 @@ job_resume_snapshot <- function(id, identity) {
     }
     # Journal failure blocks replacement. Fresh workers never restore the
     # shared checkpoint for resume, so unrelated job objects cannot leak in.
-    journal_rewrite(session, session$history %||% list(), history, reason = "job_resume")
-    session$history <- history
+    history_replace(session, history, reason = "job_resume")
     for (name in names(values)) {
         assign(name, values[[name]], envir = env)
     }

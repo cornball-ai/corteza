@@ -249,17 +249,13 @@ job_monitor_ask_wait <- function(session, q,
             # answer, which the parent treats as the monitor failing to
             # rule.
             journaled <- tryCatch({
-                journal_rewrite(session, session$history, list(),
-                                reason = "scope")
+                history_replace(session, list(), reason = "scope")
                 TRUE
             }, error = function(e) conditionMessage(e))
             if (!isTRUE(journaled)) {
                 return(list(reply = NULL, usage = NULL,
                             error = paste("monitor journal:", journaled)))
             }
-        }
-        if (!is.null(session)) {
-            session$history <- list()
         }
         .job_worker_state$monitor_scope <- scope
     }

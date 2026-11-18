@@ -251,9 +251,19 @@
         }
         content <- msg$content
         if (is.list(content) && !inherits(content, "llm_content")) {
+            # A reply in typed `text` blocks is Anthropic's as well: the
+            # Responses wire takes `output_text` there. Such a reply is
+            # all that is left of one whose thinking blocks were removed
+            # (R/history-replace.R), and it has to be bridged like the
+            # reply it was.
+            marks <- if (identical(msg$role, "assistant")) {
+                c(anthropic_blocks, "text")
+            } else {
+                anthropic_blocks
+            }
             for (b in content) {
                 if (is.list(b) && is.character(b$type) &&
-                    length(b$type) == 1L && b$type %in% anthropic_blocks) {
+                    length(b$type) == 1L && b$type %in% marks) {
                     return("anthropic")
                 }
             }
@@ -412,8 +422,8 @@
         # A provider bridge is a history rewrite too. Preserve completed
         # native traffic before the next callback replaces the live snapshot.
         if (!identical(history, args$history)) {
-            journal_rewrite(session, history, args$history, "provider_bridge")
-            session$history <- args$history
+            args$history <- history_replace(session, args$history,
+                "provider_bridge", before = history)
         }
 
         checkpoint_usage <- list()
