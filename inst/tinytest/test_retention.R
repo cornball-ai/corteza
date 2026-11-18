@@ -94,6 +94,14 @@ used <- function(path, when) {
     stopifnot(isTRUE(Sys.setFileTime(path, when)))
 }
 
+# A symbolic link stands at `path`. Sys.readlink() gives NA for a path
+# that does not exist, and nzchar(NA) is TRUE, so nzchar() alone passes
+# for a link that was removed.
+is_link <- function(path) {
+    target <- Sys.readlink(path)
+    !is.na(target) && nzchar(target)
+}
+
 set_config <- function(fx, json) {
     dir.create(fx$config, recursive = TRUE, showWarnings = FALSE)
     writeLines(json, file.path(fx$config, "config.json"))
@@ -286,9 +294,10 @@ local({
 })
 
 # A kept picture or a journal file that is a link was not made by
-# corteza: it stays, and so does what it points at. The real files
-# beside it go, and each folder stays for its link. Run twice, the
-# second time as Windows sees links, where only the real path tells.
+# corteza: it stays, and so does what it points at, wherever it is in
+# the folder. The real files beside it go, each folder stays for its
+# link, and no target is counted. Run twice, the second time as Windows
+# sees links, where only the real path tells.
 if (.Platform$OS.type != "windows") local({
     for (windows_like in c(FALSE, TRUE)) local({
         fx <- retention_fixture()
@@ -317,21 +326,33 @@ if (.Platform$OS.type != "windows") local({
         unlink(live)
         expect_true(file.symlink(file.path(away, "live.json"), live),
                     info = why)
+        # One among the shared entries, the way an entry is named.
+        writeBin(as.raw(seq_len(100) %% 256), file.path(away, "entry.json"))
+        entry <- file.path(room$journal, "entries", "0123abcd.json")
+        expect_true(file.symlink(file.path(away, "entry.json"), entry),
+                    info = why)
         found <- corteza:::retention_prune(90, now = fx$later)
         expect_identical(sort(found$kind),
                          c("attachments", "journal", "trace"), info = why)
-        # The link's target is not counted either.
+        # No link's target is counted: 8 bytes of the kept picture, and
+        # 3 each of the segment and the real entry.
         expect_equal(found$bytes[found$kind == "attachments"], 8,
                      info = why)
+        expect_equal(found$bytes[found$kind == "journal"], 6, info = why)
         expect_true(all(found$removed), info = why)
         expect_false(file.exists(kept), info = why)
         expect_false(file.exists(file.path(room$journal, "segment-0001.json")),
                      info = why)
-        expect_true(nzchar(Sys.readlink(link)), info = why)
-        expect_true(nzchar(Sys.readlink(live)), info = why)
-        expect_identical(sort(list.files(away)), c("live.json", "picture.png"),
+        expect_false(file.exists(file.path(room$journal, "entries", "one.json")),
+                     info = why)
+        expect_true(is_link(link), info = why)
+        expect_true(is_link(live), info = why)
+        expect_true(is_link(entry), info = why)
+        expect_identical(sort(list.files(away)),
+                         c("entry.json", "live.json", "picture.png"),
                          info = why)
         expect_true(dir.exists(att), info = why)
+        expect_true(dir.exists(file.path(room$journal, "entries")), info = why)
         expect_true(dir.exists(room$journal), info = why)
     })
 })
@@ -352,7 +373,7 @@ if (.Platform$OS.type != "windows") local({
                  corteza:::retention_scan(90, now = fx$later)$kind)
     found <- corteza:::retention_prune(90, now = fx$later)
     expect_identical(sort(found$kind), c("journal", "trace"))
-    expect_true(nzchar(Sys.readlink(link)))
+    expect_true(is_link(link))
     expect_true(file.exists(target))
 })
 
@@ -370,14 +391,19 @@ if (.Platform$OS.type != "windows") local({
     file.symlink(elsewhere, file.path(dir, "linked.journal"))
     file.symlink(file.path(elsewhere, "trace.jsonl"),
                  file.path(dir, "linked_trace.jsonl"))
-    # And a link inside a journal that does go.
-    file.symlink(elsewhere, file.path(inner$journal, "entries", "out"))
+    # And a link inside the entries of a journal that does go: the
+    # journal's own files go, and the link stays, with the folders it is
+    # in.
+    out <- file.path(inner$journal, "entries", "out")
+    file.symlink(elsewhere, out)
     found <- corteza:::retention_prune(90, now = fx$later)
     expect_identical(unique(found$session), "inner")
     expect_true(all(found$removed))
-    expect_false(dir.exists(inner$journal))
-    expect_true(nzchar(Sys.readlink(file.path(dir, "linked.journal"))))
-    expect_true(nzchar(Sys.readlink(file.path(dir, "linked_trace.jsonl"))))
+    expect_false(file.exists(file.path(inner$journal, "live.json")))
+    expect_false(file.exists(file.path(inner$journal, "entries", "one.json")))
+    expect_true(is_link(out))
+    expect_true(is_link(file.path(dir, "linked.journal")))
+    expect_true(is_link(file.path(dir, "linked_trace.jsonl")))
     expect_identical(sort(list.files(elsewhere)),
                      c("live.json", "trace.jsonl"))
 })

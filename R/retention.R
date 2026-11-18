@@ -185,16 +185,20 @@ retention_remove <- function(path, kind) {
     if (!retention_removable(path, kind)) {
         return(FALSE)
     }
-    files <- path
-    if (kind %in% c("journal", "attachments")) {
-        files <- retention_own(path, kind)
+    if (!kind %in% c("journal", "attachments")) {
+        # expand = FALSE: a name is a name, never a pattern.
+        unlink(path, expand = FALSE)
+        return(!file.exists(path))
     }
-    # expand = FALSE: a name is a name, never a pattern.
-    unlink(files, recursive = TRUE, expand = FALSE)
-    if (kind %in% c("journal", "attachments")) {
-        retention_rmdir(path)
+    own <- retention_own(path, kind)
+    unlink(own$files, expand = FALSE)
+    # Deepest first, each only once empty: a folder with a link in it
+    # stays, and so does every folder above it.
+    for (dir in own$dirs) {
+        retention_rmdir(dir)
     }
-    !any(file.exists(files))
+    retention_rmdir(path)
+    !any(file.exists(own$files))
 }
 
 # What a room's session keeps of what people sent it (bot_keep_attachment(),
@@ -221,17 +225,47 @@ retention_journal_files <- function(journal) {
 }
 
 # What retention may remove from a journal or attachments folder: the
-# files named above, less each that is a link or lies behind one
-# (retention_within()). corteza's writers make files and folders, never
-# links, so a link with one of those names was put there by someone
-# else, and stays.
+# files named above and everything in a folder named above, less each
+# link and everything behind one. corteza's writers make files and
+# folders, never links, so a link was put there by someone else, and it
+# stays with every folder it is in. A list of `files`, and of `dirs`
+# deepest first, to remove once empty.
 retention_own <- function(path, kind) {
-    if (kind == "journal") {
-        files <- retention_journal_files(path)
-    } else {
-        files <- retention_attachment_files(path)
+    if (!retention_within(path)) {
+        return(list(files = character(), dirs = character()))
     }
-    files[vapply(files, retention_within, logical(1), USE.NAMES = FALSE)]
+    if (kind == "journal") {
+        named <- retention_journal_files(path)
+    } else {
+        named <- retention_attachment_files(path)
+    }
+    real <- normalizePath(path, winslash = "/", mustWork = FALSE)
+    retention_tree(path, real, basename(named))
+}
+
+# The files and folders under `dir`, whose real path is `real`, that are
+# no link and lie behind none: of `names` only, or of all it holds. No
+# link is followed.
+retention_tree <- function(dir, real, names = NULL) {
+    if (is.null(names)) {
+        names <- list.files(dir, all.files = TRUE, no.. = TRUE)
+    }
+    out <- list(files = character(), dirs = character())
+    for (name in names) {
+        here <- file.path(dir, name)
+        real_here <- retention_step(here, real, name)
+        if (is.null(real_here)) {
+            next
+        }
+        if (dir.exists(here)) {
+            inside <- retention_tree(here, real_here)
+            out$files <- c(out$files, inside$files)
+            out$dirs <- c(out$dirs, inside$dirs, here)
+        } else {
+            out$files <- c(out$files, here)
+        }
+    }
+    out
 }
 
 # Remove a folder that has nothing in it. file.remove() refuses one
@@ -395,7 +429,8 @@ retention_removable <- function(path, kind) {
         return(FALSE)
     }
     if (kind %in% c("journal", "attachments")) {
-        return(dir.exists(path) && length(retention_own(path, kind)) > 0L)
+        own <- retention_own(path, kind)
+        return(dir.exists(path) && length(c(own$files, own$dirs)) > 0L)
     }
     file.exists(path) && !dir.exists(path)
 }
@@ -420,16 +455,26 @@ retention_within <- function(path, root = corteza_data_dir()) {
     for (part in strsplit(substring(path, nchar(prefix) + 1L), "/",
                           fixed = TRUE)[[1L]]) {
         here <- file.path(here, part)
-        if (retention_is_link(here)) {
+        real <- retention_step(here, real, part)
+        if (is.null(real)) {
             return(FALSE)
         }
-        real_here <- normalizePath(here, winslash = "/", mustWork = FALSE)
-        if (!retention_same_path(real_here, paste0(real, "/", part))) {
-            return(FALSE)
-        }
-        real <- real_here
     }
     TRUE
+}
+
+# One step down, from a folder whose real path is `real` to its part
+# `part` at `here`: the real path of `here`, or NULL when it is a link
+# or resolves anywhere else.
+retention_step <- function(here, real, part) {
+    if (retention_is_link(here)) {
+        return(NULL)
+    }
+    real_here <- normalizePath(here, winslash = "/", mustWork = FALSE)
+    if (!retention_same_path(real_here, paste0(real, "/", part))) {
+        return(NULL)
+    }
+    real_here
 }
 
 retention_is_link <- function(path) {
@@ -448,13 +493,8 @@ retention_same_path <- function(a, b) {
 
 retention_bytes <- function(path, kind) {
     files <- path
-    if (kind == "attachments") {
-        files <- retention_own(path, kind)
-    } else if (kind == "journal") {
-        own <- retention_own(path, kind)
-        files <- c(own, list.files(own[dir.exists(own)], all.files = TRUE,
-                                   no.. = TRUE, full.names = TRUE,
-                                   recursive = TRUE))
+    if (kind %in% c("journal", "attachments")) {
+        files <- retention_own(path, kind)$files
     }
     info <- file.info(files, extra_cols = FALSE)
     sum(info$size[!info$isdir], na.rm = TRUE)
