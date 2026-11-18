@@ -50,20 +50,25 @@ approvals_saved <- function(cwd) {
     approvals_in(approvals_read(), trust_dir(cwd))
 }
 
-# Save `tool` as allowed always in `cwd`. Written beside the file and
-# renamed into place, so a reader never sees half of it. Returns
-# whether it was saved.
-approval_save <- function(cwd, tool) {
+# Save `tool` as allowed always in `cwd`. Every terminal of the user's
+# shares the file, so the read, the change and the write happen under
+# one lock (harness_with_lock(), R/harness.R): two saves at once each
+# keep their answer. The file is written beside itself and renamed into
+# place, so a reader never sees half of it. Waits up to `timeout`
+# seconds for the lock. Returns whether it was saved.
+approval_save <- function(cwd, tool, timeout = 5) {
     path <- approvals_file()
-    dirs <- approvals_read()
     key <- trust_dir(cwd)
-    dirs[[key]] <- sort(unique(c(approvals_in(dirs, key), tool)))
-    tmp <- paste0(path, ".tmp")
-    saved <- tryCatch({
-        dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    # This process's own, so that removing it after a failure never
+    # removes another process's.
+    tmp <- sprintf("%s.%d.tmp", path, Sys.getpid())
+    saved <- tryCatch(harness_with_lock(path, {
+        dirs <- approvals_read()
+        dirs[[key]] <- sort(unique(c(approvals_in(dirs, key), tool)))
         jsonlite::write_json(dirs, tmp, pretty = TRUE)
         file.rename(tmp, path)
-    }, error = function(e) FALSE, warning = function(w) FALSE)
+    }, timeout = timeout), error = function(e) FALSE,
+                      warning = function(w) FALSE)
     if (!isTRUE(saved)) {
         unlink(tmp)
     }

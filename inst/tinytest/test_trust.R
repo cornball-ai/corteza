@@ -653,6 +653,17 @@ local({
     expect_true(grepl("bash, run_r (kept in", ns$approvals_label(other),
                       fixed = TRUE))
     expect_false(dir.exists(file.path(other, ".corteza")))
+    # A save reads, changes and writes the file under one lock, so two at
+    # once each keep their answer (test_approvals.R runs 2 processes).
+    # One that cannot get the lock in time saves nothing.
+    lock <- paste0(store, ".lock")
+    dir.create(lock)
+    expect_false(ns$approval_save(other, "git_status", timeout = 0.2))
+    expect_equal(ns$approvals_saved(other), c("bash", "run_r"))
+    unlink(lock, recursive = TRUE)
+    expect_true(ns$approval_save(other, "git_status", timeout = 0.2))
+    expect_equal(ns$approvals_saved(other), c("bash", "git_status", "run_r"))
+    expect_equal(list.files(dirname(store), pattern = "tmp$"), character())
     # A store that cannot be read gives none and is set aside, not
     # overwritten by the next answer.
     writeLines("{ not json", store)
