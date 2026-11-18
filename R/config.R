@@ -245,15 +245,6 @@ load_config <- function(cwd = getwd()) {
             "ask"
         }
     }
-    # A room's send_room_file is a write, so by its class it would ask.
-    # It runs unasked by default, as before tools had classes: the host
-    # offers it to the room's operators only, sends to that room only,
-    # and refuses a credential file (R/room-media.R). The supervisor still
-    # sends a file outside the checkout to a person, and personal data in
-    # a room is still refused. A permissions entry of "ask" turns it off.
-    if (is.null(config$permissions[["send_room_file"]])) {
-        config$permissions[["send_room_file"]] <- "allow"
-    }
 
     # Rate limits per provider
     # Example: { "anthropic": { "tokens_per_hour": 100000, "requests_per_minute": 60 } }

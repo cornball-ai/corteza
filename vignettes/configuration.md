@@ -720,7 +720,7 @@ a run.
 |-----|------|---------|-------------|
 | `approval_mode` | string | `"ask"` | What "ask" means for a tool with no `permissions` entry: `"ask"`, `"allow"`, or `"deny"` |
 | `dangerous_tools` | string[] | `["bash", "run_r", "run_r_script", "write_file", "replace_in_file", "base::writeLines"]` | Tools that ask even where their class would run. Leaving a tool off this list does not stop it asking |
-| `permissions` | object | `{"harness_note": "ask", "send_room_file": "allow"}` | Per-tool verdicts, e.g. `{"bash": "deny"}` or `{"bash": "allow"}`. An entry replaces the verdict for its tool |
+| `permissions` | object | `{"harness_note": "ask"}` | Per-tool verdicts, e.g. `{"bash": "deny"}` or `{"bash": "allow"}`. An entry replaces the verdict for its tool |
 | `denied_paths` | string[] | `["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.kube", "~/.docker"]` | Blocked paths |
 | `allowed_paths` | string[] or null | null | If set, only these paths allowed |
 
@@ -1431,8 +1431,11 @@ and receipt, and explicitly says that image bytes are absent from that text.
 Room conversations offer `send_room_file(path)` to configured bot operators.
 It sends an existing file to the current room using the host's chat identity;
 the model does not load credentials or select another destination. Tool policy
-and supervision still apply. Credential files and runtime configuration files
-are refused, and the file limit is 25 MiB. Workers do not receive this tool.
+and supervision still apply: it is a write, so each send asks, and goes to the
+monitor where `auto_approve_asks` is on. `"permissions": {"send_room_file":
+"allow"}` in your config lets it send unasked. Credential files and runtime
+configuration files are refused, and the file limit is 25 MiB. Workers do not
+receive this tool.
 
 Encrypted Matrix attachments require chat.api 0.1.0.4, mx.client 0.2.1.4,
 and mx.crypto 0.2.2.2. Uploads contain ciphertext; the file metadata travels
