@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Tests for the persistent task list (R/tasks.R) and its dispatch
 # intercept in .make_tool_handler() (R/turn.R). Covers helpers,
 # intercept routing (CLI executor never reached), policy/approval

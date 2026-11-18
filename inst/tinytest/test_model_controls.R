@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 local({
     ns <- asNamespace("corteza")
     old_models <- ns$.model_discover

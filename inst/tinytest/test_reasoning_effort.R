@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Reasoning-depth wiring (new_session -> .session_reasoning_effort /
 # .session_thinking_budget -> llm.api::agent). Two settings, one idea
 # ("how hard to think"), but each rides a different field on a different

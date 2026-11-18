@@ -22,10 +22,10 @@ s$config <- list(web_search = TRUE)
 expect_true(corteza:::.session_web_search(s))            # config on
 
 # new_session() carries the field through; NULL means "defer to turn()".
-ns_off <- new_session(channel = "cli", provider = "anthropic",
-                      web_search = FALSE)
+ns_off <- corteza::new_session(channel = "cli", provider = "anthropic",
+                               web_search = FALSE)
 expect_equal(ns_off$web_search, FALSE)
-ns_default <- new_session(channel = "cli", provider = "anthropic")
+ns_default <- corteza::new_session(channel = "cli", provider = "anthropic")
 expect_true(is.null(ns_default$web_search))
 expect_true(corteza:::.session_web_search(ns_default))   # NULL -> default on
 

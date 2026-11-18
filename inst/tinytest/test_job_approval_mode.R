@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("needs chat.api")
 local({
     ns <- asNamespace("corteza")

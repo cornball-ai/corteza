@@ -69,6 +69,10 @@ voice_room_session <- function(state, room_id) {
                              journal_key = paste0("voice:", room_id))
         s$system <- voice_speech_system(s$system,
                                         state$cfg_fn()$voice$speech_style)
+        # No compaction for an idle gap in a call: the summary is a
+        # request of its own ahead of the reply, and a caller hears the
+        # wait as silence. The size triggers still apply.
+        s$context_idle_minutes <- 0
         .voice_backfill(state, s, room_id)
         assign(room_id, s, envir = state$rooms)
     }

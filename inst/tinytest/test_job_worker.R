@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # The job worker: one persistent callr process per session, jobs run one
@@ -330,6 +333,29 @@ proj <- tempfile("job-project")
 dir.create(proj)
 writeLines(c("# Agent Instructions", "", "doer-context-sentinel"),
            file.path(proj, "AGENTS.md"))
+# A project's rules load from a trusted directory only (R/trust.R). The
+# list of those is the user's, and a worker is another process that
+# finds it through the same config directory, so the directory is set
+# here, before any worker below starts. Untrusted first: the doer then
+# has its role and nothing of the project's.
+old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+Sys.setenv(R_USER_CONFIG_DIR = tempfile("job-worker-config-"))
+stranger <- make_session("room-context-untrusted", function(task) {
+    st <- get(".subagent_state", envir = asNamespace("corteza"))
+    sys <- paste(st$session$system, collapse = "\n")
+    list(reply = paste(grepl("doer-context-sentinel", sys, fixed = TRUE),
+                       startsWith(sys, "You are the doer")))
+})
+stranger$job_worker_spec$init_fn <- NULL
+stranger$cwd <- proj
+sp <- corteza:::job_submit(stranger, "check")
+pump_until(stranger, sp)
+expect_identical(corteza:::job_read(sp)$outcome$result, "FALSE TRUE")
+corteza:::job_worker_close(stranger)
+expect_false(grepl("doer-context-sentinel",
+                   corteza:::job_worker_context("ROLE-LINE", cwd = proj),
+                   fixed = TRUE))
+corteza:::project_trust_add(proj)
 ctxprobe <- make_session("room-context", function(task) {
     st <- get(".subagent_state", envir = asNamespace("corteza"))
     sys <- paste(st$session$system, collapse = "\n")
@@ -585,3 +611,9 @@ if (is.na(old_state)) {
     Sys.setenv(CORTEZA_STATE_DIR = old_state)
 }
 unlink(state, recursive = TRUE)
+unlink(Sys.getenv("R_USER_CONFIG_DIR"), recursive = TRUE)
+if (is.na(old_config)) {
+    Sys.unsetenv("R_USER_CONFIG_DIR")
+} else {
+    Sys.setenv(R_USER_CONFIG_DIR = old_config)
+}

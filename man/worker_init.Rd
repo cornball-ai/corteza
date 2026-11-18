@@ -15,7 +15,8 @@ Invisible TRUE on success.
 Runs inside a subagent's private `callr::r_session` subprocess
 (invoked via `corteza::worker_init()` across the callr boundary).
 Sets the subprocess cwd, ensures built-in skills are registered, and
-loads user/project skills so the subagent can execute tools.
+loads the user's skills, and the project's where \code{cwd} is a
+trusted directory, so the subagent can execute tools.
 }
 \details{
 Exported (with `@keywords internal`) because it is called as

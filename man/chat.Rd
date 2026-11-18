@@ -26,8 +26,9 @@ Categories: file, code, r, data, web, git, chat, memory.
 Use "core" for file+code+git, "all" for everything (default).}
 
 \item{session}{Session resume control. NULL (default) starts fresh,
-TRUE resumes the latest session, or a character session key to
-resume a specific session.}
+TRUE resumes the latest session started in the current directory,
+or a character session key to resume a specific session from any
+directory.}
 
 \item{max_turns}{Integer or NULL. Maximum LLM turns per user prompt
 before the loop stops with \code{[Max turns reached]}. NULL (default)
@@ -45,6 +46,15 @@ The session object (invisibly).
 \description{
 Run a conversational agent inside your R session. Tools execute as direct
 function calls, no MCP server needed.
+}
+\details{
+A project's own files (its \code{.corteza/} folder, \code{AGENTS.md} or
+\code{CLAUDE.md}, and the briefing built from it) load only from a
+directory you have trusted. Where the working directory is not trusted
+and holds such files, \code{chat()} lists them and asks once before it
+starts; \code{/trust} shows the same later. See "Trusted projects" in
+\code{vignette("configuration")}.
+
 }
 \examples{
 if (interactive()) {

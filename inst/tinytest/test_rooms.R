@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # Matrix config/extract helpers delegate to mx.client (Suggests). Skip
@@ -64,8 +67,8 @@ local({
 })
 
 # bot_new_session wires config into a turn session.
-# Skipped in R CMD check: needs MOONSHOT_API_KEY via new_session().
-if (at_home()) local({
+# Runs at home with MOONSHOT_API_KEY set: new_session() needs the key.
+if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
   cfg <- list(
     server = "https://example",
     user = "bot",
@@ -282,16 +285,18 @@ local({
     list(channel = channel, inviter = inviter)
   }
   invites <- list(inv("!newroom:ex"), inv("!another:ex"))
-  # No operators configured: everything is accepted, as before.
-  expect_equal(corteza:::bot_allowed_invites(invites),
-               c("!newroom:ex", "!another:ex"))
-  # Nothing pending -> character(0), not NULL.
+  # No operators configured: nothing is accepted. Up to 0.8.0
+  # everything was.
+  expect_equal(suppressMessages(corteza:::bot_allowed_invites(invites)),
+               character())
+  # Nothing pending -> character(0), not NULL, and nothing to report.
   expect_equal(corteza:::bot_allowed_invites(list()), character())
+  expect_silent(corteza:::bot_allowed_invites(list()))
 })
 
 # The session registry hands out the same session for the same room.
-# Skipped in R CMD check: creates sessions that need MOONSHOT_API_KEY.
-if (at_home()) local({
+# Runs at home with MOONSHOT_API_KEY set: its sessions need the key.
+if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
   cfg <- list(server = "https://example", user = "bot",
               user_id = "@bot:ex", room_id = "!dm:ex",
               model = "kimi-k2.5", provider = "moonshot",
@@ -941,21 +946,44 @@ local({
     prev_user_cache_dir <- Sys.getenv("R_USER_CACHE_DIR", unset = NA)
     cache <- tempfile("matrix-room-context-cache-")
     Sys.setenv(R_USER_CACHE_DIR = cache)
+    # A room's project is read where its directory is trusted
+    # (R/trust.R). The list of those is the user's, so this block gets a
+    # config directory of its own before it adds the room's directory.
+    prev_user_config_dir <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+    config <- tempfile("matrix-room-context-config-")
+    Sys.setenv(R_USER_CONFIG_DIR = config)
     on.exit({
         unlink(tmp, recursive = TRUE)
         unlink(cache, recursive = TRUE)
+        unlink(config, recursive = TRUE)
         if (is.na(prev_user_cache_dir)) {
             Sys.unsetenv("R_USER_CACHE_DIR")
         } else {
             Sys.setenv(R_USER_CACHE_DIR = prev_user_cache_dir)
         }
+        if (is.na(prev_user_config_dir)) {
+            Sys.unsetenv("R_USER_CONFIG_DIR")
+        } else {
+            Sys.setenv(R_USER_CONFIG_DIR = prev_user_config_dir)
+        }
     }, add = TRUE)
 
-    bundle <- corteza:::bot_room_context_bundle(
-        list(user_id = "@bot:x", user = "Troy"),
-        cwd = tmp,
-        room_name = "~/project",
-        description = "topic")
+    room_bundle <- function() {
+        corteza:::bot_room_context_bundle(
+            list(user_id = "@bot:x", user = "Troy"),
+            cwd = tmp,
+            room_name = "~/project",
+            description = "topic")
+    }
+    # Untrusted, the room has its own header and corteza's guidance, and
+    # nothing of the project's.
+    sys <- room_bundle()$system
+    expect_true(grepl("You are @bot:x", sys, fixed = TRUE))
+    expect_true(grepl("Corteza Runtime Environment", sys, fixed = TRUE))
+    expect_false(grepl("saber-context-sentinel", sys, fixed = TRUE))
+
+    corteza:::project_trust_add(tmp)
+    bundle <- room_bundle()
     sys <- bundle$system
 
     expect_true(grepl("You are @bot:x", sys, fixed = TRUE))
@@ -1020,9 +1048,30 @@ local({
                     # read, so who invited us is unknown.
                     inv("!blank:ex", NA_character_))
 
-    # No operators configured: every invite is accepted, as before.
-    expect_equal(corteza:::bot_allowed_invites(invites),
-                 c("!ok:ex", "!bad:ex", "!blank:ex"))
+    # No operators configured: no invite is accepted, whoever sent it.
+    # An open bot hands a session with tools to anyone who can invite
+    # it. Up to 0.8.0 this was c("!ok:ex", "!bad:ex", "!blank:ex").
+    for (none in list(character(), NULL,
+                      corteza:::bot_operators(list()),
+                      corteza:::bot_operators(list(operators = c("", NA))))) {
+        expect_equal(suppressMessages(
+            corteza:::bot_allowed_invites(invites, none)), character())
+    }
+    expect_equal(suppressMessages(corteza:::bot_allowed_invites(invites)),
+                 character())
+
+    # Each refusal is reported, and the cause and the fix are said once
+    # for the batch, not once per invite.
+    msgs <- capture.output(corteza:::bot_allowed_invites(invites),
+                           type = "message")
+    for (room in c("!ok:ex", "!bad:ex", "!blank:ex")) {
+        expect_equal(sum(grepl(paste("refusing invite to", room), msgs,
+                               fixed = TRUE)), 1L, info = room)
+    }
+    fix <- msgs[grepl("has no operators", msgs, fixed = TRUE)]
+    expect_equal(length(fix), 1L)
+    expect_true(any(grepl("accepts no invites", fix, fixed = TRUE)))
+    expect_true(any(grepl("bot_configure(operators = ", fix, fixed = TRUE)))
 
     # Configured: only the operator's invite survives, and one whose
     # sender could not be determined is refused rather than guessed at.
@@ -1038,6 +1087,10 @@ local({
         type = "message")
     expect_true(any(grepl("!bad:ex from @jorge:ex", msgs)))
     expect_true(any(grepl("!blank:ex from an unknown sender", msgs)))
+    # A bot that has operators is not told it has none.
+    expect_false(any(grepl("has no operators", msgs, fixed = TRUE)))
+    # And an invite that is accepted is not reported as refused.
+    expect_false(any(grepl("!ok:ex", msgs, fixed = TRUE)))
 
     # An operator list that matches nobody accepts nothing.
     expect_equal(suppressMessages(
@@ -1295,7 +1348,8 @@ if (requireNamespace("pensar", quietly = TRUE)) {
 }
 
 # /clear replaces the session. Three obligations, all regressions.
-if (at_home()) local({
+# Runs at home with MOONSHOT_API_KEY set: its sessions need the key.
+if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
     cfg <- list(server = "https://example", user = "bot",
                 user_id = "@bot:ex", room_id = "!c:ex", token = "tok",
                 device_id = "DEV", model = "kimi-k2.5",

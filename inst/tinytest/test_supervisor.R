@@ -48,6 +48,18 @@ for (p in c("~/.bashrc", "/etc/hosts", file.path(root, ".git", "config"),
     expect_identical(route("write_file", list(path = p, content = "x"))$route,
                      "human", info = p)
 }
+# The whole corteza folder goes to a person, not its config alone: a
+# session sources the R files under skills/ and reads the lessons and
+# saved approvals kept beside them. So does one in a subdirectory, which
+# a session started there would read.
+for (p in c(".corteza/skills/extra.R", ".corteza/harness.json",
+            ".corteza/approvals.json", "R/.corteza/config.json")) {
+    v <- route("write_file", list(path = p, content = "x"))
+    expect_identical(v$route, "human", info = p)
+    expect_true(any(grepl("corteza folder", v$flags)), info = p)
+}
+expect_identical(route("replace_in_file",
+                       list(path = ".corteza/skills/x.R"))$route, "human")
 # A relative path is the project's.
 expect_identical(route("replace_in_file", list(path = "R/x.R"))$route, "monitor")
 # (The test project sits in the temp directory, which is scratch, so
@@ -65,8 +77,10 @@ expect_identical(v$route, "human")
 expect_true(any(grepl("names no path", v$flags)))
 # A symlink out of the project is where it points.
 link <- file.path(root, "outlink")
-# (Not on Windows: R resolves no link there, so the scan cannot follow one.)
-if (isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
+# (Not on Windows: R resolves no link there, so the scan cannot follow
+# one, and R there cannot remove the link afterwards.)
+if (.Platform$OS.type == "unix" &&
+    isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
     expect_identical(route("write_file", list(path = file.path(link, "x.txt")))$route,
                      "human")
 }
@@ -84,6 +98,11 @@ expect_identical(v$route, "monitor")
 expect_true(any(grepl("default R library", v$notes)))
 expect_identical(route("bash", list(command = "sudo make install"))$route, "human")
 expect_identical(route("run_r", list(code = "tinypkgr::submit_cran()"))$route, "human")
+# Which directories are trusted is a person's decision, and a worker's R
+# code runs where the function that adds one is loaded.
+v <- route("run_r", list(code = "corteza:::project_trust_add(getwd())"))
+expect_identical(v$route, "human")
+expect_true(any(grepl("trusted directories", v$flags)))
 # The rules read a call policy would have let through as well.
 expect_identical(route("bash", list(command = "git push"), "allow")$route, "human")
 expect_identical(route("bash", list(command = "ls"), "allow")$route, "proceed")

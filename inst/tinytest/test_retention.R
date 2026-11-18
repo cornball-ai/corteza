@@ -625,13 +625,16 @@ local({
         set_config(fx, bad)
         expect_equal(days(), 0, info = bad)
     }
-    # A project's config cannot set it. The merged config carries the
-    # value, and retention does not read the merged config.
+    # A project's config cannot set it, a trusted project's included.
+    # The merged config carries the value, and retention does not read
+    # the merged config.
     set_config(fx, "{}")
     project <- file.path(fx$root, "project")
     dir.create(file.path(project, ".corteza"), recursive = TRUE)
     writeLines('{"retention": {"session_days": 1}}',
                file.path(project, ".corteza", "config.json"))
+    expect_null(corteza:::load_config(project)$retention$session_days)
+    corteza:::project_trust_add(project)
     expect_equal(corteza:::load_config(project)$retention$session_days, 1)
     owd <- setwd(project)
     on.exit(setwd(owd), add = TRUE, after = FALSE)

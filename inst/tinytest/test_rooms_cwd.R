@@ -136,14 +136,16 @@ local({
         "does not create it")
     expect_false(file.exists(absent))
 
-    # Last, so a call written by position against 0.8.0 still matches.
-    # The deprecated names mirror the functions they forward to
-    # (test_deprecated.R), so they take it last as well.
+    # After everything 0.8.0 had, so a call written by position against
+    # 0.8.0 still matches. The deprecated names mirror the functions
+    # they forward to (test_deprecated.R), so they take it there as
+    # well. Only `operators` comes after it (test_rooms_operators.R).
     for (name in c("bot_configure", "bot_poll", "bot_run_init", "bot_run",
                    "matrix_configure", "matrix_poll", "matrix_run_init",
                    "matrix_run")) {
         f <- formals(getExportedValue("corteza", name))
-        expect_identical(names(f)[length(f)], "cwd", info = name)
+        expect_identical(utils::tail(setdiff(names(f), "operators"), 1L),
+                         "cwd", info = name)
         expect_null(f$cwd, info = name)
     }
     # And they forward it: the same check answers.
@@ -317,8 +319,23 @@ local({
     dir.create(planted, showWarnings = FALSE)
     writeLines('{"jobs": {"max_workers": 99}}',
                file.path(planted, "config.json"))
-    on.exit(unlink(c(d, planted), recursive = TRUE))
+    # A project's config is read from a trusted directory only
+    # (R/trust.R). The list of those is the user's, so this block gets a
+    # config directory of its own before it adds the bot's directory.
+    prev_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+    Sys.setenv(R_USER_CONFIG_DIR = tempfile("botdir-config-"))
+    on.exit({
+        unlink(c(d, planted, Sys.getenv("R_USER_CONFIG_DIR")), recursive = TRUE)
+        if (is.na(prev_config)) {
+            Sys.unsetenv("R_USER_CONFIG_DIR")
+        } else {
+            Sys.setenv(R_USER_CONFIG_DIR = prev_config)
+        }
+    })
 
+    # Untrusted, the bot's directory contributes nothing either.
+    expect_null(corteza:::bot_jobs_config(list(cwd = d))$max_workers)
+    corteza:::project_trust_add(d)
     expect_identical(corteza:::bot_jobs_config(list(cwd = d))$max_workers, 3L)
     global <- corteza:::load_config_file(
         corteza:::corteza_config_path("config.json"))$jobs

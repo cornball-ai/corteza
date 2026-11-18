@@ -25,6 +25,15 @@ R_TAMPER_CALLS <- c("assignInNamespace", "assignInMyNamespace",
                     "unlockBinding", "fixInNamespace", "reassignInPackage",
                     "trace", "untrace")
 R_TAMPER_SYMBOLS <- c(".subagent_state", ".job_worker_state")
+# What names corteza's list of trusted directories: the functions that
+# add to it, its key in the user's config and the file `/trust yes`
+# writes (R/trust.R). Which directories are trusted is a person's
+# decision, and a worker's R code runs where those functions are loaded,
+# so a name or a string constant that holds one of these goes to a
+# person. A name put together at run time is not seen, like a path is.
+R_TRUST_NAMES <- paste(c("project_trust_add", "trust_command",
+                         "trust_at_start", "trust_file", "trusted_projects",
+                         "trusted-projects\\.json"), collapse = "|")
 R_INSTALL_CALLS <- c("install", "install_github", "install_local",
                      "install_version", "install_git", "install_url",
                      "pkg_install", "local_install", "install.packages")
@@ -177,6 +186,11 @@ r_code_scan <- function(sx, code, depth = 0L) {
     if (length(hit)) {
         scan_flag(sx, "reaches into corteza's own runtime state (", hit[[1L]], ")")
     }
+    hit <- grep(R_TRUST_NAMES, c(st$symbols, st$strings), value = TRUE)
+    if (length(hit)) {
+        scan_flag(sx, "names corteza's list of trusted directories (",
+                  substr(hit[[1L]], 1L, 60L), "), which a person keeps")
+    }
     if (any(calls %in% c("eval", "evalq", "eval.parent")) &&
         any(calls %in% c("parse", "str2lang", "str2expression"))) {
         scan_flag(sx, "builds code from text and runs it (eval(parse()))")
@@ -209,9 +223,10 @@ r_code_scan <- function(sx, code, depth = 0L) {
         # "..\\x" and ".git\\config" pass unread.
         s <- r_path_slashes(s)
         # A relative path stays in the project, so only two are worth
-        # resolving: git's own files and the project's corteza config.
+        # resolving: git's own files and a corteza folder in the project.
         internal <- writes && !grepl("[[:space:]]", s) && nchar(s) < 400L &&
-        grepl("(^|/)\\.git(/|$)|(^|/)\\.corteza/config\\.json$", s)
+        (grepl("(^|/)\\.git(/|$)", s) ||
+            grepl("(^|/)\\.corteza(/|$)", s, ignore.case = TRUE))
         if (!r_path_like(s) && !internal) {
             next
         }
@@ -231,7 +246,7 @@ r_code_scan <- function(sx, code, depth = 0L) {
             scan_flag(sx, "may write ", if (identical(p$zone, "git")) {
                     "git's own files"
                 } else {
-                    "the project's corteza config"
+                    "the project's corteza folder"
                 }, " (", p$abs, ")")
         }
     }

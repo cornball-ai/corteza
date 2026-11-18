@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Provider fallback on limit errors (turn() -> .agent_with_fallback()).
 
 corteza:::.fallback_reset()
@@ -309,6 +312,15 @@ expect_identical(corteza:::.history_shape(list(
     list(role = "user",
          content = list(list(type = "tool_result", tool_use_id = "t1"))))),
     "anthropic")
+# A reply in typed `text` blocks is one too, with or without the
+# thinking it came with: the Responses wire wants `output_text` there.
+# What a user entry holds in `text` blocks is no marker.
+expect_identical(corteza:::.history_shape(list(
+    list(role = "assistant",
+         content = list(list(type = "text", text = "hi"))))), "anthropic")
+expect_identical(corteza:::.history_shape(list(
+    list(role = "user",
+         content = list(list(type = "text", text = "hi"))))), "portable")
 
 # Responses markers, both entry types the codex wire leaves in history.
 expect_identical(corteza:::.history_shape(list(

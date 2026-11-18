@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # subagent_seed_history round-trips a history slice into a child's
 # .subagent_state. No LLM call. Gated at_home() because spawning a
 # callr session adds ~250ms.

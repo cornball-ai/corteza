@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Milestone 2 of the CLI/chat unification: tools run IN-PROCESS, so a
 # subagent spawned via the slash-command path (subagent_spawn) and one
 # spawned via the model tool path (tool_spawn_subagent) must land in

@@ -42,7 +42,8 @@ load_config_file <- function(path) {
 #'
 #' Merges global config from \code{tools::R_user_dir("corteza", "config")}
 #' with project config (\code{.corteza/config.json}). Project config
-#' takes precedence.
+#' takes precedence, where the directory is trusted: an untrusted
+#' project's config is not read (\code{project_config()}).
 #'
 #' @param cwd Working directory for project config
 #' @return List with merged configuration
@@ -51,10 +52,8 @@ load_config <- function(cwd = getwd()) {
     global_path <- corteza_config_path("config.json")
     global <- load_config_file(global_path)
 
-    # Project config
-
-    project_path <- file.path(cwd, ".corteza", "config.json")
-    project <- load_config_file(project_path)
+    # Project config, from a trusted directory only.
+    project <- project_config(cwd)
 
     # Merge (project overrides global)
     config <- global
@@ -69,6 +68,9 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$context_files)) {
         config$context_files <- character(0)
     }
+    # From an untrusted directory, a context file named through the
+    # project does not load: the name is the user's, the content is not.
+    config$context_files <- project_context_files(cwd, config$context_files)
     if (is.null(config$provider)) {
         config$provider <- "anthropic"
     }
@@ -89,6 +91,17 @@ load_config <- function(cwd = getwd()) {
     # Auto-compaction threshold (percentage)
     if (is.null(config$context_compact_pct)) {
         config$context_compact_pct <- 90L
+    }
+    # A cap on that threshold in tokens, and the idle trigger
+    # (R/compact-trigger.R). 0 turns either off.
+    if (is.null(config$context_compact_tokens)) {
+        config$context_compact_tokens <- CONTEXT_COMPACT_TOKENS
+    }
+    if (is.null(config$context_idle_minutes)) {
+        config$context_idle_minutes <- CONTEXT_IDLE_MINUTES
+    }
+    if (is.null(config$context_idle_tokens)) {
+        config$context_idle_tokens <- CONTEXT_IDLE_TOKENS
     }
     # The Codex Responses transport can reject a provider-native history on
     # serialized request size before the model's token window is full. This is
