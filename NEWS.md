@@ -1,3 +1,18 @@
+# corteza 0.8.0.10
+
+- **A host can take a room's messages for itself.** `bot_run_init()`
+  takes a third hook, `on_message(chat, cfg, room_id, message, session,
+  backfill)`, offered each message from someone else before the loop
+  does anything else with it. When it returns `list(handled = TRUE)`,
+  corteza marks the message seen and does nothing more: no turn, no
+  history entry, no read receipt. Anything else, an error included,
+  takes the normal path.
+- Once a host has taken a message in a room, the bot's own messages
+  there are recorded nowhere for the life of the process, so the
+  host's posts do not fill a history no turn reads.
+- A restart's backfill offers each message it would record with
+  `backfill = TRUE`.
+
 # corteza 0.8.0.9
 
 - **A picture sent to a bot's room is kept where its tools can read it.**
