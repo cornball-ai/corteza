@@ -227,6 +227,13 @@ local({
     expect_null(r$path)
     expect_identical(r$reason, "could not fetch attachment")
     expect_equal(length(list.files(keep)), 1L)
+    # Not shown for a reason of its own, and not kept either: the receipt
+    # gives both reasons.
+    r <- receipt(ns$bot_message_media(chat, lost, "x", "ollama",
+                                      save_dir = keep))
+    expect_identical(r$reason, paste("provider is not configured for vision;",
+                                     "could not fetch attachment"))
+    expect_identical(r$status, "contents unavailable")
 
     # Without a folder nothing is kept and the receipt is as before.
     patch("chat_download", function(client, attachment, ...) {
@@ -237,7 +244,114 @@ local({
     plain <- ns$bot_message_media(chat, m, "edit this", "anthropic")
     expect_false(grepl('"path"', plain$text, fixed = TRUE))
 
+    # Fetched, but the folder cannot be made (a file has its name): not
+    # kept, and the receipt says so after why it was not shown.
+    blocked <- file.path(root, "blocked.attachments")
+    writeLines("a file, not a folder", blocked)
+    r <- receipt(ns$bot_message_media(chat, lost, "x", "ollama",
+                                      save_dir = blocked))
+    expect_null(r$path)
+    expect_identical(r$reason, paste("provider is not configured for vision;",
+                                     "could not keep the attachment"))
+
     # The bot config turns keeping off.
     expect_null(ns$bot_attachments_dir(list(keep_attachments = FALSE),
                                        "!room:example"))
+})
+
+# A picture sent while the bot was not running reaches it through the
+# restart's backfill, which marks the event seen, so the live path never
+# sees it. The backfill keeps it as the live path does, and the history
+# gets the receipt with the path. The model is not shown it and the room
+# is told nothing: backfill answers nothing.
+local({
+    ns <- asNamespace("corteza")
+    saved <- list()
+    patch <- function(name, fn, package = "corteza") {
+        saved[[length(saved) + 1L]] <<- list(name = name, package = package,
+            fn = get(name, asNamespace(package)))
+        utils::assignInNamespace(name, fn, package)
+    }
+    on.exit({
+        for (x in rev(saved)) utils::assignInNamespace(x$name, x$fn, x$package)
+    }, add = TRUE)
+    png <- as.raw(c(137, 80, 78, 71, 13, 10, 26, 10, 1:40))
+    downloads <- 0L
+    patch("chat_download", function(client, attachment, ...) {
+        downloads <<- downloads + 1L
+        path <- tempfile()
+        writeBin(png, path)
+        path
+    }, "chat.api")
+    patch("chat_capabilities", function(...) list(attachments = TRUE), "chat.api")
+    sent <- 0L
+    patch("chat_send", function(...) {
+        sent <<- sent + 1L
+        "$sent"
+    }, "chat.api")
+    hist <- list(
+        chat.api::chat_message(id = "$photo", channel = "!r:ex",
+            sender = "@human:example", body = "reference.png", ts = Sys.time(),
+            attachments = list(chat.api::chat_attachment(id = "pic",
+                name = "reference.png", mime = "image/png",
+                bytes = length(png), url = "mxc://example/pic"))),
+        chat.api::chat_message(id = "$doc", channel = "!r:ex",
+            sender = "@human:example", body = "notes.pdf", ts = Sys.time(),
+            attachments = list(chat.api::chat_attachment(id = "doc",
+                name = "notes.pdf", mime = "application/pdf", bytes = 10,
+                url = "mxc://example/doc"))))
+    patch("chat_history", function(client, channel, limit = 50L,
+                                   cursor = NULL, ...) {
+        list(messages = hist, cursor = NULL)
+    }, "chat.api")
+    patch("chat_channels", function(client, ...) "!r:ex", "chat.api")
+    # Vision on, so the reason in the receipt is the backfill's own.
+    cfg <- list(room_id = "!r:ex", model = "qwen3:8b", provider = "ollama",
+                images = TRUE)
+    reg <- ns$bot_new_session_registry()
+    expect_equal(ns$bot_backfill_sessions(chat.api::chat_loopback(), reg, cfg),
+                 1L)
+    s <- get("!r:ex", envir = reg)
+    expect_true(all(c("$photo", "$doc") %in% s$seen_event_ids))
+    expect_identical(downloads, 1L)
+    expect_identical(sent, 0L)
+    keep <- ns$bot_attachments_dir(cfg, "!r:ex")
+    kept <- list.files(keep, full.names = TRUE)
+    expect_equal(length(kept), 1L)
+    photo <- s$history[[1L]]$content
+    expect_true(is.character(photo))
+    expect_true(startsWith(photo, "reference.png"))
+    expect_true(grepl("kept for tools, not shown to the model", photo,
+                      fixed = TRUE))
+    expect_true(grepl("received while the bot was not running", photo,
+                      fixed = TRUE))
+    if (length(kept) == 1L) {
+        expect_true(grepl("^[0-9a-f]{12}-reference[.]png$", basename(kept)))
+        expect_identical(readBin(kept, "raw", 100L), png)
+        expect_true(grepl(normalizePath(kept, winslash = "/"), photo,
+                          fixed = TRUE))
+    }
+    expect_true(grepl("kept for tools", s$transcript[[1L]]$content,
+                      fixed = TRUE))
+    # A PDF gets its receipt as on the live path, and nothing is fetched.
+    doc <- s$history[[2L]]$content
+    expect_true(grepl("this file type is not read by the bot", doc,
+                      fixed = TRUE))
+    expect_false(grepl('"path"', doc, fixed = TRUE))
+
+    # A download that fails keeps nothing; the message still goes in.
+    patch("chat_download", function(...) stop("gone"), "chat.api")
+    hist[[1L]]$id <- "$photo2"
+    hist <- hist[1L]
+    reg2 <- ns$bot_new_session_registry()
+    cfg$room_id <- "!r2:ex"
+    patch("chat_channels", function(client, ...) "!r2:ex", "chat.api")
+    expect_equal(ns$bot_backfill_sessions(chat.api::chat_loopback(), reg2,
+                                          cfg), 1L)
+    s2 <- get("!r2:ex", envir = reg2)
+    expect_true("$photo2" %in% s2$seen_event_ids)
+    expect_true(grepl("could not fetch attachment", s2$history[[1L]]$content,
+                      fixed = TRUE))
+    expect_false(dir.exists(ns$bot_attachments_dir(cfg, "!r2:ex")))
+    expect_identical(sent, 0L)
 })

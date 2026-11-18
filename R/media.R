@@ -212,20 +212,24 @@ bot_fetch_image <- function(chat, attachment,
         return(fail("empty or unreadable download"))
     }
     bytes <- size
+    not_kept <- NULL
     if (!is.null(save_dir)) {
         if (size > .BOT_ATTACHMENT_KEEP_MAX) {
-            message("corteza: not kept, over the ",
-                    format(.BOT_ATTACHMENT_KEEP_MAX, big.mark = ","),
-                    " byte limit for keeping a picture")
+            not_kept <- sprintf("not kept: over the %s byte limit for keeping a picture",
+                                format(.BOT_ATTACHMENT_KEEP_MAX, big.mark = ","))
         } else {
             kept <- bot_keep_attachment(path, save_dir, attachment, event)
             if (is.null(kept)) {
-                message("corteza: could not keep the attachment")
+                not_kept <- "could not keep the attachment"
             }
+        }
+        if (!is.null(not_kept)) {
+            message("corteza: ", not_kept)
         }
     }
     if (!show) {
-        return(list(image = NULL, reason = NULL, path = kept, bytes = bytes))
+        return(list(image = NULL, reason = not_kept, path = kept,
+                    bytes = bytes))
     }
     if (size > max_bytes) {
         return(fail(sprintf("image over the %s byte limit after download",
@@ -276,8 +280,13 @@ bot_message_content <- function(chat, m, text, provider, cfg = list()) {
 # fetch is kept there for the session's tools, shown to the model or not,
 # and its receipt names the kept file (`path`) and its real size
 # (`bytes`): a tool cannot use a picture it has no path for.
+#
+# `not_shown`, a reason, keeps every picture from the model: one that
+# would have been shown is kept all the same, and its receipt gives that
+# reason. A more particular reason, such as the size limit, comes first.
+# The restart's backfill passes one (bot_backfill_sessions()).
 bot_message_media <- function(chat, m, text, provider, cfg = list(),
-                              save_dir = NULL) {
+                              save_dir = NULL, not_shown = NULL) {
     max_bytes <- bot_image_max_bytes(cfg, provider)
     atts <- m$attachments
     if (!length(atts)) {
@@ -302,6 +311,8 @@ bot_message_media <- function(chat, m, text, provider, cfg = list(),
             "transport cannot download attachments"
         } else if (!bot_llm_multimodal()) {
             "installed model client cannot accept images"
+        } else {
+            not_shown
         }
         keep <- !is.null(save_dir) && fetchable &&
         (is.na(size) || size <= .BOT_ATTACHMENT_KEEP_MAX)
@@ -310,7 +321,13 @@ bot_message_media <- function(chat, m, text, provider, cfg = list(),
             result <- bot_fetch_image(chat, a, max_bytes, details = TRUE,
                                       save_dir = if (keep) save_dir,
                                       event = m$id, show = is.null(reason))
-            reason <- reason %||% result$reason
+            if (is.null(reason)) {
+                reason <- result$reason
+            } else if (is.null(result$path) && !is.null(result$reason)) {
+                # Not shown, and not kept either: the receipt says why,
+                # after why it was not shown.
+                reason <- paste0(reason, "; ", result$reason)
+            }
         }
         if (is.null(reason)) {
             status <- "image supplied to model"

@@ -202,24 +202,31 @@ retention_remove <- function(path, kind) {
 # What a room's session keeps of what people sent it (bot_keep_attachment(),
 # R/media.R): each file named by a 12-character digest and a dash, and
 # the partial copy one is written through. Anything else in the folder is
-# someone else's.
+# someone else's, and so is a link of that name.
 retention_attachment_files <- function(dir) {
     names <- list.files(dir, all.files = TRUE, no.. = TRUE)
     own <- grepl("^[0-9a-f]{12}-", names)
     files <- file.path(dir, names[own])
-    files[!dir.exists(files)]
+    retention_real(files[!dir.exists(files)])
 }
 
 # What the journal's writer makes in a journal folder (R/journal.R): the
 # live snapshot and the segments, each with the copy a replacement parks
 # and the temp file it is written through, and the folder of shared
 # entries. Anything else there is someone else's, the audit records
-# first of all.
+# first of all, and so is a link of one of those names.
 retention_journal_files <- function(journal) {
     names <- list.files(journal, all.files = TRUE, no.. = TRUE)
     own <- grepl("^(live|segment-[0-9]+)[.]json([.]tmp|[.]prev)?$", names) |
     names == "entries"
-    file.path(journal, names[own])
+    retention_real(file.path(journal, names[own]))
+}
+
+# Of `paths`, those that are no link and lie behind none
+# (retention_within()). corteza's writers make files and folders, never
+# links, so a link among them was put there by someone else and stays.
+retention_real <- function(paths) {
+    paths[vapply(paths, retention_within, logical(1), USE.NAMES = FALSE)]
 }
 
 # Remove a folder that has nothing in it. file.remove() refuses one

@@ -285,6 +285,54 @@ local({
     expect_false(dir.exists(att))
 })
 
+# A kept picture or a journal file that is a link was not made by
+# corteza: it stays, and so does what it points at. The real files
+# beside it go, and each folder stays for its link. Run twice, the
+# second time as Windows sees links, where only the real path tells.
+if (.Platform$OS.type != "windows") local({
+    for (windows_like in c(FALSE, TRUE)) local({
+        fx <- retention_fixture()
+        on.exit(fx$restore(), add = TRUE)
+        if (windows_like) {
+            orig_link <- corteza:::retention_is_link
+            assignInNamespace("retention_is_link", function(path) FALSE,
+                              ns = "corteza")
+            on.exit(assignInNamespace("retention_is_link", orig_link,
+                                      ns = "corteza"), add = TRUE)
+        }
+        why <- if (windows_like) "as on Windows" else "with Sys.readlink()"
+        room <- make_session(fx, "room", agent = "matrix", transcript = FALSE)
+        att <- sub("[.]journal$", ".attachments", room$journal)
+        dir.create(att)
+        kept <- file.path(att, "0123456789ab-kept.png")
+        writeBin(as.raw(1:8), kept)
+        away <- file.path(fx$root, "away")
+        dir.create(away)
+        writeBin(as.raw(1:8), file.path(away, "picture.png"))
+        writeLines("{}", file.path(away, "live.json"))
+        link <- file.path(att, "0123456789ab-link.png")
+        expect_true(file.symlink(file.path(away, "picture.png"), link),
+                    info = why)
+        live <- file.path(room$journal, "live.json")
+        unlink(live)
+        expect_true(file.symlink(file.path(away, "live.json"), live),
+                    info = why)
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_identical(sort(found$kind),
+                         c("attachments", "journal", "trace"), info = why)
+        expect_true(all(found$removed), info = why)
+        expect_false(file.exists(kept), info = why)
+        expect_false(file.exists(file.path(room$journal, "segment-0001.json")),
+                     info = why)
+        expect_true(nzchar(Sys.readlink(link)), info = why)
+        expect_true(nzchar(Sys.readlink(live)), info = why)
+        expect_identical(sort(list.files(away)), c("live.json", "picture.png"),
+                         info = why)
+        expect_true(dir.exists(att), info = why)
+        expect_true(dir.exists(room$journal), info = why)
+    })
+})
+
 # ---- Links ----
 # A link is never removed, and nothing behind one is.
 if (.Platform$OS.type != "windows") local({
