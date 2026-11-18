@@ -320,6 +320,9 @@ if (.Platform$OS.type != "windows") local({
         found <- corteza:::retention_prune(90, now = fx$later)
         expect_identical(sort(found$kind),
                          c("attachments", "journal", "trace"), info = why)
+        # The link's target is not counted either.
+        expect_equal(found$bytes[found$kind == "attachments"], 8,
+                     info = why)
         expect_true(all(found$removed), info = why)
         expect_false(file.exists(kept), info = why)
         expect_false(file.exists(file.path(room$journal, "segment-0001.json")),
@@ -331,6 +334,26 @@ if (.Platform$OS.type != "windows") local({
         expect_true(dir.exists(att), info = why)
         expect_true(dir.exists(room$journal), info = why)
     })
+})
+
+# A folder whose only file of such a name is a link holds nothing of
+# corteza's: retention neither counts it nor touches it.
+if (.Platform$OS.type != "windows") local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    room <- make_session(fx, "room", agent = "matrix", transcript = FALSE)
+    att <- sub("[.]journal$", ".attachments", room$journal)
+    dir.create(att)
+    target <- file.path(fx$root, "picture.png")
+    writeBin(as.raw(1:8), target)
+    link <- file.path(att, "0123456789ab-link.png")
+    expect_true(file.symlink(target, link))
+    expect_false("attachments" %in%
+                 corteza:::retention_scan(90, now = fx$later)$kind)
+    found <- corteza:::retention_prune(90, now = fx$later)
+    expect_identical(sort(found$kind), c("journal", "trace"))
+    expect_true(nzchar(Sys.readlink(link)))
+    expect_true(file.exists(target))
 })
 
 # ---- Links ----
