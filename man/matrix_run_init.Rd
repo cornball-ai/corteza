@@ -23,8 +23,9 @@ matrix_run_init(
 
 \item{hooks}{Named list of functions or NULL. Policy the loop asks
 the host about; see Hooks. NULL, the default, means a bare bot:
-\code{/clear} archives and resets without filing anything, and a
-thread reply starts from the thread's own history.}
+\code{/clear} archives and resets without filing anything, a
+thread reply starts from the thread's own history, and every
+message is the bot's to answer.}
 
 \item{cwd}{Character or NULL. The directory a room works in when its
 topic names none, for this run. It must exist: corteza does not
