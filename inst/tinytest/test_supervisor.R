@@ -103,6 +103,13 @@ expect_identical(route("run_r", list(code = "tinypkgr::submit_cran()"))$route, "
 v <- route("run_r", list(code = "corteza:::project_trust_add(getwd())"))
 expect_identical(v$route, "human")
 expect_true(any(grepl("trusted directories", v$flags)))
+# So is what runs unasked: a worker's code may not save itself an
+# "always", by the function or by the file.
+v <- route("run_r", list(code = "corteza:::approval_save(getwd(), 'bash')"))
+expect_identical(v$route, "human")
+expect_true(any(grepl("saved approvals", v$flags)))
+v <- route("run_r", list(code = "f <- corteza:::approvals_file(); writeLines('{}', f)"))
+expect_identical(v$route, "human")
 # The rules read a call policy would have let through as well.
 expect_identical(route("bash", list(command = "git push"), "allow")$route, "human")
 expect_identical(route("bash", list(command = "ls"), "allow")$route, "proceed")

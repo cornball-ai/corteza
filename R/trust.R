@@ -1,11 +1,11 @@
 # Project trust: what a session may load from the directory it works in.
 #
 # A project's own files arrive with the repository: its config, its
-# skills, its instruction file, its stored lessons, the approvals saved
-# in it, and the DESCRIPTION and commit subjects a briefing is built
-# from. None of them can vouch for itself. A session loads them only
-# from a directory the user has trusted, and from any other it loads
-# nothing and says so.
+# skills, its instruction file, its stored lessons, and the DESCRIPTION
+# and commit subjects a briefing is built from. None of them can vouch
+# for itself. A session loads them only from a directory the user has
+# trusted, and from any other it loads nothing and says so. Approvals a
+# project's folder holds are not read at all (R/approvals.R).
 #
 # Trust decides what corteza loads by itself when a session starts. It
 # is not a sandbox: a tool can still read a file in an untrusted
@@ -202,8 +202,9 @@ load_project_skills <- function(cwd = getwd(), code = TRUE, docs = TRUE) {
     invisible(TRUE)
 }
 
-# The project's saved approvals, the terminal's "Allow always for this
-# project".
+# Where 0.8.0 kept the terminal's "Allow always for this project". Not
+# read: the answers are the user's, kept in the config directory
+# (R/approvals.R). Only its presence is reported.
 project_approvals_path <- function(cwd) {
     file.path(cwd, ".corteza", "approvals.json")
 }
@@ -212,19 +213,6 @@ project_approvals_path <- function(cwd) {
 # decides first.
 project_harness_path <- function(cwd) {
     file.path(cwd, ".corteza", "harness.json")
-}
-
-# The saved approvals as a display says them: the file, "none", or the
-# file with the reason it is not read.
-project_approvals_label <- function(cwd) {
-    path <- project_approvals_path(cwd)
-    if (!file.exists(path)) {
-        "none"
-    } else if (project_trusted(cwd)) {
-        path
-    } else {
-        paste(path, "(not read: the directory is not trusted)")
-    }
 }
 
 # Is `dir` in a git work tree? Looks for `.git` upward and runs nothing.
@@ -256,9 +244,6 @@ project_offers <- function(cwd = getwd()) {
     }
     if (file.exists(project_harness_path(cwd))) {
         out <- c(out, "its stored lessons (.corteza/harness.json)")
-    }
-    if (file.exists(project_approvals_path(cwd))) {
-        out <- c(out, "the approvals saved in it (.corteza/approvals.json)")
     }
     for (name in c("AGENTS.md", "CLAUDE.md")) {
         if (file.exists(at(name))) {

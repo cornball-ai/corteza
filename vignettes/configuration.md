@@ -108,7 +108,6 @@ What trust covers:
 | `.corteza/skills/` | R files are sourced at start; `SKILL.md` files join the instruction catalog |
 | `AGENTS.md` or `CLAUDE.md` | Added to the system prompt |
 | `.corteza/harness.json` | Its lessons are added to the system prompt, and `/refine` and the lesson tool may write it |
-| `.corteza/approvals.json` | The terminal's saved "Allow always for this project" answers apply |
 | `DESCRIPTION` and commit subjects | Summarized in the briefing at the top of the prompt |
 | Files your global `context_files` names by a relative path, or by a path inside the project | Added to the system prompt |
 
@@ -706,6 +705,13 @@ class, and nothing below lifts that. A path under a credential store
 saved "always" never answers it, and its prompt offers none. Personal
 paths (`~/Documents`, `~/Downloads`) can be read; a write or a command
 touching them in a room is refused.
+
+At the terminal, "Allow always for this project" saves the answer in
+`approvals.json` in your config directory, by directory, and later
+sessions there skip that prompt. A project's own `.corteza/approvals.json`,
+where earlier versions kept these answers, is not read, trusted or not:
+the terminal says so when it starts. `/permissions` lists what is saved
+for the directory.
 
 The keys below apply to what is left. None of them turns a refusal into
 a run.

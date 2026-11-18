@@ -92,10 +92,15 @@ What that gates, each through one function in `R/trust.R`:
   skill docs), and the catalog's `project` root.
 - `.corteza/harness.json`: `harness_path("project")` stops for an
   untrusted directory; `harness_scopes()` says which stores exist.
-- `.corteza/approvals.json`: the binary's `cli_approval_cb()`.
 - `AGENTS.md`/`CLAUDE.md`, the briefing, and the user's `context_files`
   that point into the project: `load_context_bundle()` and
   `project_context_files()`.
+
+`.corteza/approvals.json`, where 0.8.0 kept the terminal's "Allow
+always for this project", is not read at all, trusted or not. Those
+answers are the user's, kept in the config directory by directory
+(`R/approvals.R`); `project_approvals_path()` serves only to say the old
+file is there.
 
 A new reader of anything under `.corteza/` builds its path with one of
 the 4 `project_*_path()` builders and decides with `project_trusted()`
