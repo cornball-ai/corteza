@@ -8,7 +8,8 @@ matrix_run(
   system = NULL,
   model = NULL,
   provider = NULL,
-  tools_filter = NULL
+  tools_filter = NULL,
+  cwd = NULL
 )
 }
 \arguments{
@@ -21,6 +22,9 @@ matrix_run(
 \item{provider}{Character or NULL. Provider override.}
 
 \item{tools_filter}{Character vector or NULL. Tool filter override.}
+
+\item{cwd}{Character or NULL. The directory a room works in when its
+topic names none; see \code{\link{bot_run_init}}.}
 }
 \value{
 See \code{\link{bot_run}}.

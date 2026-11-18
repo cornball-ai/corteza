@@ -10,7 +10,8 @@ bot_poll(
   tools_filter = NULL,
   timeout = 0L,
   sessions = NULL,
-  hooks = NULL
+  hooks = NULL,
+  cwd = NULL
 )
 }
 \arguments{
@@ -31,13 +32,21 @@ keyed by room_id, or NULL to build fresh sessions each call.}
 \item{hooks}{Named list of functions or NULL, as validated by
 \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
 host nothing.}
+
+\item{cwd}{Character or NULL. The directory a room works in when its
+topic names none, for this call. It must exist: corteza does not
+create it. NULL (default) uses the \code{cwd} saved by
+\code{\link{bot_configure}}. With neither, such a room works in a
+scratch folder under the session's temporary directory.}
 }
 \value{
 An integer count of messages replied to, invisibly.
 }
 \description{
 Fetches new messages across all joined rooms and runs \code{\link{turn}}
-against each. Auto-joins any pending invites the bot has received.
+against each. Joins a room the bot is invited to when one of its
+operators sent the invite (see \code{\link{bot_configure}}); every
+other invite is refused and reported.
 Replies are sent back to the originating room. On first run there is
 no saved sync token, so this call establishes a baseline and returns
 without processing history.

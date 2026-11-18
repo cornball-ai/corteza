@@ -1,3 +1,90 @@
+# corteza 0.8.0.6
+
+- **A project's own files load only from a directory you have trusted.**
+  That covers `.corteza/config.json`, the skills under `.corteza/skills/`,
+  `AGENTS.md` or `CLAUDE.md`, the stored lessons and the briefing. Trust a
+  directory with `/trust yes`, or list it under `trusted_projects` in your
+  config; every directory inside it is trusted with it. The command and
+  `chat()` ask once at start. A room is told once, and only an operator may
+  trust its directory. `serve()` reports an untrusted directory on stderr.
+  `/trust` and `/status` show where a directory stands and what was not
+  loaded. Up to 0.8.0 a cloned repository could set the approval mode and
+  the provider for a session started in it, and ran its own R files at
+  start.
+- In an untrusted directory the terminal's "Allow always" lasts for the
+  session and writes no file.
+- An unattended session's write to a project's `.corteza` folder goes to a
+  person, and so does R code that names the list of trusted directories. Up
+  to now only `.corteza/config.json` did.
+- `harness_trust_project` is no longer read. A trusted directory's lessons
+  are trusted.
+
+# corteza 0.8.0.5
+
+- **A bot with no `operators` accepts no invites.** Up to 0.8.0 it accepted
+  every one, which gave a session with tools to anyone who could invite it.
+  Rooms it is already in work as before. Each refused invite is reported in
+  the log with what would change it.
+- `bot_configure()` gains `operators`: the people a bot answers to, each by
+  a full Matrix id. Before, the key could only be added to the bot config by
+  hand. A bot that should go on accepting invites needs it.
+
+# corteza 0.8.0.4
+
+- `corteza --resume`, `corteza --list`, `/sessions` and
+  `chat(session = TRUE)` look at the sessions started in the current
+  directory. `--all`, or `/sessions all`, covers every directory.
+  `corteza --resume --all` is what `--resume` did before.
+- A session's entry in `sessions.json` records its directory, where it runs
+  and a title, the first prompt cut to 100 characters. A list shows the
+  title. Sessions from earlier versions get their directory from the
+  transcript the first time sessions are listed.
+- A session started with `--session <key>` is listed. Only keys beginning
+  with `corteza:` were.
+- A Matrix room's session has an entry too, under agent `matrix`.
+- `vignette("configuration")` has a "Session records" section that states
+  the fields for programs that read the file.
+- `sessions.json` is written through a temporary file with mode 0600, and a
+  store that cannot be read is set aside as `sessions.json.unreadable` where
+  it used to be replaced by the entry being written.
+
+# corteza 0.8.0.3
+
+- corteza now removes what old sessions no longer need. Once a day, when a
+  terminal session starts and while a bot runs, the journal and the tool
+  trace of every session unused for 90 days are removed. Transcripts, session
+  stores, workspaces and audit records stay, and a session whose journal is
+  gone still resumes. Set `retention$session_days` in the user's config to
+  change the number of days; 0 keeps everything.
+  `sessions_prune(dry_run = TRUE)` reports what a run would remove. Nothing
+  reached through a link is removed.
+- A room that restores its context from its journal, and has been silent for
+  90 days, starts its next conversation fresh.
+- A journal removed while its session is running starts again from nothing.
+  Before, the session's next compaction was refused.
+
+# corteza 0.8.0.2
+
+- `install_cli()` no longer writes to `~/bin` by default. With no `path`, the
+  command goes to `tools::R_user_dir("corteza", "data")/bin` on every system,
+  as it already did on Windows, and the function prints the line that puts
+  that directory on `PATH`. A named directory works as before. An install
+  made by 0.8.0 or earlier stays in `~/bin`: `install_cli()` and
+  `uninstall_cli()` say so and leave it alone, and
+  `install_cli("~/bin", force = TRUE)` refreshes it.
+
+# corteza 0.8.0.1
+
+- corteza no longer creates a directory in the home directory for a chat bot.
+  Up to 0.8.0 a room whose topic named no directory worked in `~/<bot name>`,
+  created on first use; a test did the same on CRAN's check machine. Such a
+  room now works in the bot's `cwd`, a new last argument of `bot_configure()`,
+  `bot_run()`, `bot_run_init()` and `bot_poll()`, and of the `matrix_*` names
+  that forward to them. It must name an existing directory. With no `cwd`,
+  the room works in a scratch folder under the session's temporary directory
+  and is told it has no project directory. A bot that relied on
+  `~/<bot name>` now needs `cwd`.
+
 # corteza 0.8.0
 
 CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.

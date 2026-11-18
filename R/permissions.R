@@ -303,17 +303,11 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
             ))
     }
 
-    approvals_path <- file.path(cwd, ".corteza", "approvals.json")
     list(
          changed = FALSE, mode = NULL,
          text = paste(c(
                         format_permissions(config),
-                        sprintf("Project approvals: %s",
-                    if (file.exists(approvals_path)) {
-                        approvals_path
-                    } else {
-                        "none"
-                    }),
+                        sprintf("Project approvals: %s", project_approvals_label(cwd)),
                         sprintf("Change for this session: /permissions %s",
                                 paste(.approval_modes, collapse = "|"))
             ), collapse = "\n")

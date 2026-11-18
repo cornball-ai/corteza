@@ -9,6 +9,15 @@
 # JSONL transcript format:
 #   Line 1: {"type":"session","version":2,"id":"...","timestamp":"...","cwd":"..."}
 #   Lines 2+: {"role":"user|assistant","content":[{"type":"text","text":"..."}],...}
+#
+# A store entry also says where its session was started (`cwd`), where
+# it runs (`surface`) and what it is about (`title`, the first prompt).
+# Lists and resumes go by `cwd`: a session belongs to its directory.
+# session_new() writes `cwd` and `surface`, session_title_once() writes
+# `title`, and session_save() leaves all 3 alone. A Matrix room's
+# session has its entry under agent "matrix" (bot_session_record()).
+# vignette("configuration") states the fields as a contract for other
+# programs: add fields, never rename one.
 
 # Constants
 SESSION_VERSION <- 2L
@@ -140,6 +149,17 @@ session_transcript_path <- function(id, agent_id = DEFAULT_AGENT_ID) {
 
 # Store operations ----
 
+#' Read a store file. NULL when it cannot be read as one.
+#' @noRd
+store_read <- function(path) {
+    store <- tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE),
+                      error = function(e) NULL)
+    if (!is.list(store)) {
+        return(NULL)
+    }
+    store
+}
+
 #' Load all session metadata from store
 #' @param agent_id Agent ID
 #' @return Named list of session entries (keyed by session key)
@@ -151,23 +171,57 @@ store_load <- function(agent_id = DEFAULT_AGENT_ID) {
         return(list())
     }
 
-    tryCatch(jsonlite::fromJSON(path, simplifyVector = FALSE),
-             error = function(e) list())
+    store_read(path) %||% list()
+}
+
+#' The store as a writer needs it. A file that is there and cannot be
+#' read is moved aside first: a save over it would replace every entry
+#' with the one being written.
+#' @noRd
+store_load_for_write <- function(agent_id = DEFAULT_AGENT_ID) {
+    path <- sessions_store_path(agent_id)
+    if (!file.exists(path)) {
+        return(list())
+    }
+    store <- store_read(path)
+    if (is.null(store)) {
+        aside <- paste0(path, ".unreadable")
+        if (!isTRUE(file.rename(path, aside))) {
+            stop("could not read session store ", path,
+                 " and could not move it aside", call. = FALSE)
+        }
+        log_event("session_store_unreadable", level = "warn",
+                  agent_id = agent_id)
+        return(list())
+    }
+    store
 }
 
 #' Save session metadata store
+#'
+#' Written beside the store and renamed over it. Every session of an
+#' agent shares this file, and a process that read it half written took
+#' it for empty. Private like the transcripts: an entry holds the start
+#' of a prompt.
 #' @param store Named list of session entries
 #' @param agent_id Agent ID
 #' @return Invisible path to store file
 #' @noRd
 store_save <- function(store, agent_id = DEFAULT_AGENT_ID) {
+    previous <- Sys.umask("0077")
+    on.exit(Sys.umask(previous), add = TRUE)
     dir <- sessions_dir(agent_id)
     if (!dir.exists(dir)) {
         dir.create(dir, recursive = TRUE, mode = "0700")
     }
 
     path <- sessions_store_path(agent_id)
-    writeLines(jsonlite::toJSON(store, auto_unbox = TRUE, pretty = TRUE), path)
+    tmp <- tempfile("sessions.json.", tmpdir = dir)
+    on.exit(unlink(tmp), add = TRUE)
+    writeLines(jsonlite::toJSON(store, auto_unbox = TRUE, pretty = TRUE), tmp)
+    if (!isTRUE(file.rename(tmp, path))) {
+        stop("could not write session store ", path, call. = FALSE)
+    }
     invisible(path)
 }
 
@@ -178,7 +232,7 @@ store_save <- function(store, agent_id = DEFAULT_AGENT_ID) {
 #' @return Updated session entry
 #' @noRd
 store_update <- function(session_key, updates, agent_id = DEFAULT_AGENT_ID) {
-    store <- store_load(agent_id)
+    store <- store_load_for_write(agent_id)
 
     if (is.null(store[[session_key]])) {
         store[[session_key]] <- list(sessionId = updates$sessionId %||%
@@ -198,16 +252,55 @@ store_update <- function(session_key, updates, agent_id = DEFAULT_AGENT_ID) {
 
 # Session operations ----
 
+#' A directory as the store records it and as 2 are compared: resolved
+#' when it exists, so a link and its target are 1 directory, with
+#' forward slashes on every system and no slash at the end.
+#' @return The path, or NULL for no directory.
+#' @noRd
+session_cwd <- function(cwd) {
+    if (!is.character(cwd) || !length(cwd) || is.na(cwd[[1L]]) ||
+        !nzchar(cwd[[1L]])) {
+        return(NULL)
+    }
+    path <- normalizePath(cwd[[1L]], winslash = "/", mustWork = FALSE)
+    if (nchar(path) > 1L && !grepl("^[A-Za-z]:/$", path)) {
+        path <- sub("/+$", "", path)
+    }
+    path
+}
+
+SESSION_TITLE_CHARS <- 100L
+
+#' A conversation's title: its first prompt on 1 line, cut to 100
+#' characters.
+#' @return The title, or NULL when the prompt has no text.
+#' @noRd
+session_title <- function(prompt) {
+    # A prompt that is not valid text in this locale has no title.
+    text <- tryCatch({
+        text <- paste(as.character(prompt), collapse = " ")
+        text <- trimws(gsub("[[:space:][:cntrl:]]+", " ", text))
+        substr(text, 1L, SESSION_TITLE_CHARS)
+    }, error = function(e) "")
+    if (is.na(text) || !nzchar(text)) {
+        return(NULL)
+    }
+    text
+}
+
 #' Create a new session
 #' @param provider LLM provider name
 #' @param model Model name
 #' @param cwd Working directory for session
 #' @param session_key Session key (default: generates new)
 #' @param agent_id Agent ID
+#' @param surface Where the session runs: "cli" or "console". NULL
+#'   records none.
 #' @return Session list object
 #' @noRd
 session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
-                        session_key = NULL, agent_id = DEFAULT_AGENT_ID) {
+                        session_key = NULL, agent_id = DEFAULT_AGENT_ID,
+                        surface = NULL) {
     id <- session_id(agent_id = agent_id)
     now <- as.numeric(Sys.time()) * 1000
     session_key <- session_key %||% paste0("corteza:", id)
@@ -218,24 +311,29 @@ session_new <- function(provider = "anthropic", model = NULL, cwd = getwd(),
                     inputTokens = 0L, outputTokens = 0L, totalTokens = 0L,
                     compactionCount = 0L, memoryFlushCompactionCount = 0L,
                     tasks = list(), messages = list())
+    session$surface <- surface
 
     # Write session header to transcript
     transcript_write_header(id, cwd, agent_id)
 
-    # Save to store
-    store_update(session_key, list(
-                                   sessionId = id,
-                                   sessionFile = session_transcript_path(id, agent_id),
-                                   createdAt = now,
-                                   modelProvider = provider,
-                                   model = model,
-                                   inputTokens = 0L,
-                                   outputTokens = 0L,
-                                   totalTokens = 0L,
-                                   compactionCount = 0L,
-                                   memoryFlushCompactionCount = 0L,
-                                   tasks = list()
-        ), agent_id)
+    # Save to store. The directory is what lists and resumes a session
+    # by where it was started; session_save() leaves it as written here.
+    entry <- list(
+                  sessionId = id,
+                  sessionFile = session_transcript_path(id, agent_id),
+                  createdAt = now,
+                  modelProvider = provider,
+                  model = model,
+                  inputTokens = 0L,
+                  outputTokens = 0L,
+                  totalTokens = 0L,
+                  compactionCount = 0L,
+                  memoryFlushCompactionCount = 0L,
+                  tasks = list()
+    )
+    entry$cwd <- session_cwd(cwd)
+    entry$surface <- surface
+    store_update(session_key, entry, agent_id)
 
     session
 }
@@ -292,7 +390,9 @@ session_load <- function(session_key, agent_id = DEFAULT_AGENT_ID,
                     updatedAt = entry$updatedAt,
                     provider = entry$modelProvider,
                     model = entry$model,
-                    cwd = entry$cwd,
+                    # From the transcript's header for a session made
+                    # before the store recorded it.
+                    cwd = entry$cwd %||% transcript_cwd(id, agent_id),
                     inputTokens = entry$inputTokens %||% 0L,
                     outputTokens = entry$outputTokens %||% 0L,
                     totalTokens = entry$totalTokens %||% 0L,
@@ -302,56 +402,276 @@ session_load <- function(session_key, agent_id = DEFAULT_AGENT_ID,
                     messages = transcript_load(id, agent_id,
             from_compaction = from_compaction)
     )
+    session$surface <- entry$surface
+    # A session from before titles were recorded takes its own first
+    # prompt, never the next one typed into it.
+    session$title <- entry$title %||%
+    session_title(session_first_prompt(session$messages))
 
     session
+}
+
+#' The text of the first user message among `messages`, or NULL.
+#' @noRd
+session_first_prompt <- function(messages) {
+    for (m in messages) {
+        if (!identical(m$role, "user")) {
+            next
+        }
+        content <- m$content
+        if (is.character(content)) {
+            return(content)
+        }
+        if (is.list(content) && length(content) && is.list(content[[1L]]) &&
+            is.character(content[[1L]]$text)) {
+            return(content[[1L]]$text)
+        }
+        return(NULL)
+    }
+    NULL
+}
+
+#' Give a session its title from its first prompt, once.
+#'
+#' The store is written the first time and never again for this
+#' session: session_save() leaves the title as it is.
+#' @param session Session object (the on-disk one).
+#' @param prompt What the person typed.
+#' @param agent_id Agent ID
+#' @return The session, with `title` set when the prompt gave one.
+#' @noRd
+session_title_once <- function(session, prompt, agent_id = DEFAULT_AGENT_ID) {
+    if (!is.null(session$title)) {
+        return(session)
+    }
+    title <- session_title(prompt)
+    if (is.null(title)) {
+        return(session)
+    }
+    session$title <- title
+    key <- session$sessionKey %||% paste0("corteza:", session$sessionId)
+    # A title is for lists. Failing to record one must not stop a turn.
+    tryCatch(store_update(key,
+                          list(sessionId = session$sessionId, title = title),
+                          agent_id),
+             error = function(e) NULL)
+    session
+}
+
+#' TRUE for the key of a session a person started. Subagents share the
+#' store under "agent:<id>:subagent:<uuid>" keys and mean nothing in a
+#' list of conversations.
+#' @noRd
+session_key_listed <- function(key) {
+    !startsWith(key, "agent:")
+}
+
+#' The first lines of a transcript, parsed. Lines that do not parse are
+#' dropped.
+#' @noRd
+transcript_head <- function(id, agent_id = DEFAULT_AGENT_ID, n = 1L) {
+    path <- session_transcript_path(id, agent_id)
+    if (!file.exists(path)) {
+        return(list())
+    }
+    lines <- tryCatch(readLines(path, n = n, warn = FALSE),
+                      error = function(e) character())
+    entries <- lapply(lines, function(line) {
+        tryCatch(jsonlite::fromJSON(line, simplifyVector = FALSE),
+                 error = function(e) NULL)
+    })
+    Filter(is.list, entries)
+}
+
+#' The directory a session was started in, from its transcript's header.
+#' @noRd
+transcript_cwd <- function(id, agent_id = DEFAULT_AGENT_ID) {
+    head <- transcript_head(id, agent_id, n = 1L)
+    if (!length(head) || !identical(head[[1L]]$type, "session")) {
+        return(NULL)
+    }
+    session_cwd(head[[1L]]$cwd)
+}
+
+# How far into a transcript the first prompt is looked for.
+SESSION_TITLE_LINES <- 5L
+
+#' A title from the first prompt in a transcript's first lines.
+#' @noRd
+transcript_title <- function(id, agent_id = DEFAULT_AGENT_ID) {
+    head <- transcript_head(id, agent_id, n = SESSION_TITLE_LINES)
+    session_title(session_first_prompt(head))
+}
+
+#' Record fields that entries lack, in 1 write.
+#'
+#' The store is read again just before, and a field another process
+#' recorded meanwhile is left as that process wrote it.
+#' @param fills Named list by session key; each element a named list of
+#'   fields.
+#' @param agent_id Agent ID
+#' @return Invisible NULL.
+#' @noRd
+store_fill <- function(fills, agent_id = DEFAULT_AGENT_ID) {
+    # A transcript that gave nothing leaves nothing to record.
+    fills <- lapply(fills, function(f) f[!vapply(f, is.null, logical(1))])
+    fills <- fills[lengths(fills) > 0L]
+    if (!length(fills)) {
+        return(invisible())
+    }
+    store <- store_load_for_write(agent_id)
+    changed <- FALSE
+    for (key in names(fills)) {
+        if (is.null(store[[key]])) {
+            next
+        }
+        for (field in names(fills[[key]])) {
+            if (is.null(store[[key]][[field]])) {
+                store[[key]][[field]] <- fills[[key]][[field]]
+                changed <- TRUE
+            }
+        }
+    }
+    if (changed) {
+        store_save(store, agent_id)
+    }
+    invisible()
+}
+
+#' Every session a person started, newest first, each with its key and
+#' its directory.
+#'
+#' Sessions made before 0.8.1 have their directory on line 1 of the
+#' transcript and nowhere else. It is read from there the first time
+#' they are listed and recorded in the store.
+#' @noRd
+session_entries <- function(agent_id = DEFAULT_AGENT_ID) {
+    store <- store_load(agent_id)
+    keys <- names(store)[vapply(names(store), session_key_listed, logical(1))]
+    keys <- keys[vapply(store[keys], function(e) {
+        is.list(e) && is.character(e$sessionId) && length(e$sessionId) == 1L
+    }, logical(1))]
+
+    fills <- list()
+    entries <- vector("list", length(keys))
+    for (i in seq_along(keys)) {
+        entry <- store[[keys[[i]]]]
+        entry$sessionKey <- keys[[i]]
+        if (is.null(entry$cwd)) {
+            entry$cwd <- transcript_cwd(entry$sessionId, agent_id)
+            fills[[keys[[i]]]] <- list(cwd = entry$cwd)
+        }
+        entries[[i]] <- entry
+    }
+    tryCatch(store_fill(fills, agent_id), error = function(e) NULL)
+
+    # A time that is no number sorts last.
+    updated <- vapply(entries, function(e) {
+        suppressWarnings(as.numeric(e$updatedAt %||% 0)[[1L]])
+    }, numeric(1))
+    entries[order(updated, decreasing = TRUE)]
+}
+
+#' TRUE for each of `entries` started in `cwd`.
+#' @noRd
+session_in_dir <- function(entries, cwd) {
+    here <- session_cwd(cwd)
+    vapply(entries, function(e) {
+        !is.null(here) && identical(session_cwd(e$cwd), here)
+    }, logical(1))
 }
 
 #' List sessions
 #' @param agent_id Agent ID
 #' @param n Maximum number of sessions to return (most recent first)
-#' @return List of session summaries
+#' @param cwd List the sessions started in this directory.
+#' @param all TRUE lists the sessions of every directory.
+#' @return List of session summaries. Its attribute "elsewhere" is the
+#'   number of sessions in other directories (0 with `all`), and "cwd"
+#'   is the directory listed (NULL with `all`).
 #' @noRd
-session_list <- function(agent_id = DEFAULT_AGENT_ID, n = 20) {
-    store <- store_load(agent_id)
-
-    if (length(store) == 0) {
-        return(list())
+session_list <- function(agent_id = DEFAULT_AGENT_ID, n = 20, cwd = getwd(),
+                         all = FALSE) {
+    entries <- session_entries(agent_id)
+    elsewhere <- 0L
+    if (!isTRUE(all)) {
+        here <- session_in_dir(entries, cwd)
+        elsewhere <- sum(!here)
+        entries <- entries[here]
     }
+    entries <- head(entries, n)
 
-    # Only list user sessions (keys starting with "corteza:"); subagent
-    # entries share the same store but have "agent:...:subagent:" keys and
-    # are not meaningful to the user in the --list / /sessions surface.
-    user_keys <- Filter(function(k) startsWith(k, "corteza:"), names(store))
-
-    # Convert to list and sort by updatedAt
-    sessions <- lapply(user_keys, function(key) {
-        entry <- store[[key]]
-        entry$sessionKey <- key
+    # Only what is shown is opened: a count of its messages, and a title
+    # for a session from before titles were recorded.
+    fills <- list()
+    sessions <- vector("list", length(entries))
+    for (i in seq_along(entries)) {
+        entry <- entries[[i]]
         entry$messages <- transcript_count(entry$sessionId, agent_id)
-        entry
-    })
+        if (is.null(entry$title)) {
+            entry$title <- transcript_title(entry$sessionId, agent_id)
+            fills[[entry$sessionKey]] <- list(title = entry$title)
+        }
+        sessions[[i]] <- entry
+    }
+    tryCatch(store_fill(fills, agent_id), error = function(e) NULL)
 
-    # Sort by updatedAt descending
-    updated_times <- vapply(sessions, function(s) s$updatedAt %||% 0,
-                            numeric(1))
-    sessions <- sessions[order(updated_times, decreasing = TRUE)]
-
-    # Limit to n
-    head(sessions, n)
+    attr(sessions, "elsewhere") <- elsewhere
+    if (!isTRUE(all)) {
+        attr(sessions, "cwd") <- session_cwd(cwd)
+    }
+    sessions
 }
 
 #' Get the latest session
 #' @param agent_id Agent ID
+#' @param cwd The latest session started in this directory.
+#' @param all TRUE takes the latest of every directory.
 #' @return Session object, or NULL if no sessions exist
 #' @noRd
-session_latest <- function(agent_id = DEFAULT_AGENT_ID) {
-    sessions <- session_list(agent_id, n = 1)
+session_latest <- function(agent_id = DEFAULT_AGENT_ID, cwd = getwd(),
+                           all = FALSE) {
+    sessions <- session_list(agent_id, n = 1, cwd = cwd, all = all)
 
     if (length(sessions) == 0) {
         return(NULL)
     }
 
     session_load(sessions[[1]]$sessionKey, agent_id)
+}
+
+#' One line for a person who asked for the sessions of a directory that
+#' has none: how many there are elsewhere and what reaches them.
+#' @param elsewhere Number of sessions in other directories.
+#' @param how What reaches them, as the person would type it.
+#' @return The line.
+#' @noRd
+session_none_here <- function(elsewhere, how) {
+    if (elsewhere <= 0L) {
+        return("No sessions found.")
+    }
+    sprintf("No session was started in this directory. %d %s elsewhere (%s).",
+            elsewhere, if (elsewhere == 1L) "is" else "are", how)
+}
+
+#' The same line, counted for `cwd`.
+#' @noRd
+session_none_note <- function(cwd, how, agent_id = DEFAULT_AGENT_ID) {
+    none <- session_list(agent_id, n = 0L, cwd = cwd)
+    session_none_here(attr(none, "elsewhere"), how)
+}
+
+#' One line when a session is resumed in another directory than the one
+#' it was started in: the paths in its history belong there.
+#' @return The line, or NULL when the directories are the same or the
+#'   session's is not known.
+#' @noRd
+session_elsewhere_note <- function(session, cwd) {
+    started <- session_cwd(session$cwd)
+    if (is.null(started) || identical(started, session_cwd(cwd))) {
+        return(NULL)
+    }
+    sprintf("This session was started in %s.", session_dir_show(started))
 }
 
 #' Add a message to a session (in memory only)
@@ -545,13 +865,33 @@ transcript_compact <- function(session, summary, agent_id = DEFAULT_AGENT_ID) {
                       agent_id = agent_id)
 }
 
+#' A directory as a person reads it: the home directory as "~".
+#' @noRd
+session_dir_show <- function(path) {
+    home <- session_cwd(path.expand("~"))
+    if (is.null(path) || is.null(home)) {
+        return(path)
+    }
+    if (identical(path, home)) {
+        return("~")
+    }
+    if (startsWith(path, paste0(home, "/"))) {
+        return(paste0("~", substring(path, nchar(home) + 1L)))
+    }
+    path
+}
+
 #' Format session list for display
 #' @param sessions List of session summaries from session_list()
+#' @param how What lists the sessions of every directory, as the person
+#'   would type it. Shown when some are elsewhere.
 #' @return Character string for printing
 #' @noRd
-format_session_list <- function(sessions) {
+format_session_list <- function(sessions, how = "session_list(all = TRUE)") {
+    elsewhere <- attr(sessions, "elsewhere") %||% 0L
+    listed_dir <- attr(sessions, "cwd")
     if (length(sessions) == 0) {
-        return("No sessions found.")
+        return(session_none_here(elsewhere, how))
     }
 
     safe_str <- function(x, default = "?") {
@@ -574,15 +914,33 @@ format_session_list <- function(sessions) {
         compactions <- if ((s$compactionCount %||% 0) > 0) {
             sprintf(" [%d compactions]", s$compactionCount)
         } else ""
-        sprintf("  %s  %s  %d msgs  %s/%s%s", safe_str(s$sessionKey, "?"),
-                format_time(s$updatedAt),
+        line <- sprintf("  %s  %s  %d msgs  %s/%s%s",
+                        safe_str(s$sessionKey, "?"), format_time(s$updatedAt),
             if (is.numeric(s$messages)) s$messages else 0L,
-                safe_str(s$modelProvider, "?"), safe_str(s$model, "default"),
-                compactions)
+                        safe_str(s$modelProvider, "?"),
+                        safe_str(s$model, "default"), compactions)
+        # Under it: what the conversation is, and where when the list
+        # covers every directory.
+        about <- if (is.character(s$title)) s$title else NULL
+        if (is.null(listed_dir) && is.character(s$cwd)) {
+            about <- paste(c(session_dir_show(s$cwd), about), collapse = ": ")
+        }
+        if (!is.null(about)) {
+            line <- paste0(line, "\n      ", about)
+        }
+        line
     }, character(1))
 
     lines <- lines[nchar(lines) > 0]
-    paste(c("Sessions:", lines), collapse = "\n")
+    header <- "Sessions:"
+    if (!is.null(listed_dir)) {
+        header <- sprintf("Sessions in %s:", session_dir_show(listed_dir))
+    }
+    footer <- NULL
+    if (elsewhere > 0L) {
+        footer <- sprintf("%d more in other directories (%s).", elsewhere, how)
+    }
+    paste(c(header, lines, footer), collapse = "\n")
 }
 
 # Trace storage ----

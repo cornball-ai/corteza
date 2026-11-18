@@ -21,6 +21,14 @@ prev_user_cache_dir <- Sys.getenv("R_USER_CACHE_DIR", unset = NA)
 Sys.setenv(R_USER_CACHE_DIR = file.path(tmpdir,
                                         paste0("ctx_cache_", Sys.getpid())))
 
+# A project's files load from a trusted directory only (R/trust.R;
+# test_trust.R covers the other case). The list of those is the user's,
+# so this file gets a config directory of its own before it adds to it.
+prev_user_config_dir <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+Sys.setenv(R_USER_CONFIG_DIR = file.path(tmpdir,
+                                         paste0("ctx_config_", Sys.getpid())))
+corteza:::project_trust_add(testdir)
+
 # --- list_context_files returns empty when no custom files configured ---
 files <- corteza:::list_context_files(testdir)
 expect_equal(length(files), 0)
@@ -117,4 +125,10 @@ if (is.na(prev_user_cache_dir)) {
     Sys.unsetenv("R_USER_CACHE_DIR")
 } else {
     Sys.setenv(R_USER_CACHE_DIR = prev_user_cache_dir)
+}
+unlink(Sys.getenv("R_USER_CONFIG_DIR"), recursive = TRUE)
+if (is.na(prev_user_config_dir)) {
+    Sys.unsetenv("R_USER_CONFIG_DIR")
+} else {
+    Sys.setenv(R_USER_CONFIG_DIR = prev_user_config_dir)
 }
