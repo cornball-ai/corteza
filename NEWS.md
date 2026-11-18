@@ -1,3 +1,31 @@
+# corteza 0.8.0.8
+
+- **Compaction follows the windows of current models, with a cap.** The
+  table of context windows had stopped at Claude Opus 4.7 and gpt-5.6, and a
+  model it did not know compacted at 115,200 tokens. It now holds the
+  current models of each provider, and `context_compact_tokens` (200,000 by
+  default) caps the trigger: a session compacts at the smaller of
+  `context_compact_pct` of its window and the cap. `0` turns the cap off.
+- A session that comes back after `context_idle_minutes` (60) with at least
+  `context_idle_tokens` (100,000) of context compacts before its next
+  request. `"context_idle_minutes": 0` turns that off.
+- `/context` says where compaction starts and which rule set it. A
+  `context_window` in the config now shows there and in the context meter.
+- A `context_window` that is not a number above 0 is ignored. A quoted
+  number there stopped every turn.
+- A compaction's summary reads more of what it replaces on a model with a
+  large window: up to 937,500 characters at 1M, which holds a context at the
+  default cap. It read the newest 120,000 characters on any model, and still
+  does in a recovery from a request refused for its size and after a summary
+  that failed.
+- On the Codex backend the summary's request keeps `context_compact_bytes`
+  (900,000 by default), measured as it is sent. A request that cannot fit,
+  or has room for no message of the conversation, is not sent, and the
+  history stays as it is.
+- `context_limit_for_model()` resolves a dated or suffixed id to its
+  family's row, and an ambiguous short id to the smallest window among its
+  matches. The OpenAI rows hold the input limit.
+
 # corteza 0.8.0.7
 
 - **A session on a Claude model that thinks by default no longer stops
