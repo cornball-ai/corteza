@@ -126,14 +126,17 @@ local({
                      "human")
     copy$context <- list(plan_mode = TRUE)
     expect_identical(corteza::policy(copy, cfg)$approval, "deny")
-    # The room's file sender keeps running unasked: corteza's default
-    # names it, and a person can turn it off.
-    expect_identical(cfg$permissions$send_room_file, "allow")
+    # The room's file sender asks, as any write does: corteza writes no
+    # permission for it, so approval_mode and dangerous_tools reach it.
+    # A person who wants it unasked says so in the config.
+    expect_null(cfg$permissions$send_room_file)
     send <- list(tool = "send_room_file", channel = "matrix",
                  args = list(path = file.path(proj, "plot.png")))
-    expect_identical(corteza::policy(send, cfg)$approval, "allow")
-    cfg$permissions$send_room_file <- "ask"
     expect_identical(corteza::policy(send, cfg)$approval, "ask")
+    expect_identical(corteza::policy(send, utils::modifyList(cfg,
+                     list(approval_mode = "deny")))$approval, "deny")
+    cfg$permissions$send_room_file <- "allow"
+    expect_identical(corteza::policy(send, cfg)$approval, "allow")
 })
 
 # ---- A session in plan mode: the job and subagent tools ----------------
