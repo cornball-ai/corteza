@@ -156,8 +156,9 @@ tool_hint <- function(name, args) {
 #'   Categories: file, code, r, data, web, git, chat, memory.
 #'   Use "core" for file+code+git, "all" for everything (default).
 #' @param session Session resume control. NULL (default) starts fresh,
-#'   TRUE resumes the latest session, or a character session key to
-#'   resume a specific session.
+#'   TRUE resumes the latest session started in the current directory,
+#'   or a character session key to resume a specific session from any
+#'   directory.
 #' @param max_turns Integer or NULL. Maximum LLM turns per user prompt
 #'   before the loop stops with \code{[Max turns reached]}. NULL (default)
 #'   reads \code{getOption("corteza.max_turns")}, then falls back to the
@@ -211,9 +212,12 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     route <- .session_model_pair(provider, model, config)
     disk_session <- resolve_disk_session(session_arg, route$provider,
         route$model, cwd)
+    resume_note <- NULL
     if (isTRUE(disk_session$resumed)) {
         route <- .session_model_pair(provider, model, config,
                                      saved = disk_session$session)
+        # Read before the resume writes to the session (R/retention.R).
+        resume_note <- retention_resume_note(disk_session$sessionId)
     }
     history <- disk_session$history %||% list()
     resumed_count <- length(history)
@@ -296,6 +300,17 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         sprintf("  %ssession %s%s\n",
                 color$dim, disk_session$sessionId, color$reset)
     }
+    retention_line <- NULL
+    if (!is.null(resume_note)) {
+        retention_line <- sprintf("  %s%s%s\n", color$dim, resume_note,
+                                  color$reset)
+    }
+    # Why nothing was resumed, or where what was resumed comes from.
+    directory_line <- ""
+    if (!is.null(disk_session$note)) {
+        directory_line <- sprintf("  %s%s%s\n", color$dim, disk_session$note,
+                                  color$reset)
+    }
     cat(corteza_startup_banner(
                                version = as.character(utils::packageVersion("corteza")),
                                model = display_model,
@@ -303,6 +318,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         ),
         "\n\n",
         session_line,
+        retention_line,
+        directory_line,
         "\n",
         sep = "")
 
@@ -334,7 +351,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         # Read provider/model from ctx, not the original locals: /model
         # and /provider mutate ctx, so a later /clear must spin up the
         # fresh session with the current model/provider.
-        fresh <- session_new(ctx$provider, ctx$model, cwd)
+        fresh <- session_new(ctx$provider, ctx$model, cwd, surface = "console")
         list(session = fresh, sessionId = fresh$sessionId, resumed = FALSE)
     }
     ctx$handle_copy <- chat_handle_copy
@@ -394,21 +411,28 @@ chat_approval_cb <- function(cwd = getwd()) {
     }
 }
 
-# Resolve the on-disk session, returning list(session, sessionId, history).
+# Resolve the on-disk session, returning list(session, sessionId, history,
+# resumed, note). `session = TRUE` resumes the latest session started in
+# `cwd`; a key resumes that session wherever it was started. `note` is a
+# line for the person, or NULL: that this directory has no session, or
+# that the one resumed was started somewhere else.
 resolve_disk_session <- function(session_arg, provider, model, cwd) {
     if (is.character(session_arg)) {
         resumed <- session_load(session_arg)
         if (!is.null(resumed)) {
             return(list(session = resumed, sessionId = resumed$sessionId,
                         history = disk_messages_to_history(resumed$messages),
-                        resumed = TRUE))
+                        resumed = TRUE,
+                        note = session_elsewhere_note(resumed, cwd)))
         }
-        fresh <- session_new(provider, model, cwd, session_key = session_arg)
+        fresh <- session_new(provider, model, cwd, session_key = session_arg,
+                             surface = "console")
         return(list(session = fresh, sessionId = fresh$sessionId,
                     history = list(), resumed = FALSE))
     }
+    note <- NULL
     if (isTRUE(session_arg)) {
-        latest <- session_latest()
+        latest <- session_latest(cwd = cwd)
         if (!is.null(latest)) {
             return(list(
                         session = latest,
@@ -417,10 +441,11 @@ resolve_disk_session <- function(session_arg, provider, model, cwd) {
                         resumed = TRUE
                 ))
         }
+        note <- session_none_note(cwd, how = "/sessions all")
     }
-    fresh <- session_new(provider, model, cwd)
+    fresh <- session_new(provider, model, cwd, surface = "console")
     list(session = fresh, sessionId = fresh$sessionId,
-         history = list(), resumed = FALSE)
+         history = list(), resumed = FALSE, note = note)
 }
 
 # Flatten on-disk message blocks into simple {role, content} pairs.

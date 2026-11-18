@@ -136,14 +136,16 @@ local({
         "does not create it")
     expect_false(file.exists(absent))
 
-    # Last, so a call written by position against 0.8.0 still matches.
-    # The deprecated names mirror the functions they forward to
-    # (test_deprecated.R), so they take it last as well.
+    # After everything 0.8.0 had, so a call written by position against
+    # 0.8.0 still matches. The deprecated names mirror the functions
+    # they forward to (test_deprecated.R), so they take it there as
+    # well. Only `operators` comes after it (test_rooms_operators.R).
     for (name in c("bot_configure", "bot_poll", "bot_run_init", "bot_run",
                    "matrix_configure", "matrix_poll", "matrix_run_init",
                    "matrix_run")) {
         f <- formals(getExportedValue("corteza", name))
-        expect_identical(names(f)[length(f)], "cwd", info = name)
+        expect_identical(utils::tail(setdiff(names(f), "operators"), 1L),
+                         "cwd", info = name)
         expect_null(f$cwd, info = name)
     }
     # And they forward it: the same check answers.

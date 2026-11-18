@@ -282,11 +282,13 @@ local({
     list(channel = channel, inviter = inviter)
   }
   invites <- list(inv("!newroom:ex"), inv("!another:ex"))
-  # No operators configured: everything is accepted, as before.
-  expect_equal(corteza:::bot_allowed_invites(invites),
-               c("!newroom:ex", "!another:ex"))
-  # Nothing pending -> character(0), not NULL.
+  # No operators configured: nothing is accepted. Up to 0.8.0
+  # everything was.
+  expect_equal(suppressMessages(corteza:::bot_allowed_invites(invites)),
+               character())
+  # Nothing pending -> character(0), not NULL, and nothing to report.
   expect_equal(corteza:::bot_allowed_invites(list()), character())
+  expect_silent(corteza:::bot_allowed_invites(list()))
 })
 
 # The session registry hands out the same session for the same room.
@@ -1043,9 +1045,30 @@ local({
                     # read, so who invited us is unknown.
                     inv("!blank:ex", NA_character_))
 
-    # No operators configured: every invite is accepted, as before.
-    expect_equal(corteza:::bot_allowed_invites(invites),
-                 c("!ok:ex", "!bad:ex", "!blank:ex"))
+    # No operators configured: no invite is accepted, whoever sent it.
+    # An open bot hands a session with tools to anyone who can invite
+    # it. Up to 0.8.0 this was c("!ok:ex", "!bad:ex", "!blank:ex").
+    for (none in list(character(), NULL,
+                      corteza:::bot_operators(list()),
+                      corteza:::bot_operators(list(operators = c("", NA))))) {
+        expect_equal(suppressMessages(
+            corteza:::bot_allowed_invites(invites, none)), character())
+    }
+    expect_equal(suppressMessages(corteza:::bot_allowed_invites(invites)),
+                 character())
+
+    # Each refusal is reported, and the cause and the fix are said once
+    # for the batch, not once per invite.
+    msgs <- capture.output(corteza:::bot_allowed_invites(invites),
+                           type = "message")
+    for (room in c("!ok:ex", "!bad:ex", "!blank:ex")) {
+        expect_equal(sum(grepl(paste("refusing invite to", room), msgs,
+                               fixed = TRUE)), 1L, info = room)
+    }
+    fix <- msgs[grepl("has no operators", msgs, fixed = TRUE)]
+    expect_equal(length(fix), 1L)
+    expect_true(any(grepl("accepts no invites", fix, fixed = TRUE)))
+    expect_true(any(grepl("bot_configure(operators = ", fix, fixed = TRUE)))
 
     # Configured: only the operator's invite survives, and one whose
     # sender could not be determined is refused rather than guessed at.
@@ -1061,6 +1084,10 @@ local({
         type = "message")
     expect_true(any(grepl("!bad:ex from @jorge:ex", msgs)))
     expect_true(any(grepl("!blank:ex from an unknown sender", msgs)))
+    # A bot that has operators is not told it has none.
+    expect_false(any(grepl("has no operators", msgs, fixed = TRUE)))
+    # And an invite that is accepted is not reported as refused.
+    expect_false(any(grepl("!ok:ex", msgs, fixed = TRUE)))
 
     # An operator list that matches nobody accepts nothing.
     expect_equal(suppressMessages(

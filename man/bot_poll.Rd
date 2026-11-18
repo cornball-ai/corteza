@@ -44,7 +44,9 @@ An integer count of messages replied to, invisibly.
 }
 \description{
 Fetches new messages across all joined rooms and runs \code{\link{turn}}
-against each. Auto-joins any pending invites the bot has received.
+against each. Joins a room the bot is invited to when one of its
+operators sent the invite (see \code{\link{bot_configure}}); every
+other invite is refused and reported.
 Replies are sent back to the originating room. On first run there is
 no saved sync token, so this call establishes a baseline and returns
 without processing history.
