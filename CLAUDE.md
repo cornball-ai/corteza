@@ -352,6 +352,13 @@ fields, never rename one.
   `assign(key, value, envir = corteza:::env)`.
 - `llm.api::agent` calls hit the network. Gate any test that calls it
   with both `at_home()` and `nzchar(Sys.getenv("ANTHROPIC_API_KEY"))`.
+- A test file that writes under `tools::R_user_dir()` starts with
+  `source("isolate.R", local = TRUE)`. R CMD check runs the tests
+  through `tests/tinytest.R`, which points those folders at temporary
+  ones; `run_test_file()`, `run_test_dir()` and `test_package()` do
+  not, and a file they run would write beside a live session's
+  records. `tools/check_files_alone.sh` runs each file alone with an
+  empty home and lists any that write there, stop or fail.
 
 ## CLI vs `chat()` slash-command parity
 

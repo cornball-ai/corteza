@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # Matrix config/extract helpers delegate to mx.client (Suggests). Skip
@@ -64,8 +67,8 @@ local({
 })
 
 # bot_new_session wires config into a turn session.
-# Skipped in R CMD check: needs MOONSHOT_API_KEY via new_session().
-if (at_home()) local({
+# Runs at home with MOONSHOT_API_KEY set: new_session() needs the key.
+if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
   cfg <- list(
     server = "https://example",
     user = "bot",
@@ -292,8 +295,8 @@ local({
 })
 
 # The session registry hands out the same session for the same room.
-# Skipped in R CMD check: creates sessions that need MOONSHOT_API_KEY.
-if (at_home()) local({
+# Runs at home with MOONSHOT_API_KEY set: its sessions need the key.
+if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
   cfg <- list(server = "https://example", user = "bot",
               user_id = "@bot:ex", room_id = "!dm:ex",
               model = "kimi-k2.5", provider = "moonshot",
@@ -1345,7 +1348,8 @@ if (requireNamespace("pensar", quietly = TRUE)) {
 }
 
 # /clear replaces the session. Three obligations, all regressions.
-if (at_home()) local({
+# Runs at home with MOONSHOT_API_KEY set: its sessions need the key.
+if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
     cfg <- list(server = "https://example", user = "bot",
                 user_id = "@bot:ex", room_id = "!c:ex", token = "tok",
                 device_id = "DEV", model = "kimi-k2.5",

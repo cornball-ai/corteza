@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Pure-function tests for the subagent compaction helpers. These
 # exercise the policy resolution, the cut-point finder, and the
 # pure history-rewrite. The summarizer call itself is gated to
