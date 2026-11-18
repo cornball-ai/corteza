@@ -280,7 +280,6 @@ format_doctor_report <- function(cwd, session, provider, display_model,
                                         provider,
                                         model = if (!is.null(session$model)) session$model else NULL
     )
-    approvals_path <- file.path(cwd, ".corteza", "approvals.json")
 
     paste(
           c(
@@ -325,12 +324,7 @@ format_doctor_report <- function(cwd, session, provider, display_model,
                     "hidden"
                 }),
             sprintf("approval mode: %s", config$approval_mode %||% "ask"),
-            sprintf("project approvals: %s",
-                if (file.exists(approvals_path)) {
-                    approvals_path
-                } else {
-                    "none"
-                })
+            sprintf("project approvals: %s", project_approvals_label(cwd))
         ),
           collapse = "\n"
     )

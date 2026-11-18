@@ -6,6 +6,13 @@ if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
 }
 expect_true(is.function(corteza::session_setup))
 
+# A project's files load from a trusted directory only (R/trust.R;
+# test_trust.R covers the other case). The list of those is the user's,
+# so this file gets a config directory of its own, and each block below
+# that needs its project read adds the project to it. tinytest puts the
+# variable back when the file ends.
+Sys.setenv(R_USER_CONFIG_DIR = tempfile("session-setup-config-"))
+
 # Require an API key for the selected provider.
 local({
     orig <- Sys.getenv("ANTHROPIC_API_KEY", unset = NA_character_)
@@ -117,6 +124,7 @@ local({
     dir.create(file.path(proj, ".corteza"), recursive = TRUE,
                showWarnings = FALSE)
     on.exit(unlink(proj, recursive = TRUE), add = TRUE)
+    corteza:::project_trust_add(proj)
     writeLines(
         jsonlite::toJSON(list(
             provider = "openai_compatible",
@@ -142,6 +150,7 @@ local({
     proj <- tempfile("session-context-")
     cache <- tempfile("session-context-cache-")
     dir.create(file.path(proj, ".corteza"), recursive = TRUE)
+    corteza:::project_trust_add(proj)
     writeLines("# Session Agent Context", file.path(proj, "AGENTS.md"))
     writeLines(
         '{"context_include_user": false, "context_include_soul": false}',

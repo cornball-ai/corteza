@@ -187,7 +187,7 @@ expect_null(no_latest)
 
 # Test format_session_list
 formatted <- corteza:::format_session_list(sessions)
-expect_true(grepl("Sessions:", formatted))
+expect_true(grepl("^Sessions in ", formatted))
 expect_true(grepl(session$sessionKey, formatted))
 expect_true(grepl("2 msgs", formatted))
 

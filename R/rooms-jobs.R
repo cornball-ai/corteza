@@ -220,6 +220,19 @@ bot_notices_retry <- function(chat, sessions, owner, now = Sys.time()) {
     invisible(delivered)
 }
 
+# The `jobs` block that applies to the bot itself: the global corteza
+# config, with the project config of the bot's `cwd` over it where that
+# directory is trusted (R/trust.R). A bot with no directory has the
+# global config alone. The scratch folder is not read for a project
+# config: a room's tools can write there.
+bot_jobs_config <- function(cfg) {
+    dir <- bot_configured_cwd(cfg)
+    if (is.null(dir)) {
+        return(load_config_file(corteza_config_path("config.json"))$jobs)
+    }
+    load_config(dir)$jobs
+}
+
 # Retire the bot's idle job workers (job_workers_retire()). A bot has a
 # session per room and per thread, each of which keeps a doer and a
 # reviewer process once it has used them, so without this the count only
@@ -227,8 +240,8 @@ bot_notices_retry <- function(chat, sessions, owner, now = Sys.time()) {
 #
 # The two settings are the bot's, not a room's: `jobs$worker_idle_minutes`
 # and `jobs$max_workers` in the corteza config that applies to the bot's
-# own directory (the global config, with the bot's project config over
-# it). The config is read only while there is a worker to retire.
+# own directory (bot_jobs_config()). The config is read only while there
+# is a worker to retire.
 bot_retire_workers <- function(sessions, cfg = NULL, now = Sys.time()) {
     all <- bot_sessions_list(sessions)
     if (!length(job_workers_live(all))) {
@@ -240,8 +253,7 @@ bot_retire_workers <- function(sessions, cfg = NULL, now = Sys.time()) {
     jobs <- if (is.null(cfg)) {
         list()
     } else {
-        tryCatch(load_config(bot_default_cwd(cfg))$jobs,
-                 error = function(e) NULL) %||% list()
+        tryCatch(bot_jobs_config(cfg), error = function(e) NULL) %||% list()
     }
     job_workers_retire(all,
                        idle_minutes = job_worker_limit(jobs$worker_idle_minutes,

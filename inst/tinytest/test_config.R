@@ -12,6 +12,10 @@ isolated_global <- file.path(tmpdir, paste0("cfg_test_global_", Sys.getpid()))
 if (dir.exists(isolated_global)) unlink(isolated_global, recursive = TRUE)
 dir.create(isolated_global, recursive = TRUE)
 Sys.setenv(R_USER_CONFIG_DIR = isolated_global)
+# A project's config is read from a trusted directory only (R/trust.R;
+# test_trust.R covers the other case). The list is the user's and is
+# kept in the config directory set above.
+corteza:::project_trust_add(testdir)
 
 # Test load_config with no config file - context_files defaults to empty
 # (saber owns standard context loading)

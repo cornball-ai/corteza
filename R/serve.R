@@ -71,11 +71,22 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL,
 
     # Load user R skills (.R files)
     load_skills(corteza_data_path("skills"))
-    load_skills(file.path(getwd(), ".corteza", "skills"))
 
     # Load skill docs (SKILL.md files) for context injection
     load_skill_docs(corteza_data_path("skills"))
-    load_skill_docs(file.path(getwd(), ".corteza", "skills"))
+
+    # The project's skills and their docs, from a trusted directory only.
+    # Nobody is here to ask, so an untrusted directory that holds
+    # something is reported, on stderr: stdout carries the protocol.
+    load_project_skills(getwd())
+    untrusted <- project_trust_note(getwd(),
+                                    when = "the next start of the server")
+    if (!is.null(untrusted)) {
+        message(paste(c(untrusted,
+                        sprintf("Or list it under trusted_projects in %s.",
+                                corteza_config_path("config.json"))),
+                      collapse = "\n"))
+    }
 
     # Load skill packages from config
     config <- load_config(getwd())
