@@ -96,6 +96,8 @@ bot_archive_unfiled <- function(entries, filed) {
 # NULL, reported, when it did not.
 bot_archive_offer <- function(on_archive, chat, cfg, range) {
     why <- "not archived"
+    # When corteza first kept it is corteza's (bot_archive_waiting()).
+    range$queued <- NULL
     answer <- tryCatch(on_archive(chat, cfg, range$room_id, range),
                        error = function(e) {
         why <<- conditionMessage(e)
@@ -150,14 +152,19 @@ bot_archive_session <- function(session, key, chat = NULL, on_archive = NULL,
     # An open range, kept from a flush, takes what the session said since.
     # One /clear closed stays as it was.
     entries <- new
+    queued <- NULL
     n <- length(ranges)
     if (n && identical(ranges[[n]]$reason, "flush")) {
         entries <- c(ranges[[n]]$entries, new)
+        queued <- ranges[[n]]$queued
         ranges <- ranges[-n]
     }
     current <- NULL
     if (length(entries)) {
         current <- bot_archive_range(cfg, key, room_id, entries, reason)
+        # When it was first kept, in seconds, which every retry carries:
+        # how long a range has waited (bot_archive_waiting()).
+        current$queued <- queued %||% as.numeric(Sys.time())
     }
     offered <- c(ranges, if (!is.null(current)) list(current))
     if (!length(offered)) {
@@ -208,6 +215,54 @@ bot_archive_session <- function(session, key, chat = NULL, on_archive = NULL,
     # the host took the range that carries it.
     out$durable <- kept || !length(new) || !is.null(out$answer)
     invisible(out)
+}
+
+# What waits for this bot's host: how many ranges, the size of their
+# files, and when the oldest was first kept. Retention never removes a
+# pending file (R/retention.R walks the sessions folders only), so a
+# host that stops taking ranges shows here, in the log after a flush.
+# Reads only: an unreadable file is left for the next flush to set
+# aside.
+bot_archive_waiting <- function(cfg) {
+    out <- list(ranges = 0L, bytes = 0, oldest = NA_real_)
+    dir <- file.path(bot_signal_dir(), "archive")
+    for (path in list.files(dir, pattern = "[.]pending[.]json$",
+                            full.names = TRUE)) {
+        kept <- tryCatch(jsonlite::read_json(path, simplifyVector = FALSE),
+                         error = function(e) NULL)
+        id <- sub("[.]pending[.]json$", "", basename(path))
+        if (!is.character(kept$key) ||
+            !identical(bot_session_id(cfg, kept$key), id)) {
+            next
+        }
+        out$ranges <- out$ranges + length(kept$ranges)
+        out$bytes <- out$bytes + file.size(path)
+        for (r in kept$ranges) {
+            if (is.numeric(r$queued) && length(r$queued) == 1L) {
+                out$oldest <- min(out$oldest, r$queued, na.rm = TRUE)
+            }
+        }
+    }
+    out
+}
+
+# The log's line for what waits, or NULL when nothing does.
+bot_archive_waiting_line <- function(waiting, now = Sys.time()) {
+    if (!isTRUE(waiting$ranges > 0L)) {
+        return(NULL)
+    }
+    age <- ""
+    if (!is.na(waiting$oldest)) {
+        hours <- (as.numeric(now) - waiting$oldest) / 3600
+        age <- if (hours < 48) {
+            sprintf(", the oldest kept %.0f hour(s) ago", max(hours, 0))
+        } else {
+            sprintf(", the oldest kept %.0f day(s) ago", hours / 24)
+        }
+    }
+    sprintf("bot_run: %d range(s) wait for the host in %s (%s bytes%s)",
+            waiting$ranges, file.path(bot_signal_dir(), "archive"),
+            format(waiting$bytes, big.mark = ",", scientific = FALSE), age)
 }
 
 #' Hand each room's new conversation to the host

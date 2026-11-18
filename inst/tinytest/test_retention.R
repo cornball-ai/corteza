@@ -133,6 +133,11 @@ local({
     writeLines("{}", file.path(dir, "sessions.json"))
     writeLines("x", file.path(dir, "old_workspace.rds"))
     writeLines("{}", file.path(dir, "old_workspace.json"))
+    # A room's conversation waiting for the host (R/archive.R) stays,
+    # however old, until the host takes it.
+    pending <- file.path(fx$data, "state", "archive", "5f2c.pending.json")
+    dir.create(dirname(pending), recursive = TRUE)
+    writeLines("{}", pending)
     before <- tree(fx)
 
     # A dry run lists them and removes nothing.
@@ -165,6 +170,7 @@ local({
 
     # Said once more by name. A transcript always stays, a holder's too,
     # and no agent's folder goes whole.
+    expect_true(file.exists(pending))
     expect_true(file.exists(old$transcript))
     expect_true(file.exists(holder$transcript))
     expect_true(dir.exists(file.path(fx$data, "agents", "matrix", "sessions")))

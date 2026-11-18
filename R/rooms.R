@@ -3318,5 +3318,15 @@ bot_handle_flush_signal <- function(flush_signal, sessions, chat = NULL,
     } else if (isTRUE(n >= 0L)) {
         message(sprintf("bot_run: the host archived %d range(s)", n))
     }
+    # What is left waits until the host takes it: say how much, so its
+    # growth shows.
+    if (is.function(on_archive)) {
+        waiting <- tryCatch(bot_archive_waiting(cfg %||% bot_load_config()),
+                            error = function(e) NULL)
+        line <- bot_archive_waiting_line(waiting)
+        if (!is.null(line)) {
+            message(line)
+        }
+    }
     invisible(n)
 }

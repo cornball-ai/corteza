@@ -411,6 +411,60 @@ with_state(local({
     expect_identical(corteza:::bot_archive_state_read(key), c("$1", "$2"))
 }))
 
+# ---- What waits, and for how long ----
+# A range keeps the time it was first kept through every retry, and the
+# host is not handed it (the names checked above). The log after a
+# flush counts this bot's ranges, their size, and the oldest's age.
+with_state(local({
+    expect_null(corteza:::bot_archive_waiting_line(
+        corteza:::bot_archive_waiting(cfg)))
+    key <- "!q:ex"
+    path <- pending_path(key)
+    s <- mk("$1", room = key)
+    h <- host(FALSE)
+    suppressMessages(archive(s, key, h))
+    first <- jsonlite::read_json(path)$ranges[[1L]]$queued
+    expect_true(is.numeric(first))
+    expect_true(abs(first - as.numeric(Sys.time())) < 60)
+    expect_null(h$offered[[1L]]$archive$queued)
+    # Two days back: the open range takes a new entry and keeps its time.
+    kept <- jsonlite::read_json(path, simplifyVector = FALSE)
+    kept$ranges[[1L]]$queued <- first - 2 * 86400
+    jsonlite::write_json(kept, path, auto_unbox = TRUE, null = "null",
+                         digits = NA)
+    corteza:::bot_transcript_add(s, "$2", "user", "turn $2")
+    suppressMessages(archive(s, key, h))
+    expect_identical(offered_ids(h)[[2L]], c("$1", "$2"))
+    expect_equal(jsonlite::read_json(path)$ranges[[1L]]$queued,
+                 first - 2 * 86400)
+    # A thread's closed range waits in a file of its own; another bot's
+    # is not this bot's to count.
+    thread <- corteza:::bot_session_key(key, "$root")
+    suppressMessages(archive(mk("$5", room = key), thread, h, "clear"))
+    other <- list(user_id = "@other:ex")
+    suppressMessages(corteza:::bot_archive_session(mk("$7", room = key), key,
+                                                   NULL, h$hook, other))
+    w <- corteza:::bot_archive_waiting(cfg)
+    expect_identical(w$ranges, 2L)
+    expect_equal(w$bytes, sum(file.size(c(path, pending_path(thread)))))
+    expect_equal(w$oldest, first - 2 * 86400)
+    expect_identical(corteza:::bot_archive_waiting(other)$ranges, 1L)
+    line <- corteza:::bot_archive_waiting_line(w, now = first)
+    expect_true(grepl("bot_run: 2 range(s) wait for the host in ", line,
+                      fixed = TRUE))
+    expect_true(grepl("the oldest kept 2 day(s) ago)", line, fixed = TRUE))
+    line <- corteza:::bot_archive_waiting_line(w,
+        now = first - 2 * 86400 + 3 * 3600)
+    expect_true(grepl("the oldest kept 3 hour(s) ago)", line, fixed = TRUE))
+    # The host takes them: nothing waits, and the log says nothing more.
+    h$take <- TRUE
+    reg <- new.env(parent = emptyenv())
+    expect_identical(corteza::bot_archive_all(reg, on_archive = h$hook,
+                                              cfg = cfg), 2L)
+    expect_null(corteza:::bot_archive_waiting_line(
+        corteza:::bot_archive_waiting(cfg)))
+}))
+
 # ---- The flush signal ----
 with_state(local({
     sig <- tempfile("sig-")
@@ -434,4 +488,10 @@ with_state(local({
     expect_false(file.exists(sig))
     expect_identical(h$offered[[1L]]$archive$reason, "flush")
     expect_identical(length(get("!r:ex", envir = reg)$transcript), 0L)
+    # A host that takes nothing: the log says what waits for it.
+    file.create(sig)
+    assign("!r:ex", mk("$h2", room = "!r:ex"), envir = reg)
+    expect_message(corteza:::bot_handle_flush_signal(sig, reg, NULL,
+                                                     host(FALSE)$hook, cfg),
+                   "bot_run: 1 range(s) wait for the host", fixed = TRUE)
 }))
