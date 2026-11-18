@@ -606,6 +606,11 @@ local({
     }))
     s1 <- corteza:::voice_room_session(state, "!room:h")
     expect_equal(length(s1$history), 1L)
+    # A call never waits on a summary made for an idle gap, whatever
+    # the config says.
+    expect_equal(s1$context_idle_minutes, 0)
+    expect_equal(corteza:::context_trigger(
+        s1, list(context_idle_minutes = 60L))$idle_minutes, 0)
     s2 <- corteza:::voice_room_session(state, "!room:h")
     # Same session, and the room history was fetched exactly once.
     expect_identical(s1, s2)

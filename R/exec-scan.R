@@ -100,8 +100,20 @@ scan_sensitive <- function(abs) {
 }
 
 # Where a resolved path sits: "sensitive", "project", "git" (the
-# project's .git), "control" (the project's own corteza config),
+# project's .git), "control" (a .corteza folder in the project),
 # "scratch", "write_root", or "outside".
+#
+# A whole .corteza folder is the control zone, where it used to be the
+# project's config.json alone. A session in a trusted directory sources
+# the R files under .corteza/skills when it starts and reads the lessons
+# and the saved approvals kept beside them, so an unattended write to
+# any of them changes what the next session runs or is allowed.
+#
+# The folder counts at any depth, and whatever the case of its name.
+# Trusting a directory trusts every directory inside it, and a session
+# reads the folder of the directory it starts in, so one made in a
+# subdirectory is control for a session started there. A file system
+# that ignores case opens the same folder under another spelling.
 scan_zone <- function(sx, abs, lex = abs) {
     if (scan_sensitive(abs) || scan_sensitive(lex)) {
         return("sensitive")
@@ -111,7 +123,7 @@ scan_zone <- function(sx, abs, lex = abs) {
         if (identical(rel, ".git") || startsWith(rel, ".git/")) {
             return("git")
         }
-        if (identical(rel, ".corteza/config.json")) {
+        if (grepl("(^|/)\\.corteza(/|$)", rel, ignore.case = TRUE)) {
             return("control")
         }
         return("project")
@@ -226,8 +238,9 @@ scan_write <- function(sx, tok, what = "writes") {
                                  ", where credentials or secrets are kept"),
            outside = scan_flag(sx, what, " outside the project (", p$abs, ")"),
            git = scan_flag(sx, what, " git's own files (", p$abs, ")"),
-           control = scan_flag(sx, what, " the project's corteza config (",
-                               p$abs, "), which decides what needs approval"),
+           control = scan_flag(sx, what, " the project's corteza folder (",
+                               p$abs, "), which sets what a session loads ",
+                               "and what needs approval"),
            NULL)
     invisible(p)
 }

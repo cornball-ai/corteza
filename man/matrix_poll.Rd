@@ -11,7 +11,8 @@ matrix_poll(
   timeout = 0L,
   sessions = NULL,
   crypto = NULL,
-  hooks = NULL
+  hooks = NULL,
+  cwd = NULL
 )
 }
 \arguments{
@@ -35,6 +36,12 @@ run; the chat transport handles encryption now.}
 \item{hooks}{Named list of functions or NULL, as validated by
 \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
 host nothing.}
+
+\item{cwd}{Character or NULL. The directory a room works in when its
+topic names none, for this call. It must exist: corteza does not
+create it. NULL (default) uses the \code{cwd} saved by
+\code{\link{bot_configure}}. With neither, such a room works in a
+scratch folder under the session's temporary directory.}
 }
 \value{
 See \code{\link{bot_poll}}.

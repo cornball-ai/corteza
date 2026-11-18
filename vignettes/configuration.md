@@ -63,7 +63,9 @@ How to configure corteza for your workflow.
 
 ## Config files
 
-corteza reads two JSON files and merges them. Project config overrides global config.
+corteza reads two JSON files and merges them. Project config overrides global
+config. The project file is read from a trusted directory only (see
+[Trusted projects](#trusted-projects)).
 
 | Layer | Path |
 |-------|------|
@@ -91,6 +93,76 @@ Create the directory first:
 dir.create(".corteza", showWarnings = FALSE)
 ```
 
+## Trusted projects
+
+A project's own files arrive with its repository, and a cloned repository is
+somebody else's text. A session therefore loads them only from a directory
+you have trusted. In any other directory it loads nothing of the project's,
+says so, and runs on your global config and the package's own guidance.
+
+What trust covers:
+
+| From the project | Effect when trusted |
+|------------------|---------------------|
+| `.corteza/config.json` | Merged over the global config: provider, model, base URL, approval settings and the rest |
+| `.corteza/skills/` | R files are sourced at start; `SKILL.md` files join the instruction catalog |
+| `AGENTS.md` or `CLAUDE.md` | Added to the system prompt |
+| `.corteza/harness.json` | Its lessons are added to the system prompt, and `/refine` and the lesson tool may write it |
+| `.corteza/approvals.json` | The terminal's saved "Allow always for this project" answers apply |
+| `DESCRIPTION` and commit subjects | Summarized in the briefing at the top of the prompt |
+| Files your global `context_files` names by a relative path, or by a path inside the project | Added to the system prompt |
+
+A directory is trusted when it is, or lies inside, a directory on your list.
+Paths are compared after links are resolved, so a link into a trusted
+directory is judged by where it points. The list lives in your config
+directory, where no project can write:
+
+- `trusted_projects` in the global `config.json`, which you edit:
+
+  ```json
+  {
+    "trusted_projects": ["~/work", "/srv/projects/reports"]
+  }
+  ```
+
+- `trusted-projects.json` beside it, which `/trust yes` writes. Remove a line
+  there to undo it.
+
+Trusting a directory trusts every directory inside it, so trusting your home
+trusts everything you clone into it.
+
+How you are asked:
+
+- The `corteza` command and `chat()` ask once at start, when the directory is
+  not trusted and holds something a session would load. Enter means no.
+- `/trust` shows where the directory stands and what it holds. `/trust yes`
+  trusts it.
+- A new answer applies from the next start of corteza. A session's prompt
+  and tools are fixed when it starts.
+- `/status` shows `trusted:` and lists what an untrusted session left alone.
+
+In a Matrix room, `/trust` acts on the room's directory and only an operator
+of the bot may use it. The answer applies from the room's next conversation
+(send `/clear` to start one). A room whose directory is not trusted says so
+once, ahead of its first reply. A bot's directory has to be on the list
+before the bot starts, or the bot runs without its project config and
+instructions. A room with no directory works in a scratch folder, which is
+never trusted.
+
+In an untrusted directory the terminal's "Allow always" lasts for the
+session and writes no file. The lessons tool refuses the project's store and
+keeps a lesson only under scope `global`, and `/refine` lists the global
+store and runs no review pass.
+
+Trust decides what corteza loads by itself. It does not confine the agent:
+a tool can still read a file in an untrusted directory when asked, and what
+it reads comes back as a tool result under the approval settings below.
+For an unattended session (a Matrix room or one of its jobs), a write to a
+`.corteza` folder by a file tool, a shell command or R code goes to a person,
+and so does R code that names the list of trusted directories. The lessons
+tool still records a note in a trusted project's store once that note is
+approved.
+
 ## CLI flags
 
 ```bash
@@ -104,8 +176,9 @@ corteza [options]
 | `--base-url <url>` | Endpoint for `--provider openai_compatible` | config / env |
 | `--tools <filter>` | Tool filter: `core`, `file`, `code`, `git`, `r`, `data`, `web`, `chat` | all |
 | `--session <key>` | Session key; resumes if exists | none |
-| `--resume` | Resume most recent session | `false` |
-| `--list` | List sessions and exit | `false` |
+| `--resume` | Resume the latest session started in this directory | `false` |
+| `--list` | List the sessions started in this directory and exit | `false` |
+| `--all` | With `--resume` or `--list`: every directory | `false` |
 | `--dry-run` | Preview tool calls without executing | `false` |
 | `--context-edit` | Enable conversation context editing for this session | `false` |
 | `--trace` | Print structured tool-call events to stderr | `false` |
@@ -118,6 +191,14 @@ has changed. Explicit `--provider` and `--model` flags still override that pair.
 Changing only the provider uses its matching configured model or its default;
 it does not carry the old provider's model across. The same rules apply to
 `chat(session = ...)` and its `provider` and `model` arguments.
+
+A session belongs to the directory it was started in. `--resume`, `--list`,
+`/sessions` and `chat(session = TRUE)` look at the current directory's
+sessions, and say how many there are elsewhere when it has none. `--all` and
+`/sessions all` cover every directory. `--session <key>` and
+`chat(session = "<key>")` resume that session from anywhere, and say so when
+it was started somewhere else: the paths in its history belong to that
+directory.
 
 ## Unattended work
 
@@ -230,6 +311,124 @@ window exhaustion and do not trigger summary compaction.
 If recovery ends with a partial reply, the rendered text is kept in conversation
 history and the journal. A later turn can refer to what the user actually saw;
 unfinished tool calls are still discarded.
+
+## When a conversation is compacted
+
+A compaction replaces the older turns of a conversation with a summary. Three
+conditions start one.
+
+- **A share of the window.** The context reaches `context_compact_pct` of the
+  model's window, 90% by default.
+- **A size.** The context reaches `context_compact_tokens`, 200,000 by default.
+  On a model with a 1M window, 90% is 900,000 tokens, so this number decides
+  there. `0` turns it off.
+- **A return after a pause.** The model last answered at least
+  `context_idle_minutes` ago (60 by default), the pause is longer than the
+  prompt cache lasts (`cache`), and the context holds at least
+  `context_idle_tokens` (100,000 by default). The provider has dropped its
+  cached copy of the conversation by then, so the next request pays the full
+  price for the whole history. A summary costs one such request and makes
+  every later request smaller. `"context_idle_minutes": 0` turns it off.
+
+The first two are checked before a turn and between the tool rounds of a
+turn, and the terminal checks again after the reply. The third is checked
+once, before a turn's first request. The summary is then a request of its own
+ahead of the reply, and a line in the terminal, or in a bot's log, says what
+the wait is. A voice session skips the third, since a caller would hear the
+wait as silence.
+
+```json
+{
+  "context_compact_pct": 90,
+  "context_compact_tokens": 200000,
+  "context_idle_minutes": 60,
+  "context_idle_tokens": 100000
+}
+```
+
+`/context` shows the trigger in force and the window it is measured against.
+In the terminal an automatic compaction also runs the memory flush first
+(`memory_flush_enabled`), which is a request of its own.
+
+None of the three applies to a session that manages its own context
+(`context_edit` with `"strategy": "clm"`, under "Conversation context
+editing"). Such a session is never compacted, and `/context` says so.
+
+Each size is corteza's estimate, about 1 token per 4 characters. A provider
+counts with its own tokenizer and can count more, so a context that corteza
+puts at 200,000 tokens can be billed as a larger one.
+
+### What the summary reads
+
+The session's own model writes the summary, in one request, from the turns
+the summary replaces. That request holds a budget of text that follows the
+model's window: 120,000 characters at a window of 128,000 tokens or less, and
+the same share of a larger one, which is 937,500 characters at 1M. With the
+default `context_compact_tokens`, a model with a 1M window reads every turn it
+summarizes. Where the turns do not fit, the oldest are left out and the
+summarizer is told how many. On the Codex transport the budget is also held
+to a quarter of `context_compact_bytes`, counted in characters.
+
+The summarizer has 60 seconds to answer
+(`subagents.context_compaction.timeout_seconds`). When it fails, the
+conversation stays as it was and the turn goes on. The session's next summary
+then reads 120,000 characters whatever the window, the smaller request, and a
+summary that succeeds brings the larger budget back. A model too slow for the
+larger request wants a longer `timeout_seconds`.
+
+A summary made because the provider refused a request for its size reads
+120,000 characters too. The larger budget rests on corteza's count of 4
+characters to a token, and such a refusal says the count ran low for this
+conversation, as it does for text in Chinese or Japanese.
+
+### The model's window
+
+corteza reads a model's window from a table in the package
+(`R/context-budget.R`), where each number names the provider's page it was
+read from. The table holds the largest input a model takes: OpenAI's API
+models have a 1,050,000-token window and take 922,000 tokens of input, and
+the table says 922,000. A model with no row is taken to have 128,000 tokens,
+and `/context` says so.
+
+`context_window` overrides the table:
+
+```json
+{ "context_window": 64000 }
+```
+
+It takes a number above 0. Anything else, a quoted `"64000"` included, is
+ignored and the table answers.
+
+Set it for a local model. An Ollama server decides the window when it loads a
+model (`OLLAMA_CONTEXT_LENGTH`, or 4k, 32k or 256k tokens by the memory of
+the GPU), so the table's row for an Ollama model is a guess, and your server
+may give the model less.
+
+## Thinking blocks after a rewrite
+
+A Claude model that thinks by default signs each thinking block against the
+conversation that produced it: the system text, the tools and every earlier
+message. Where the provider checks that signature, a request that replays a
+block after any of the three changed returns `API error (400)` with "bound to
+a different conversation", and so does every retry.
+
+corteza removes the thinking blocks from a history whenever it replaces one: a
+compaction, a context edit, an archived turn, a move to another provider, a
+conversation restored after a restart, and a job resumed in a new worker. Text
+and tool calls stay, and the journal keeps the history as the model wrote it.
+Appending removes nothing, so the tool rounds of a turn go back with their
+thinking.
+
+A session that sets `thinking_budget_tokens` keeps its blocks when its own
+history is replaced. The models that accept a budget do not run the check, and
+they expect an open tool round to keep the thinking it started with. A history
+passed to `new_session()` comes from another conversation and loses its blocks
+whatever the session's settings.
+
+When a provider refuses replayed thinking anyway, the turn removes every
+thinking block from the history, records that in the journal, and continues
+once. Tools that already ran in the turn do not run again. A second refusal in
+the same turn is raised as the provider's error.
 
 ## Conversation context editing
 
@@ -433,7 +632,11 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_warn_pct` | integer | `75` | Token-usage % to start showing warnings |
 | `context_high_pct` | integer | `90` | Token-usage % for orange indicator |
 | `context_crit_pct` | integer | `95` | Token-usage % for red indicator + hint to `/clear` |
-| `context_compact_pct` | integer | `90` | Auto-compaction threshold |
+| `context_compact_pct` | integer | `90` | Auto-compaction threshold, as a share of the model's window |
+| `context_compact_tokens` | integer | `200000` | A cap on that threshold in estimated tokens; the smaller of the two applies. `0` turns the cap off |
+| `context_idle_minutes` | integer | `60` | Compact before a turn when the model last answered this long ago and the prompt cache has expired. `0` turns it off |
+| `context_idle_tokens` | integer | `100000` | The smallest context the idle rule compacts |
+| `context_window` | integer or null | null | The model's window in tokens (null = the package's table). Set it for a local model |
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
@@ -529,6 +732,35 @@ These keys are read from the user's config file only. A project's
 | `supervisor.timeout_sec` | number | `120` | A monitor that has not ruled by then is stopped and the call goes to a person |
 | `supervisor.max_turns` | integer | `6` | Model turns the monitor may take on one call |
 | `supervisor.write_roots` | string[] | `[]` | Directories outside the project that may be written without asking a person, such as a notes directory |
+
+### Retention
+
+corteza keeps its sessions under `tools::R_user_dir("corteza", "data")`.
+Once a day, when a terminal session starts and while a chat bot runs, it
+removes the journal and the tool trace of every session that has gone
+unused for `retention.session_days`. A session was last used when its
+journal, its trace or its transcript last changed. The terminal says
+what it removed.
+
+Transcripts, session stores, workspaces, config and audit records stay.
+A session whose journal is gone still resumes from its transcript, and
+says what is gone. A room that restores its context from its journal
+starts its next conversation fresh.
+
+A session's audit records are kept in its journal folder, under
+`audit/`. Retention leaves them and the folder in place:
+`audit_payload_expire()` removes audit payloads, and only when called.
+
+`sessions_prune(dry_run = TRUE)` reports what a run would remove.
+`sessions_prune()` runs one now.
+
+This key is read from the user's config file only. A project's
+`.corteza/config.json` cannot set it. A config file that does not parse,
+or a value that is not one non-negative number, turns retention off.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed. `0` keeps everything |
 
 ### Skills
 
@@ -654,9 +886,58 @@ corteza::bot_configure(
   password = "verysecure",
   room = "#general:example.com",
   model = "llama3.2",
-  provider = "ollama"
+  provider = "ollama",
+  operators = "@you:example.com"
 )
 ```
+
+#### Who a bot answers to
+
+`operators` names the people a bot answers to, each by a full Matrix id.
+
+- The bot accepts an invite only from an operator.
+- In a room with one person in it, the bot answers only when that person is
+  an operator.
+- Operators answer its approval prompts, and commands such as
+  `/approve-all` are theirs.
+
+A bot with no operators accepts no invites. It works in the room it was
+configured with and in rooms it has already joined. Where such a room has
+one person in it, that person is answered and answers the approval prompts.
+Where it has more, the bot answers when it is mentioned and nobody can
+approve, so a call that needs approval is declined. Each invite the bot
+refuses is reported in its log, with what would change that.
+
+Up to 0.8.0 a bot with no operators accepted every invite, which gave a
+session with tools to anyone who could invite it. A bot that should go on
+accepting invites needs `operators`: pass it to `bot_configure()`, which
+writes the whole config again, or add `"operators": ["@you:example.com"]`
+to the bot config.
+
+#### Where a room works
+
+A room works in the first of these that exists:
+
+1. The directory at the start of its topic, written `<path> | <description>`,
+   as in `~/project | release notes`. A room reads its topic when its
+   conversation starts, so send `/clear` after changing it.
+2. The bot's `cwd`. `bot_configure(cwd = )` saves one. `bot_run(cwd = )`,
+   `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
+   wins over the saved one.
+3. A scratch folder under the session's temporary directory, deleted when the
+   process ends. The room is told it has no project directory.
+
+corteza creates neither of the first 2. A `cwd` that does not exist is an
+error where it is given, and a run stops at its start when the saved one has
+been removed. Up to 0.8.0 the last step was `~/<bot name>`, created on first
+use. A bot that relied on that directory now needs `cwd`:
+
+```r
+corteza::bot_run(cwd = "~/mybot")
+```
+
+`voice_serve()` sessions resolve their directory the same way. In a process
+of their own they use the saved `cwd`.
 
 ### Legacy memory
 
@@ -680,9 +961,10 @@ In-chat commands prefixed with `/`.
 | `/review [ref]` | Review local changes with LLM |
 | `/config` | Active runtime configuration |
 | `/permissions` | Tool approval and sandbox settings |
+| `/trust [yes]` | Show whether this directory is trusted, or trust it |
 | `/clear` | Clear conversation (keeps session) |
 | `/compact` | Summarize conversation to free context |
-| `/sessions` | List sessions |
+| `/sessions [all]` | List this directory's sessions, or every directory's |
 | `/context` | Live context usage and loaded files |
 | `/model` | List current/configured models and the active provider's catalog |
 | `/model <name> [provider]` or `/model <number>` | Switch model, optionally provider; numbers select from the last displayed list |
@@ -745,6 +1027,9 @@ session startup. Built-in roots are:
 |-------|------|
 | Global | `tools::R_user_dir("corteza", "data")/skills/` |
 | Project | `.corteza/skills/` |
+
+The project root, and the roots a project config adds, exist in a
+[trusted](#trusted-projects) directory only.
 
 Only compact metadata enters the system prompt. The agent calls the read-only
 `skill_instructions` tool with the displayed stable id when it needs the
@@ -841,7 +1126,7 @@ The session is an environment that carries history, the active provider/model, a
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `channel` | string | `"cli"` | `"cli"`, `"console"`, `"matrix"` |
-| `history` | list or null | null | Prior messages; resumes mid-conversation |
+| `history` | list or null | null | Prior messages; resumes mid-conversation. Thinking blocks are removed |
 | `model_map` | list or null | null | `list(cloud = ..., local = ...)`; falls back to `corteza.model_map` option |
 | `provider` | string | `"anthropic"` | LLM provider |
 | `tools_filter` | string[] or null | null | Restrict available tools |
@@ -849,6 +1134,61 @@ The session is an environment that carries history, the active provider/model, a
 | `approval_cb` | function or null | null | Called when policy returns `"ask"`. Default denies. |
 | `max_turns` | integer | `10` | Max tool-use turns per call |
 | `verbose` | boolean | `FALSE` | Print tool-call progress |
+
+## Session records
+
+Each agent keeps one index of its conversations, a JSON object keyed by
+session key:
+
+```
+tools::R_user_dir("corteza", "data")/agents/<agent>/sessions/sessions.json
+```
+
+The terminal and `chat()` write under agent `main`, a Matrix bot under agent
+`matrix`. Another program may read these files. Fields are added in later
+versions and never renamed, and a reader should skip an entry or a field it
+does not know. The file is replaced whole on every write, so it is always
+complete when read.
+
+A terminal or console session, keyed `corteza:<id>` or by the key given with
+`--session`:
+
+| Field | Meaning |
+|-------|---------|
+| `sessionId` | Names the session's files in the same folder: `<id>.jsonl` (the transcript), `<id>_trace.jsonl`, `<id>.journal/` |
+| `cwd` | The directory the session was started in, resolved, with forward slashes |
+| `title` | The first prompt on one line, cut to 100 characters |
+| `updatedAt` | When the entry was last written, in milliseconds since 1970 |
+| `surface` | `cli` or `console` |
+| `sessionFile`, `createdAt`, `modelProvider`, `model` | The transcript's path, the creation time, and the provider and model last used |
+
+Entries keyed `agent:<id>:subagent:<uuid>` in the same file belong to
+subagents and are not conversations a person started.
+
+Sessions made before 0.8.1 have no `cwd` and no `title` in the index. corteza
+records a session's directory, from the first line of its transcript, the
+first time its sessions are listed, and its title the first time the session
+is shown in a list. `surface` is absent on those. A session that never got a
+prompt has no `title`.
+
+A room or a thread a Matrix bot answers in:
+
+| Field | Meaning |
+|-------|---------|
+| `sessionId` | The entry's key. The session's journal is `<sessionId>.journal/` in the same folder |
+| `surface` | `matrix` |
+| `bot` | The bot's Matrix user id. 2 bots in 1 room have 1 entry each |
+| `room` | The room id |
+| `thread` | The thread's root event id, when the conversation is a thread |
+| `voice` | `true` for the room's voice session |
+| `cwd` | The directory the room works in. Absent for a room with no directory |
+| `title` | The room's name |
+| `journal` | The journal folder's path |
+| `updatedAt` | When the bot last built the session: at its first message after a start or a `/clear` |
+
+A room has no transcript. How recently it was used is the modification time
+of `live.json` in its journal folder, a file that is not there before the
+session's first turn.
 
 ## Incomplete worker jobs
 

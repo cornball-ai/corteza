@@ -28,20 +28,22 @@ expect_equal(corteza::format_tokens(2000000L), "2.0M")
 expect_equal(corteza::context_limit_for_model("gpt-4o"), 128000L)
 expect_equal(corteza::context_limit_for_model("claude-sonnet-4-20250514"),
              200000L)
-# Regression: short-form Claude 4 IDs must resolve to 200K, not the
-# 128K unknown-model fallback. "claude-sonnet-4-6" is not a prefix of
-# any date-stamped key (e.g. "claude-sonnet-4-20250514"), so without
-# explicit short-form entries it would hit the default and trigger
-# premature compaction.
-expect_equal(corteza::context_limit_for_model("claude-opus-4-7"), 200000L)
-expect_equal(corteza::context_limit_for_model("claude-sonnet-4-6"), 200000L)
+# Regression: short-form Claude 4 IDs must resolve to their own rows,
+# not the 128K unknown-model fallback. "claude-sonnet-4-6" is not a
+# prefix of any date-stamped key (e.g. "claude-sonnet-4-20250514"), so
+# without explicit short-form entries it would hit the default and
+# trigger premature compaction. Opus 4.7 and Sonnet 4.6 have a 1M
+# window; Haiku 4.5 has 200K (test_compact_trigger.R has the rest).
+expect_equal(corteza::context_limit_for_model("claude-opus-4-7"), 1000000L)
+expect_equal(corteza::context_limit_for_model("claude-sonnet-4-6"), 1000000L)
 expect_equal(corteza::context_limit_for_model("claude-haiku-4-5"), 200000L)
 # A model id is not enough to identify the usable window. The public OpenAI API
-# exposes 1.05M for Sol, while the ChatGPT Codex product catalog used by the
-# openai_codex provider exposes a 272K working window.
-expect_equal(corteza::context_limit_for_model("gpt-5.6-sol"), 1050000L)
+# takes 922,000 input tokens for Sol (in a 1.05M window), while the ChatGPT
+# Codex product catalog used by the openai_codex provider exposes a 272K
+# working window.
+expect_equal(corteza::context_limit_for_model("gpt-5.6-sol"), 922000L)
 expect_equal(corteza::context_limit_for_model(
-    "gpt-5.6-sol", provider = "openai"), 1050000L)
+    "gpt-5.6-sol", provider = "openai"), 922000L)
 expect_equal(corteza::context_limit_for_model(
     "gpt-5.6-sol", provider = "openai_codex"), 272000L)
 expect_equal(corteza::context_limit_for_model(

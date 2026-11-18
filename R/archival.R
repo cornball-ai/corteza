@@ -808,8 +808,8 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     # collapse (R/journal.R). A failed write leaves the turn intact,
     # and the guard above releases the holder nothing references.
     journaled <- tryCatch({
-        journal_rewrite(turn_session, history, collapsed,
-                        reason = "archival", summary = archived$summary)
+        history_replace(turn_session, collapsed, reason = "archival",
+                        before = history, summary = archived$summary)
         TRUE
     }, error = function(e) {
         log_event("archival_failed", phase = "journal",
@@ -819,7 +819,6 @@ maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
     if (!journaled) {
         return(invisible())
     }
-    turn_session$history <- collapsed
     # Ownership transferred: parent history now references the holder.
     # The on.exit guard above sees this flag set and lets the holder
     # live.

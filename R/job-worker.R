@@ -415,7 +415,12 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     }
     history_path <- file.path(state_dir, "history.rds")
     if (!is.null(.subagent_state$session) && file.exists(history_path)) {
-        .subagent_state$session$history <- readRDS(history_path)
+        # The worker's system text was built again when it started, from
+        # a briefing that changes, so the thinking blocks of the history
+        # it left would be refused at its first request
+        # (R/history-replace.R). The journal is installed after this.
+        history_replace(.subagent_state$session, readRDS(history_path),
+                        "restore")
     }
     list(restored = TRUE, job = info$job, at = info$at, objects = names(values))
 }

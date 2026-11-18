@@ -16,7 +16,9 @@ matrix_configure(
   models = NULL,
   model_badge = c("never", "non_default", "always"),
   display_name = NULL,
-  fallback = NULL
+  fallback = NULL,
+  cwd = NULL,
+  operators = NULL
 )
 }
 \arguments{
@@ -92,6 +94,22 @@ providers; a fallback onto an API-key provider such as \code{anthropic}
 or \code{openai} is labeled as billable usage prominently in the reply.
 \code{reasoning_effort}, when configured, applies to every candidate.
 NULL (default) means a limit error is reported like any other error.}
+
+\item{cwd}{Character or NULL. The directory a room works in when its
+topic names none. It must exist: corteza does not create it. NULL
+(default) saves none, and such a room then works in a scratch folder
+under the session's temporary directory, which is deleted when the
+process ends. Up to 0.8.0 the default was \code{~/<bot name>},
+created on first use.}
+
+\item{operators}{Character vector or NULL. The people the bot answers
+to, each a full Matrix id such as \code{"@you:example.org"}. The bot
+accepts an invite only from one of them, answers a room with one
+person in it only when that person is one of them, and takes its
+approvals from them. NULL (default) saves none. A bot with no
+operators accepts no invites: it works in the room it was configured
+with and in rooms it has already joined. Up to 0.8.0 it accepted
+every invite.}
 }
 \value{
 See \code{\link{bot_configure}}.
