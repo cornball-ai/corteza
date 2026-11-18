@@ -230,13 +230,16 @@
 #' @param sources A saber manifest's source metadata. When supplied, this
 #'   replaces the legacy file list and never renders source bodies.
 #' @param bar_width Bar width in cells (default 50).
+#' @param note Lines printed under the breakdown (a character vector),
+#'   or NULL for none. /context passes the compaction trigger in force.
 #' @return Character scalar (multi-line, no trailing newline).
 #' @noRd
 format_context_block <- function(used, limit, breakdown, compact_pct = 90,
                                  warn_pct = 75, high_pct = 90, crit_pct = 95,
                                  files = character(0L),
                                  palette = ansi_colors(), bar_width = 50L,
-                                 status_info = NULL, sources = NULL) {
+                                 status_info = NULL, sources = NULL,
+                                 note = NULL) {
     used <- as.integer(round(used %||% 0))
     limit <- as.integer(round(limit %||% 0))
     if (limit > 0L) {
@@ -321,6 +324,12 @@ format_context_block <- function(used, limit, breakdown, compact_pct = 90,
                 palette$dim %||% "", palette$reset %||% "")
     }
 
-    paste(c(status_lines, header, bar, rows, "", context_block),
+    note_lines <- if (is.character(note)) {
+        note <- note[!is.na(note) & nzchar(note)]
+        if (length(note)) {
+            paste0(palette$dim %||% "", note, palette$reset %||% "")
+        }
+    }
+    paste(c(status_lines, header, bar, rows, note_lines, "", context_block),
           collapse = "\n")
 }

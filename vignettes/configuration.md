@@ -312,6 +312,98 @@ If recovery ends with a partial reply, the rendered text is kept in conversation
 history and the journal. A later turn can refer to what the user actually saw;
 unfinished tool calls are still discarded.
 
+## When a conversation is compacted
+
+A compaction replaces the older turns of a conversation with a summary. Three
+conditions start one.
+
+- **A share of the window.** The context reaches `context_compact_pct` of the
+  model's window, 90% by default.
+- **A size.** The context reaches `context_compact_tokens`, 200,000 by default.
+  On a model with a 1M window, 90% is 900,000 tokens, so this number decides
+  there. `0` turns it off.
+- **A return after a pause.** The model last answered at least
+  `context_idle_minutes` ago (60 by default), the pause is longer than the
+  prompt cache lasts (`cache`), and the context holds at least
+  `context_idle_tokens` (100,000 by default). The provider has dropped its
+  cached copy of the conversation by then, so the next request pays the full
+  price for the whole history. A summary costs one such request and makes
+  every later request smaller. `"context_idle_minutes": 0` turns it off.
+
+The first two are checked before a turn and between the tool rounds of a
+turn, and the terminal checks again after the reply. The third is checked
+once, before a turn's first request. The summary is then a request of its own
+ahead of the reply, and a line in the terminal, or in a bot's log, says what
+the wait is. A voice session skips the third, since a caller would hear the
+wait as silence.
+
+```json
+{
+  "context_compact_pct": 90,
+  "context_compact_tokens": 200000,
+  "context_idle_minutes": 60,
+  "context_idle_tokens": 100000
+}
+```
+
+`/context` shows the trigger in force and the window it is measured against.
+In the terminal an automatic compaction also runs the memory flush first
+(`memory_flush_enabled`), which is a request of its own.
+
+None of the three applies to a session that manages its own context
+(`context_edit` with `"strategy": "clm"`, under "Conversation context
+editing"). Such a session is never compacted, and `/context` says so.
+
+Each size is corteza's estimate, about 1 token per 4 characters. A provider
+counts with its own tokenizer and can count more, so a context that corteza
+puts at 200,000 tokens can be billed as a larger one.
+
+### What the summary reads
+
+The session's own model writes the summary, in one request, from the turns
+the summary replaces. That request holds a budget of text that follows the
+model's window: 120,000 characters at a window of 128,000 tokens or less, and
+the same share of a larger one, which is 937,500 characters at 1M. With the
+default `context_compact_tokens`, a model with a 1M window reads every turn it
+summarizes. Where the turns do not fit, the oldest are left out and the
+summarizer is told how many. On the Codex transport the budget is also held
+to a quarter of `context_compact_bytes`, counted in characters.
+
+The summarizer has 60 seconds to answer
+(`subagents.context_compaction.timeout_seconds`). When it fails, the
+conversation stays as it was and the turn goes on. The session's next summary
+then reads 120,000 characters whatever the window, the smaller request, and a
+summary that succeeds brings the larger budget back. A model too slow for the
+larger request wants a longer `timeout_seconds`.
+
+A summary made because the provider refused a request for its size reads
+120,000 characters too. The larger budget rests on corteza's count of 4
+characters to a token, and such a refusal says the count ran low for this
+conversation, as it does for text in Chinese or Japanese.
+
+### The model's window
+
+corteza reads a model's window from a table in the package
+(`R/context-budget.R`), where each number names the provider's page it was
+read from. The table holds the largest input a model takes: OpenAI's API
+models have a 1,050,000-token window and take 922,000 tokens of input, and
+the table says 922,000. A model with no row is taken to have 128,000 tokens,
+and `/context` says so.
+
+`context_window` overrides the table:
+
+```json
+{ "context_window": 64000 }
+```
+
+It takes a number above 0. Anything else, a quoted `"64000"` included, is
+ignored and the table answers.
+
+Set it for a local model. An Ollama server decides the window when it loads a
+model (`OLLAMA_CONTEXT_LENGTH`, or 4k, 32k or 256k tokens by the memory of
+the GPU), so the table's row for an Ollama model is a guess, and your server
+may give the model less.
+
 ## Thinking blocks after a rewrite
 
 A Claude model that thinks by default signs each thinking block against the
@@ -540,7 +632,11 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_warn_pct` | integer | `75` | Token-usage % to start showing warnings |
 | `context_high_pct` | integer | `90` | Token-usage % for orange indicator |
 | `context_crit_pct` | integer | `95` | Token-usage % for red indicator + hint to `/clear` |
-| `context_compact_pct` | integer | `90` | Auto-compaction threshold |
+| `context_compact_pct` | integer | `90` | Auto-compaction threshold, as a share of the model's window |
+| `context_compact_tokens` | integer | `200000` | A cap on that threshold in estimated tokens; the smaller of the two applies. `0` turns the cap off |
+| `context_idle_minutes` | integer | `60` | Compact before a turn when the model last answered this long ago and the prompt cache has expired. `0` turns it off |
+| `context_idle_tokens` | integer | `100000` | The smallest context the idle rule compacts |
+| `context_window` | integer or null | null | The model's window in tokens (null = the package's table). Set it for a local model |
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |

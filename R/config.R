@@ -92,6 +92,17 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$context_compact_pct)) {
         config$context_compact_pct <- 90L
     }
+    # A cap on that threshold in tokens, and the idle trigger
+    # (R/compact-trigger.R). 0 turns either off.
+    if (is.null(config$context_compact_tokens)) {
+        config$context_compact_tokens <- CONTEXT_COMPACT_TOKENS
+    }
+    if (is.null(config$context_idle_minutes)) {
+        config$context_idle_minutes <- CONTEXT_IDLE_MINUTES
+    }
+    if (is.null(config$context_idle_tokens)) {
+        config$context_idle_tokens <- CONTEXT_IDLE_TOKENS
+    }
     # The Codex Responses transport can reject a provider-native history on
     # serialized request size before the model's token window is full. This is
     # a wire-size guard, not another token estimate; it is currently applied

@@ -771,7 +771,10 @@ run_agent <- function(opts) {
   # Track estimated live context, not cumulative billed API usage.
   session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
   session$tokens <- session_tokens
-  context_limit <- context_limit_for_model(display_model, provider = provider)
+  # context_window in the config overrides the table here as it does
+  # for compaction, where it is a number above 0.
+  context_limit <- corteza:::.window_value(config$context_window) %||%
+    context_limit_for_model(display_model, provider = provider)
 
   # Show resumed message count
   if (length(session$messages) > 0) {

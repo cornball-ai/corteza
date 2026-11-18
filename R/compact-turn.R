@@ -264,6 +264,23 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
                                  sep = "\n"
 )
 
+# A summary request's bytes, measured as the trigger measures a live
+# request (.estimate_live_request_bytes()), plus an allowance for what a
+# provider's body adds around the prompt and the system text: the
+# model, the flags and their keys. llm.api's Codex body adds under 300.
+# Inf when the size cannot be measured, so that nothing is sent then.
+.COMPACT_REQUEST_FRAMING <- 4096
+
+.compact_request_bytes <- function(prompt, system) {
+    bytes <- .estimate_live_request_bytes(
+        list(history = list(list(role = "user", content = prompt))),
+        system_prompt = system)
+    if (is.na(bytes)) {
+        return(Inf)
+    }
+    bytes + .COMPACT_REQUEST_FRAMING
+}
+
 #' Summarize the prefix of a history slice via the LLM.
 #'
 #' Returns the summary text on success or NULL on any error
@@ -279,28 +296,87 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #'   error before NULL is returned.
 #' @param session Optional session supplying audit settings, identity and the
 #'   parent turn reference.
+#' @param max_total_chars How many characters of the rendered slice the
+#'   request may hold. Past it the oldest entries are left out and the
+#'   summarizer is told how many. The compactor passes a budget that
+#'   follows the model's window.
+#' @param max_request_bytes The most bytes the serialized request may
+#'   take, its framing included, or NA for no limit. Past it the oldest
+#'   entries are left out as well. A request that cannot fit is not sent,
+#'   nor one with room for no entry of the slice.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
                                     model = NULL, timeout_seconds = 60L,
                                     summary_prompt = NULL,
-                                    error_callback = NULL, session = NULL) {
+                                    error_callback = NULL, session = NULL,
+                                    max_total_chars = .compact_max_total_chars,
+                                    max_request_bytes = NA_real_) {
     if (length(slice) == 0L) {
         return(NULL)
     }
     rendered <- vapply(slice, .compact_render_entry, character(1L))
-    conv_text <- paste(.compact_trim_total(rendered), collapse = "\n\n")
     instructions <- summary_prompt %||% .compact_summary_prompt
-    prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s",
-                      instructions, conv_text)
+    system <- paste("You are a helpful assistant that creates",
+                    "concise conversation summaries.")
+    frame <- function(conv_text) {
+        sprintf("%s\n\n---\nConversation to summarize:\n%s", instructions,
+                conv_text)
+    }
+    max_bytes <- Inf
+    if (!is.na(max_request_bytes)) {
+        max_bytes <- max_request_bytes - .compact_request_bytes(frame(""),
+            system)
+    }
+    kept <- .compact_trim_total(rendered, max_total = max_total_chars,
+                                max_bytes = max_bytes)
+    prompt <- frame(paste(kept, collapse = "\n\n"))
+    if (!is.na(max_request_bytes)) {
+        bytes <- .compact_request_bytes(prompt, system)
+        # Only when the request is over the limit with no conversation
+        # in it at all. Sent anyway, it would be refused for its size.
+        if (bytes > max_request_bytes) {
+            e <- simpleError(sprintf(
+                                     "the summary request would take %s bytes, over the limit of %s",
+                                     format(bytes, big.mark = ","),
+                                     format(max_request_bytes, big.mark = ",")))
+            if (is.function(error_callback)) {
+                error_callback(e)
+            }
+            log_event("subagent_compact_failed",
+                      reason = "summary_request_too_large",
+                      request_bytes = bytes, byte_limit = max_request_bytes,
+                      level = "warn")
+            return(NULL)
+        }
+    }
+    # Not one message fits. The request would hold the note about what
+    # was left out and nothing else, and its reply would still replace
+    # the history. The history stays as it is.
+    if (identical(attr(kept, "dropped"), length(rendered))) {
+        newest <- rendered[[length(rendered)]]
+        limit <- if (nchar(newest) + 2L > max_total_chars) {
+            sprintf("%s characters", format(max_total_chars, big.mark = ","))
+        } else {
+            sprintf("%s bytes", format(max_request_bytes, big.mark = ","))
+        }
+        e <- simpleError(sprintf(paste("not one message fits in the summary",
+                                       "request: the newest alone is over its limit of %s"),
+                                 limit))
+        if (is.function(error_callback)) {
+            error_callback(e)
+        }
+        log_event("subagent_compact_failed",
+                  reason = "summary_request_no_message",
+                  messages = length(rendered), level = "warn")
+        return(NULL)
+    }
     setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
     chat_args <- list(
                       prompt = prompt,
                       provider = provider,
                       model = model,
-                      system = paste(
-                                     "You are a helpful assistant that creates",
-                                     "concise conversation summaries."))
+                      system = system)
     # Compaction does not need a sampling override. Provider-default sampling
     # keeps it compatible with models that reject or deprecate `temperature`.
     result <- tryCatch(
@@ -358,8 +434,16 @@ compact_rewrite_history <- function(history, cut, summary) {
 #'   - Compaction mode off → return invisibly without checking.
 #'   - History shorter than `min_messages` → skip (nothing to gain).
 #'   - Live token usage and serialized request size below thresholds → skip.
+#'     The token threshold is the smaller of `context_compact_pct` of the
+#'     window and `context_compact_tokens`. Ahead of a turn's first
+#'     request, a session idle for `context_idle_minutes` with
+#'     `context_idle_tokens` of context compacts below it
+#'     (R/compact-trigger.R).
 #'   - No safe cut available (e.g. open tool_use) → skip.
-#'   - Summarizer fails → log and leave history intact.
+#'   - Summarizer fails → log and leave history intact. The session's
+#'     next summary then reads the smaller budget of 120,000 characters,
+#'     until one succeeds. So does a summary made after the provider
+#'     refused a request for its size (R/compact-trigger.R).
 #'
 #' On success, mutates `session$history` in place. Returns invisibly
 #' TRUE if compaction ran successfully, FALSE otherwise.
@@ -382,11 +466,16 @@ compact_rewrite_history <- function(history, cut, summary) {
 #'   uses its configured value; forced overflow recovery may lower this because
 #'   a few individual entries can themselves exceed the context window.
 #' @param reason Short lifecycle marker recorded in the compaction event.
+#'   `"preflight"`, the check ahead of a turn's first request, is also
+#'   where a session back from an idle gap compacts; the event then
+#'   carries the reason `"idle"`.
+#' @param now The time the idle gap is measured to. A test passes its
+#'   own.
 #' @keywords internal
 maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        tools = NULL, system = NULL,
                                        threshold, byte_limit, min_messages,
-                                       reason = "threshold") {
+                                       reason = "threshold", now = Sys.time()) {
     if (identical(kind, "archive_holder") || .context_edit_pure(session)) {
         return(invisible(FALSE))
     }
@@ -441,17 +530,28 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     request_bytes <- .estimate_live_request_bytes(
         list(history = history), system_prompt = system_for_estimate,
         tools = tools_for_estimate)
-    limit <- session$context_window %||% config$context_window %||%
-    context_limit_for_model(model, provider = session$provider)
+    # The window, the cap and the idle numbers, as /context shows them
+    # (R/compact-trigger.R).
+    size <- context_trigger(session, config, model = model, pct = threshold)
+    limit <- size$window
     if (is.null(limit) || limit <= 0L) {
         pct <- 0
     } else {
         pct <- 100 * used / limit
     }
-    token_pressure <- pct >= threshold
+    # On a 1M window the percentage is far off, and the cap decides.
+    token_pressure <- pct >= threshold ||
+    (!is.null(size$cap) && used >= size$cap)
     byte_pressure <- !is.na(byte_limit) && !is.na(request_bytes) &&
     request_bytes >= byte_limit
-    if (!token_pressure && !byte_pressure) {
+    # Asked only ahead of a turn's first request, and only where
+    # automatic compaction is on at all (a memory flush turns it off
+    # for its own session).
+    idle_gap <- if (!token_pressure && !byte_pressure &&
+        identical(reason, "preflight") && !identical(size$rule, "off")) {
+        .compact_idle_gap(session, size, used, now = now)
+    }
+    if (!token_pressure && !byte_pressure && is.null(idle_gap)) {
         return(invisible(FALSE))
     }
     forced_reason <- reason %in% c("context_overflow", "request_buffer_overflow")
@@ -459,8 +559,13 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
         "forced"
     } else if (byte_pressure) {
         "request_bytes"
-    } else {
+    } else if (token_pressure) {
         "tokens"
+    } else {
+        "idle"
+    }
+    if (identical(trigger, "idle")) {
+        reason <- "idle"
     }
     cut <- compact_find_cut(history,
                             keep_recent_turns = cc$keep_recent_turns %||% 1L,
@@ -472,14 +577,26 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
         return(invisible(FALSE))
     }
     slice <- history[seq_len(cut)]
+    if (identical(trigger, "idle")) {
+        # The summary is a request of its own ahead of the reply, and a
+        # person waiting should be told what the wait is.
+        message(sprintf(
+                        "context: idle for %s with about %s tokens of context; summarizing the older turns first",
+                        format_age(idle_gap * 60), format_tokens(used)))
+    }
     summary_error <- NULL
+    summary_chars <- .compact_summary_budget(session, limit, reason)
+    # The session's byte limit holds for the summary's own request too,
+    # in a recovery as at any other time.
     summary <- compact_summarize_slice(
                                        slice, provider = session$provider %||% "anthropic",
                                        model = model,
                                        timeout_seconds = as.integer(cc$timeout_seconds %||% 60L),
                                        summary_prompt = session$compaction_prompt %||% NULL,
                                        error_callback = function(e) summary_error <<- e,
-                                       session = session)
+                                       session = session,
+                                       max_total_chars = summary_chars,
+                                       max_request_bytes = byte_limit)
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",
@@ -488,6 +605,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
             } else {
                 conditionMessage(summary_error)
             },
+                        summary_chars = summary_chars,
                         tokens_before = used,
                         request_bytes = request_bytes,
                         byte_limit = byte_limit,
@@ -523,11 +641,14 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                   history_after = rewritten,
                   thinking_removed = stripped$removed,
                   cut = cut,
+                  summary_chars = summary_chars,
                   tokens_before = used,
                   request_bytes = request_bytes,
                   byte_limit = byte_limit,
                   trigger = trigger,
                   threshold_pct = threshold,
+                  trigger_tokens = size$tokens,
+                  idle_minutes = idle_gap,
                   context_pct = pct,
                   context_window = limit,
                   provider = session$provider,

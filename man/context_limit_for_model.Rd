@@ -16,8 +16,10 @@ Context limit in tokens (integer). Returns 128000L when
   no entry matches.
 }
 \description{
-Tries exact match, then prefix match either direction (so
-`"claude-3-5-sonnet"` resolves to the dated entry, and a longer
-model id with a known prefix also resolves).
+Tries the model's own row, then the longest row name the id starts
+with (so a dated or suffixed id resolves to its family), then the
+rows whose names start with the id (so `"claude-3-haiku"` resolves to
+the dated entry). An id cut short can mean several rows, and it gets
+the smallest limit among them.
 }
 \keyword{internal}
