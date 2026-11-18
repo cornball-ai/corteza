@@ -111,12 +111,23 @@ local({
             FALSE
         }
     )
-    h <- corteza:::.make_tool_handler(s)
+    executed <- FALSE
+    h <- corteza:::.make_tool_handler(s, tool_executor = function(name, args) {
+        executed <<- TRUE
+        list(content = list(list(type = "text", text = "stub")))
+    })
 
-    # cli + personal + read = ask
-    out <- h("read_file", list(path = "~/Documents/private.md"))
+    # cli + write = ask, wherever the path is
+    out <- h("write_file", list(path = "~/Documents/private.md", content = "x"))
     expect_true(called)
     expect_true(grepl("declined", out))
+    expect_false(executed)
+
+    # cli + personal + read = allow (approval-engine note, decision 2)
+    called <- FALSE
+    out <- h("read_file", list(path = "~/Documents/private.md"))
+    expect_false(called)
+    expect_true(executed)
 })
 
 # Ask path: approval_cb TRUE -> dispatches to the real skill. We use
@@ -214,11 +225,9 @@ local({
     out_bash <- h_bash("bash", list(command = "ls /tmp"))
     expect_true(called_bash)
 
-    # Sanity: without config, the historical contract holds — a
-    # write_file in console that classifies as random falls into the
-    # tensor allow cell and approval_cb does not fire. Use a fake
-    # tool_executor so the test doesn't actually touch the
-    # filesystem when the negative-case write goes through.
+    # Without config, a write asks by its class: no data class lets one
+    # run unasked. Use a fake tool_executor so the test doesn't touch
+    # the filesystem if the write ever goes through.
     called_none <- FALSE
     fake_executor <- function(name, args) {
         list(content = list(list(type = "text", text = "stub")))
@@ -235,8 +244,9 @@ local({
                                            tool_executor = fake_executor)
     sanity_path <- tempfile("corteza-test-no-cfg-")
     on.exit(unlink(sanity_path, force = TRUE), add = TRUE)
-    h_none("write_file", list(path = sanity_path, content = "x"))
-    expect_false(called_none)
+    out_none <- h_none("write_file", list(path = sanity_path, content = "x"))
+    expect_true(called_none)
+    expect_true(grepl("declined", out_none))
     expect_false(file.exists(sanity_path))
 })
 

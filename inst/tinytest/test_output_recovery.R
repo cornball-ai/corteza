@@ -115,14 +115,19 @@ local({
 })
 
 local({
+    # harness_note is a write the envelope can never approve (it names no
+    # path), and spawn_subagent and delegate drive other work: none is
+    # offered to a run the monitor brokers.
     names <- c("read_file", "read_handle", "write_file", "bash", "run_r",
-               "base__file.remove", "edit_context", "task_create")
+               "base__file.remove", "edit_context", "task_create",
+               "harness_note", "spawn_subagent", "delegate", "job_status")
     tools <- lapply(names, function(name) list(name = name))
     shown <- function(config) vapply(corteza:::.auto_filter_tools(tools, config),
                                      function(x) x$name, "")
     expect_identical(shown(NULL), names)
     expect_identical(shown(list()),
-                     c("read_file", "read_handle", "write_file", "edit_context", "task_create"))
+                     c("read_file", "read_handle", "write_file", "edit_context",
+                       "task_create", "job_status"))
     expect_true(all(c("bash", "run_r") %in% shown(list(auto = list(allow_exec = TRUE)))))
     expect_false("base__file.remove" %in% shown(list(auto = list(allow_exec = TRUE))))
     expect_false("read_file" %in% shown(list(auto = list(never_broker = "read_file"))))

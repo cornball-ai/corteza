@@ -39,10 +39,17 @@ That's it. The string form registers every export. For larger packages, the obje
 ```json
 {
   "skill_packages": [
-    {"package": "fortunes", "functions": ["fortune"]}
+    {"package": "fortunes", "functions": ["fortune"], "class": "read"}
   ]
 }
 ```
+
+`class` says what the functions do: `"read"`, `"write"` or `"exec"`. It
+decides who approves a call. A read runs; a write or an exec asks, and
+plan mode refuses it. An entry without a class, and the string form, leave
+each function asking before every call, since nothing says what it
+touches. Name a class only for what every function of the entry does,
+and give functions that differ entries of their own.
 
 ## Use
 
@@ -91,4 +98,4 @@ Same tool surface, different cost curve. corteza's MCP server (`corteza::serve()
 
 - The derivation pipeline is summarized in the package vignette and package source; the earlier external blog post is no longer linked because its URL no longer resolves reliably.
 - Discover what's in a package the same way the agent does: `Rscript --vanilla -e 'saber::pkg_exports("fortunes")'` and `Rscript --vanilla -e 'saber::pkg_help("fortune", "fortunes")'`.
-- For your own functions, drop an `.R` file in `<project>/.corteza/skills/` calling `register_skill_from_fn("name", my_fn)`. Loaded on every session start in a directory you have trusted (`/trust yes`), no installation required.
+- For your own functions, drop an `.R` file in `<project>/.corteza/skills/` calling `register_skill(skill_spec("name", "What it does.", params = list(), handler = function(args, ctx) ok("done"), class = "read"))`. Loaded on every session start in a directory you have trusted (`/trust yes`), no installation required. Without `class`, each call asks.

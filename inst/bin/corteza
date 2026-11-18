@@ -431,11 +431,18 @@ cli_approval_cb <- function(cwd) {
   for_session <- character()
   function(call, decision) {
     name <- call$tool %||% ""
-    if (name %in% for_session || (trusted && is_approved(cwd, name))) {
+    # The credential rule's ask is answered each time: an "always" given
+    # for the tool, for any file, does not answer it, and its prompt
+    # offers none.
+    once_only <- identical(decision$rule, "credential")
+    if (!once_only &&
+        (name %in% for_session || (trusted && is_approved(cwd, name)))) {
       return(TRUE)
     }
 
-    persistent_label <- if (trusted) {
+    persistent_label <- if (once_only) {
+      NULL
+    } else if (trusted) {
       "Allow always for this project"
     } else {
       "Allow always for this session"
@@ -456,7 +463,7 @@ cli_approval_cb <- function(cwd) {
                                       color$yellow, color$reset))
     if (length(response) == 0) response <- ""
     response <- trimws(response)
-    if (response == "") response <- "1"
+    if (response == "" || (once_only && response == "2")) response <- "1"
 
     # "Allow always for this project" persists to .corteza/approvals.json
     # so future runs skip the prompt for this tool. In an untrusted

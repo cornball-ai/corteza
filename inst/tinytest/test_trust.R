@@ -681,6 +681,28 @@ local({
         expect_true(got$ok)
         expect_equal(got$asked, 0L)
         expect_equal(ask(cb, "run_r", "1")$asked, 1L)
+        # The credential rule's ask is answered each time: the session's
+        # "always" for the tool does not answer it, and its prompt
+        # offers none. A "2" there counts as once and is not kept.
+        key <- function(cb, reply, tool = "bash") {
+            replies <<- reply
+            before_n <- prompts
+            said <- utils::capture.output(ok <- cb(
+                list(tool = tool, args = calls[[tool]]),
+                list(approval = "ask", rule = "credential",
+                     reason = "safety: ~/.ssh/id_rsa is a credential path")))
+            list(ok = ok, asked = prompts - before_n, said = said)
+        }
+        got <- key(cb, "1")
+        expect_true(got$ok)
+        expect_equal(got$asked, 1L)
+        expect_false(any(grepl("Allow always", got$said, fixed = TRUE)))
+        got <- key(cb, "2", "run_r")
+        expect_true(got$ok)
+        expect_equal(got$asked, 1L)
+        expect_equal(key(cb, "1", "run_r")$asked, 1L)
+        expect_equal(ask(cb, "run_r", "1")$asked, 1L)
+        expect_equal(ask(cb, "bash")$asked, 0L)
         expect_equal(readLines(saved), before)
         expect_equal(ask(cli$cli_approval_cb(proj), "bash", "1")$asked, 1L)
         # Where the project has no folder, "always" makes none.
@@ -696,6 +718,10 @@ local({
         got <- ask(cb, "bash")
         expect_true(got$ok)
         expect_equal(got$asked, 0L)
+        # Nor does a saved one, and a "2" there saves nothing.
+        expect_equal(key(cb, "1")$asked, 1L)
+        expect_equal(key(cb, "2", "run_r")$asked, 1L)
+        expect_null(jsonlite::fromJSON(saved)$run_r)
         got <- ask(cb, "run_r", "2")
         expect_equal(got$asked, 1L)
         expect_true(any(grepl("Allow always for this project", got$said,

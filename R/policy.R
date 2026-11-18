@@ -2,11 +2,23 @@
 #
 # policy(call) -> list(model, approval, reason)
 #
-# Precedence (most specific wins):
-#   1. Hard safety rules (cannot be overridden by user config)
-#   2. User policy function, if options(corteza.policy = ...) is set
-#   3. Default tensor lookup on (data_class, op, channel)
-#   4. Fallback: cloud + ask
+# Every tool has a class, declared where it is registered (skill_spec(),
+# register_skill_from_fn(), a skill_packages entry): read, write, exec,
+# control or continue. A tool that declares none is "unknown".
+#
+# Order (approval-engine note, WP18):
+#   1. The session's mode. Plan mode refuses write, exec, continue and
+#      unknown. Nothing after this lifts a mode's deny.
+#   2. The credential rule. A path under a credential store asks, and the
+#      verdict carries rule = "credential", so no saved "always" answers
+#      it. Neither the user's policy function nor the config can lift it.
+#   3. The user's policy function, if options(corteza.policy = ...) is
+#      set. Its verdict is final.
+#   4. The table: the tool's class, and personal data refused for a write
+#      or a command in a room.
+#   5. The config: a permissions entry replaces the verdict for its tool;
+#      for the rest, dangerous_tools asks and approval_mode says what
+#      "ask" means. Neither lifts a deny.
 #
 # A "call" is a list with fields:
 #   tool      - character, the tool name (e.g. "read_file")
@@ -15,12 +27,13 @@
 #   urls      - character, URLs touched (resolved from args if NULL)
 #   channel   - character, one of "cli", "console", "matrix"
 #   context   - list, optional; context$recent_classes carries sticky
-#               classifications from earlier calls in the same turn
+#               classifications from earlier calls in the same turn, and
+#               context$plan_mode the session's mode
 
 # ---- Hard safety ----
 
-# Paths where reads must route to a local model and any operation requires
-# an ask. These cannot be overridden by user config.
+# Paths where any operation requires an ask. These cannot be overridden
+# by user config, and no saved answer counts for them.
 .hard_secret_paths <- function() {
     c("~/.ssh", "~/.gnupg", "~/.aws/credentials", "~/.config/gcloud",
         "~/.kube/config", "~/.docker/config.json")
@@ -44,15 +57,84 @@ get_code_paths <- function() {
     getOption("corteza.code_paths", .default_code_paths())
 }
 
+# ---- Tool classes ----
+
+# What a tool does. read reports and changes nothing; write changes
+# files or state a later session reads; exec runs code; control acts on
+# this session's own work; continue runs work in a child, a worker or
+# another room, whose mode was set elsewhere. "unknown" is the class of a
+# tool that names none.
+.tool_classes <- c("read", "write", "exec", "control", "continue")
+
+# A declared class, checked. NULL and "unknown" mean none.
+tool_class_check <- function(class, name = "") {
+    if (is.null(class) || identical(class, "unknown")) {
+        return("unknown")
+    }
+    if (!is.character(class) || length(class) != 1L || is.na(class) ||
+        !class %in% .tool_classes) {
+        stop(sprintf("%s: class must be one of %s", name,
+                     paste(.tool_classes, collapse = ", ")), call. = FALSE)
+    }
+    class
+}
+
+# Tools a host adds to a room session's list, outside the registry:
+# R/room-media.R, R/room-consult.R and R/delegation-bot.R. turn() queues
+# edit_context (R/context-edit.R) before the gate, so its class is never
+# read there.
+.session_tool_classes <- c(send_room_file = "write", ask_room = "continue",
+                           delegate_to = "continue", edit_context = "control")
+
+# The registry's entry for a tool, registering the built-in tools first
+# when nothing is registered yet.
+.registered_tool <- function(tool_name) {
+    ensure_skills()
+    get_skill(tool_name)
+}
+
+# Whether corteza wrote the tool's arguments, so that resolve_paths()
+# can read its paths by argument name.
+.args_named_by_corteza <- function(tool_name) {
+    if (!is.character(tool_name) || length(tool_name) != 1L ||
+        is.na(tool_name) || !nzchar(tool_name)) {
+        return(FALSE)
+    }
+    if (tool_name %in% names(.session_tool_classes)) {
+        return(TRUE)
+    }
+    isTRUE(.registered_tool(tool_name)$builtin)
+}
+
 # ---- Path / URL resolution ----
 
-# Pull filesystem paths out of tool arguments. Best-effort: looks at common
-# arg keys. Shell commands and run_r code bodies are not parsed.
+# Argument names that hold a path, in the tools corteza wrote.
+.path_arg_keys <- c("path", "file", "filename", "dir", "directory",
+                    "dest", "destination", "from", "to", "src", "target")
+
+# Every string in a tool's arguments, at any depth.
+.string_args <- function(args) {
+    if (!length(args)) {
+        return(character())
+    }
+    out <- as.character(unname(rapply(as.list(args), function(x) x,
+                                      classes = "character", how = "unlist")))
+    out[!is.na(out) & nzchar(out)]
+}
+
+# Pull filesystem paths out of tool arguments. For a tool corteza wrote,
+# the arguments named in .path_arg_keys; shell commands and run_r code
+# bodies are read by exec_scan() instead. For any other tool (a package
+# function, a skill), every string argument counts as a path: a string
+# that only looks like one may ask needlessly, and a path under another
+# argument name is not missed.
 resolve_paths <- function(call) {
     args <- call$args %||% list()
+    if (!.args_named_by_corteza(call$tool %||% "")) {
+        return(.string_args(args))
+    }
     out <- character()
-    for (key in c("path", "file", "filename", "dir", "directory", "dest",
-                  "destination", "from", "to", "src", "target")) {
+    for (key in .path_arg_keys) {
         v <- args[[key]]
         if (is.character(v)) {
             out <- c(out, v)
@@ -76,25 +158,17 @@ resolve_urls <- function(call) {
 
 # ---- Classifiers ----
 
-# Classify the operation class of a tool.
+# The class of a tool: the one it declared where it was registered, or
+# "unknown". A session tool a host adds is looked up first.
 classify_op <- function(tool_name) {
-    read_tools <- c("read_file", "read_handle", "skill_instructions",
-                    "list_files", "grep_files", "git_log", "git_diff",
-                    "git_status", "web_search", "fetch_url", "r_help",
-                    "installed_packages")
-    write_tools <- c("write_file", "replace_in_file", "send_room_file")
-    exec_tools <- c("bash", "cmd", "run_r", "run_r_script")
-
-    if (tool_name %in% read_tools) {
-        return("read")
+    if (!is.character(tool_name) || length(tool_name) != 1L ||
+        is.na(tool_name) || !nzchar(tool_name)) {
+        return("unknown")
     }
-    if (tool_name %in% write_tools) {
-        return("write")
+    if (tool_name %in% names(.session_tool_classes)) {
+        return(.session_tool_classes[[tool_name]])
     }
-    if (tool_name %in% exec_tools) {
-        return("exec")
-    }
-    "unknown"
+    .registered_tool(tool_name)$class %||% "unknown"
 }
 
 # Classify the data class of a tool call. Sticky: if any prior call in the
@@ -129,32 +203,48 @@ classify_data <- function(call, context = NULL) {
     "random"
 }
 
+# ---- Modes ----
+
+# The verdict each mode gives each class. A mode other than the default
+# only refuses: a call it lets through is decided as in the default, by
+# the rules after it.
+.mode_verdicts <- list(
+                       default = c(read = "allow", write = "ask", exec = "ask",
+                                   control = "allow", continue = "allow", unknown = "ask"),
+                       plan = c(read = "allow", write = "deny", exec = "deny", control = "allow",
+                                continue = "deny", unknown = "deny")
+)
+
 # Run the plan-mode gate. Returns a deny decision to short-circuit when
-# the session is in plan mode and the tool would mutate state, or NULL.
-# `exit_plan_mode` is always allowed (it's the escape hatch). Reads pass
-# through. Sticky data-class routing still applies to the read result.
+# the session is in plan mode and the tool's class is one plan mode
+# refuses, or NULL. `exit_plan_mode` is a control tool, so it passes (it
+# is the escape hatch). Reads pass through. Sticky data-class routing
+# still applies to the read result.
 check_plan_mode <- function(call) {
     if (!isTRUE(call$context$plan_mode)) {
         return(NULL)
     }
     tool <- call$tool %||% ""
-    if (identical(tool, "exit_plan_mode")) {
+    op <- classify_op(tool)
+    if (!identical(.mode_verdicts$plan[[op]], "deny")) {
         return(NULL)
     }
-    op <- classify_op(tool)
-    if (op %in% c("write", "exec")) {
-        return(list(
-                    model = "cloud",
-                    approval = "deny",
-                    reason = sprintf(
-                                     "plan mode: %s would modify state; present a plan via exit_plan_mode first",
-                                     tool)
-            ))
-    }
-    NULL
+    why <- switch(op, continue = "runs work that does not follow plan mode",
+                  unknown = "has no class, so it may modify state",
+                  "would modify state")
+    list(
+         model = "cloud",
+         approval = "deny",
+         reason = sprintf(
+                          "plan mode: %s %s; present a plan via exit_plan_mode first",
+                          tool, why),
+         rule = "plan_mode"
+    )
 }
 
 # Run hard safety checks. Returns a decision list to short-circuit, or NULL.
+# The decision carries rule = "credential": an approval callback asks for
+# it whatever was saved, and offers no "always".
 check_safety <- function(call) {
     paths <- path.expand(call$paths %||% character())
     if (!length(paths)) {
@@ -168,7 +258,8 @@ check_safety <- function(call) {
                 return(list(
                             model = "local",
                             approval = "ask",
-                            reason = sprintf("safety: %s is a credential path", p)
+                            reason = sprintf("safety: %s is a credential path", p),
+                            rule = "credential"
                     ))
             }
         }
@@ -176,28 +267,10 @@ check_safety <- function(call) {
     NULL
 }
 
-# ---- Default tensor ----
-
-# (data_class, op, channel) -> "allow" | "ask" | "deny"
-.default_tensor <- list(
-                        personal = list(
-                                        read = list(cli = "ask", console = "ask", matrix = "ask"),
-                                        write = list(cli = "ask", console = "ask", matrix = "deny"),
-                                        exec = list(cli = "ask", console = "ask", matrix = "deny")
-    ),
-                        code = list(
-                                    read = list(cli = "allow", console = "allow", matrix = "allow"),
-                                    write = list(cli = "ask", console = "ask", matrix = "ask"),
-                                    exec = list(cli = "ask", console = "allow", matrix = "ask")
-    ),
-                        random = list(
-                                      read = list(cli = "allow", console = "allow", matrix = "allow"),
-                                      write = list(cli = "allow", console = "allow", matrix = "allow"),
-                                      exec = list(cli = "allow", console = "allow", matrix = "allow")
-    )
-)
+# ---- Default table ----
 
 # Personal data routes to a local model; everything else to cloud.
+# Nothing routes on it yet: the field is computed, recorded and returned.
 .default_model_route <- function(data_class) {
     if (identical(data_class, "personal")) {
         "local"
@@ -206,26 +279,18 @@ check_safety <- function(call) {
     }
 }
 
-# Default decision based on the tensor.
+# Default decision: the class's verdict in the default mode. Personal data
+# is refused for a write or a command in a room, where the person who
+# would answer is not at a prompt. A read of it is allowed.
 default_policy <- function(call) {
     data_class <- classify_data(call, call$context)
     op <- classify_op(call$tool %||% "")
     channel <- call$channel %||% "cli"
 
-    # Requester/operator and conversation checks live in job_resume(). This
-    # host operation queues an explicitly requested attempt, whose tool calls
-    # still pass their own policy and supervision. Do not ask to approve the
-    # same task again merely because this orchestration tool is unclassified.
-    # User policy and explicit per-tool ask/deny settings still take precedence.
-    if (identical(call$tool, "job_resume")) {
-        return(list(model = .default_model_route(data_class), approval = "allow",
-                    reason = "default: resume authorization is checked by the job host"))
-    }
-
-    approval <- tryCatch(.default_tensor[[data_class]][[op]][[channel]],
-                         error = function(e) NULL)
-    if (is.null(approval)) {
-        approval <- "ask"
+    approval <- .mode_verdicts$default[[op]]
+    if (identical(data_class, "personal") && op %in% c("write", "exec") &&
+        identical(channel, "matrix")) {
+        approval <- "deny"
     }
 
     list(
@@ -240,34 +305,46 @@ default_policy <- function(call) {
 #' Evaluate policy for a tool call
 #'
 #' Returns a decision \code{list(model, approval, reason)}. \code{model} is
-#' \code{"cloud"} or \code{"local"}; \code{approval} is \code{"allow"},
-#' \code{"ask"}, or \code{"deny"}.
+#' \code{"cloud"} or \code{"local"}; nothing routes on it yet.
+#' \code{approval} is \code{"allow"}, \code{"ask"}, or \code{"deny"}. A
+#' verdict from the credential rule also carries
+#' \code{rule = "credential"}, and one from plan mode
+#' \code{rule = "plan_mode"}.
 #'
-#' When \code{config} is supplied, the project's
-#' \code{approval_mode} / \code{dangerous_tools} / per-tool
-#' \code{permissions} are overlaid on top of the default tensor: a
-#' tool the user has configured as \code{"ask"} or \code{"deny"} will
-#' have its decision promoted accordingly. Safety verdicts (credential
-#' paths, plan mode) still win because those represent invariants the
-#' user can't waive from config.
+#' Every tool has a class, declared where it is registered:
+#' \code{"read"}, \code{"write"}, \code{"exec"}, \code{"control"} (acts on
+#' the session's own work) or \code{"continue"} (runs work in a child, a
+#' worker or another room). A tool that declares none is
+#' \code{"unknown"}. By default \code{read}, \code{control} and
+#' \code{continue} are allowed, and \code{write}, \code{exec} and
+#' \code{unknown} ask. Plan mode refuses \code{write}, \code{exec},
+#' \code{continue} and \code{unknown}, and nothing lifts that refusal.
+#' A path under a credential store asks next, whatever follows.
+#'
+#' When \code{config} is supplied, the user's settings are overlaid on
+#' the table: a \code{permissions} entry replaces the verdict for its
+#' tool, a tool named in \code{dangerous_tools} asks, and
+#' \code{approval_mode} says what "ask" means for a tool with no
+#' \code{permissions} entry. None of them lifts a deny.
 #'
 #' Both \code{corteza::chat()} and the CLI tool dispatch loop pass
 #' their session's config through here so the \code{/permissions}
 #' contract advertised by both surfaces is enforced consistently.
+#' \code{serve()} does not: an MCP client asks its own user.
 #'
 #' @param call A list describing the tool call. See the file header in
 #'   \code{R/policy.R} for the expected fields.
 #' @param config Optional config list from \code{load_config()}. When
-#'   \code{NULL} (default), only the built-in tensor and user policy
-#'   apply; this matches the historical \code{policy(call)} contract.
+#'   \code{NULL} (default), only the table and user policy apply; this
+#'   matches the historical \code{policy(call)} contract.
 #'
 #' @return A decision list with fields \code{model}, \code{approval},
 #'   \code{reason}.
 #' @examples
 #' # A bare-environment read_file call resolves under the default
 #' # built-in policy without needing any session config.
-#' decision <- policy(list(name = "read_file",
-#'                         arguments = list(path = "DESCRIPTION")))
+#' decision <- policy(list(tool = "read_file",
+#'                         args = list(path = "DESCRIPTION")))
 #' decision$approval
 #' @export
 policy <- function(call, config = NULL) {
@@ -278,14 +355,16 @@ policy <- function(call, config = NULL) {
         call$urls <- resolve_urls(call)
     }
 
-    safety <- check_safety(call)
-    if (!is.null(safety)) {
-        return(safety)
-    }
-
+    # The mode first: a credential prompt answered yes must not perform
+    # what plan mode refuses.
     plan <- check_plan_mode(call)
     if (!is.null(plan)) {
         return(plan)
+    }
+
+    safety <- check_safety(call)
+    if (!is.null(safety)) {
+        return(safety)
     }
 
     user_fn <- getOption("corteza.policy")
@@ -308,28 +387,20 @@ policy <- function(call, config = NULL) {
 }
 
 #' Overlay the configured tool permissions on top of a base policy
-#' decision. Honors approval_mode + dangerous_tools + per-tool
-#' permissions so the /permissions contract is actually enforced in
-#' both chat() and CLI.
+#' decision, so the /permissions contract is enforced in both chat()
+#' and the CLI.
 #'
 #' Resolution rules (in order):
 #'
 #' \itemize{
-#'   \item Safety verdicts (credential paths, etc.) have already
-#'     short-circuited by the time we get here, so a base \code{"deny"}
-#'     can only come from the data tensor or a user fn. We never
-#'     downgrade that.
-#'   \item Config \code{"deny"} wins over base \code{"allow"} or
-#'     \code{"ask"} — config can always tighten.
-#'   \item Config \code{"ask"} promotes base \code{"allow"} to
-#'     \code{"ask"}. (It doesn't downgrade base \code{"deny"}.)
-#'   \item Config \code{"allow"} downgrades base \code{"ask"} to
-#'     \code{"allow"}. This mirrors the CLI's
-#'     \code{requires_approval(name, dangerous_tools)} semantics: a
-#'     tool the user has explicitly marked allow skips approval
-#'     regardless of data class. It does **not** override a base
-#'     \code{"deny"} — config can tighten or relax \code{"ask"},
-#'     never widen a \code{"deny"}.
+#'   \item A base \code{"deny"} stays. Config can tighten, never widen
+#'     a deny.
+#'   \item A \code{permissions} entry for the tool replaces the verdict:
+#'     \code{"deny"}, \code{"ask"} or \code{"allow"}.
+#'   \item Otherwise a tool named in \code{dangerous_tools} asks where
+#'     the table allowed it, and \code{approval_mode} (\code{"ask"},
+#'     \code{"allow"} or \code{"deny"}) says what an \code{"ask"}
+#'     becomes. Nothing else turns an "ask" into an "allow".
 #' }
 #' @noRd
 .apply_config_overlay <- function(base, call, config) {
@@ -337,35 +408,35 @@ policy <- function(call, config = NULL) {
         return(base)
     }
     tool <- call$tool %||% ""
-    if (!nzchar(tool)) {
+    if (!nzchar(tool) || identical(base$approval, "deny")) {
         return(base)
     }
-    perm <- tryCatch(get_tool_permission(tool, config),
-                     error = function(e) NULL)
-    if (is.null(perm)) {
-        return(base)
+    verdict <- function(approval, reason) {
+        list(model = base$model %||% "cloud", approval = approval,
+             reason = reason)
     }
 
-    if (identical(perm, "deny")) {
-        return(list(model = base$model %||% "cloud",
-                    approval = "deny",
-                    reason = sprintf("config: %s denied", tool)))
-    }
-    if (identical(perm, "ask")) {
-        if (identical(base$approval, "allow")) {
-            return(list(model = base$model %||% "cloud",
-                        approval = "ask",
-                        reason = sprintf("config: %s requires approval", tool)))
+    perm <- get_tool_permission(tool, config)
+    if (!is.null(perm)) {
+        if (identical(perm, base$approval)) {
+            return(base)
         }
-        return(base)
+        return(switch(perm,
+                      deny = verdict("deny", sprintf("config: %s denied", tool)),
+                      ask = verdict("ask", sprintf("config: %s requires approval", tool)),
+                      allow = verdict("allow", sprintf("config: %s allowed", tool)),
+                      base))
     }
-    if (identical(perm, "allow")) {
-        if (identical(base$approval, "ask")) {
-            return(list(model = base$model %||% "cloud",
-                        approval = "allow",
-                        reason = sprintf("config: %s allowed", tool)))
-        }
-        return(base)
+
+    out <- base
+    dangerous <- config$dangerous_tools %||% default_dangerous_tools()
+    if (identical(out$approval, "allow") && tool %in% dangerous) {
+        out <- verdict("ask", sprintf("config: %s is in dangerous_tools", tool))
     }
-    base
+    mode <- config$approval_mode %||% "ask"
+    if (identical(out$approval, "ask") && mode %in% c("allow", "deny")) {
+        out <- verdict(mode, sprintf("config: approval_mode is %s (%s)", mode,
+                                     out$reason))
+    }
+    out
 }

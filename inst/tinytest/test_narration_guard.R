@@ -74,10 +74,10 @@ local({
     s$silent_streak <- 2L
     h <- corteza:::.make_tool_handler(s)
 
-    # cli + personal + read = ask -> declined. Final (and only) silent call of
+    # cli + write = ask -> declined. Final (and only) silent call of
     # the batch: .update_silent_streak bumps 2 -> 3 (threshold), and the
     # declined return routes through nudge().
-    out <- h("read_file", list(path = "~/Documents/private.md"),
+    out <- h("write_file", list(path = "~/Documents/private.md", content = "x"),
              ctx("", 1L, 1L))
     expect_true(grepl("declined", out))
     expect_true(grepl("[corteza]", out, fixed = TRUE))

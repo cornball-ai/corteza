@@ -701,11 +701,13 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
         lines <- c(lines, " Warning", paste0("   ", warnings), "")
     }
 
+    # No persistent label: the call may be allowed once only (a
+    # credential path), and the numbers keep their meaning.
     c(
         lines,
         " Do you want to proceed?",
         "   1. Allow once (Enter)",
-        sprintf("   2. %s", persistent_label),
+        if (!is.null(persistent_label)) sprintf("   2. %s", persistent_label),
         sprintf("   3. %s", deny_label)
     )
 }
