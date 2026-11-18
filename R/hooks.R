@@ -5,11 +5,11 @@
 # messages the host answers itself, are the host's decisions (cerebro
 # files segments and folds them into topic rooms; a host can run agent
 # sessions in rooms of their own). The loop calls out through named
-# hooks and carries on without them: with none supplied, /clear
-# archives and resets, a thread reply starts from the thread's own
+# hooks and carries on without them: with none supplied, /clear resets
+# and nothing is filed, a thread reply starts from the thread's own
 # history, and every message is the bot's to answer.
 
-BOT_HOOK_NAMES <- c("on_clear", "thread_context", "on_message")
+BOT_HOOK_NAMES <- c("on_clear", "thread_context", "on_message", "on_archive")
 
 # Validate the host's hook list once, at init, so a misspelled slot is
 # an error at startup rather than a hook that silently never fires.

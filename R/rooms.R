@@ -542,8 +542,7 @@ bot_cfg_object <- function(cfg) {
 # "I cannot ask" (an error), and both mean the same thing to every caller
 # here: fall back to a default. So the error is absorbed once, in one
 # place, rather than at four call sites that would each have to
-# remember. A NULL chat is the no-transport case -- archiving from a
-# registry with no live client, which is a real path.
+# remember. A NULL chat is the no-transport case.
 bot_channel_info <- function(chat, room_id) {
     empty <- list(id = room_id, name = NULL, topic = NULL)
     if (is.null(chat) || is.null(room_id)) {
@@ -551,10 +550,6 @@ bot_channel_info <- function(chat, room_id) {
     }
     tryCatch(chat.api::chat_channel_info(chat, room_id),
              error = function(e) empty)
-}
-
-bot_room_name <- function(chat, room_id) {
-    bot_channel_info(chat, room_id)$name
 }
 
 # The record shape this file's poll loop reads, from the contract's
@@ -649,9 +644,9 @@ bot_archive_state_read <- function(room_id) {
     tryCatch(readLines(path, warn = FALSE), error = function(e) character())
 }
 
-# Bounded rolling tail. Only ever called after a successful ingest, so a
-# failed archive leaves the previous state untouched and the same turns
-# are retried on the next flush.
+# Bounded rolling tail. Only ever called after the host took a range
+# (R/archive.R), so a range it did not take leaves the previous state
+# untouched and is offered again.
 bot_archive_state_write <- function(room_id, keys, cap = 512L) {
     path <- bot_archive_state_path(room_id)
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
@@ -666,167 +661,6 @@ bot_archive_state_write <- function(room_id, keys, cap = 512L) {
         stop("could not update archive state for ", room_id, call. = FALSE)
     }
     invisible(keys)
-}
-
-# Format ledger entries from `start` onward as a markdown transcript.
-# Reads the Matrix-visible transcript, not session$history, so tool
-# calls and tool results stay in the provider context where they are
-# needed and out of the human conversation archive. Returns NULL when
-# there is nothing new.
-bot_session_to_markdown <- function(session, room_id, room_name = NULL,
-                                    which = NULL) {
-    entries <- session$transcript %||% list()
-    if (is.null(which)) {
-        which <- seq_along(entries)
-    }
-    which <- which[which >= 1L & which <= length(entries)]
-    if (!length(which)) {
-        return(NULL)
-    }
-    new_msgs <- entries[which]
-    parts <- vapply(new_msgs, function(m) {
-        role <- m$role %||% "?"
-        text <- if (is.character(m$content)) {
-            paste(m$content, collapse = "\n")
-        } else {
-            as.character(m$content %||% "")
-        }
-        sprintf("## %s\n\n%s", role, text)
-    }, character(1))
-    header <- sprintf("# %s", room_id)
-    room_label <- room_name %||% ""
-    if (length(room_label)) {
-        room_label <- room_label[[1L]]
-    } else {
-        room_label <- ""
-    }
-    room_label <- .sanitize_inline(room_label, max_chars = 100L)
-    metadata <- if (nzchar(room_label)) {
-        sprintf("Room name at archive time: %s", room_label)
-    } else {
-        character()
-    }
-    paste(c(header, "", metadata, parts), collapse = "\n\n")
-}
-
-# Archive new turns from one room's session to the pensar vault and
-# advance the watermark so the same turns aren't re-ingested. Silent
-# no-op when pensar isn't installed or there's nothing new.
-bot_archive_session <- function(session, room_id, chat = NULL) {
-    # pensar is an optional cornball-ai companion package, declared in
-    # Suggests. The dynamic getExportedValue lookup keeps archiving a
-    # no-op when it is absent rather than erroring at load.
-    #
-    # It used to be off CRAN, which is why it went undeclared. It has
-    # been on CRAN since 0.6.4, and Writing R Extensions requires a
-    # package used from a function body or conditionally in tests to be
-    # declared, so the omission was a bug.
-    pensar_ingest <- tryCatch(getExportedValue("pensar", "ingest"),
-                              error = function(e) NULL)
-    if (is.null(pensar_ingest)) {
-        return(invisible(NULL))
-    }
-
-    entries <- session$transcript %||% list()
-    if (!length(entries)) {
-        return(invisible(NULL))
-    }
-    # Matrix event ids are unique and stable across a restart, so
-    # "already archived" is exact set membership rather than an
-    # alignment guess. Anything the persisted tail has not seen is new,
-    # in ledger order.
-    ids <- bot_transcript_ids(entries)
-    persisted <- bot_archive_state_read(room_id)
-    fresh <- which(!(ids %in% persisted))
-    if (!length(fresh)) {
-        # Everything queued is already archived -- a restart backfill
-        # replaying known events. Drop it: leaving it queued lets an
-        # entry outlive its id in the bounded persisted tail and come
-        # back as fresh later.
-        session$transcript <- list()
-        .context_room_snapshot(session)
-        return(invisible(NULL))
-    }
-
-    room_name <- bot_room_name(chat, room_id)
-    md <- bot_session_to_markdown(session, room_id, room_name, which = fresh)
-    if (is.null(md)) {
-        return(invisible(NULL))
-    }
-    out <- tryCatch(
-                    pensar_ingest(content = md, type = "matrix",
-                                  source = room_id,
-                                  title = room_id),
-                    error = function(e) {
-        message("bot_archive_session: pensar ingest failed: ",
-                conditionMessage(e))
-        NULL
-    }
-    )
-    if (!is.null(out)) {
-        bot_archive_state_write(room_id, c(persisted, ids[fresh]))
-        # Consume everything present, not just what was archived: the
-        # rest was already in persisted state. The queue can grow past
-        # the tail's size between flushes -- what it must never do is
-        # hold an already-archived entry long enough for that entry's id
-        # to age out of the tail, which is how one got archived twice.
-        # Draining on every pass is what rules that out.
-        session$transcript <- list()
-        .context_room_snapshot(session)
-    } else {
-        # Ingest failed. Keep only what still needs archiving so a retry
-        # does not resend events already in persisted state.
-        session$transcript <- entries[fresh]
-    }
-    invisible(out)
-}
-
-#' Flush all in-memory matrix sessions to the pensar vault
-#'
-#' Walks the per-room session registry and archives each room's
-#' unarchived Matrix events via the pensar archive ingest. Archived
-#' events are consumed from the session ledger, and their Matrix event
-#' ids are persisted per room under \code{CORTEZA_STATE_DIR} so a
-#' restart's backfill is recognized rather than archived again. Silent
-#' no-op when \code{pensar} is not installed.
-#'
-#' @param sessions A registry environment built by
-#'   \code{bot_run}/\code{bot_poll}. Keys are room IDs, values
-#'   are session environments carrying \code{$transcript}, the
-#'   Matrix-visible event ledger.
-#' @param chat Optional chat.api client for room-name lookups. When
-#'   NULL, the room ID is used as the source identifier.
-#'
-#' @return Integer count of rooms ingested, invisibly.
-#' @examples
-#' \dontrun{
-#' # Requires a running Matrix session registry and the optional
-#' # pensar package for the actual archive step.
-#' reg <- new.env(parent = emptyenv())
-#' bot_archive_all(reg)
-#' }
-#' @export
-bot_archive_all <- function(sessions, chat = NULL) {
-    if (!is.environment(sessions)) {
-        stop("sessions must be an environment registry", call. = FALSE)
-    }
-    n <- 0L
-    for (key in ls(envir = sessions, all.names = TRUE)) {
-        s <- get(key, envir = sessions, inherits = FALSE)
-        # The session's own room, not the registry key: a thread's key
-        # is room and root joined, and archiving under it would file the
-        # transcript against a room id no homeserver has ever heard of.
-        room_id <- s$room_id %||% key
-        # Count what actually reached the vault. Inspecting session
-        # state before and after cannot: a room whose pending events
-        # turn out to be already archived leaves state changed while
-        # ingesting nothing, which reported archived rooms that were
-        # never written.
-        if (!is.null(bot_archive_session(s, room_id, chat))) {
-            n <- n + 1L
-        }
-    }
-    invisible(n)
 }
 
 # Matrix clients such as Element intercept single-slash commands before
@@ -1998,15 +1832,20 @@ bot_no_approver_notice <- function(call) {
             .sanitize_inline(call$tool %||% "", max_chars = 60L))
 }
 
-# Where a room or thread session's journal lives (R/journal.R). Two bots
-# can share one data directory and one room, so the bot's identity is
-# part of the name along with the session's registry key, the way the
-# job ledger names its owner. A digest, since both carry characters that
-# do not belong in a path.
+# A room or thread session's id, which names its journal (R/journal.R)
+# and its pending archive (R/archive.R). Two bots can share one data
+# directory and one room, so the bot's identity is part of it along with
+# the session's registry key, the way the job ledger names its owner. A
+# digest, since both carry characters that do not belong in a path.
+bot_session_id <- function(cfg, key) {
+    digest::digest(paste(bot_job_owner(cfg), key, sep = "\n"),
+                   algo = "sha256", serialize = FALSE)
+}
+
+# Where a room or thread session's journal lives.
 bot_journal_dir <- function(cfg, key) {
-    name <- digest::digest(paste(bot_job_owner(cfg), key, sep = "\n"),
-                           algo = "sha256", serialize = FALSE)
-    file.path(sessions_dir("matrix"), paste0(name, ".journal"))
+    file.path(sessions_dir("matrix"),
+              paste0(bot_session_id(cfg, key), ".journal"))
 }
 
 # A room or thread session's entry in the session store (R/session.R),
@@ -2688,17 +2527,21 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Read here for the same reason as the title: the archive is
             # about to drain the transcript this reads.
             seg_worth <- bot_segment_worth_keeping(session)
-            # Archive whatever's in the session before nuking it so the
-            # topic isn't lost. Best-effort; failures already log.
+            # The ended conversation goes to the host (on_archive,
+            # R/archive.R) before the session that holds it goes. What
+            # the host does not take waits on disk for a retry.
             archived <- tryCatch(
-                                 bot_archive_session(session, m$channel, chat_now()),
-                                 error = function(e) NULL
-            )
+                                 bot_archive_session(session, skey, chat_now(),
+                    hooks$on_archive, cfg,
+                    reason = "clear")$answer,
+                                 error = function(e) {
+                message("bot_poll: archive failed: ", conditionMessage(e))
+                NULL
+            })
             # Whether the ended conversation becomes a room of its own
             # is the host's call, through the on_clear hook (see
-            # bot_run_init()); without one it is simply archived. Only
-            # when something was archived: the transcript pointer is
-            # the segment's content.
+            # bot_run_init()). Only when the host archived it: its
+            # reference is the segment's content.
             # Not for a thread: a thread is already the segment of a
             # conversation that ended once, and filing it again would
             # make a segment room whose parent is a topic room. Clearing
@@ -2712,7 +2555,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 seg <- tryCatch(
                                 bot_hook_segment(hooks$on_clear(chat_now(), cfg,
                             m$channel, seg_title,
-                            bot_vault_ref(archived))),
+                            archived$ref)),
                                 error = function(e) {
                     message("on_clear hook: ", conditionMessage(e))
                     NULL
@@ -3089,9 +2932,9 @@ bot_cwd_unavailable <- function(dir) {
 #' @param tools_filter Character vector or NULL. Tool filter override.
 #' @param hooks Named list of functions or NULL. Policy the loop asks
 #'   the host about; see Hooks. NULL, the default, means a bare bot:
-#'   \code{/clear} archives and resets without filing anything, a
-#'   thread reply starts from the thread's own history, and every
-#'   message is the bot's to answer.
+#'   \code{/clear} resets and nothing is filed, a thread reply starts
+#'   from the thread's own history, and every message is the bot's to
+#'   answer.
 #' @param cwd Character or NULL. The directory a room works in when its
 #'   topic names none, for this run. It must exist: corteza does not
 #'   create it, and the run stops at its start when this directory, or
@@ -3104,26 +2947,49 @@ bot_cwd_unavailable <- function(dir) {
 #' corteza runs a conversation. What becomes of one once it ends, where
 #' a thread's earlier context comes from, and which rooms' messages the
 #' host answers itself, belong to the host that runs the bot over time
-#' (cerebro files segments and folds them into topic rooms). Three
+#' (cerebro files segments and folds them into topic rooms). Four
 #' slots, all optional:
 #'
 #' \describe{
+#'   \item{\code{on_archive(chat, cfg, room_id, archive)}}{Called with
+#'     each range of a room's or thread's conversation that nothing has
+#'     filed yet: at \code{/clear}, at a flush
+#'     (\code{\link{bot_request_flush}}), and again for every range the
+#'     hook did not take before. \code{archive} is a list: \code{id},
+#'     the same however often the range is offered; \code{bot}, the
+#'     bot's Matrix id; \code{room_id}; \code{thread}, the thread's root
+#'     event or NULL; \code{session}, the session's id;
+#'     \code{first_event} and \code{last_event}, the Matrix events that
+#'     bound the range; \code{entries}, oldest first, each
+#'     \code{list(event_id, role, content)} with the text as posted; and
+#'     \code{reason}, \code{"clear"} or \code{"flush"}. Returns
+#'     \code{list(archived = TRUE, ref)} once the host has filed the
+#'     range or chosen not to; \code{ref}, a string or NULL, is what
+#'     \code{on_clear} receives. Anything else, or an error, which is
+#'     reported, and the range waits under \code{CORTEZA_STATE_DIR} for
+#'     the next \code{/clear} or flush, through a restart. A range from
+#'     a flush takes the conversation's later entries under the same
+#'     \code{id}, so a host that filed one before replaces it. With no
+#'     hook nothing is filed.}
 #'   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
-#'     from the \code{/clear} handler once the conversation is archived,
-#'     when the user said something in it and the clear was not inside a
-#'     thread. \code{chat} is the live chat.api client, \code{cfg} the
-#'     bot config, \code{title} the segment title corteza derived from
-#'     the transcript's opening line, \code{vault_ref} the archive's
-#'     vault-relative path (or NULL). Returns \code{list(id, name)} for a
-#'     room it filed the conversation into, which the acknowledgement
-#'     names, or NULL for none. An error is reported and treated as
-#'     none: archive-and-reset is the critical path.}
+#'     from the \code{/clear} handler once \code{on_archive} took the
+#'     conversation, when the user said something in it and the clear
+#'     was not inside a thread. \code{chat} is the live chat.api client,
+#'     \code{cfg} the bot config, \code{title} the segment title corteza
+#'     derived from the transcript's opening line, \code{vault_ref} the
+#'     \code{ref} the archive hook returned (or NULL). Returns
+#'     \code{list(id, name)} for a room it filed the conversation into,
+#'     which the acknowledgement names, or NULL for none. An error is
+#'     reported and treated as none: archive-and-reset is the critical
+#'     path.}
 #'   \item{\code{thread_context(chat, room_id, thread_root)}}{Called once
 #'     per thread session before its first reply. Returns
-#'     \code{list(segment, vault)} naming the archived conversation the
-#'     thread continues, or NULL when it continues nothing; \code{vault}
-#'     is the transcript's path, vault-relative or absolute. A result
-#'     seeds the session with the transcript's tail.}
+#'     \code{list(segment, vault, kind)} naming the archived
+#'     conversation the thread continues, or NULL when it continues
+#'     nothing; \code{vault} is the file's path, vault-relative or
+#'     absolute. With \code{kind = "summary"} the file is a summary, and
+#'     the session is seeded with its start, said to be one; otherwise
+#'     it is a transcript, and the session is seeded with its tail.}
 #'   \item{\code{on_message(chat, cfg, room_id, message, session,
 #'     backfill)}}{The host's first refusal on each message from someone
 #'     else, for a host that answers some rooms itself. Called once per
@@ -3300,15 +3166,16 @@ bot_run_step <- function(state, timeout = 30000L) {
     # counted as idle from now. Needs no client.
     bot_retire_workers(state$sessions)
     # Out-of-band archive trigger: another process (e.g. a cornelius
-    # systemd timer) drops `archive.signal` to ask the bot to flush
-    # all in-memory room sessions to the pensar vault. The bot owns
-    # the registry; the schedule lives outside the package.
+    # systemd timer) drops `archive.signal` to ask the bot to hand all
+    # in-memory room sessions to the host's on_archive hook. The bot
+    # owns the registry; the schedule lives outside the package.
     # Derived now, not from state: a client built at startup holds a
-    # token every rotation since has invalidated, which silently costs
-    # the archive its room-name metadata.
-    flush_chat <- tryCatch(bot_chat_client(bot_load_config()),
-                           error = function(e) NULL)
-    bot_handle_flush_signal(state$flush_signal, state$sessions, flush_chat)
+    # token every rotation since has invalidated, and the host's hook
+    # works through it.
+    flush_cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
+    flush_chat <- tryCatch(bot_chat_client(flush_cfg), error = function(e) NULL)
+    bot_handle_flush_signal(state$flush_signal, state$sessions, flush_chat,
+                            o$hooks$on_archive, flush_cfg)
     # Once a day, what old sessions no longer need goes (R/retention.R).
     # It looks at the clock on most steps and does nothing else.
     pruned <- retention_tick()
@@ -3376,12 +3243,13 @@ bot_signal_dir <- function() {
     file.path(tools::R_user_dir("corteza", "data"), "state")
 }
 
-#' Ask the running matrix bot to archive sessions to pensar
+#' Ask the running matrix bot to archive its sessions
 #'
 #' Drops an \code{archive.signal} file in the corteza state directory.
 #' The next iteration of the long-poll loop in \code{\link{bot_run}}
-#' picks it up, runs \code{\link{bot_archive_all}}, and removes the
-#' file. Safe to call from any process or scheduler — systemd, Task
+#' picks it up, runs \code{\link{bot_archive_all}} with the host's
+#' \code{on_archive} hook, and removes the file. Safe to call from any
+#' process or scheduler — systemd, Task
 #' Scheduler, launchd, cron, or a separate R session — without needing
 #' to know the bot's PID or share its memory.
 #'
@@ -3407,23 +3275,26 @@ bot_request_flush <- function() {
     invisible(sig)
 }
 
-# Flush sessions to pensar when the signal file exists. Removes the
-# file on success so each touch fires exactly one flush. Errors are
-# logged, never raised — the long-poll loop must keep running.
-bot_handle_flush_signal <- function(flush_signal, sessions, chat = NULL) {
+# Hand the sessions to the host's on_archive hook when the signal file
+# exists. Removes the file so each touch fires exactly one flush. Errors
+# are logged, never raised — the long-poll loop must keep running.
+bot_handle_flush_signal <- function(flush_signal, sessions, chat = NULL,
+                                    on_archive = NULL, cfg = NULL) {
     if (!file.exists(flush_signal)) {
         return(invisible(0L))
     }
     n <- tryCatch(
-                  bot_archive_all(sessions, chat),
+                  bot_archive_all(sessions, chat, on_archive, cfg),
                   error = function(e) {
         message("bot_run: flush failed: ", conditionMessage(e))
         -1L
     }
     )
     tryCatch(file.remove(flush_signal), error = function(e) NULL)
-    if (isTRUE(n >= 0L)) {
-        message(sprintf("bot_run: archived %d room(s) to vault", n))
+    if (!is.function(on_archive)) {
+        message("bot_run: flush asked for; no on_archive hook, nothing filed")
+    } else if (isTRUE(n >= 0L)) {
+        message(sprintf("bot_run: the host archived %d range(s)", n))
     }
     invisible(n)
 }

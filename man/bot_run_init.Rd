@@ -23,9 +23,9 @@ bot_run_init(
 
 \item{hooks}{Named list of functions or NULL. Policy the loop asks
 the host about; see Hooks. NULL, the default, means a bare bot:
-\code{/clear} archives and resets without filing anything, a
-thread reply starts from the thread's own history, and every
-message is the bot's to answer.}
+\code{/clear} resets and nothing is filed, a thread reply starts
+from the thread's own history, and every message is the bot's to
+answer.}
 
 \item{cwd}{Character or NULL. The directory a room works in when its
 topic names none, for this run. It must exist: corteza does not
@@ -63,26 +63,49 @@ call \code{\link{bot_run}}, which wraps both.
 corteza runs a conversation. What becomes of one once it ends, where
 a thread's earlier context comes from, and which rooms' messages the
 host answers itself, belong to the host that runs the bot over time
-(cerebro files segments and folds them into topic rooms). Three
+(cerebro files segments and folds them into topic rooms). Four
 slots, all optional:
 
 \describe{
+  \item{\code{on_archive(chat, cfg, room_id, archive)}}{Called with
+    each range of a room's or thread's conversation that nothing has
+    filed yet: at \code{/clear}, at a flush
+    (\code{\link{bot_request_flush}}), and again for every range the
+    hook did not take before. \code{archive} is a list: \code{id},
+    the same however often the range is offered; \code{bot}, the
+    bot's Matrix id; \code{room_id}; \code{thread}, the thread's root
+    event or NULL; \code{session}, the session's id;
+    \code{first_event} and \code{last_event}, the Matrix events that
+    bound the range; \code{entries}, oldest first, each
+    \code{list(event_id, role, content)} with the text as posted; and
+    \code{reason}, \code{"clear"} or \code{"flush"}. Returns
+    \code{list(archived = TRUE, ref)} once the host has filed the
+    range or chosen not to; \code{ref}, a string or NULL, is what
+    \code{on_clear} receives. Anything else, or an error, which is
+    reported, and the range waits under \code{CORTEZA_STATE_DIR} for
+    the next \code{/clear} or flush, through a restart. A range from
+    a flush takes the conversation's later entries under the same
+    \code{id}, so a host that filed one before replaces it. With no
+    hook nothing is filed.}
   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
-    from the \code{/clear} handler once the conversation is archived,
-    when the user said something in it and the clear was not inside a
-    thread. \code{chat} is the live chat.api client, \code{cfg} the
-    bot config, \code{title} the segment title corteza derived from
-    the transcript's opening line, \code{vault_ref} the archive's
-    vault-relative path (or NULL). Returns \code{list(id, name)} for a
-    room it filed the conversation into, which the acknowledgement
-    names, or NULL for none. An error is reported and treated as
-    none: archive-and-reset is the critical path.}
+    from the \code{/clear} handler once \code{on_archive} took the
+    conversation, when the user said something in it and the clear
+    was not inside a thread. \code{chat} is the live chat.api client,
+    \code{cfg} the bot config, \code{title} the segment title corteza
+    derived from the transcript's opening line, \code{vault_ref} the
+    \code{ref} the archive hook returned (or NULL). Returns
+    \code{list(id, name)} for a room it filed the conversation into,
+    which the acknowledgement names, or NULL for none. An error is
+    reported and treated as none: archive-and-reset is the critical
+    path.}
   \item{\code{thread_context(chat, room_id, thread_root)}}{Called once
     per thread session before its first reply. Returns
-    \code{list(segment, vault)} naming the archived conversation the
-    thread continues, or NULL when it continues nothing; \code{vault}
-    is the transcript's path, vault-relative or absolute. A result
-    seeds the session with the transcript's tail.}
+    \code{list(segment, vault, kind)} naming the archived
+    conversation the thread continues, or NULL when it continues
+    nothing; \code{vault} is the file's path, vault-relative or
+    absolute. With \code{kind = "summary"} the file is a summary, and
+    the session is seeded with its start, said to be one; otherwise
+    it is a transcript, and the session is seeded with its tail.}
   \item{\code{on_message(chat, cfg, room_id, message, session,
     backfill)}}{The host's first refusal on each message from someone
     else, for a host that answers some rooms itself. Called once per

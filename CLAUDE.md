@@ -321,6 +321,22 @@ Two things to keep in mind when changing it or the journal:
   (`.journal_removed()`), and a mark taken on the old one counts as
   before every segment of the new (`.journal_mark_seq()`).
 
+## The archive (`R/archive.R`)
+
+What a room said is filed by the host, through the `on_archive` hook
+(the Hooks section of `bot_run_init()`). With no hook nothing is filed.
+corteza keeps the books:
+
+- A range the host took is recorded by its Matrix event ids, per room
+  (`bot_archive_state_write()`), so a restart's backfill is not offered
+  again.
+- One it did not take waits as `<session id>.pending.json` beside those
+  ids, written before the host is asked, and goes again at the next
+  `/clear` or flush. A range from a flush stays open and takes the
+  conversation's later entries under the same `id`; one from `/clear`
+  is closed and goes on its own. `on_clear` follows only a range the
+  host took.
+
 ## Session records (`R/session.R`)
 
 `sessions.json` is each agent's index of conversations, and other

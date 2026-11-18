@@ -526,7 +526,7 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
                              list(id = channel, name = "The Lab",
                                   topic = "~/lab | a place")
                          }, envir = asNamespace("chat.api"))
-        expect_identical(corteza:::bot_room_name(cl, "!r:ex"), "The Lab")
+        expect_identical(info_of(cl, "!r:ex")$name, "The Lab")
         expect_identical(info_of(cl, "!r:ex")$topic, "~/lab | a place")
     })
 

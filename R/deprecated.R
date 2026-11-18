@@ -121,7 +121,7 @@ matrix_run_step <- function(state, timeout = 30000L) {
 #' Deprecated: use bot_archive_all()
 #' @inheritParams bot_archive_all
 #' @param mx_sess Ignored. Kept so calls written for corteza 0.7.1 still
-#'   run; pass \code{chat} to look up room names.
+#'   run.
 #' @return See \code{\link{bot_archive_all}}.
 #' @seealso \code{\link{bot_archive_all}}
 #' @examples
@@ -129,9 +129,11 @@ matrix_run_step <- function(state, timeout = 30000L) {
 #' matrix_archive_all(sessions)  # use bot_archive_all()
 #' }
 #' @export
-matrix_archive_all <- function(sessions, mx_sess = NULL, chat = NULL) {
+matrix_archive_all <- function(sessions, mx_sess = NULL, chat = NULL,
+                               on_archive = NULL, cfg = NULL) {
     .Deprecated("bot_archive_all")
-    bot_archive_all(sessions = sessions, chat = chat)
+    bot_archive_all(sessions = sessions, chat = chat,
+                    on_archive = on_archive, cfg = cfg)
 }
 
 #' Deprecated: use bot_request_flush()

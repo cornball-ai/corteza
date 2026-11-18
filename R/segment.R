@@ -6,14 +6,14 @@
 # bot_run_init(), for the rooms its config names). Creating that room is
 # the host's; what this file owns is read from the session transcript,
 # which is corteza's data: the segment's title and whether the
-# conversation is worth a room at all, plus the durable form of the
-# archive path the hook is handed.
+# conversation is worth a room at all.
 #
 # Segmentation is best-effort from the /clear handler's point of view:
 # archive-and-reset is the critical path, and a hook that fails must not
-# break it. It also rides on the archive: a clear that archived nothing
-# (empty conversation, or pensar absent) asks the hook nothing, because
-# the pointer to the transcript is the segment's content.
+# break it. It also rides on the archive: a clear the host did not
+# archive (an empty conversation, no on_archive hook, or one that
+# failed) asks the hook nothing, because the host's reference is the
+# segment's content.
 
 # A line that drives the tool rather than saying anything: "/clear",
 # "/reset", "/model sonnet".
@@ -86,23 +86,4 @@ bot_segment_title <- function(session, max_chars = 60L) {
 # it sits in the sidebar, and nothing in it will ever be worth reopening.
 bot_segment_worth_keeping <- function(session) {
     length(.bot_user_lines(session)) > 0L
-}
-
-# The durable form of an archive path: relative to the pensar vault
-# root when it lives there, so the pointer survives the vault moving
-# hosts. Anything else passes through unchanged.
-bot_vault_ref <- function(path) {
-    if (is.null(path) || !length(path) || !nzchar(path[[1L]])) {
-        return(NULL)
-    }
-    p <- normalizePath(as.character(path[[1L]]), mustWork = FALSE)
-    root <- tryCatch(
-                     normalizePath(getExportedValue("pensar", "default_vault")(),
-                                   mustWork = FALSE),
-                     error = function(e) NULL
-    )
-    if (!is.null(root) && nzchar(root) && startsWith(p, paste0(root, "/"))) {
-        return(substring(p, nchar(root) + 2L))
-    }
-    p
 }
