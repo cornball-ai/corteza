@@ -17,7 +17,8 @@ matrix_configure(
   model_badge = c("never", "non_default", "always"),
   display_name = NULL,
   fallback = NULL,
-  cwd = NULL
+  cwd = NULL,
+  operators = NULL
 )
 }
 \arguments{
@@ -100,6 +101,15 @@ topic names none. It must exist: corteza does not create it. NULL
 under the session's temporary directory, which is deleted when the
 process ends. Up to 0.8.0 the default was \code{~/<bot name>},
 created on first use.}
+
+\item{operators}{Character vector or NULL. The people the bot answers
+to, each a full Matrix id such as \code{"@you:example.org"}. The bot
+accepts an invite only from one of them, answers a room with one
+person in it only when that person is one of them, and takes its
+approvals from them. NULL (default) saves none. A bot with no
+operators accepts no invites: it works in the room it was configured
+with and in rooms it has already joined. Up to 0.8.0 it accepted
+every invite.}
 }
 \value{
 See \code{\link{bot_configure}}.

@@ -692,9 +692,33 @@ corteza::bot_configure(
   password = "verysecure",
   room = "#general:example.com",
   model = "llama3.2",
-  provider = "ollama"
+  provider = "ollama",
+  operators = "@you:example.com"
 )
 ```
+
+#### Who a bot answers to
+
+`operators` names the people a bot answers to, each by a full Matrix id.
+
+- The bot accepts an invite only from an operator.
+- In a room with one person in it, the bot answers only when that person is
+  an operator.
+- Operators answer its approval prompts, and commands such as
+  `/approve-all` are theirs.
+
+A bot with no operators accepts no invites. It works in the room it was
+configured with and in rooms it has already joined. Where such a room has
+one person in it, that person is answered and answers the approval prompts.
+Where it has more, the bot answers when it is mentioned and nobody can
+approve, so a call that needs approval is declined. Each invite the bot
+refuses is reported in its log, with what would change that.
+
+Up to 0.8.0 a bot with no operators accepted every invite, which gave a
+session with tools to anyone who could invite it. A bot that should go on
+accepting invites needs `operators`: pass it to `bot_configure()`, which
+writes the whole config again, or add `"operators": ["@you:example.com"]`
+to the bot config.
 
 #### Where a room works
 
