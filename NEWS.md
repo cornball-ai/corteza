@@ -1,3 +1,21 @@
+# corteza 0.8.0.9
+
+- **A picture sent to a bot's room is kept where its tools can read it.**
+  It used to be given to the model and removed, so no tool could use it.
+  A room's session now keeps each picture in `<id>.attachments/` beside
+  its journal, readable by this user alone, and the receipt the model
+  gets names the file and the size actually downloaded. A picture the
+  model is not shown, too big for the provider or with no vision, is
+  kept all the same, up to 25 MiB. `keep_attachments: false` in the bot
+  config turns keeping off.
+- A picture in the history a restart reads back is kept the same way,
+  and the history gets its receipt; the model is not shown it and
+  nothing is posted. chat.api 0.2.0's Matrix history does not yet
+  return pictures.
+- Retention removes a session's kept pictures with its journal. It
+  removes no link, wherever one is in a session's folders, and counts
+  no link's target in a size.
+
 # corteza 0.8.0.8
 
 - **Compaction follows the windows of current models, with a cap.** The

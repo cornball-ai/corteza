@@ -2494,7 +2494,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
         media <- bot_message_media(chat_now(), m, ingest_body,
-                                   session$provider, cfg = cfg)
+                                   session$provider, cfg = cfg,
+                                   save_dir = bot_attachments_dir(cfg, skey))
         ingest_content <- media$content
         ingest_body <- media$text
         # Ledger the incoming event once, before the gate, so both the
@@ -2963,6 +2964,24 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             } else {
                 bot_ingest_body(m$sender, body,
                                 multi_human || m$sender %in% room_bots)
+            }
+            # A picture sent while the bot was not running is kept as the
+            # live path keeps one, and the history gets its receipt, with
+            # the kept file's path. None goes to the model and nothing is
+            # posted: backfill answers nothing. The event is marked seen
+            # below, so the live path never sees the picture.
+            if (!is_self && length(m$attachments)) {
+                content <- tryCatch({
+                    key <- bot_session_key(rid, m$thread)
+                    bot_message_media(chat, m, content, session$provider,
+                                      cfg = cfg,
+                                      save_dir = bot_attachments_dir(cfg, key),
+                                      not_shown = "received while the bot was not running")$text
+                }, error = function(e) {
+                    message("bot_run: backfill kept no attachment of ", m$id,
+                            ": ", conditionMessage(e))
+                    content
+                })
             }
             session$history <- c(
                                  session$history %||% list(),
