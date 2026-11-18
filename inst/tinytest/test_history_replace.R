@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # One operation replaces a session's history, and a refused replay of
 # thinking blocks is recovered (R/history-replace.R). Offline throughout:
 # the model call is replaced inside function scopes.

@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # When a session compacts: the table of windows, the cap on the trigger,
 # the context_window override, and the idle trigger with a fake clock
 # (R/compact-trigger.R, R/context-budget.R). Offline: the summarizer and

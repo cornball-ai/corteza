@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Real agent warnings must identify their emitting invocation. In particular,
 # nested do.call() invocations can have identical conditionCall() values.
 local({

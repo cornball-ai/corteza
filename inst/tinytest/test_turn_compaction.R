@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Shared turn-lifecycle compaction. Everything here is offline: llm.api::agent
 # and the summarizer are temporarily replaced inside function scopes.
 

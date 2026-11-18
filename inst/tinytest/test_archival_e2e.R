@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # End-to-end archival flow: seeded history -> maybe_archive_turn ->
 # verify parent history collapses, subagent appears, transcript file
 # exists. Gated at_home + ANTHROPIC_API_KEY because archival_summarize

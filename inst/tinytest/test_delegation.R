@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Two identities on an offline chat.api loopback bus. All ledgers, workers,
 # approval files and configuration live in a fresh temporary state directory.
 if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api needed")

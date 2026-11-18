@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Codex request-buffer pressure and recovery. Entirely offline: agent and
 # summarizer calls are replaced inside function scopes.
 

@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # One bot, two independent conversations. Fake model calls and transport;
 # real durable jobs, child processes, tool policy, snapshots, and polling.
 # At top level: exit_file() ends the file between expressions, so inside
