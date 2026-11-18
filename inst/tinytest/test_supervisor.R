@@ -77,8 +77,10 @@ expect_identical(v$route, "human")
 expect_true(any(grepl("names no path", v$flags)))
 # A symlink out of the project is where it points.
 link <- file.path(root, "outlink")
-# (Not on Windows: R resolves no link there, so the scan cannot follow one.)
-if (isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
+# (Not on Windows: R resolves no link there, so the scan cannot follow
+# one, and R there cannot remove the link afterwards.)
+if (.Platform$OS.type == "unix" &&
+    isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
     expect_identical(route("write_file", list(path = file.path(link, "x.txt")))$route,
                      "human")
 }
