@@ -216,4 +216,11 @@ local({
     expect_equal(got$asked, 1L)
     expect_equal(ask(secret, key, "1")$asked, 1L)
     expect_equal(ask(notes, plain)$asked, 0L)
+    # Nor is a "2" there kept for the tool's ordinary calls.
+    expect_equal(ask(list(tool = "write_file",
+                          args = list(path = "~/.ssh/config", content = "x")),
+                     key, "2")$asked, 1L)
+    expect_equal(ask(list(tool = "write_file",
+                          args = list(path = "out.md", content = "x")),
+                     plain, "1")$asked, 1L)
 })
