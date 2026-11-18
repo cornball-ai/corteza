@@ -1,3 +1,23 @@
+# corteza 0.8.0.7
+
+- **A session on a Claude model that thinks by default no longer stops
+  answering after a compaction, a context edit, a restart or a change to its
+  task list.** Those models sign each thinking block against the
+  conversation that produced it, and the provider refuses a request that
+  replays one after the system text, the tools or an earlier message
+  changed. corteza now removes the thinking blocks from a history whenever
+  it replaces one. When a provider refuses replayed thinking all the same,
+  the turn removes the blocks, records that in the journal and continues
+  once, without running a tool twice.
+- A session that sets `thinking_budget_tokens` keeps its thinking blocks
+  through a rewrite.
+- `new_session(history = )` removes the thinking blocks of the history it
+  is given.
+- A fallback to another provider converts a Claude reply to plain text
+  whether or not it came with thinking.
+- A request-buffer error on a turn's first request sends the prompt again.
+  The retry went out without it.
+
 # corteza 0.8.0.6
 
 - **A project's own files load only from a directory you have trusted.**
