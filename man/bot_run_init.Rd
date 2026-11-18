@@ -83,7 +83,9 @@ slots, all optional:
     range or chosen not to; \code{ref}, a string or NULL, is what
     \code{on_clear} receives. Anything else, or an error, which is
     reported, and the range waits under \code{CORTEZA_STATE_DIR} for
-    the next \code{/clear} or flush, through a restart. A range from
+    the next \code{/clear} or flush, through a restart. When it
+    cannot be written there either, \code{/clear} keeps the session
+    that holds it, and says so in the room. A range from
     a flush takes the conversation's later entries under the same
     \code{id}, so a host that filed one before replaces it. With no
     hook nothing is filed.}

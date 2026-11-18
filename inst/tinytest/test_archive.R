@@ -76,7 +76,7 @@ archive <- function(s, key, h, reason = "flush") {
 with_state(local({
     s <- mk(c("$1", "$2"))
     out <- corteza:::bot_archive_session(s, "!a:ex")
-    expect_identical(out, list(answer = NULL, filed = 0L))
+    expect_identical(out, list(answer = NULL, filed = 0L, durable = TRUE))
     expect_identical(length(s$transcript), 2L)
     reg <- new.env(parent = emptyenv())
     assign("!a:ex", s, envir = reg)
@@ -192,7 +192,7 @@ with_state(local({
     expect_message(out <- archive(s, key, down, "clear"),
                    "on_archive hook: not archived (!p:ex, kept to retry)",
                    fixed = TRUE)
-    expect_identical(out, list(answer = NULL, filed = 0L))
+    expect_identical(out, list(answer = NULL, filed = 0L, durable = TRUE))
     first_id <- down$offered[[1L]]$archive$id
     # On disk, not in the session, which /clear is about to drop.
     expect_identical(length(s$transcript), 0L)
@@ -235,7 +235,7 @@ with_state(local({
         h <- host(function(archive) "unused")
         h$hook <- function(chat, cfg, room_id, archive) answer
         out <- suppressMessages(archive(mk("$1"), "!m:ex", h))
-        expect_identical(out, list(answer = NULL, filed = 0L))
+        expect_identical(out, list(answer = NULL, filed = 0L, durable = TRUE))
         expect_true(file.exists(pending_path("!m:ex")))
         unlink(pending_path("!m:ex"))
     }
@@ -247,7 +247,7 @@ with_state(local({
     }
     out <- archive(mk("$2"), "!m:ex", h)
     expect_identical(out, list(answer = list(archived = TRUE, ref = NULL),
-                               filed = 1L))
+                               filed = 1L, durable = TRUE))
 }))
 
 # A range from a flush stays open: what the session says next joins it,
@@ -367,16 +367,48 @@ with_state(local({
 }))
 
 # Nowhere to keep it on disk: the session keeps what the host did not
-# take, as it always did.
+# take, as it always did, and says it may not go (/clear keeps it).
 with_state(local({
     state <- Sys.getenv("CORTEZA_STATE_DIR")
     dir.create(state)
     file.create(file.path(state, "archive"))
     h <- host(FALSE)
     s <- mk(c("$1", "$2"))
-    expect_message(archive(s, "!a:ex", h), "could not keep a pending archive",
-                   fixed = TRUE)
+    expect_message(out <- archive(s, "!a:ex", h, "clear"),
+                   "could not keep a pending archive", fixed = TRUE)
+    expect_false(out$durable)
     expect_identical(corteza:::bot_transcript_ids(s$transcript), c("$1", "$2"))
+}))
+
+# Only the pending file cannot be written: a folder stands where it is
+# written first. A range the host took is safe, and so is one that
+# waits in the file from before; only what the session said since, not
+# taken, keeps the session.
+with_state(local({
+    key <- "!w:ex"
+    path <- pending_path(key)
+    s <- mk("$1", room = key)
+    h <- host(FALSE)
+    suppressMessages(archive(s, key, h))
+    expect_true(file.exists(path))
+    expect_identical(length(s$transcript), 0L)
+    dir.create(paste0(path, ".tmp"))
+    # The open range from that flush, offered again: it is on disk.
+    out <- suppressMessages(archive(s, key, h, "clear"))
+    expect_true(out$durable)
+    expect_identical(offered_ids(h)[[2L]], "$1")
+    # Something new, not taken: it is in the session alone.
+    corteza:::bot_transcript_add(s, "$2", "user", "turn $2")
+    out <- suppressMessages(archive(s, key, h, "clear"))
+    expect_false(out$durable)
+    expect_true("$2" %in% corteza:::bot_transcript_ids(s$transcript))
+    # Taken, though still not written: safe.
+    h$take <- TRUE
+    out <- suppressMessages(archive(s, key, h, "clear"))
+    expect_true(out$durable)
+    expect_identical(out$filed, 1L)
+    expect_identical(offered_ids(h)[[4L]], c("$1", "$2"))
+    expect_identical(corteza:::bot_archive_state_read(key), c("$1", "$2"))
 }))
 
 # ---- The flush signal ----

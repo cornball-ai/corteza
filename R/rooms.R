@@ -2530,14 +2530,34 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # The ended conversation goes to the host (on_archive,
             # R/archive.R) before the session that holds it goes. What
             # the host does not take waits on disk for a retry.
-            archived <- tryCatch(
-                                 bot_archive_session(session, skey, chat_now(),
-                    hooks$on_archive, cfg,
-                    reason = "clear")$answer,
-                                 error = function(e) {
+            filing <- tryCatch(
+                               bot_archive_session(session, skey, chat_now(),
+                    hooks$on_archive, cfg, reason = "clear"),
+                               error = function(e) {
                 message("bot_poll: archive failed: ", conditionMessage(e))
-                NULL
+                list(answer = NULL, durable = FALSE)
             })
+            # Neither with the host nor on disk: the session is all that
+            # holds the conversation, so it stays, and a later /clear
+            # tries again.
+            if (!isTRUE(filing$durable)) {
+                message("bot_poll: /clear kept the session in ", m$channel,
+                        ": its conversation could not be archived or saved")
+                ack <- paste("Not cleared: this conversation could not be",
+                             "archived or saved for a retry, so this session",
+                             "keeps it. Try /clear again.")
+                sent_id <- tryCatch(
+                                    bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                    error = function(e) NULL)
+                if (!is.null(sent_id)) {
+                    session$seen_event_ids <- bot_remember_event(
+                        session$seen_event_ids, sent_id)
+                    bot_transcript_add(session, sent_id, "assistant", ack)
+                }
+                replied <- replied + 1L
+                next
+            }
+            archived <- filing$answer
             # Whether the ended conversation becomes a room of its own
             # is the host's call, through the on_clear hook (see
             # bot_run_init()). Only when the host archived it: its
@@ -2967,7 +2987,9 @@ bot_cwd_unavailable <- function(dir) {
 #'     range or chosen not to; \code{ref}, a string or NULL, is what
 #'     \code{on_clear} receives. Anything else, or an error, which is
 #'     reported, and the range waits under \code{CORTEZA_STATE_DIR} for
-#'     the next \code{/clear} or flush, through a restart. A range from
+#'     the next \code{/clear} or flush, through a restart. When it
+#'     cannot be written there either, \code{/clear} keeps the session
+#'     that holds it, and says so in the room. A range from
 #'     a flush takes the conversation's later entries under the same
 #'     \code{id}, so a host that filed one before replaces it. With no
 #'     hook nothing is filed.}

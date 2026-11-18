@@ -46,7 +46,8 @@ run_clear <- function(hooks, body = "/clear", thread = NULL,
                       transcript = list(list(event_id = "$said", role = "user",
                                              content = "fold formula?")),
                       archived = list(archived = TRUE, ref = "notes/seg.md"),
-                      archive_hook = TRUE, cwd = NULL) {
+                      archive_hook = TRUE, cwd = NULL, block_pending = FALSE,
+                      archive_fails = FALSE) {
     saved <- list()
     patch <- function(name, fn, package = "corteza") {
         saved[[length(saved) + 1L]] <<- list(name = name, package = package,
@@ -74,6 +75,15 @@ run_clear <- function(hooks, body = "/clear", thread = NULL,
     chat <- chat.api::chat_loopback()
     sessions <- corteza:::bot_new_session_registry()
     key <- corteza:::bot_session_key("fixture-room", thread)
+    if (block_pending) {
+        # The pending file cannot be written: a folder stands where it
+        # is written first. Everything else in the state folder works.
+        dir.create(paste0(corteza:::bot_archive_pending_path(
+            corteza:::bot_session_id(cfg, key)), ".tmp"), recursive = TRUE)
+    }
+    if (archive_fails) {
+        patch("bot_archive_session", function(...) stop("disk on fire"))
+    }
     s <- corteza:::bot_get_or_create_session(sessions, key, cfg,
                                              room_id = "fixture-room")
     s$transcript <- transcript
@@ -207,6 +217,36 @@ local({
     fixed = TRUE)
     expect_identical(asked, 0L)
     expect_identical(length(pending_files(r$state)), 1L)
+})
+
+# Nothing may be cleared that is neither with the host nor on disk. When
+# the pending file cannot be written and the host declines, the session
+# is all that holds the conversation: /clear keeps it, says so, and asks
+# no segment. A later /clear tries again.
+local({
+    asked <- 0L
+    hooks <- list(on_clear = function(...) {
+        asked <<- asked + 1L
+        list(id = "!seg:ex", name = "never")
+    })
+    expect_message(r <- run_clear(hooks, archived = NULL, block_pending = TRUE),
+                   "/clear kept the session in fixture-room", fixed = TRUE)
+    expect_true(identical(r$before, r$after))
+    expect_true("$said" %in% corteza:::bot_transcript_ids(r$after$transcript))
+    expect_true(startsWith(r$replies[[1L]], "Not cleared:"))
+    expect_identical(length(r$offered), 1L)
+    expect_identical(asked, 0L)
+    expect_identical(pending_files(r$state), character())
+    # The host takes it: nothing is left in memory alone, so it clears.
+    r <- suppressMessages(run_clear(hooks, block_pending = TRUE))
+    expect_false(identical(r$before, r$after))
+    expect_identical(r$replies, "Cleared. Filed as \"never\".")
+    # The archive step fails outright: the session stays as well.
+    expect_message(r <- run_clear(hooks, archive_fails = TRUE),
+                   "archive failed: disk on fire", fixed = TRUE)
+    expect_true(identical(r$before, r$after))
+    expect_true(startsWith(r$replies[[1L]], "Not cleared:"))
+    expect_identical(asked, 1L)
 })
 
 # A host with on_clear and no on_archive, such as one written for an

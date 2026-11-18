@@ -119,12 +119,16 @@ bot_archive_offer <- function(on_archive, chat, cfg, range) {
 #
 # The ranges are written down before the host is asked, and the ledger
 # is emptied once they are, so a process that dies while the host works
-# loses nothing. Returns list(answer, filed): the host's answer for the
-# range this call made or extended (NULL when there was none, or the
-# host did not take it), and how many ranges the host took.
+# loses nothing. Returns list(answer, filed, durable): the host's answer
+# for the range this call made or extended (NULL when there was none, or
+# the host did not take it), how many ranges the host took, and whether
+# the session may go. `durable` is FALSE when the session said something
+# that is now neither with the host nor on disk: the pending file could
+# not be written and the host did not take the range. The session then
+# holds it, and /clear keeps the session.
 bot_archive_session <- function(session, key, chat = NULL, on_archive = NULL,
                                 cfg = NULL, reason = "flush") {
-    out <- list(answer = NULL, filed = 0L)
+    out <- list(answer = NULL, filed = 0L, durable = TRUE)
     if (!is.function(on_archive)) {
         return(invisible(out))
     }
@@ -200,6 +204,9 @@ bot_archive_session <- function(session, key, chat = NULL, on_archive = NULL,
         }
         .context_room_snapshot(session)
     }
+    # What the ledger held alone (`new`) is safe once it is on disk or
+    # the host took the range that carries it.
+    out$durable <- kept || !length(new) || !is.null(out$answer)
     invisible(out)
 }
 
