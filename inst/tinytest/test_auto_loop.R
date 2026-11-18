@@ -20,6 +20,16 @@ reset_wt <- function() {
     writeLines("start", file.path(wt, "a.txt"))
 }
 
+# The worktree's own config is read where the directory is trusted
+# (R/trust.R). The list of those is the user's, so this file gets a
+# config directory of its own before it adds to it. Trust goes by path,
+# so it holds across reset_wt().
+old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+tmp_config <- file.path(tempdir(), "corteza-auto-loop-config")
+Sys.setenv(R_USER_CONFIG_DIR = tmp_config)
+reset_wt()
+corteza:::project_trust_add(wt)
+
 empty_palette <- list(dim = "", reset = "", cyan = "", bold = "",
                       yellow = "", green = "", bright_magenta = "",
                       red = "", magenta = "")
@@ -738,9 +748,14 @@ expect_equal(turns, 1L)
 expect_equal(ctx$last_turn_status, "truncated")
 expect_true(any(grepl("output incomplete: max_tokens", out, fixed = TRUE)))
 
-unlink(c(wt, tmp_data), recursive = TRUE)
+unlink(c(wt, tmp_data, tmp_config), recursive = TRUE)
 if (is.na(old_home)) {
     Sys.unsetenv("R_USER_DATA_DIR")
 } else {
     Sys.setenv(R_USER_DATA_DIR = old_home)
+}
+if (is.na(old_config)) {
+    Sys.unsetenv("R_USER_CONFIG_DIR")
+} else {
+    Sys.setenv(R_USER_CONFIG_DIR = old_config)
 }

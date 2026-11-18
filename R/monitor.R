@@ -360,8 +360,7 @@ auto_envelope_config <- function(cwd = getwd(), allow_exec = NULL) {
     config <- load_config(cwd)
     global <- load_config_file(corteza_config_path("config.json"))$auto %||%
     list()
-    project <- load_config_file(
-                                file.path(cwd, ".corteza", "config.json"))$auto %||% list()
+    project <- project_config(cwd)$auto %||% list()
 
     # Default off. Shell and run_r bodies cannot be path-resolved
     # (resolve_paths() says so itself in R/policy.R), so an auto run

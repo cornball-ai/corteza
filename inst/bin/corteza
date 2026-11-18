@@ -132,6 +132,7 @@ Commands (in chat):
   /review [ref]  Review local changes with the current model
   /config        Show active runtime configuration
   /permissions   Show tool approval and sandbox settings
+  /trust [yes]   Show whether this directory is trusted, or trust it
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /auto [--exec] [goal]  Continue the current task unattended, or start a goal
   /auto status|resume   Inspect or resume the last unattended run
@@ -164,6 +165,11 @@ Additional files can be loaded via the `context_files` config key.
 Config files:
   tools::R_user_dir('corteza', 'config')/config.json   Global defaults
   .corteza/config.json                                 Project overrides
+
+A project's own files (its config, skills, instructions, lessons, saved
+approvals and briefing) load only from a directory you have trusted:
+answer the question at start, send /trust yes, or list the directory under
+`trusted_projects` in the global config.
 
 ")
       quit(save = "no", status = 0)
@@ -204,6 +210,7 @@ Commands:
   /review [ref]  Review local changes with the current model
   /config        Show active runtime configuration
   /permissions   Show tool approval and sandbox settings
+  /trust [yes]   Show whether this directory is trusted, or trust it
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
   /clear         Clear conversation (keeps session)
   /compact       Summarize conversation to free context
@@ -365,9 +372,10 @@ print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, c
 # approval_cb hand-off in corteza::new_session() so this local copy is
 # no longer needed.
 
-# Load approvals from project-local file
+# Load approvals from project-local file. Called for a trusted directory
+# only (cli_approval_cb): the file travels with the repository.
 load_approvals <- function(cwd) {
-  path <- file.path(cwd, ".corteza", "approvals.json")
+  path <- corteza:::project_approvals_path(cwd)
   if (file.exists(path)) {
     tryCatch(
       jsonlite::fromJSON(path, simplifyVector = FALSE),
@@ -383,7 +391,7 @@ save_approval <- function(cwd, tool_name) {
   approvals <- load_approvals(cwd)
   approvals[[tool_name]] <- TRUE
 
-  path <- file.path(cwd, ".corteza", "approvals.json")
+  path <- corteza:::project_approvals_path(cwd)
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
   jsonlite::write_json(approvals, path, auto_unbox = TRUE, pretty = TRUE)
 }
@@ -411,14 +419,27 @@ is_approved <- function(cwd, tool_name) {
 # The callback persists "Allow always for this project" choices to
 # .corteza/approvals.json via save_approval(), and short-circuits
 # subsequent prompts via is_approved().
+#
+# In a trusted directory only. That file travels with the repository,
+# and one that arrives with answers already in it would approve calls
+# nobody here was asked about. In any other directory the file is
+# neither read nor written: "always" lasts for the session and the
+# project gets no folder. Decided once, when the session starts, like
+# everything else trust decides.
 cli_approval_cb <- function(cwd) {
+  trusted <- corteza:::project_trusted(cwd)
+  for_session <- character()
   function(call, decision) {
     name <- call$tool %||% ""
-    if (is_approved(cwd, name)) {
+    if (name %in% for_session || (trusted && is_approved(cwd, name))) {
       return(TRUE)
     }
 
-    persistent_label <- "Allow always for this project"
+    persistent_label <- if (trusted) {
+      "Allow always for this project"
+    } else {
+      "Allow always for this session"
+    }
     # Terminal CLI catches Ctrl+C as the interrupt that aborts the
     # turn -- same outcome as picking Deny. Surface the shortcut so
     # users don't have to type "3" + Enter.
@@ -438,9 +459,14 @@ cli_approval_cb <- function(cwd) {
     if (response == "") response <- "1"
 
     # "Allow always for this project" persists to .corteza/approvals.json
-    # so future runs skip the prompt for this tool.
+    # so future runs skip the prompt for this tool. In an untrusted
+    # directory the answer is kept here, for this session.
     if (response == "2") {
-      save_approval(cwd, name)
+      if (trusted) {
+        save_approval(cwd, name)
+      } else {
+        for_session <<- c(for_session, name)
+      }
     }
 
     # Replace the verbose approval block with a one-line `User replied:`
@@ -607,7 +633,7 @@ run_agent <- function(opts) {
   # user-skill loads the CLI tool count drifted below chat()'s.
   corteza::ensure_skills()
   corteza:::load_skills(corteza:::corteza_data_path("skills"))
-  corteza:::load_skills(file.path(cwd, ".corteza", "skills"))
+  corteza:::load_project_skills(cwd, docs = FALSE)
   corteza:::load_skill_packages(config)
   tools <- corteza::schema_from_registry(opts$tools)
 
@@ -616,7 +642,7 @@ run_agent <- function(opts) {
 
   # Load skill docs (SKILL.md files)
   corteza:::load_skill_docs(corteza:::corteza_data_path("skills"))
-  corteza:::load_skill_docs(file.path(cwd, ".corteza", "skills"))
+  corteza:::load_project_skills(cwd, code = FALSE)
   # Load context files
   context_files <- corteza:::list_context_files(cwd)
   context_bundle <- corteza:::load_context_bundle(
@@ -803,6 +829,7 @@ run_agent <- function(opts) {
   turn_session$config <- config
   turn_session$context_edit <- opts$context_edit
   turn_session$cwd <- cwd
+  turn_session$project_trusted <- corteza:::project_trusted(cwd)
   turn_session$sessionId <- session$sessionId
   turn_session$disk_session <- session
   turn_session$tasks <- session$tasks %||% list()
@@ -883,6 +910,14 @@ run_agent <- function(opts) {
 # ============================================================================
 
 if (!interactive()) {
+  # Trust is decided before anything of the project's is read, and
+  # parse_args() takes its defaults from the config. A person at the
+  # terminal is asked once. --help and --list load nothing of the
+  # project's, so they ask nothing.
+  if (!any(commandArgs(trailingOnly = TRUE) %in% c("--help", "-h", "--list"))) {
+    at_terminal <- isTRUE(tryCatch(isatty(stdin()), error = function(e) FALSE))
+    corteza:::trust_at_start(getwd(), ask = if (at_terminal) cli_read_line)
+  }
   opts <- parse_args()
   run_agent(opts)
 }

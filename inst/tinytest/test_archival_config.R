@@ -30,6 +30,21 @@ dir.create(project_cfg_dir, recursive = TRUE, showWarnings = FALSE)
 on.exit(unlink(project_cfg_dir, recursive = TRUE), add = TRUE)
 dir.create(file.path(project_cfg_dir, ".corteza"), recursive = TRUE,
            showWarnings = FALSE)
+# A project's config is read from a trusted directory only (R/trust.R).
+# The list of those is the user's, so this block gets a config directory
+# of its own before it adds the project to it.
+old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+tmp_config <- tempfile("archival_validation_config_")
+Sys.setenv(R_USER_CONFIG_DIR = tmp_config)
+on.exit({
+    unlink(tmp_config, recursive = TRUE)
+    if (is.na(old_config)) {
+        Sys.unsetenv("R_USER_CONFIG_DIR")
+    } else {
+        Sys.setenv(R_USER_CONFIG_DIR = old_config)
+    }
+}, add = TRUE)
+corteza:::project_trust_add(project_cfg_dir)
 writeLines(jsonlite::toJSON(list(
     subagents = list(enabled = FALSE),
     archival = list(enabled = TRUE)

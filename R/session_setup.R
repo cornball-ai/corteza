@@ -10,12 +10,15 @@
 #' Performs pre-turn setup common to all channels:
 #'
 #' \enumerate{
-#'   \item Loads project + global corteza config from \code{cwd}.
+#'   \item Loads project + global corteza config from \code{cwd}. The
+#'     project's files (its config, skills, instructions, lessons and
+#'     briefing) are read only where the user has trusted the directory:
+#'     see "Trusted projects" in \code{vignette("configuration")}.
 #'   \item Resolves provider, model, and verifies the required API
 #'     environment variable is set.
 #'   \item Registers built-in skills and loads user/project skills and
 #'     skill docs from \code{tools::R_user_dir("corteza", "data")/skills}
-#'     and \code{<cwd>/.corteza/skills}.
+#'     and, in a trusted directory, \code{<cwd>/.corteza/skills}.
 #'   \item Loads skill packages declared in the config.
 #'   \item Optionally builds the system prompt and source manifest via
 #'     \code{load_context_bundle(cwd)}.
@@ -124,9 +127,8 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     # Skill registration + user overrides
     ensure_skills()
     load_skills(corteza_data_path("skills"))
-    load_skills(file.path(cwd, ".corteza", "skills"))
     load_skill_docs(corteza_data_path("skills"))
-    load_skill_docs(file.path(cwd, ".corteza", "skills"))
+    load_project_skills(cwd)
     load_skill_packages(config)
     options(corteza.tools = tools)
 
@@ -157,6 +159,9 @@ session_setup <- function(channel = c("cli", "console", "matrix"),
     )
     session$cwd <- cwd
     session$config <- config
+    # Whether this session loaded from its directory. Fixed here: a
+    # later /trust applies to the next session, and /status says which.
+    session$project_trusted <- project_trusted(cwd)
     session$instruction_catalog <- instruction_catalog
     if (!is.null(context_manifest)) {
         session$context_manifest <- context_manifest

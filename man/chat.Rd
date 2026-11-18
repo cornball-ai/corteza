@@ -47,6 +47,15 @@ The session object (invisibly).
 Run a conversational agent inside your R session. Tools execute as direct
 function calls, no MCP server needed.
 }
+\details{
+A project's own files (its \code{.corteza/} folder, \code{AGENTS.md} or
+\code{CLAUDE.md}, and the briefing built from it) load only from a
+directory you have trusted. Where the working directory is not trusted
+and holds such files, \code{chat()} lists them and asks once before it
+starts; \code{/trust} shows the same later. See "Trusted projects" in
+\code{vignette("configuration")}.
+
+}
 \examples{
 if (interactive()) {
     # Start chatting with defaults from config

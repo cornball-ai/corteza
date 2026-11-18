@@ -139,6 +139,13 @@ tool_hint <- function(name, args) {
 #' Run a conversational agent inside your R session. Tools execute as direct
 #' function calls, no MCP server needed.
 #'
+#' A project's own files (its \code{.corteza/} folder, \code{AGENTS.md} or
+#' \code{CLAUDE.md}, and the briefing built from it) load only from a
+#' directory you have trusted. Where the working directory is not trusted
+#' and holds such files, \code{chat()} lists them and asks once before it
+#' starts; \code{/trust} shows the same later. See "Trusted projects" in
+#' \code{vignette("configuration")}.
+#'
 #' @param provider LLM provider: "anthropic", "openai", "moonshot", or
 #'   "ollama".
 #'   Defaults to the saved provider when resuming, otherwise the config value
@@ -192,6 +199,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     )
 
     cwd <- getwd()
+
+    # Trust is decided before anything of the project's is read. chat()
+    # runs only where a person is at the console, so it asks, once,
+    # where the directory holds something a session would load.
+    trust_at_start(cwd, ask = readline)
 
     # Resume / create the on-disk session record so we can persist the
     # transcript and workspace between R sessions.

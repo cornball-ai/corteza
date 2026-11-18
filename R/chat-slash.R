@@ -294,6 +294,7 @@ chat_help_text <- function() {
           "  /sessions [all]               List this directory's sessions, or every directory's",
           "  /trace [N]                    Show last N tool executions (default 20)",
           "  /permissions [allow|ask|deny] Show, or switch, tool approval for this session",
+          "  /trust [yes]                  Show whether this directory is trusted, or trust it",
           "  /auto [--exec] [goal]         Continue the current task unattended, or start a new goal",
           "  /auto status|resume           Inspect or resume a stopped unattended run",
           "  /max-tokens [N|default]        Show or change the response output budget",

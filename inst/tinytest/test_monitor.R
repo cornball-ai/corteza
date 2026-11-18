@@ -257,6 +257,13 @@ if (.Platform$OS.type == "unix") {
 cfg_root <- file.path(tempdir(), "corteza-monitor-cfg")
 dir.create(file.path(cfg_root, ".corteza"), recursive = TRUE,
            showWarnings = FALSE)
+# A project's config is read from a trusted directory only (R/trust.R),
+# so this one is trusted: the rule here is what a project the user does
+# trust may still not do. The list of trusted directories is the user's,
+# so the file gets a config directory of its own first; tinytest puts
+# the variable back when the file ends.
+Sys.setenv(R_USER_CONFIG_DIR = tempfile("monitor-config-"))
+corteza:::project_trust_add(cfg_root)
 
 # A project that tries to grant itself exec brokering does not get it.
 writeLines('{"auto": {"allow_exec": true, "never_broker": []}}',

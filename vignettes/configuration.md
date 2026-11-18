@@ -63,7 +63,9 @@ How to configure corteza for your workflow.
 
 ## Config files
 
-corteza reads two JSON files and merges them. Project config overrides global config.
+corteza reads two JSON files and merges them. Project config overrides global
+config. The project file is read from a trusted directory only (see
+[Trusted projects](#trusted-projects)).
 
 | Layer | Path |
 |-------|------|
@@ -90,6 +92,76 @@ Create the directory first:
 ```r
 dir.create(".corteza", showWarnings = FALSE)
 ```
+
+## Trusted projects
+
+A project's own files arrive with its repository, and a cloned repository is
+somebody else's text. A session therefore loads them only from a directory
+you have trusted. In any other directory it loads nothing of the project's,
+says so, and runs on your global config and the package's own guidance.
+
+What trust covers:
+
+| From the project | Effect when trusted |
+|------------------|---------------------|
+| `.corteza/config.json` | Merged over the global config: provider, model, base URL, approval settings and the rest |
+| `.corteza/skills/` | R files are sourced at start; `SKILL.md` files join the instruction catalog |
+| `AGENTS.md` or `CLAUDE.md` | Added to the system prompt |
+| `.corteza/harness.json` | Its lessons are added to the system prompt, and `/refine` and the lesson tool may write it |
+| `.corteza/approvals.json` | The terminal's saved "Allow always for this project" answers apply |
+| `DESCRIPTION` and commit subjects | Summarized in the briefing at the top of the prompt |
+| Files your global `context_files` names by a relative path, or by a path inside the project | Added to the system prompt |
+
+A directory is trusted when it is, or lies inside, a directory on your list.
+Paths are compared after links are resolved, so a link into a trusted
+directory is judged by where it points. The list lives in your config
+directory, where no project can write:
+
+- `trusted_projects` in the global `config.json`, which you edit:
+
+  ```json
+  {
+    "trusted_projects": ["~/work", "/srv/projects/reports"]
+  }
+  ```
+
+- `trusted-projects.json` beside it, which `/trust yes` writes. Remove a line
+  there to undo it.
+
+Trusting a directory trusts every directory inside it, so trusting your home
+trusts everything you clone into it.
+
+How you are asked:
+
+- The `corteza` command and `chat()` ask once at start, when the directory is
+  not trusted and holds something a session would load. Enter means no.
+- `/trust` shows where the directory stands and what it holds. `/trust yes`
+  trusts it.
+- A new answer applies from the next start of corteza. A session's prompt
+  and tools are fixed when it starts.
+- `/status` shows `trusted:` and lists what an untrusted session left alone.
+
+In a Matrix room, `/trust` acts on the room's directory and only an operator
+of the bot may use it. The answer applies from the room's next conversation
+(send `/clear` to start one). A room whose directory is not trusted says so
+once, ahead of its first reply. A bot's directory has to be on the list
+before the bot starts, or the bot runs without its project config and
+instructions. A room with no directory works in a scratch folder, which is
+never trusted.
+
+In an untrusted directory the terminal's "Allow always" lasts for the
+session and writes no file. The lessons tool refuses the project's store and
+keeps a lesson only under scope `global`, and `/refine` lists the global
+store and runs no review pass.
+
+Trust decides what corteza loads by itself. It does not confine the agent:
+a tool can still read a file in an untrusted directory when asked, and what
+it reads comes back as a tool result under the approval settings below.
+For an unattended session (a Matrix room or one of its jobs), a write to a
+`.corteza` folder by a file tool, a shell command or R code goes to a person,
+and so does R code that names the list of trusted directories. The lessons
+tool still records a note in a trusted project's store once that note is
+approved.
 
 ## CLI flags
 
@@ -767,6 +839,7 @@ In-chat commands prefixed with `/`.
 | `/review [ref]` | Review local changes with LLM |
 | `/config` | Active runtime configuration |
 | `/permissions` | Tool approval and sandbox settings |
+| `/trust [yes]` | Show whether this directory is trusted, or trust it |
 | `/clear` | Clear conversation (keeps session) |
 | `/compact` | Summarize conversation to free context |
 | `/sessions [all]` | List this directory's sessions, or every directory's |
@@ -832,6 +905,9 @@ session startup. Built-in roots are:
 |-------|------|
 | Global | `tools::R_user_dir("corteza", "data")/skills/` |
 | Project | `.corteza/skills/` |
+
+The project root, and the roots a project config adds, exist in a
+[trusted](#trusted-projects) directory only.
 
 Only compact metadata enters the system prompt. The agent calls the read-only
 `skill_instructions` tool with the displayed stable id when it needs the

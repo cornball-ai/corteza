@@ -13,7 +13,8 @@
 #' Runs inside a subagent's private `callr::r_session` subprocess
 #' (invoked via `corteza::worker_init()` across the callr boundary).
 #' Sets the subprocess cwd, ensures built-in skills are registered, and
-#' loads user/project skills so the subagent can execute tools.
+#' loads the user's skills, and the project's where \code{cwd} is a
+#' trusted directory, so the subagent can execute tools.
 #'
 #' Exported (with `@keywords internal`) because it is called as
 #' `corteza::worker_init()` from inside the `callr::r_session` child,
@@ -33,7 +34,7 @@ worker_init <- function(cwd = getwd()) {
     setwd(cwd)
     ensure_skills()
     load_skills(corteza_data_path("skills"))
-    load_skills(file.path(cwd, ".corteza", "skills"))
+    load_project_skills(cwd, docs = FALSE)
     invisible(TRUE)
 }
 

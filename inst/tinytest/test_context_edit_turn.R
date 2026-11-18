@@ -202,6 +202,8 @@ local({
     global <- corteza:::corteza_config_path("config.json")
     dir.create(dirname(global), recursive = TRUE)
     writeLines('{"context_edit":{"enabled":true,"cadence":"always"}}', global)
+    # A project's config is read from a trusted directory only (R/trust.R).
+    corteza:::project_trust_add(project)
     writeLines('{"context_edit":{"enabled":false}}', file.path(project, ".corteza", "config.json"))
     cfg <- corteza:::load_config(project)
     expect_identical(cfg$context_edit, list(enabled = FALSE, cadence = "always"))

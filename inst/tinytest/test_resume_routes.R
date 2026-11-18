@@ -24,6 +24,9 @@ local({
         unlink(root, recursive = TRUE)
     }, add = TRUE)
     dir.create(".corteza")
+    # A project's config is read from a trusted directory only
+    # (R/trust.R). The list is kept in the config directory set above.
+    corteza:::project_trust_add(root)
     writeLines('{"provider":"anthropic","model":"claude-config", "web_search":false,
         "workspace":{"enabled":false}, "context_edit":{"enabled":false}}',
         ".corteza/config.json")

@@ -861,6 +861,95 @@ bot_is_status_command <- function(body) {
                          ignore.case = TRUE)
 }
 
+# Match `/trust` and `/trust yes`, with or without the slash. NULL when
+# the message is neither, else what followed the word: "" or one word.
+# With the slash any one word is the command's (and gets its usage line
+# when it is not "yes"). Without it only `trust` and `trust yes` are, so
+# that "trust me" stays a thing said to the bot.
+bot_parse_trust_command <- function(body) {
+    cmd <- bot_command_text(body)
+    if (!nzchar(cmd)) {
+        return(NULL)
+    }
+    pattern <- "^/+trust(?:\\s+(\\S+))?\\s*$|^trust(?:\\s+(yes))?\\s*$"
+    m <- regmatches(cmd,
+                    regexec(pattern, cmd, perl = TRUE, ignore.case = TRUE))[[1]]
+    if (!length(m)) {
+        return(NULL)
+    }
+    tolower(paste0(m[[2L]], m[[3L]]))
+}
+
+# When a new answer about trust reaches a room: its session loaded from
+# the directory when it was built, and the next one is built after a
+# clear.
+bot_trust_when <- function() {
+    "this room's next conversation (send /clear to start one)"
+}
+
+# `/trust` in a room acts on the room's directory, for the room and its
+# threads. Only an operator may use it: a trusted directory's files set
+# this bot's config, instructions and tools.
+bot_trust_command <- function(cfg, session, sender, arg) {
+    if (!(sender %in% bot_operators(cfg))) {
+        return("Only an operator of this bot can use /trust.")
+    }
+    cwd <- session$cwd
+    if (is.null(cwd) || bot_is_scratch(cwd)) {
+        return("This room has no project directory, so there is nothing to trust.")
+    }
+    paste(trust_command(cwd, arg, when = bot_trust_when()), collapse = "\n")
+}
+
+# The lines `status` adds about trust. None for a room in the scratch
+# folder, which has no project to trust.
+bot_trust_status <- function(session) {
+    cwd <- session$cwd
+    if (is.null(cwd) || bot_is_scratch(cwd)) {
+        return(character())
+    }
+    word <- trust_status_word(session$project_trusted, project_trusted(cwd))
+    c(sprintf("trusted: %s", word), trust_left_alone(session, cwd))
+}
+
+# Which rooms have been told that their directory is not trusted.
+.bot_trust_told <- new.env(parent = emptyenv())
+
+# What names a room and its directory in `.bot_trust_told`.
+bot_trust_told_key <- function(session) {
+    paste(session$room_id %||% "", trust_dir(session$cwd), sep = "\r")
+}
+
+# What a room is told when its session loaded nothing from a directory
+# that holds something to load. Nobody is at a terminal to read it, and
+# a bot that stops following its project's instructions should say why.
+# Once per room and directory for the life of the process: a thread, a
+# clear and a rebuilt session do not repeat it. NULL when there is
+# nothing to say. bot_trust_told() records that it was delivered.
+bot_trust_notice <- function(session) {
+    cwd <- session$cwd
+    if (isTRUE(session$project_trusted) || is.null(cwd) ||
+        bot_is_scratch(cwd)) {
+        return(NULL)
+    }
+    if (exists(bot_trust_told_key(session), envir = .bot_trust_told,
+               inherits = FALSE)) {
+        return(NULL)
+    }
+    note <- project_trust_note(cwd, when = bot_trust_when())
+    if (is.null(note)) {
+        return(NULL)
+    }
+    paste(c(note, "Only an operator of this bot can do that."), collapse = "\n")
+}
+
+# Record that a room was told, so it is not told again. Called once the
+# notice reached the room: one that failed to send is tried again.
+bot_trust_told <- function(session) {
+    assign(bot_trust_told_key(session), TRUE, envir = .bot_trust_told)
+    invisible(TRUE)
+}
+
 # Match `/model <name> [provider]`, `model <name> [provider]`, or `model`
 # alone to query. Returns NULL if not a model command, else a list.
 bot_parse_model_command <- function(body) {
@@ -2506,6 +2595,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                            bot_session_model(session) %||% "(unset)",
                            session$provider %||% "(unset)",
                            session$cwd %||% getwd(), .context_edit_status(session))
+            ack <- paste(c(ack, bot_trust_status(session)), collapse = "\n")
             sent_id <- tryCatch(
                                 bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
@@ -2514,6 +2604,21 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        trust_arg <- bot_parse_trust_command(m$body)
+        if (!is.null(trust_arg)) {
+            ack <- tryCatch(bot_trust_command(cfg, session, sender, trust_arg),
+                            error = function(e) conditionMessage(e))
+            sent_id <- tryCatch(
+                                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
@@ -2628,6 +2733,22 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                               room_id = m$channel)
             replied <- replied + 1L
             next
+        }
+
+        # A session that loaded nothing from its directory says so, once,
+        # ahead of its first reply. To the room and not to the model:
+        # telling the model which files were held back invites it to
+        # read them.
+        trust_note <- bot_trust_notice(session)
+        if (!is.null(trust_note)) {
+            sent_id <- tryCatch(
+                                bot_reply_send(chat_now(), m$channel, trust_note, thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", trust_note)
+                bot_trust_told(session)
+            }
         }
 
         # Show a typing indicator while the model works -- turns run

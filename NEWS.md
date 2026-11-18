@@ -1,3 +1,24 @@
+# corteza 0.8.0.6
+
+- **A project's own files load only from a directory you have trusted.**
+  That covers `.corteza/config.json`, the skills under `.corteza/skills/`,
+  `AGENTS.md` or `CLAUDE.md`, the stored lessons and the briefing. Trust a
+  directory with `/trust yes`, or list it under `trusted_projects` in your
+  config; every directory inside it is trusted with it. The command and
+  `chat()` ask once at start. A room is told once, and only an operator may
+  trust its directory. `serve()` reports an untrusted directory on stderr.
+  `/trust` and `/status` show where a directory stands and what was not
+  loaded. Up to 0.8.0 a cloned repository could set the approval mode and
+  the provider for a session started in it, and ran its own R files at
+  start.
+- In an untrusted directory the terminal's "Allow always" lasts for the
+  session and writes no file.
+- An unattended session's write to a project's `.corteza` folder goes to a
+  person, and so does R code that names the list of trusted directories. Up
+  to now only `.corteza/config.json` did.
+- `harness_trust_project` is no longer read. A trusted directory's lessons
+  are trusted.
+
 # corteza 0.8.0.5
 
 - **A bot with no `operators` accepts no invites.** Up to 0.8.0 it accepted

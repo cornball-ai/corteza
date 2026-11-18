@@ -55,11 +55,12 @@
     txt
 }
 
-# Render current entries (both scopes) for /refine list and for the
-# pass's own input.
+# Render current entries for /refine list and for the pass's own
+# input: the project's first, where the directory is trusted, then this
+# machine's. An untrusted project's store is not opened.
 .harness_overview <- function(cwd) {
     out <- character()
-    for (scope in c("project", "global")) {
+    for (scope in rev(harness_scopes(cwd))) {
         store <- harness_load(harness_path(scope, cwd))
         for (e in store$entries) {
             out <- c(out, sprintf("[%s] %s (v%s, %s): %s", scope, e$id,
@@ -81,12 +82,20 @@ run_refine <- function(ctx, args = character()) {
         sub <- ""
     }
 
+    # The project's store exists for a trusted directory only. Everything
+    # below that needs it says so and stops before a model is called or
+    # a file is opened.
+    has_project <- "project" %in% harness_scopes(cwd)
+
     if (identical(sub, "list")) {
         rows <- .harness_overview(cwd)
         if (!length(rows)) {
             cat("No lessons recorded yet.\n")
         } else {
             cat(rows, sep = "\n")
+        }
+        if (!has_project) {
+            cat(harness_untrusted_note(), "\n")
         }
         return(invisible(NULL))
     }
@@ -117,6 +126,10 @@ run_refine <- function(ctx, args = character()) {
             cat("usage: /refine promote <entry-id>\n")
             return(invisible(NULL))
         }
+        if (!has_project) {
+            cat(harness_untrusted_note(), "\n")
+            return(invisible(NULL))
+        }
         store <- harness_load(harness_path("project", cwd))
         entry <- store$entries[[args[[2L]]]]
         if (is.null(entry)) {
@@ -136,7 +149,12 @@ run_refine <- function(ctx, args = character()) {
         return(invisible(NULL))
     }
 
-    # Default: the review pass. One completion, no tools.
+    # Default: the review pass. One completion, no tools. Its edits go
+    # to the project's store, so there has to be one.
+    if (!has_project) {
+        cat(harness_untrusted_note(), "\n")
+        return(invisible(NULL))
+    }
     session <- ctx$session
     history <- session$history %||% list()
     if (length(history) < 2L) {
