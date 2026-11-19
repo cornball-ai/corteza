@@ -254,7 +254,8 @@ local({
                      paste("No session has gone unused for 90 days. 5 folders",
                            "that do not read as corteza's stay;",
                            "sessions_prune(dry_run = TRUE) lists them."))
-    expect_identical(corteza:::retention_summary(found[1, ], 90, TRUE),
+    one <- found[found$session %in% jid(2),, drop = FALSE]
+    expect_identical(corteza:::retention_summary(one, 90, TRUE),
                      paste("No session has gone unused for 90 days. 1 folder",
                            "that does not read as corteza's stays;",
                            "sessions_prune(dry_run = TRUE) lists it."))
