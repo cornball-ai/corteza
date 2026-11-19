@@ -1,3 +1,28 @@
+# corteza 0.8.0.14
+
+- **A reviewer can answer what would prompt, at the terminal and in
+  `chat()`.** With `approval_mode: "review"`, from `/permissions
+  review` or the user's config, a call that would prompt goes to the
+  rules in code, then to a reviewer, then to the person. The reviewer
+  is a model in a process of its own with read-only tools, set by the
+  `supervisor` settings. It approves, refuses and tells the model why,
+  or passes the call on. It rules on reads, writes and commands; a
+  call the rules flag, a tool with no class and a credential path
+  still prompt, and a call allowed always runs without it. A reviewer
+  that fails or has not ruled within `supervisor.timeout_sec` passes
+  the call on, and an interrupt cancels its request. A project's config
+  cannot set `"review"`.
+- The reviewer reads the conversation from the session's transcript:
+  every prompt whole, each after the whole reply it answers. It never
+  reads a compaction's summary, output staged with `/r` or `!`, or an
+  `/auto` run's driver prompts. A conversation it cannot read whole
+  goes to the person: one past 100,000 characters, one with a line it
+  cannot read, or one with prompts written before this version.
+- Each prompt in a transcript says how it was sent: `staged`, and
+  `typed` when more went with it than the person typed.
+- The approval prompt says why it asks when the reviewer passed a call
+  on or the rules flagged it.
+
 # corteza 0.8.0.13
 
 - **The host files a room's conversation.** `bot_run_init()` takes a

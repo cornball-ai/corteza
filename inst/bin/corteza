@@ -394,14 +394,21 @@ print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, c
 # that cannot be saved holds for this session.
 cli_approval_cb <- function(cwd) {
   for_session <- character()
-  function(call, decision) {
+  # Has the person answered this call for good? "Allow always" for its
+  # tool, saved or held for the session. The credential rule's ask is
+  # answered each time: an "always" given for the tool, for any file,
+  # does not answer it, and its prompt offers none. The reviewer
+  # (R/review.R) asks this first, so it never rules on an answer the
+  # person already gave.
+  answered <- function(call, decision) {
     name <- call$tool %||% ""
-    # The credential rule's ask is answered each time: an "always" given
-    # for the tool, for any file, does not answer it, and its prompt
-    # offers none.
+    !identical(decision$rule, "credential") &&
+      (name %in% for_session || name %in% corteza:::approvals_saved(cwd))
+  }
+  cb <- function(call, decision) {
+    name <- call$tool %||% ""
     once_only <- identical(decision$rule, "credential")
-    if (!once_only &&
-        (name %in% for_session || name %in% corteza:::approvals_saved(cwd))) {
+    if (answered(call, decision)) {
       return(TRUE)
     }
 
@@ -416,6 +423,7 @@ cli_approval_cb <- function(cwd) {
     lines <- corteza:::cli_approval_lines(
       call,
       decision,
+      gate_reason = decision$gate_reason,
       cwd = cwd,
       persistent_label = persistent_label,
       deny_label = "Deny (Ctrl+C)"
@@ -459,6 +467,8 @@ cli_approval_cb <- function(cwd) {
     }
     response %in% c("1", "2")
   }
+  attr(cb, "answered") <- answered
+  cb
 }
 
 # Construct the CLI's live turn session from the same context bundle used for

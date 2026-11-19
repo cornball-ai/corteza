@@ -39,6 +39,11 @@
 
 .auto_command <- function(ctx, text) {
     spec <- parse_auto_flags(text)
+    # What the person typed after /auto, flags aside: the run's goal, or
+    # nothing, or "resume". The goal stood in below for nothing is
+    # corteza's, and the transcript keeps the person's words apart from
+    # it (run_auto_loop()).
+    typed <- spec$goal
     if (identical(spec$goal, "status")) {
         .remote_emit(ctx, .auto_status(ctx))
         cat(.auto_status(ctx), "\n")
@@ -66,6 +71,6 @@
     ctx$last_auto_request <- spec
     run_auto_loop(ctx, spec$goal, max_loops = spec$loops,
                   allow_exec = spec$allow_exec,
-                  continuous = is.null(spec$loops))
+                  continuous = is.null(spec$loops), typed = typed)
     invisible(NULL)
 }

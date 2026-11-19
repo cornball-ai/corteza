@@ -718,7 +718,7 @@ a run.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `approval_mode` | string | `"ask"` | What "ask" means for a tool with no `permissions` entry: `"ask"`, `"allow"`, or `"deny"` |
+| `approval_mode` | string | `"ask"` | What "ask" means for a tool with no `permissions` entry: `"ask"`, `"allow"`, `"deny"`, or `"review"` (the reviewer first; see Supervisor). A project's config cannot set `"review"` |
 | `dangerous_tools` | string[] | `["bash", "run_r", "run_r_script", "write_file", "replace_in_file", "base::writeLines"]` | Tools that ask even where their class would run. Leaving a tool off this list does not stop it asking |
 | `permissions` | object | `{"harness_note": "ask"}` | Per-tool verdicts, e.g. `{"bash": "deny"}` or `{"bash": "allow"}`. An entry replaces the verdict for its tool |
 | `denied_paths` | string[] | `["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.kube", "~/.docker"]` | Blocked paths |
@@ -744,6 +744,48 @@ nobody at a prompt. Each call goes through three steps:
 No setting approves a call unseen. The rules read text and are not a
 sandbox: a command can be written so that they miss it, which is what
 the monitor and the tool policy above are also there for.
+
+At the terminal and in `chat()`, `"approval_mode": "review"` gives a
+session the same three steps for each call that would prompt. The
+monitor there is called the reviewer. It rules on reads, writes and
+commands that the rules leave open. It reads the conversation to judge
+them, from the session's transcript: every message you sent, whole,
+each after the whole reply it answers. Only your words are taken as
+instructions. It is not shown these:
+
+- a compaction's summary, which the agent wrote;
+- output you staged with `/r` or `!`;
+- an `/auto` run's prompts, which its driver wrote, and the goal
+  corteza writes for a bare `/auto`. It sees what you typed to start
+  the run, and the run's replies;
+- the agent's task list.
+
+An approval runs the call and prints a dim line saying so. A refusal
+goes back to the agent with its reason. A call it passes on prompts you
+with its reason. These still prompt without it:
+
+- a call the rules flag;
+- a tool with no class;
+- a credential path;
+- any call while the reviewer cannot read the whole conversation: one
+  past 100,000 characters, one with no transcript or with a line it
+  cannot read, or one begun before 0.8.1, whose transcript does not
+  mark what you typed. `/clear` starts a conversation it can read.
+
+A tool you allowed always runs without asking it. Plan mode still
+refuses what it refuses. A reviewer that fails, or has not ruled by
+`supervisor.timeout_sec`, passes the call to you. Interrupting a turn
+while the reviewer works cancels its request, and the next call is
+asked afresh. "review" changes only what would prompt: a call that
+policy allows runs, as under "ask". In a room the rules read every
+call, allowed ones included.
+
+`/permissions review` turns it on for the session and `/permissions ask`
+turns it off. Your config can turn it on for every session. A project's
+config cannot: who reviews the agent is yours to choose. In a Matrix
+room, `auto_approve_asks` is this mode. An `/auto` run keeps its own
+monitor, since nobody is at its prompt. A talker's delegated jobs still
+ask you for each call.
 
 These keys are read from the user's config file only. A project's
 `.corteza/config.json` cannot set them.

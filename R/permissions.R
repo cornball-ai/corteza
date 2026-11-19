@@ -219,9 +219,10 @@ validate_command <- function(command) {
     list(ok = TRUE, message = NULL)
 }
 
-#' Valid approval modes, in order of increasing restriction.
+#' Valid approval modes, in order of increasing restriction. "review"
+#' sends what would prompt to the reviewer first (R/review.R).
 #' @noRd
-.approval_modes <- c("allow", "ask", "deny")
+.approval_modes <- c("allow", "review", "ask", "deny")
 
 #' Handle the `/permissions` slash command for both surfaces.
 #'
@@ -268,6 +269,12 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
                                    "  Calls that would prompt run without prompting for this session.",
                                    "  Credential paths still prompt, and plan mode still refuses:",
                                    "  both come before config, so this can't waive them."),
+                         review = c(
+                                    "  Calls that would prompt go to the reviewer first, a model in a",
+                                    "  process of its own: it approves, refuses (the model is told why),",
+                                    "  or passes the call to you. What the rules flag, tools with no",
+                                    "  class and credential paths still prompt; plan mode still refuses.",
+                                    "  Its model: \"supervisor\" in your config."),
                          ask = "  Writes, commands and tools with no class prompt before running.",
                          deny = "  Calls that would prompt are refused outright, no prompt.")
         if (identical(arg, current)) {
