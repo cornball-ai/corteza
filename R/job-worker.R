@@ -980,6 +980,33 @@ job_cancel <- function(session, id, by = "local") {
     TRUE
 }
 
+# What a job stopped mid-run leaves (WP20a, rule 10), so nobody reads
+# "cancelled" as "nothing happened". Files it wrote stay. Its R objects
+# and history since its worker's last checkpoint go with the worker,
+# and the next job starts from that checkpoint, which the job's own
+# identity names (its dispatch record), whatever the session's is now.
+job_cancel_reason <- function(j) {
+    identity <- j$dispatch$worker$identity
+    info <- NULL
+    if (!is.null(identity)) {
+        path <- file.path(job_worker_state_dir(identity), "checkpoint.json")
+        info <- tryCatch(job_read_file(path), error = function(e) NULL)
+    }
+    if (is.null(info)) {
+        return(paste("stopped mid-job. Files it wrote stay; the R objects",
+                     "and history its worker held are gone, and the next",
+                     "job starts without them."))
+    }
+    since <- if (is.null(info$job)) {
+        "this conversation began"
+    } else {
+        sprintf("job %s ended", info$job)
+    }
+    sprintf(paste("stopped mid-job. Files it wrote stay; the R objects and",
+                  "history made since %s are gone, and the next job starts",
+                  "from there."), since)
+}
+
 # Advance this session's jobs without blocking. Returns a list of
 # events, each list(type = ..., job = <record>) with type one of
 # "settled", "started", or "restored" (the last carrying `restore`).
@@ -1092,9 +1119,7 @@ job_pump_current <- function(session, id) {
         # Its memory goes with it; the next job restores the checkpoint
         # from before this one.
         job_worker_close(session)
-        return(finish("cancelled",
-                      reason = paste("stopped mid-job; changes it made",
-                                     "before stopping are kept")))
+        return(finish("cancelled", reason = job_cancel_reason(j)))
     }
     wall <- j$limits$wall_seconds
     if (!is.null(wall) && !is.null(j$dispatch)) {
@@ -1291,8 +1316,11 @@ job_dispatch <- function(session, j, checkout) {
         return(abandon("failed", error = why))
     }
     marked <- tryCatch({
+        # The identity whose checkpoint the job starts from, which a
+        # cancel names (job_cancel_reason()).
         job_mark_dispatched(j$id, worker = list(
-                pid = session$.job_worker$get_pid()),
+                pid = session$.job_worker$get_pid(),
+                identity = spec$identity),
                             # What the checkout looked like as the job began, so its
                             # review can show exactly what it changed. Only taken for a
                             # job that will be reviewed: nothing else reads it.

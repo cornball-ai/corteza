@@ -613,6 +613,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         internal_name <- unsanitize_tool_name(name)
         ids <- .audit_safe(.audit_tool_call(session, internal_name, args)) %||% list()
         .remote_check_stop(session)
+        # A stop asked for ends the turn before the call (R/turn-stop.R).
+        .turn_stop_check(session)
         # A worker reads what its conversation allows before each call
         # (R/job-authority.R). A record it cannot use refuses the call.
         authority <- .authority_apply(session)
@@ -1199,6 +1201,17 @@ observer_progress <- function() {
 #' their actual model/provider; API-key fallbacks carry a prominent billable
 #' usage warning. Errors that are not limits are rethrown untouched.
 #'
+#' A program that runs turns for someone else can let them stop one. It
+#' sets \code{session$stop_requested} to a function of no arguments that
+#' returns \code{TRUE} once a stop is asked for. The turn asks it before
+#' each request to the model, before each tool call and, when the turn
+#' streams (\code{session$on_delta}), before each piece of the reply goes
+#' out. A stop ends the turn with status \code{cancelled}: a tool call that
+#' got no result is given a placeholder, and the history ends on a note
+#' that the turn was stopped, so the next turn can go on from it. A stop
+#' cannot cut short a request already waiting for its first word, nor the
+#' reply of a provider that does not stream.
+#'
 #' @param prompt Character. User prompt.
 #' @param session A session environment created by \code{\link{new_session}}.
 #' @param tool_executor Function or NULL. Dispatcher with signature
@@ -1335,6 +1348,12 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     .context_edit_prepare(session)
     compact_session_history(session$history %||% list(), reason = "preflight")
 
+    # A stop asked for ends the run (R/turn-stop.R). The repair after it
+    # is scoped to what the run adds to the history.
+    pre_turn_len <- length(session$history %||% list())
+    stopped <- FALSE
+    note_stop <- function() stopped <<- TRUE
+
     # Pass a history_callback to llm.api so session$history mirrors
     # intermediate state continuously: after each assistant message
     # and after each tool_result lands, the callback overwrites
@@ -1379,7 +1398,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     }
     attempt_checkpoint_usage <- list()
     if ("request_callback" %in% names(formals(llm.api::agent))) {
-        agent_args$request_callback <- .audit_request_callback(session, session$.audit_turn)
+        agent_args$request_callback <- .turn_request_callback(session,
+            .audit_request_callback(session, session$.audit_turn))
     }
     attempt_checkpoint_turns <- 0L
     if ("checkpoint_callback" %in% names(formals(llm.api::agent))) {
@@ -1412,7 +1432,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (is.function(session$on_delta) &&
         "on_delta" %in% names(formals(llm.api::agent))) {
         redacted_stream <- .redact_stream(session$on_delta, function() session$secret_values)
-        agent_args$on_delta <- redacted_stream$push
+        agent_args$on_delta <- .turn_stop_sink(session, redacted_stream$push,
+            note_stop)
     }
 
     if (ws_active) {
@@ -1571,7 +1592,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         .recover_output(call_agent_request_safe(args), args, session,
                         call_agent_request_safe)
     }
-    response <- call_agent_output_safe(agent_args)
+    response <- .turn_stop_catch(call_agent_output_safe(agent_args), note_stop)
 
     # Pi pairs proactive threshold compaction with one compact-and-retry on an
     # actual context overflow. llm.api deliberately excludes the incomplete
@@ -1598,7 +1619,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             retry_args$max_turns <- max(
                                         1L, as.integer(agent_args$max_turns) -
                                         as.integer(overflow_response$turns %||% 0L))
-            response <- call_agent_output_safe(retry_args)
+            response <- .turn_stop_catch(call_agent_output_safe(retry_args),
+                note_stop)
             response$usage <- .turn_add_usage(overflow_response$usage,
                 response$usage)
             response$turns <- as.integer(overflow_response$turns %||% 0L) +
@@ -1627,13 +1649,22 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if (!is.null(response$history)) {
         session$history <- response$history
     }
+    # Stopped: the history as last mirrored, each call that got no result
+    # given a placeholder, and the interrupt marker after it, as the
+    # terminal leaves it after Ctrl+C.
+    if (stopped) {
+        apply_exit_marker(session, prompt, pre_turn_len,
+                          user_interrupt_marker())
+    }
     reply <- .fallback_reply(response)
     if (.output_keep_reply(session, response, reply)) {
         response$history <- session$history
     }
     .context_room_snapshot(session)
 
-    if (exists("redacted_stream", inherits = FALSE)) {
+    # Nothing more reaches the sink after a stop: what it held back to
+    # check for secrets is in the reply.
+    if (exists("redacted_stream", inherits = FALSE) && !stopped) {
         redacted_stream$flush()
     }
     termination <- .turn_termination(response)

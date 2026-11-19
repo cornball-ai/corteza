@@ -329,8 +329,9 @@ cx <- corteza:::tool_job_cancel(id, ctx = ctx)
 expect_true(grepl("Cancellation requested", cx$content[[1L]]$text))
 corteza:::job_pump(t)
 expect_identical(corteza:::job_read(id)$status, "cancelled")
-expect_identical(corteza:::job_read(id)$outcome$reason,
-                 "stopped mid-job; changes it made before stopping are kept")
+# The reason says what stays and what goes (job_cancel_reason()).
+expect_true(startsWith(corteza:::job_read(id)$outcome$reason,
+                       "stopped mid-job. Files it wrote stay;"))
 again <- corteza:::tool_job_cancel(id, ctx = ctx)
 expect_true(grepl("already ended", again$content[[1L]]$text))
 # Without a session the tools refuse rather than guessing one.
