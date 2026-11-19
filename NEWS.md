@@ -1,3 +1,24 @@
+# corteza 0.8.0.12
+
+- **"Allow always for this project" is kept in the user's config, by
+  directory.** The terminal keeps those answers in `approvals.json`
+  under `tools::R_user_dir("corteza", "config")`, keyed by the
+  directory with links resolved, and no longer reads a project's own
+  `.corteza/approvals.json`, trusted or not, so a repository cannot
+  arrive with answers already given. A tool allowed always through the
+  project's file asks once more.
+- The terminal offers "Allow always for this project" in every
+  directory, an untrusted one included. Saving makes no folder in the
+  project.
+- Where a project holds the old file, the terminal says at start that
+  it is not read. `/permissions` and `/status` list what is saved for
+  the directory.
+- Terminals that save at once each keep their answer. A store that
+  cannot be read is set aside as `approvals.json.unreadable`, and an
+  answer that cannot be saved holds for the session.
+- In a room, a worker's R code that names the approvals file goes to a
+  person.
+
 # corteza 0.8.0.11
 
 - **Every tool has a class, and approvals follow it.** A tool reads,
