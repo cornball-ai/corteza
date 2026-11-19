@@ -27,8 +27,10 @@
 #   urls      - character, URLs touched (resolved from args if NULL)
 #   channel   - character, one of "cli", "console", "matrix"
 #   context   - list, optional; context$recent_classes carries sticky
-#               classifications from earlier calls in the same turn, and
-#               context$plan_mode the session's mode
+#               classifications from earlier calls in the same turn,
+#               context$plan_mode the session's mode, and
+#               context$plan_mode_locked whether the session may end it
+#               (not a job's worker, R/job-authority.R)
 #   class     - character, optional: the tool's class, as the session's
 #               table holds it (turn() sets it, R/tool-table.R). Without
 #               it the class is read from the registry.
@@ -269,12 +271,17 @@ check_plan_mode <- function(call) {
     why <- switch(op, continue = "runs work that does not follow plan mode",
                   unknown = "has no class, so it may modify state",
                   "would modify state")
+    # A job's worker cannot end plan mode (R/job-authority.R), so it is
+    # not told to.
+    then <- if (isTRUE(call$context$plan_mode_locked)) {
+        "report the plan; only the person can end plan mode"
+    } else {
+        "present a plan via exit_plan_mode first"
+    }
     list(
          model = "cloud",
          approval = "deny",
-         reason = sprintf(
-                          "plan mode: %s %s; present a plan via exit_plan_mode first",
-                          tool, why),
+         reason = sprintf("plan mode: %s %s; %s", tool, why, then),
          rule = "plan_mode"
     )
 }

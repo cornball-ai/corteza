@@ -222,6 +222,31 @@ installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set
 `"review"` (`load_config()`).
 
+## A worker obeys its conversation (`R/job-authority.R`)
+
+A job's worker (a doer or a reviewer) is a process whose session was
+built when it started. Each job brings a spec, and the child applies
+all of it at the job's start (`.job_worker_child_apply_spec()`):
+provider, model, reasoning settings, plan mode, tools, turn limit.
+Plan mode, approval mode and dry run can change while the job runs, so
+the session that dispatched it writes them to `authority.json` beside
+the job: in `job_dispatch()`, and from `job_pump()` when one changes
+(`job_authority_sync()`). turn()'s handler reads the record
+(`session$authority`, `.authority_apply()`) before each call and again
+just before the call runs; a different `seq` the second time refuses
+the call. A record that is missing, unreadable, or names another job or
+conversation refuses every call. A failed write removes the record, so
+the failure refuses rather than leaving a looser record standing.
+
+Only the conversation that dispatched a job writes its record: the
+cache on the session (`.job_authority`) names the job and the
+`sessionId`, and is not in `JOB_SESSION_STATE`, so neither the
+terminal's `/clear` nor a room's replacement session updates an old
+job's record. A worker cannot end plan mode (`plan_mode_locked`): it is
+not offered `exit_plan_mode`, the handler refuses it by name, and its
+plan-mode text and refusals say the person ends it. The monitor runs no
+job and has neither.
+
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 
 `voice_turn()` and `voice_turn_report()` are the voice brain: a turn

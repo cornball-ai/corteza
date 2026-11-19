@@ -321,6 +321,17 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     .job_worker_state$monitor_run_fn <- if (identical(spec$role, "monitor")) {
         spec$run_fn
     }
+    # A job's worker obeys its conversation (R/job-authority.R): plan
+    # mode, approval mode and dry run come from its job's record at each
+    # call, and plan mode is not its to end. Not the monitor, which runs
+    # no job and only reads.
+    if (!is.null(.subagent_state$session) && !identical(spec$role, "monitor")) {
+        .subagent_state$session$plan_mode_locked <- TRUE
+        .subagent_state$session$authority <- function() {
+            job_authority_read(.job_worker_state$job_id,
+                               .job_worker_state$session_key)
+        }
+    }
     # Replace the subagent default (deny everything) with the bridge.
     if (!is.null(.subagent_state$session)) {
         .subagent_state$session$approval_cb <- .job_worker_child_ask
@@ -451,6 +462,32 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     objects
 }
 
+# A job brings the settings it runs with, and a warm worker takes all
+# of them (WP20a, rule 7). Before, only the tools and the turn limit
+# reached a worker after its first job: the provider, the model, the
+# reasoning settings and plan mode stayed as the first job left them.
+# A history in another provider's shape is bridged at the next request
+# (.agent_with_fallback()), as when a session switches providers.
+.job_worker_child_apply_spec <- function(session, spec) {
+    if (!is.null(spec$provider)) {
+        session$provider <- spec$provider
+    }
+    if (!is.null(spec$model)) {
+        session$model_map$cloud <- spec$model
+    }
+    session$reasoning_effort <- .check_reasoning_effort(spec$reasoning_effort,
+        "job spec (reasoning_effort)")
+    session$thinking_budget_tokens <- .check_max_tokens(spec$thinking_budget_tokens,
+        "job spec (thinking_budget_tokens)", what = "thinking_budget_tokens")
+    session$thinking <- .check_thinking(spec[["thinking"]], "job spec (thinking)")
+    session$plan_mode <- isTRUE(spec$plan_mode)
+    session$tools_filter <- spec$tools
+    if (!is.null(spec$max_turns)) {
+        session$max_turns <- as.integer(spec$max_turns)
+    }
+    invisible(session)
+}
+
 # Run one job in the child. Errors from the turn are the job's outcome,
 # not the worker's: they come back as data, and the checkpoint is still
 # taken, so the next job starts from what this one left.
@@ -459,7 +496,12 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
     session <- .subagent_state$session
     job <- job_read(job_id)
+    # The conversation the job came from, which its authority record has
+    # to name (job_authority_read()).
+    .job_worker_state$session_key <- job$origin$session_key
+    on.exit(.job_worker_state$session_key <- NULL, add = TRUE)
     if (is.environment(session)) {
+        .job_worker_child_apply_spec(session, spec)
         old_tools <- session$tools_filter
         old_allowed <- session$job_allowed_tools
         old_search <- session$web_search
@@ -889,6 +931,13 @@ job_cancel <- function(session, id, by = "local") {
 job_pump <- function(session) {
     events <- session$.job_events %||% list()
     session$.job_events <- NULL
+    # The running job's record follows its conversation's settings
+    # (R/job-authority.R). A write that fails leaves no record, so the
+    # worker refuses its calls until a later pump writes one.
+    tryCatch(job_authority_sync(session), error = function(e) {
+        message("jobs: could not update the authority record: ",
+                conditionMessage(e))
+    })
     current <- session$.job_current
     if (!is.null(current)) {
         ev <- job_pump_current(session, current)
@@ -1170,6 +1219,16 @@ job_dispatch <- function(session, j, checkout) {
             job_lock_release(checkout, j$id)
         }
         c(events, list(list(type = "settled", job = job_read(j$id))))
+    }
+    # What the conversation allows the job, which the worker reads at
+    # each call (R/job-authority.R). Written before the worker has the
+    # job: without it every call would be refused.
+    authority <- tryCatch(job_authority_write(session, j$id),
+                          error = function(e) e)
+    if (inherits(authority, "error")) {
+        why <- paste("could not write the job's authority record:",
+                     conditionMessage(authority))
+        return(abandon("failed", error = why))
     }
     marked <- tryCatch({
         job_mark_dispatched(j$id, worker = list(

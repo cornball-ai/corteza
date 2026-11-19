@@ -613,6 +613,25 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         internal_name <- unsanitize_tool_name(name)
         ids <- .audit_safe(.audit_tool_call(session, internal_name, args)) %||% list()
         .remote_check_stop(session)
+        # A worker reads what its conversation allows before each call
+        # (R/job-authority.R). A record it cannot use refuses the call.
+        authority <- .authority_apply(session)
+        if (!isTRUE(authority$ok)) {
+            .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
+                        outcome = "deny", decision = list(approval = "deny", reason = "job_authority"),
+                        success = FALSE)))
+            return(sprintf("[job policy denied: %s; nothing ran]",
+                           .sanitize_inline(authority$reason %||% "no reason given")))
+        }
+        # Plan mode is the conversation's, so a worker cannot end it.
+        if (identical(internal_name, "exit_plan_mode") &&
+            isTRUE(session$plan_mode_locked)) {
+            .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
+                        outcome = "deny", decision = list(approval = "deny", reason = "plan_mode_locked"),
+                        success = FALSE)))
+            return(paste("[job policy denied: plan mode belongs to the",
+                         "conversation, and only the person can end it]"))
+        }
         if (!is.null(session$job_allowed_tools) &&
             !internal_name %in% session$job_allowed_tools) {
             .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
@@ -641,6 +660,10 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             call$origin <- tool_origin_kind(entry)
         }
         call <- c(call, ids)
+        # A worker's plan mode is its conversation's (R/job-authority.R).
+        if (isTRUE(session$plan_mode_locked)) {
+            call$context$plan_mode_locked <- TRUE
+        }
 
         # Silent-streak narration guard: bookkeep once per model turn
         # (the first dispatched call of the batch, call_index == 1). A
@@ -859,6 +882,24 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                                     nudge(sprintf("[user declined: %s]", decision$reason)),
                                     FALSE
                     ))
+            }
+        }
+
+        # A worker reads its record again just before the call runs: the
+        # person may have changed a setting while it waited for an
+        # approval, and a call judged by the old settings does not run.
+        if (is.function(session$authority)) {
+            again <- .authority_apply(session)
+            if (!isTRUE(again$ok) || !identical(again$seq, authority$seq)) {
+                why <- if (isTRUE(again$ok)) {
+                    "the conversation's settings changed while this call waited"
+                } else {
+                    again$reason %||% "no reason given"
+                }
+                msg <- sprintf(paste("[job policy denied: %s; it did not run, and",
+                                     "a call made now meets the new settings]"),
+                               .sanitize_inline(why))
+                return(outcome_text("deny", nudge(msg), FALSE))
             }
         }
 
@@ -1233,7 +1274,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         ensure_skills()
         tools <- skills_as_api_tools(session$tools_filter, session$tool_table)
     }
-    tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
+    tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode),
+                                     offer_exit = !isTRUE(session$plan_mode_locked))
     tools <- .task_filter_tools(tools, session$channel)
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .context_edit_tools(tools, session)
@@ -1255,7 +1297,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     "web_search" %in% names(formals(llm.api::agent))
     tools <- .drop_redundant_web_search(tools, ws_active)
     system <- .plan_mode_compose_system(session$system,
-                                        isTRUE(session$plan_mode))
+                                        isTRUE(session$plan_mode),
+                                        locked = isTRUE(session$plan_mode_locked))
     system <- task_compose_system(system, session$tasks %||% list(),
                                   channel = session$channel,
                                   auto = !is.null(session$auto_run_id))
