@@ -2398,7 +2398,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
     replied <- 0L
     bots <- bot_known_bots(cfg, self_id)
-    for (m in msgs) {
+    for (i in seq_along(msgs)) {
+        m <- msgs[[i]]
         if (tryCatch(.delegation_route(m, cfg, chat, sessions), error = function(e) {
             message("delegation input: ", conditionMessage(e))
             !is.null(.delegation_parse(m$body))
@@ -2423,6 +2424,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             system = system, model = model, provider = provider,
             tools_filter = tools_filter, room_id = m$channel)
         .delegation_bind(session, cfg)
+        # The host's first refusal (on_message, R/hooks.R), on the
+        # transport's own message: ahead of everything below, behind
+        # only remote control and delegation above, which keep theirs.
+        if (bot_host_message(hooks$on_message, chat_now(), cfg, sessions,
+                             session, res$messages[[i]])) {
+            next
+        }
         # A folded conversation's thread root stands for an archived
         # transcript, and replying there should continue that
         # conversation rather than open a blank one. Gated on the
@@ -2889,7 +2897,7 @@ bot_remember_event <- function(seen, event_id, cap = 256L) {
 bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                                   model = NULL, provider = NULL,
                                   tools_filter = NULL, limit = 30L,
-                                  thread_context = NULL) {
+                                  thread_context = NULL, on_message = NULL) {
     rooms <- tryCatch(chat.api::chat_channels(chat),
                       error = function(e) character())
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
@@ -2946,6 +2954,13 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                 room_id = rid
             )
             if (m$id %in% session$seen_event_ids) {
+                next
+            }
+            # The host's first refusal, as on the live path. It answers
+            # from the room's own state and drives nothing (backfill =
+            # TRUE), and what it takes stays out of the history.
+            if (bot_host_message(on_message, chat, cfg, sessions, session,
+                                 m, backfill = TRUE)) {
                 next
             }
             # A thread's archive is older context than this window, so
@@ -3074,8 +3089,9 @@ bot_cwd_unavailable <- function(dir) {
 #' @param tools_filter Character vector or NULL. Tool filter override.
 #' @param hooks Named list of functions or NULL. Policy the loop asks
 #'   the host about; see Hooks. NULL, the default, means a bare bot:
-#'   \code{/clear} archives and resets without filing anything, and a
-#'   thread reply starts from the thread's own history.
+#'   \code{/clear} archives and resets without filing anything, a
+#'   thread reply starts from the thread's own history, and every
+#'   message is the bot's to answer.
 #' @param cwd Character or NULL. The directory a room works in when its
 #'   topic names none, for this run. It must exist: corteza does not
 #'   create it, and the run stops at its start when this directory, or
@@ -3085,10 +3101,11 @@ bot_cwd_unavailable <- function(dir) {
 #'   deleted when the process ends.
 #'
 #' @section Hooks:
-#' corteza runs a conversation. What becomes of one once it ends, and
-#' where a thread's earlier context comes from, belong to the host that
-#' runs the bot over time (cerebro files segments and folds them into
-#' topic rooms). Two slots, both optional:
+#' corteza runs a conversation. What becomes of one once it ends, where
+#' a thread's earlier context comes from, and which rooms' messages the
+#' host answers itself, belong to the host that runs the bot over time
+#' (cerebro files segments and folds them into topic rooms). Three
+#' slots, all optional:
 #'
 #' \describe{
 #'   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
@@ -3107,6 +3124,23 @@ bot_cwd_unavailable <- function(dir) {
 #'     thread continues, or NULL when it continues nothing; \code{vault}
 #'     is the transcript's path, vault-relative or absolute. A result
 #'     seeds the session with the transcript's tail.}
+#'   \item{\code{on_message(chat, cfg, room_id, message, session,
+#'     backfill)}}{The host's first refusal on each message from someone
+#'     else, for a host that answers some rooms itself. Called once per
+#'     event, after remote control and delegation take theirs and before
+#'     anything else: the read receipt, the media step, the reply rules,
+#'     commands and the turn. \code{message} is the transport's
+#'     \code{chat_message} as received, \code{raw} included;
+#'     \code{session} is the room's or the thread's session, where the
+#'     host may keep state of its own. Returns \code{list(handled = TRUE)}
+#'     when the host took the message: corteza marks it seen and does
+#'     nothing more with it, not even a read receipt, and from then on
+#'     records none of the bot's own messages in that room. Anything
+#'     else, or an error, which is reported, and the message goes on as
+#'     if there were no hook. In a restart's backfill \code{backfill} is
+#'     TRUE: the hook answers from the room's own state and drives
+#'     nothing, and a message it takes stays out of the session's
+#'     history.}
 #' }
 #'
 #' @return A list holding the session registry, startup session handle,
@@ -3166,7 +3200,8 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
                     system = system, model = model,
                     provider = provider,
                     tools_filter = tools_filter,
-                    thread_context = hooks$thread_context),
+                    thread_context = hooks$thread_context,
+                    on_message = hooks$on_message),
                                 error = function(e) {
                 message("bot_run: backfill failed: ", conditionMessage(e))
                 0L

@@ -1,3 +1,48 @@
+# corteza 0.8.0.11
+
+- **Every tool has a class, and approvals follow it.** A tool reads,
+  writes, runs code (`exec`), acts on the session's own work
+  (`control`), or runs work in a child, a worker or another room
+  (`continue`).
+  `skill_spec()` and `register_skill_from_fn()` take `class`, and a
+  `skill_packages` entry takes one for all its functions. A tool that
+  names none is `unknown` and asks: a skill, or a package tool whose
+  entry names no class, used to run unasked.
+- **Changed default: `send_room_file` asks**, as any write does. A
+  person answers by reaction, or the monitor where `auto_approve_asks`
+  is on. `"permissions": {"send_room_file": "allow"}` in the user's
+  config lets it send unasked.
+- Plan mode refuses `write`, `exec`, `continue` and `unknown` tools,
+  among them `query_subagent`, `delegate`, `job_resume` and
+  `harness_note`, and a write under a credential path, which used to
+  ask.
+- A read or write under a credential path asks each time. No saved
+  "always" answers it, and its prompt offers none.
+- `base::file.copy`, `base::file.remove`, `base::dir.create` and `cmd`
+  ask, as `write_file` does. For a tool corteza did not write, every
+  string argument counts as a path.
+- A `permissions` entry replaces its tool's verdict, unless that
+  verdict refuses: nothing in the config lifts a refusal. Taking a tool
+  off `dangerous_tools` no longer stops it asking; a `permissions`
+  entry does.
+- In a room, `harness_note` and a tool with no class go to a person,
+  never to the monitor.
+
+# corteza 0.8.0.10
+
+- **A host can take a room's messages for itself.** `bot_run_init()`
+  takes a third hook, `on_message(chat, cfg, room_id, message, session,
+  backfill)`, offered each message from someone else before the loop
+  does anything else with it. When it returns `list(handled = TRUE)`,
+  corteza marks the message seen and does nothing more: no turn, no
+  history entry, no read receipt. Anything else, an error included,
+  takes the normal path.
+- Once a host has taken a message in a room, the bot's own messages
+  there are recorded nowhere for the life of the process, so the
+  host's posts do not fill a history no turn reads.
+- A restart's backfill offers each message it would record with
+  `backfill = TRUE`.
+
 # corteza 0.8.0.9
 
 - **A picture sent to a bot's room is kept where its tools can read it.**

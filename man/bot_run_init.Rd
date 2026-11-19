@@ -23,8 +23,9 @@ bot_run_init(
 
 \item{hooks}{Named list of functions or NULL. Policy the loop asks
 the host about; see Hooks. NULL, the default, means a bare bot:
-\code{/clear} archives and resets without filing anything, and a
-thread reply starts from the thread's own history.}
+\code{/clear} archives and resets without filing anything, a
+thread reply starts from the thread's own history, and every
+message is the bot's to answer.}
 
 \item{cwd}{Character or NULL. The directory a room works in when its
 topic names none, for this run. It must exist: corteza does not
@@ -59,10 +60,11 @@ call \code{\link{bot_run}}, which wraps both.
 
 }
 \section{Hooks}{
-corteza runs a conversation. What becomes of one once it ends, and
-where a thread's earlier context comes from, belong to the host that
-runs the bot over time (cerebro files segments and folds them into
-topic rooms). Two slots, both optional:
+corteza runs a conversation. What becomes of one once it ends, where
+a thread's earlier context comes from, and which rooms' messages the
+host answers itself, belong to the host that runs the bot over time
+(cerebro files segments and folds them into topic rooms). Three
+slots, all optional:
 
 \describe{
   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
@@ -81,6 +83,23 @@ topic rooms). Two slots, both optional:
     thread continues, or NULL when it continues nothing; \code{vault}
     is the transcript's path, vault-relative or absolute. A result
     seeds the session with the transcript's tail.}
+  \item{\code{on_message(chat, cfg, room_id, message, session,
+    backfill)}}{The host's first refusal on each message from someone
+    else, for a host that answers some rooms itself. Called once per
+    event, after remote control and delegation take theirs and before
+    anything else: the read receipt, the media step, the reply rules,
+    commands and the turn. \code{message} is the transport's
+    \code{chat_message} as received, \code{raw} included;
+    \code{session} is the room's or the thread's session, where the
+    host may keep state of its own. Returns \code{list(handled = TRUE)}
+    when the host took the message: corteza marks it seen and does
+    nothing more with it, not even a read receipt, and from then on
+    records none of the bot's own messages in that room. Anything
+    else, or an error, which is reported, and the message goes on as
+    if there were no hook. In a restart's backfill \code{backfill} is
+    TRUE: the hook answers from the room's own state and drives
+    nothing, and a message it takes stays out of the session's
+    history.}
 }
 
 }
