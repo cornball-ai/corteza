@@ -495,7 +495,7 @@ expect_null(entries[[3L]]$typed)
 # the prompt, and the reviewer reads what the person typed. In an /auto
 # run the driver writes the prompt, and the run's goal is what was typed.
 local({
-    loop <- function(lines, run_id = NULL, goal = NULL) {
+    loop <- function(lines, run_id = NULL, typed = NULL) {
         disk <- ns$session_new("ollama", "llama3.2", proj)
         ctx <- new.env(parent = emptyenv())
         ctx$ws_enabled <- FALSE
@@ -524,7 +524,7 @@ local({
         ctx$session$tasks <- list()
         ctx$session$tasks_dirty <- FALSE
         ctx$session$auto_run_id <- run_id
-        ctx$session$auto_goal <- goal
+        ctx$session$auto_typed <- typed
         ctx$disk_session <- list(session = disk, sessionId = disk$sessionId,
                                  resumed = FALSE)
         ctx$render_reply <- function(txt) invisible(NULL)
@@ -543,11 +543,19 @@ local({
     expect_identical(ns$review_conversation(out$id)$lines,
                      c("Person: explain this [sent with R or shell output, not shown]",
                        "Worker: ok", "Person: plain words"))
-    out <- loop("Work toward the goal.", run_id = "run-1", goal = "tidy the tests")
+    out <- loop("Work toward the goal.", run_id = "run-1", typed = "tidy the tests")
     e <- ns$transcript_load(out$id)[[1L]]
     expect_identical(e$auto_run_id, "run-1")
     expect_identical(e$staged, TRUE)
     expect_identical(e$typed, "tidy the tests")
+    # A bare /auto: the person typed nothing after it, and the goal
+    # corteza wrote is not theirs.
+    out <- loop("Continue the current task in this conversation.",
+                run_id = "run-2", typed = "")
+    e <- ns$transcript_load(out$id)[[1L]]
+    expect_identical(e$staged, TRUE)
+    expect_identical(e$typed, "")
+    expect_identical(ns$review_conversation(out$id)$lines, "Person: /auto")
 })
 
 # chat()'s prompt.

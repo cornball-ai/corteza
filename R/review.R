@@ -213,9 +213,10 @@ review_question <- function(session, call, decision, notes, conversation) {
 # is not shown. A prompt is shown as the person typed it, and the
 # transcript says how each was sent (`staged`, `typed`): one sent with
 # staged R or shell output shows what was typed and says output came
-# with it, and an /auto run shows its goal once, as "/auto <goal>", and
-# its replies, but not the driver's prompts. A task list is the model's
-# own, and is not shown.
+# with it. An /auto run shows once what the person typed to start it, as
+# "/auto <goal>" or a bare "/auto", and then its replies; not the
+# driver's prompts, nor a goal corteza wrote for a bare /auto. A task
+# list is the model's own, and is not shown.
 #
 # Returns list(lines, why). `why` says why the reviewer cannot judge the
 # call, and is NULL when it can. It cannot when the conversation cannot

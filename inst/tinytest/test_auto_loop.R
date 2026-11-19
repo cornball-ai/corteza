@@ -127,7 +127,7 @@ expect_true(all(vapply(prompts, function(e) {
 }, logical(1))))
 expect_identical(corteza:::review_conversation(ctx$disk_session$session$sessionId)$lines,
                  "Person: /auto do a thing")
-expect_null(ctx$session$auto_goal)
+expect_null(ctx$session$auto_typed)
 
 # ---- stops when the monitor says stop ----
 
@@ -744,6 +744,16 @@ expect_true(any(grepl("Continue the current task", out)))
 expect_true(any(grepl("Auto is off. Last run:", out, fixed = TRUE)))
 expect_true(isTRUE(ctx$last_auto_request$allow_exec))
 expect_null(ctx$session$auto_config)
+# The transcript keeps what the person typed to start each run, not the
+# goal corteza wrote for the bare one, and the reviewer reads that.
+rec <- corteza:::transcript_load_strict(ctx$disk_session$session$sessionId)
+started <- Filter(function(e) identical(e$role, "user"), rec$entries)
+expect_identical(vapply(started, function(e) {
+    if (is.character(e$typed)) e$typed else NA_character_
+}, character(1)), c("", "resume"))
+expect_identical(corteza:::review_conversation(ctx$disk_session$session$sessionId)$lines,
+                 c("Person: /auto", "Worker: working", "Person: /auto resume"))
+expect_null(ctx$session$auto_typed)
 
 # An unrecovered cutoff stops before the monitor can mistake it for progress.
 reset_wt()

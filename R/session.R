@@ -745,9 +745,10 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #'   whether anything was sent with it, `staged` FALSE when the content
 #'   is what was typed, and TRUE with `typed` beside the whole content
 #'   when it is not: R or shell output staged with the prompt, or an
-#'   /auto run's driver text around its goal. NULL writes neither field,
-#'   as every entry before 0.8.1 has neither. The reviewer
-#'   (R/review.R) reads them.
+#'   /auto run's prompt, which its driver writes, beside what the person
+#'   typed after /auto (maybe nothing). NULL writes neither field, as
+#'   every entry before 0.8.1 has neither. The reviewer (R/review.R)
+#'   reads them.
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,

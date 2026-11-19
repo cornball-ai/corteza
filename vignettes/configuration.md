@@ -755,8 +755,9 @@ instructions. It is not shown these:
 
 - a compaction's summary, which the agent wrote;
 - output you staged with `/r` or `!`;
-- an `/auto` run's prompts, which its driver wrote. It sees the goal
-  you gave the run, and the run's replies;
+- an `/auto` run's prompts, which its driver wrote, and the goal
+  corteza writes for a bare `/auto`. It sees what you typed to start
+  the run, and the run's replies;
 - the agent's task list.
 
 An approval runs the call and prints a dim line saying so. A refusal

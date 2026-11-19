@@ -972,11 +972,11 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         # otherwise, so attended messages keep their exact format while
         # a run's worker conversation partitions cleanly from disk --
         # including two runs with the same goal in one session. In a run
-        # the driver writes the prompt, and what the person typed is the
-        # run's goal.
+        # the driver writes the prompt, and what the person typed is what
+        # started the run.
         person_typed <- typed
         if (!is.null(ctx$session$auto_run_id)) {
-            person_typed <- ctx$session$auto_goal
+            person_typed <- ctx$session$auto_typed
         }
         transcript_append(ctx$disk_session$session, "user", prompt,
                           auto_run_id = ctx$session$auto_run_id,
