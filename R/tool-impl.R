@@ -612,6 +612,10 @@ tool_replace_in_file <- function(path, old_text, new_text, all = FALSE,
 
 #' Search file contents with regex pattern.
 #'
+#' Search the files the glob `file_pattern` matches in `path` (no
+#' recursion) for a regex. Skips binary files and files over 10 MB;
+#' stops at 500 matches or 20 s and says so.
+#'
 #' @param pattern (character) Regex pattern to search.
 #' @param path (character) Directory to search.
 #' @param file_pattern (character) File glob pattern.
@@ -638,25 +642,119 @@ tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
         return(ok("No files to search"))
     }
 
+    # A search reads text. A binary file or a very large one (a model's
+    # weights, a video) took longer to read than the tool may run, and
+    # grep() warned once for each of its lines; the search passes them
+    # by, and stops at a number of matches and at a time.
+    limits <- .grep_limits
+    started <- Sys.time()
+    skipped <- c(binary = 0L, large = 0L, unreadable = 0L)
     results <- character()
-    for (f in files) {
-        lines <- tryCatch(readLines(f, warn = FALSE), error = function(e) NULL)
-        if (is.null(lines)) {
+    stopped <- ""
+    for (k in seq_along(files)) {
+        f <- files[[k]]
+        spent <- as.numeric(difftime(Sys.time(), started, units = "secs"))
+        if (spent >= limits$seconds) {
+            stopped <- sprintf("Stopped after %d s, %d files not searched.",
+                               limits$seconds, length(files) - k + 1L)
+            break
+        }
+        kind <- .grep_file_kind(f, limits$file_bytes)
+        if (!identical(kind, "text")) {
+            skipped[[kind]] <- skipped[[kind]] + 1L
             next
         }
-
-        hits <- grep(pattern, lines)
-        if (length(hits) > 0) {
-            for (i in hits) {
-                results <- c(results, sprintf("%s:%d: %s", f, i, lines[i]))
-            }
+        lines <- tryCatch(readLines(f, warn = FALSE), error = function(e) NULL)
+        if (is.null(lines)) {
+            skipped[["unreadable"]] <- skipped[["unreadable"]] + 1L
+            next
+        }
+        hits <- .grep_lines(pattern, lines)
+        room <- limits$matches - length(results)
+        if (length(hits) > room) {
+            hits <- hits[seq_len(room)]
+            stopped <- sprintf("Stopped at %d matches.", limits$matches)
+        }
+        results <- c(results, sprintf("%s:%d: %s", f, hits,
+                                      .grep_shown(lines[hits], limits$line_chars)))
+        if (nzchar(stopped)) {
+            break
         }
     }
 
+    notes <- c(.grep_skipped_note(skipped, limits$file_bytes), stopped)
+    notes <- notes[nzchar(notes)]
     if (length(results) == 0) {
-        return(ok("No matches found"))
+        return(ok(paste(c("No matches found", notes), collapse = "\n")))
     }
-    ok(paste(results, collapse = "\n"))
+    ok(paste(c(results, notes), collapse = "\n"))
+}
+
+# What grep_files() reads: files up to `file_bytes`, `matches` matching
+# lines in all, each cut to `line_chars`, for up to `seconds`.
+.grep_limits <- list(file_bytes = 10 * 1024 ^ 2, matches = 500L,
+                     line_chars = 500L, seconds = 20L)
+
+# "text", "binary" (a NUL byte in its first 8000, as git decides),
+# "large" or "unreadable".
+.grep_file_kind <- function(f, file_bytes) {
+    size <- file.size(f)
+    if (is.na(size)) {
+        return("unreadable")
+    }
+    if (size > file_bytes) {
+        return("large")
+    }
+    head <- tryCatch(readBin(f, "raw", 8000L), error = function(e) NULL)
+    if (is.null(head)) {
+        return("unreadable")
+    }
+    if (any(head == as.raw(0L))) {
+        return("binary")
+    }
+    "text"
+}
+
+# The lines that match. A line that is not UTF-8 (a Latin-1 file) is
+# matched by its bytes: grep() would warn for it and pass it by.
+.grep_lines <- function(pattern, lines) {
+    valid <- validUTF8(lines)
+    hits <- which(valid)[grep(pattern, lines[valid])]
+    if (!all(valid)) {
+        other <- which(!valid)
+        hits <- c(hits, other[grep(pattern, lines[other], useBytes = TRUE)])
+    }
+    sort(hits)
+}
+
+# The lines as the result shows them: UTF-8 (a line that is not is read
+# as Latin-1, the usual other encoding of a text file), each cut to
+# `line_chars` characters.
+.grep_shown <- function(lines, line_chars) {
+    other <- !validUTF8(lines)
+    lines[other] <- iconv(lines[other], from = "latin1", to = "UTF-8")
+    long <- nchar(lines) > line_chars
+    lines[long] <- paste0(substr(lines[long], 1L, line_chars), "...")
+    lines
+}
+
+.grep_skipped_note <- function(skipped, file_bytes) {
+    skipped <- skipped[skipped > 0L]
+    if (!length(skipped)) {
+        return("")
+    }
+    size <- sprintf("%d bytes", as.integer(file_bytes))
+    if (file_bytes >= 1024 ^ 2) {
+        size <- sprintf("%g MB", file_bytes / 1024 ^ 2)
+    }
+    what <- c(binary = "binary", large = paste("over", size),
+              unreadable = "unreadable")
+    noun <- "files"
+    if (sum(skipped) == 1L) {
+        noun <- "file"
+    }
+    sprintf("Skipped %d %s: %s.", sum(skipped), noun,
+            paste(skipped, what[names(skipped)], collapse = ", "))
 }
 
 # Code execution ----

@@ -77,6 +77,52 @@ skill_spec <- function(name, description, params = list(), handler,
 .timelimit_armed <- new.env(parent = emptyenv())
 .timelimit_armed$pending <- FALSE
 
+# A tool's warnings and messages, held while its time limit is armed.
+# R runs a calling handler with the handlers established inside it out
+# of reach, so a handler outside the tool (.agent_call()'s, a host's
+# suppressMessages()) runs where skill_run()'s tryCatch cannot catch.
+# A limit that fires there ends the turn instead of the tool, with the
+# call left open. R checks the limit only between R calls, never inside
+# readLines() or grep(), so a limit passed in a long one fires at the
+# next R code, and grep() over binary lines warns once a line. The
+# tool's conditions are held under a handler inside the tryCatch and
+# passed on once the limit is off, the first `max` of them.
+.held_conditions <- function(max = 100L) {
+    kept <- list()
+    dropped <- 0L
+    hold <- function(cond) {
+        if (length(kept) < max) {
+            kept[[length(kept) + 1L]] <<- cond
+        } else {
+            dropped <<- dropped + 1L
+        }
+    }
+    run <- function(expr) {
+        withCallingHandlers(expr, warning = function(w) {
+            hold(w)
+            invokeRestart("muffleWarning")
+        }, message = function(m) {
+            hold(m)
+            invokeRestart("muffleMessage")
+        })
+    }
+    release <- function(tool) {
+        for (cond in kept) {
+            if (inherits(cond, "warning")) {
+                warning(cond)
+            } else {
+                message(cond)
+            }
+        }
+        if (dropped > 0L) {
+            log_event("tool_conditions_dropped", tool = tool,
+                      conditions = dropped, level = "warn")
+        }
+        invisible(NULL)
+    }
+    list(run = run, release = release)
+}
+
 #' Executes a skill's handler with validation and optional timeout.
 #' Logs tool calls and results for observability.
 #'
@@ -136,6 +182,7 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
     use_time_limit <- !is.null(timeout) && timeout > 0 &&
     !(skill$name %in% .self_bounded_tools)
     if (use_time_limit) {
+        held <- .held_conditions()
         result <- tryCatch({
             setTimeLimit(cpu = timeout, elapsed = timeout, transient = TRUE)
             # Mark before the handler runs so the flag survives an interrupt;
@@ -143,8 +190,11 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
             # call flushes any interrupt this one may have left queued.
             .timelimit_armed$pending <- TRUE
             on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE))
-            skill$handler(args, ctx)
+            value <- held$run(skill$handler(args, ctx))
+            setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)
+            value
         }, error = function(e) {
+            setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)
             if (grepl("time limit|elapsed time", e$message,
                       ignore.case = TRUE)) {
                 log_error(sprintf("Skill timed out after %s seconds", timeout),
@@ -156,6 +206,7 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
                 err(paste("Skill error:", e$message))
             }
         })
+        held$release(skill$name)
     } else {
         result <- tryCatch(
                            skill$handler(args, ctx),
