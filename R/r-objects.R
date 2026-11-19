@@ -41,14 +41,10 @@ r_objects_owned <- function(session) {
     (session$channel %||% "") %in% c("cli", "console")
 }
 
-# One object: its name, class, dimensions or length, and size.
+# One object: its name, class, shape (r_object_shape()) and size. An
+# environment has no size: object.size() does not count what it holds.
 r_object_line <- function(name, value) {
-    parts <- paste(class(value), collapse = "/")
-    if (!is.null(dim(value))) {
-        parts <- c(parts, paste(dim(value), collapse = " x "))
-    } else if (!is.environment(value) && !is.function(value)) {
-        parts <- c(parts, sprintf("length %d", length(value)))
-    }
+    parts <- c(paste(class(value), collapse = "/"), r_object_shape(value))
     if (!is.environment(value)) {
         parts <- c(parts, format(utils::object.size(value), units = "auto",
                                  standard = "SI"))
@@ -56,10 +52,42 @@ r_object_line <- function(name, value) {
     paste0("- ", name, ": ", paste(parts, collapse = ", "))
 }
 
-# An object's line, or a note that it could not be read.
+# An object's shape, read from its attributes and its storage, never
+# from dim() or length(): both are generics, and a class's method may
+# run a query or read a file. A data frame's rows and columns, an
+# array's dimensions or a vector's length; NULL for anything else. A
+# list with a class has no length here, since its storage need not say
+# how many items the class holds (a POSIXlt date is a list of 11), and
+# neither has an S4 object.
+r_object_shape <- function(value) {
+    if (isS4(value)) {
+        return(NULL)
+    }
+    if (is.list(value) && inherits(value, "data.frame")) {
+        return(sprintf("%s x %s", .row_names_info(value, 2L),
+                       length(unclass(value))))
+    }
+    d <- attr(value, "dim", exact = TRUE)
+    if (!is.null(d)) {
+        return(paste(d, collapse = " x "))
+    }
+    if (is.atomic(value) || (is.list(value) && is.null(oldClass(value)))) {
+        return(paste("length", format(length(unclass(value)),
+                                      scientific = FALSE)))
+    }
+    NULL
+}
+
+# An object's line, or a note that it could not be read. An active
+# binding is named and not read, since reading one runs its function.
 r_object_entry <- function(name, envir) {
-    tryCatch(r_object_line(name, get(name, envir = envir, inherits = FALSE)),
-             error = function(e) paste0("- ", name, ": (could not be read)"))
+    tryCatch({
+        if (bindingIsActive(name, envir)) {
+            paste0("- ", name, ": an active binding, not read")
+        } else {
+            r_object_line(name, get(name, envir = envir, inherits = FALSE))
+        }
+    }, error = function(e) paste0("- ", name, ": (could not be read)"))
 }
 
 # The list a compaction's summary ends with, or "" when there is nothing

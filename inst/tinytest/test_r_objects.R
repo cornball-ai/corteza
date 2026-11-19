@@ -36,6 +36,43 @@ local({
     # Sorted by name, so the list reads the same each time.
     expect_identical(sub(":.*", "", lines[-1]), c("- df", "- e", "- f", "- x"))
 
+    # ---- Nothing of an object's own code runs ------------------------------------
+    # An active binding is named, not read. A shape comes from attributes
+    # and storage, so a class's dim() and length() methods are not called.
+    # A list with a class has no length, and a vector with one keeps its
+    # own.
+    ran <- character()
+    methods_made <- c("dim.wp25probe", "length.wp25probe")
+    on.exit(suppressWarnings(rm(list = methods_made, envir = globalenv())),
+            add = TRUE)
+    assign("dim.wp25probe", function(x) {
+        ran <<- c(ran, "dim")
+        c(9L, 9L)
+    }, envir = globalenv())
+    assign("length.wp25probe", function(x) {
+        ran <<- c(ran, "length")
+        99L
+    }, envir = globalenv())
+    own <- new.env()
+    makeActiveBinding("act", function() {
+        ran <<- c(ran, "active")
+        1
+    }, own)
+    own$vec <- structure(1:4, class = "wp25probe")
+    own$rec <- structure(list(1, 2), class = "wp25probe")
+    own$when <- as.POSIXlt("2026-01-01", tz = "UTC")
+    own$m <- matrix(1:6, 2L)
+    lines <- strsplit(ns$r_objects_note(session(), envir = own), "\n")[[1]]
+    expect_identical(ran, character())
+    expect_true("- act: an active binding, not read" %in% lines)
+    expect_true(any(grepl("^- vec: wp25probe, length 4, [0-9.]+ [kM]?B$", lines)))
+    expect_true(any(grepl("^- rec: wp25probe, [0-9.]+ [kM]?B$", lines)))
+    expect_true(any(grepl("^- when: POSIXlt/POSIXt, [0-9.]+ [kM]?B$", lines)))
+    expect_true(any(grepl("^- m: matrix/array, 2 x 3, [0-9.]+ [kM]?B$", lines)))
+    # The probe's methods do run when called, so the test above can fail.
+    expect_identical(dim(own$vec), c(9L, 9L))
+    expect_identical(ran, "dim")
+
     # ---- Whose objects --------------------------------------------------------
     # The terminal, chat() and a child own theirs. A room shares the bot's
     # global environment, and run_r in a worker keeps its objects there.
