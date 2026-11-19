@@ -1,3 +1,11 @@
+# corteza 0.8.0.16
+
+- `/help` lists every command. The terminal's had left out `/q`,
+  `/reset` and `/new` (the same as `/quit` and `/clear`), `/refine`,
+  `/job resume` and `/skills`, and `chat()`'s had left out `/skills`.
+  corteza keeps a table of the commands of each surface, and a test
+  holds both help texts and the dispatchers to it.
+
 # corteza 0.8.0.15
 
 - **Changed default: no package functions are registered as tools
