@@ -250,13 +250,16 @@ person ends it. The monitor runs no job and has neither.
 ## A worker follows its conversation (`R/job-conversation.R`)
 
 A conversation's id is `session_conversation()`: the session id at the
-terminal; a room has none yet. Each job's spec and origin carry it. A
-warm worker holds the conversation it built its session for
-(`.job_worker_state$conversation`); a job from another one rebuilds the
-session in the same process (`.job_worker_child_session()`: config,
-trust, prompt, tools, callbacks) with an empty history, and leaves the
-R objects. A checkpoint records its conversation, and a restore takes
-the history only from its own conversation's checkpoint.
+terminal, and for a room or a thread the id in its record (below). Each
+job's spec and origin carry it. A warm worker holds the conversation it
+built its session for (`.job_worker_state$conversation`); a job from
+another one rebuilds the session in the same process
+(`.job_worker_child_session()`: config, trust, prompt, tools,
+callbacks) with an empty history, and leaves the R objects. A
+checkpoint records its conversation, and a restore takes the history
+only from its own conversation's checkpoint: one from before 0.8.1
+names none and gives its R objects only, except to a session with no
+conversation of its own.
 
 A surface's `/clear` gives the session its new id and calls
 `job_conversation_clear()`, and touches no worker or checkpoint itself.
@@ -268,6 +271,22 @@ by `job_pump()` once it settles (`.job_starts`). A job in flight
 finishes under the conversation that asked for it, and the terminal
 sends its result to that conversation's transcript, not to the new
 talker's history.
+
+A room or a thread keeps its record in the bot's room-state file
+(`R/room-conversation.R`, `<state>/rooms/`, one file per room and bot):
+an id, the `/clear` that started the conversation (`since`, `at`) and
+the bot's answer to it (`ack`). `bot_get_or_create_session()` takes the
+record, or makes one, so a restart goes on with the conversation. The
+`/clear` command hands the old session to `bot_reset_session()`, which
+makes the new record, clears the old context, moves the jobs and worker
+to the replacement (the authority cache stays behind, which freezes an
+old job's record) and calls `job_conversation_clear()`. A room keeps
+one checkpoint for each session key, so its clear writes none. A result
+after a clear is posted marked as asked before it and goes into the new
+history, since a restart seeds the timeline from there. The backfill
+seeds nothing from before a conversation's start
+(`bot_conversation_before()`), each thread by its own record. Retention
+never removes the file.
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 

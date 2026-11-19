@@ -424,8 +424,11 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 # `workspace` is the environment the worker's run_r code evaluates in, which
 # in a worker process is that process's global environment. The R objects
 # come back whenever the identity matches; the history only when the
-# checkpoint was saved in `conversation`, or names none (one written
-# before checkpoints recorded it).
+# checkpoint was saved in `conversation`. A room keeps one checkpoint
+# for all its conversations, so one that names none (written before
+# checkpoints recorded it) could hold a history a /clear ended, and
+# gives its R objects only. A session with no conversation of its own
+# reads one that names none.
 .job_worker_child_restore <- function(state_dir, identity,
                                       workspace = globalenv(),
                                       conversation = NULL) {
@@ -452,8 +455,7 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                                        try(library(pkg, character.only = TRUE), silent = TRUE))
     }
     history_path <- file.path(state_dir, "history.rds")
-    same <- is.null(info$conversation) ||
-    identical(info$conversation, conversation)
+    same <- identical(info$conversation, conversation)
     history <- same && !is.null(.subagent_state$session) &&
     file.exists(history_path)
     if (history) {

@@ -2004,26 +2004,40 @@ bot_new_session_registry <- function() {
 # among already archived ones.
 bot_reset_session <- function(registry, key, cfg, sent_id, ack,
                               system = NULL, model = NULL, provider = NULL,
-                              tools_filter = NULL, room_id = key) {
+                              tools_filter = NULL, room_id = key,
+                              start = NULL) {
     old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
         old <- get(key, envir = registry)
         .context_room_clear(old)
         rm(list = key, envir = registry)
     }
+    # A new conversation, recorded before the session that holds it:
+    # `start` is the /clear message and `sent_id` the answer to it
+    # (R/room-conversation.R). The session takes the record in hand, so
+    # one that could not be saved still starts a new conversation.
+    conversation <- bot_conversation_new(start, ack = sent_id)
+    bot_conversation_save(cfg, key, room_id, conversation)
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
                                    tools_filter = tools_filter,
-                                   room_id = room_id)
+                                   room_id = room_id,
+                                   conversation = conversation)
     # The room's jobs outlive its conversation. A job running when the
     # session is replaced is pumped by whichever session holds the
     # registry key, so the worker handles and the job in flight move to
     # the replacement; left on the discarded session, the job would never
-    # be settled and its worker would run on unowned.
+    # be settled and its worker would run on unowned. The job keeps the
+    # conversation it was asked in, and its authority record stays as
+    # that conversation left it: the cache that writes it does not move.
     if (is.environment(old)) {
         job_state_move(old, s)
         s$context_edit <- old$context_edit
     }
+    # The clear every surface makes (R/job-conversation.R). A room keeps
+    # one checkpoint for each session key, which records the conversation
+    # it was saved in, so nothing is written for it here.
+    job_conversation_clear(s, conversation$id)
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -2034,7 +2048,8 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
 
 bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
                                       model = NULL, provider = NULL,
-                                      tools_filter = NULL, room_id = key) {
+                                      tools_filter = NULL, room_id = key,
+                                      conversation = NULL) {
     if (exists(key, envir = registry, inherits = FALSE)) {
         return(get(key, envir = registry))
     }
@@ -2049,6 +2064,13 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # The session key is the job key: a thread's jobs belong to the
     # thread's session, and their results come back to it.
     s$job_key <- key
+    # The conversation it holds (R/room-conversation.R): the one on
+    # record, so a restart goes on with it, unless /clear hands in a new
+    # one.
+    if (is.null(conversation)) {
+        conversation <- bot_conversation_open(cfg, key, room_id)
+    }
+    bot_conversation_attach(s, conversation)
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
@@ -2582,9 +2604,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 }
                 )
             }
-            if (exists(skey, envir = sessions, inherits = FALSE)) {
-                rm(list = skey, envir = sessions)
-            }
+            # The session stays in the registry until bot_reset_session()
+            # takes it: the helper clears its context, moves its jobs and
+            # worker to the replacement, and finds nothing to do with a
+            # session already gone.
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
             cfg <- bot_update_displayname(cfg, model = model, chat = chat,
@@ -2602,7 +2625,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                               system = system, model = model,
                               provider = provider,
                               tools_filter = tools_filter,
-                              room_id = m$channel)
+                              room_id = m$channel, start = m)
             replied <- replied + 1L
             next
         }
@@ -2793,7 +2816,10 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         )
         multi_human <- length(human_senders) > 1L
         added <- 0L
-        for (m in msgs) {
+        ids <- vapply(msgs, function(m) as.character(m$id %||% ""),
+                      character(1))
+        for (i in seq_along(msgs)) {
+            m <- msgs[[i]]
             # Only ordinary messages carry a turn. chat_history() has
             # already dropped the msgtypes the contract has no word for,
             # so this is the notice/emote filter and nothing else.
@@ -2817,6 +2843,11 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                 room_id = rid
             )
             if (m$id %in% session$seen_event_ids) {
+                next
+            }
+            # From a conversation a /clear ended: its session began after
+            # it (R/room-conversation.R). Each thread by its own record.
+            if (bot_conversation_before(session, ids, i, m$ts)) {
                 next
             }
             # The host's first refusal, as on the live path. It answers
