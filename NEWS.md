@@ -1,3 +1,10 @@
+# corteza 0.8.0.17
+
+- A room's trust messages go out as Markdown, with what a session left
+  alone as a list: the notice a room gets once, the `/trust` reply and
+  the trust lines of `status`. A client that renders Markdown had run
+  the indented items together. The terminal and `chat()` are unchanged.
+
 # corteza 0.8.0.16
 
 - `/help` lists every command. The terminal's had left out `/q`,
