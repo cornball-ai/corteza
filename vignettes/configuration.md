@@ -834,7 +834,7 @@ or a value that is not one non-negative number, turns retention off.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `skill_paths` | string[] | `[]` | Legacy executable/file-skill configuration |
-| `skill_packages` | object[] | `[{"package":"base", ..., "class":"read"}, {"package":"base", ..., "class":"write"}, {"package":"utils", ..., "class":"read"}]` | R packages registered as tools. An entry's `class` applies to all its functions; an entry without one leaves them asking |
+| `skill_packages` | object[] | `[]` | R package functions registered as tools, as in `[{"package": "utils", "functions": ["head"], "class": "read"}]`. An entry's `class` applies to all its functions; an entry without one leaves them asking. Up to 0.8.0 the default registered 8 functions of base and utils |
 | `skill_timeout` | number | `30` | Default skill execution timeout (seconds) |
 | `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
