@@ -222,9 +222,14 @@ When a run stops, auto mode is off. Ordinary messages do not restart it.
 The `auto` block of `config.json` sets a run's bounds and its monitor. The
 first of these limits to be reached stops the run.
 
+The iteration limit is the exception. `/auto --loops N` stops after N
+iterations. `/auto` without `--loops` runs with no iteration limit, whatever
+`max_loops` says, and the other limits stop it. `/auto resume` keeps the
+count of the run it resumes. One iteration can run many model turns.
+
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `max_loops` | 10 | Iterations. One iteration can run many model turns |
+| `max_loops` | 10 | Iterations, for a run that sets no count of its own. `/auto` always sets one or runs without, so it does not read this |
 | `max_tool_calls` | 300 | Tool calls, the bound that holds whatever a turn does |
 | `max_minutes` | 30 | Minutes since the run started |
 | `max_cost` | 5 | Dollars spent. Skipped where the provider reports no price, as on a subscription, and `max_tokens` holds instead |
