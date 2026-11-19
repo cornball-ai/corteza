@@ -748,21 +748,32 @@ the monitor and the tool policy above are also there for.
 At the terminal and in `chat()`, `"approval_mode": "review"` gives a
 session the same three steps for each call that would prompt. The
 monitor there is called the reviewer. It rules on reads, writes and
-commands that the rules leave open, and it reads the conversation to
-judge them: your first message, and since then your messages and the
-agent's latest replies. Only your words are taken as instructions; the
-agent's task list is not shown. An approval runs the call and prints a
-dim line saying so. A refusal goes back to the agent with its reason.
-A call it passes on prompts you with its reason. These still prompt
-without it:
+commands that the rules leave open. It reads the conversation to judge
+them, from the session's transcript: every message you sent, whole,
+each after the end of the reply it answers. Only your words are taken
+as instructions. It is not shown these:
+
+- a compaction's summary, which the agent wrote;
+- output you staged with `/r` or `!`;
+- the agent's task list.
+
+An approval runs the call and prints a dim line saying so. A refusal
+goes back to the agent with its reason. A call it passes on prompts you
+with its reason. These still prompt without it:
 
 - a call the rules flag;
 - a tool with no class;
-- a credential path.
+- a credential path;
+- any call while the conversation runs past 100,000 characters, or
+  has no transcript: the reviewer judges only what it can read whole.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by
-`supervisor.timeout_sec`, passes the call to you.
+`supervisor.timeout_sec`, passes the call to you. Interrupting a turn
+while the reviewer works cancels its request, and the next call is
+asked afresh. "review" changes only what would prompt: a call that
+policy allows runs, as under "ask". In a room the rules read every
+call, allowed ones included.
 
 `/permissions review` turns it on for the session and `/permissions ask`
 turns it off. Your config can turn it on for every session. A project's

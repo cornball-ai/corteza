@@ -973,7 +973,8 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         # a run's worker conversation partitions cleanly from disk --
         # including two runs with the same goal in one session.
         transcript_append(ctx$disk_session$session, "user", prompt,
-                          auto_run_id = ctx$session$auto_run_id)
+                          auto_run_id = ctx$session$auto_run_id,
+                          typed = typed)
         # The first prompt names the conversation in lists: what the
         # person typed, without the R context sent along with it.
         if (!is.null(ctx$disk_session$session)) {

@@ -741,11 +741,15 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #'   run; NULL (the attended default) writes no field, so the attended
 #'   message format is unchanged. This is what lets two runs with the
 #'   same goal in one session be partitioned from the transcript alone.
+#' @param typed For a prompt sent with staged R or shell output, what the
+#'   person typed, kept as `typed` beside the whole `content`; the
+#'   reviewer (R/review.R) reads it. NULL, or the content itself, writes
+#'   no field.
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
                               agent_id = DEFAULT_AGENT_ID,
-                              auto_run_id = NULL, audit = NULL) {
+                              auto_run_id = NULL, audit = NULL, typed = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -761,6 +765,9 @@ transcript_append <- function(session, role, content, provider = NULL,
     )
     if (!is.null(auto_run_id)) {
         msg$auto_run_id <- auto_run_id
+    }
+    if (!is.null(typed) && !identical(typed, content)) {
+        msg$typed <- typed
     }
 
     if (role == "assistant") {

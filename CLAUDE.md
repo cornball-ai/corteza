@@ -190,12 +190,18 @@ time is invisible to it.
 `review_gate()` on `session$auto_gate`, the room's monitor process as
 the reviewer, and the prompt for what it passes on. It rules on read,
 write and exec calls only, and never on one the person allowed always
-(the callback's `answered` attribute). It is shown the conversation
-(`review_conversation()`): the person's lines instruct, the model's do
-not, and the task list is left out. `review_apply()` installs it when a
-loop starts and after `/permissions`, and leaves another gate (an
-`/auto` run's) alone. A project's config cannot set `"review"`
-(`load_config()`).
+(the callback's `answered` attribute). It reads the conversation from
+the transcript (`review_conversation()`), never from
+`session$history`: a compaction leaves its summary there as a user
+message, which would pass for the person's words. Every prompt goes in
+whole, each after the end of the reply it answers; a conversation too
+long to send whole, or with no transcript, goes to the person instead.
+Each request is its own scope, so the reviewer keeps nothing between
+calls. A wait cut short (an interrupt, an error) cancels the request
+(`review_cancel()`), which a room's monitor never does. `review_apply()`
+installs it when a loop starts and after `/permissions`, and leaves
+another gate (an `/auto` run's) alone. A project's config cannot set
+`"review"` (`load_config()`).
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 

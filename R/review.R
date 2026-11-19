@@ -17,8 +17,9 @@
 # The setting says what an "ask" becomes, and nothing more: a call
 # policy() allows runs, and one it refuses is refused, as under "ask".
 # Never the reviewer's: the credential rule's ask, a tool of class
-# unknown, whatever the rules flag, and a call the person already
-# allowed always, which their own answer settles.
+# unknown, whatever the rules flag, a call the person already allowed
+# always, which their own answer settles, and any call while the
+# conversation cannot be read whole (review_conversation()).
 #
 # A person turns it on for a session with `/permissions review`, or for
 # every session with "approval_mode": "review" in the user's config. A
@@ -56,7 +57,7 @@ review_apply <- function(session) {
     } else if (installed) {
         session$auto_gate <- NULL
         session$.review_gate <- NULL
-        job_monitor_close(session)
+        review_cancel(session)
     }
     invisible(review_mode(session))
 }
@@ -64,7 +65,7 @@ review_apply <- function(session) {
 # Close the reviewer's process, when the session that owns it ends.
 review_close <- function(session) {
     if (is.environment(session) && is.function(session$.review_gate)) {
-        job_monitor_close(session)
+        review_cancel(session)
     }
     invisible(TRUE)
 }
@@ -112,25 +113,34 @@ review_gate <- function(session, reviewer = review_ask) {
                                 error = function(e) FALSE))) {
                 return(list(action = "proceed", reason = ""))
             }
-            q <- review_question(session, call, decision, v$notes)
-            r <- tryCatch(reviewer(session, q), error = function(e) {
-                list(verdict = "escalate",
-                     reason = paste("the reviewer failed:", conditionMessage(e)))
-            })
-            verdict <- r$verdict %||% "escalate"
-            why <- .sanitize_inline(r$reason %||% "", max_chars = 300L)
-            if (!nzchar(why)) {
-                why <- "no reason given"
-            }
-            if (verdict %in% c("approve", "refuse")) {
-                review_record(session, call, verdict, why)
-                if (identical(verdict, "approve")) {
-                    return(list(action = "proceed", reason = why))
+            # A reviewer that cannot read the whole conversation does not
+            # judge the call: the person does.
+            conv <- review_conversation(session$sessionId)
+            if (is.null(conv$why)) {
+                q <- review_question(session, call, decision, v$notes,
+                                     conv$lines)
+                r <- tryCatch(reviewer(session, q), error = function(e) {
+                    list(verdict = "escalate",
+                         reason = paste("the reviewer failed:", conditionMessage(e)))
+                })
+                verdict <- r$verdict %||% "escalate"
+                why <- .sanitize_inline(r$reason %||% "", max_chars = 300L)
+                if (!nzchar(why)) {
+                    why <- "no reason given"
                 }
-                return(list(action = "refuse", reason = why))
+                if (verdict %in% c("approve", "refuse")) {
+                    review_record(session, call, verdict, why)
+                    if (identical(verdict, "approve")) {
+                        return(list(action = "proceed", reason = why))
+                    }
+                    return(list(action = "refuse", reason = why))
+                }
+                decision$gate_reason <- paste("The reviewer passed this to you:",
+                    why)
+            } else {
+                decision$gate_reason <- paste("The reviewer was not asked:",
+                    conv$why)
             }
-            decision$gate_reason <- paste("The reviewer passed this to you:",
-                why)
         } else if (length(v$flags)) {
             decision$gate_reason <- paste("The rules flagged it:",
                 paste(v$flags, collapse = "; "))
@@ -152,79 +162,132 @@ review_gate <- function(session, reviewer = review_ask) {
     }
 }
 
-# Ask the session's monitor process, and wait for its ruling.
+# Ask the session's monitor process, and wait for its ruling. A wait
+# that ends early, by an interrupt or an error, cancels the request
+# (review_cancel()), so the next call finds the reviewer free.
 review_ask <- function(session, q) {
-    job_monitor_ask_wait(session, q)
+    settled <- FALSE
+    on.exit(if (!settled) review_cancel(session), add = TRUE)
+    v <- job_monitor_ask_wait(session, q)
+    settled <- TRUE
+    v
+}
+
+# Stop what the reviewer was asked, and forget it. Its process is closed,
+# the one way to stop a model mid-answer, as job_monitor_poll() closes one
+# out of time; the next call starts another. A room's monitor keeps its
+# own lifecycle: the room's loop answers or escalates what it holds
+# (bot_monitor_answer()).
+review_cancel <- function(session) {
+    job_monitor_close(session)
+    session$.job_monitor_pending <- NULL
+    invisible(TRUE)
 }
 
 # The request the reviewer is sent (job_monitor_question() renders it):
-# the person's first message as the task; the conversation since, the
-# person's lines and the worker's, so that a "yes" comes with the
-# question it answers; and what the worker said with this call. Only the
-# person's words instruct. A task list the worker keeps is not shown: it
-# is the worker's own, and grants nothing.
-review_question <- function(session, call, decision, notes) {
-    conv <- review_conversation(session$history %||% list(),
-                                session$current_prompt)
+# the conversation (review_conversation()), what the worker said with
+# this call, and the call. Each request is a scope of its own, so the
+# reviewer starts each ruling from the request alone: the conversation
+# comes whole with every call, and kept, it would pile up a copy per
+# call. `earlier` says how the session's earlier calls were settled.
+review_question <- function(session, call, decision, notes, conversation) {
     session$.review_seq <- (session$.review_seq %||% 0L) + 1L
-    list(scope = paste0("turn:", session$.audit_turn$id %||% conv$people),
-         request_id = sprintf("r%06d", session$.review_seq),
-         goal = conv$task, since = conv$since,
-         narration = call$model_context$assistant_text,
-         tool = call$tool, args = job_approval_args(call$args),
-         reason = decision$reason, notes = notes,
-         earlier = review_earlier(session))
+    id <- sprintf("r%06d", session$.review_seq)
+    list(scope = paste0("review:", id), request_id = id,
+         conversation = conversation,
+         narration = call$model_context$assistant_text, tool = call$tool,
+         args = job_approval_args(call$args), reason = decision$reason,
+         notes = notes, earlier = review_earlier(session))
 }
 
-# The conversation as the reviewer reads it. `task` is the person's
-# first message. `since` is what followed, oldest first, a line each,
-# "Person: ..." or "Worker: ...": every one of the person's last
-# `max_person` messages, and anything among the last `max_recent`.
-# Text only: no tool calls, tool results or pictures. The turn's own
-# prompt is last, though the history llm.api builds holds it only once
-# the model has answered. `people` counts the person's messages.
-review_conversation <- function(history, prompt = NULL, max_person = 20L,
-                                max_recent = 12L, max_chars = 600L) {
-    who <- character()
-    text <- character()
-    for (m in history) {
-        speaker <- if (.context_edit_human(m)) {
-            "Person"
-        } else if (identical(m$role, "assistant")) {
-            "Worker"
+# The conversation as the reviewer reads it, from the session's
+# transcript (R/session.R), a line each, oldest first: every prompt of
+# the person's, whole, as "Person: ...", and before each the end of the
+# reply it follows, as "Worker: ...", so that a "yes" comes with its
+# question.
+#
+# The transcript is appended to and never rewritten. A compaction or a
+# context edit rewrites the history the model sees, and leaves a summary
+# there as a user message; read from there, the model's words could pass
+# for the person's, and the person's own could be gone. Here a summary
+# is not shown, nor an /auto run's prompts, which its driver wrote. A
+# prompt sent with staged R or shell output shows what was typed, and
+# says output came with it. A task list is the model's own, and is not
+# shown.
+#
+# Returns list(lines, why). `why` says why the reviewer cannot judge the
+# call, and is NULL when it can. Without a transcript it cannot, nor when
+# the conversation runs past `budget` characters: nothing is left out to
+# make it fit.
+review_conversation <- function(session_id, tail_chars = 800L,
+                                budget = 100000L) {
+    path <- NULL
+    if (is.character(session_id) && length(session_id) == 1L &&
+        !is.na(session_id) && nzchar(session_id)) {
+        path <- session_transcript_path(session_id)
+    }
+    if (is.null(path) || !file.exists(path)) {
+        return(list(lines = character(),
+                    why = "there is no transcript of the conversation to judge it by"))
+    }
+    entries <- tryCatch(transcript_load(session_id), error = function(e) NULL)
+    if (is.null(entries)) {
+        return(list(lines = character(),
+                    why = "the transcript of the conversation could not be read"))
+    }
+    lines <- character()
+    reply <- ""
+    for (e in entries) {
+        if (!is.null(e$auto_run_id)) {
+            next
+        }
+        if (identical(e$role, "assistant")) {
+            if (!identical(e$model, "compaction")) {
+                reply <- review_message_text(e)
+            }
+            next
+        }
+        if (!identical(e$role, "user")) {
+            next
+        }
+        staged <- is.character(e$typed) && length(e$typed) == 1L
+        if (staged) {
+            said <- e$typed
         } else {
-            ""
+            said <- review_message_text(e)
         }
-        if (nzchar(speaker)) {
-            said <- review_message_text(m)
-        } else {
-            said <- ""
+        said <- .sanitize_inline(said, max_chars = budget)
+        if (!nzchar(said)) {
+            next
         }
-        if (nzchar(trimws(said))) {
-            who <- c(who, speaker)
-            text <- c(text, said)
+        if (staged) {
+            said <- paste(said, "[sent with R or shell output, not shown]")
         }
+        if (nzchar(trimws(reply))) {
+            lines <- c(lines, paste("Worker:", review_tail(reply, tail_chars)))
+        }
+        reply <- ""
+        lines <- c(lines, paste("Person:", said))
     }
-    if (is.character(prompt) && length(prompt) == 1L && !is.na(prompt) &&
-        nzchar(trimws(prompt)) &&
-        !identical(utils::tail(text[who == "Person"], 1L), prompt)) {
-        who <- c(who, "Person")
-        text <- c(text, prompt)
+    if (!length(lines)) {
+        return(list(lines = character(),
+                    why = "the transcript holds no message of the person's"))
     }
-    text <- vapply(text, .sanitize_inline, character(1),
-                   max_chars = max_chars, USE.NAMES = FALSE)
-    first <- match("Person", who)
-    if (is.na(first)) {
-        return(list(task = "(no message yet)", since = character(),
-                    people = 0L))
+    if (sum(nchar(lines)) > budget) {
+        return(list(lines = character(),
+                    why = sprintf("the conversation runs past the %s characters it reads",
+                                  format(budget, big.mark = ","))))
     }
-    rest <- seq_along(who)[seq_along(who) > first]
-    person <- rest[who[rest] == "Person"]
-    keep <- rest[rest %in% utils::tail(person, max_person) |
-        rest > length(who) - max_recent]
-    list(task = text[[first]],
-         since = paste0(who[keep], ": ", text[keep]),
-         people = sum(who == "Person"))
+    list(lines = lines, why = NULL)
+}
+
+# The last `n` characters of a reply, on one line, marked where cut.
+review_tail <- function(text, n) {
+    text <- .sanitize_inline(text, max_chars = .Machine$integer.max)
+    if (nchar(text) <= n) {
+        return(text)
+    }
+    paste0("...", substr(text, nchar(text) - n + 1L, nchar(text)))
 }
 
 # The text of a message: its content when that is a string, otherwise
