@@ -39,6 +39,14 @@
 #' - `git_status`, `git_diff`, `git_log` - Git operations
 #' - `chat`, `chat_models` - LLM chat (requires llm.api)
 #'
+#' ## Approval
+#'
+#' A call from an MCP client runs without [policy()] and without an
+#' approval prompt: the client asks its own user, and a server has
+#' nobody to ask. What the server decides is which tools it offers.
+#' `tools` sets that list, a call to a tool outside it is refused, and
+#' the subagent tools are refused unless `expose_subagents` allows them.
+#'
 #' @return NULL (runs until interrupted or client disconnects)
 #' @export
 #'

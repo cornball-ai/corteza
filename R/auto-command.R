@@ -9,9 +9,23 @@
         if (name %in% c("edit_context", "task_create", "task_update",
                         "exit_plan_mode")) return(TRUE)
         op <- classify_op(name)
-        op %in% c("read", "write") ||
+        identical(op, "read") ||
+        (identical(op, "write") && .auto_names_target(name, tool)) ||
         (identical(op, "exec") && isTRUE(auto$allow_exec))
     }, tools)
+}
+
+# Whether a write tool has an argument the envelope reads as its target.
+# monitor_in_envelope() refuses a write whose target it cannot resolve,
+# so a write that can name none (harness_note) is not offered to a run
+# only the envelope approves: each call would end the run.
+.auto_names_target <- function(name, tool) {
+    props <- tool$input_schema$properties %||%
+    get_skill(name)$inputSchema$properties %||% list()
+    if (.args_named_by_corteza(name)) {
+        return(any(names(props) %in% .path_arg_keys))
+    }
+    any(vapply(props, function(p) identical(p$type, "string"), logical(1)))
 }
 
 .auto_status <- function(ctx) {

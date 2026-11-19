@@ -373,11 +373,19 @@ chat_approval_cb <- function(cwd = getwd()) {
 
     function(call, decision) {
         key <- call$tool %||% ""
-        if (isTRUE(approved[[key]])) {
+        # The credential rule's ask is answered each time: an "always"
+        # given for the tool, for any file, does not answer it, and its
+        # prompt offers none.
+        once_only <- identical(decision$rule, "credential")
+        if (!once_only && isTRUE(approved[[key]])) {
             return(TRUE)
         }
 
-        persistent_label <- "Allow always for this session"
+        if (once_only) {
+            persistent_label <- NULL
+        } else {
+            persistent_label <- "Allow always for this session"
+        }
         lines <- cli_approval_lines(call, decision, cwd = cwd,
                                     persistent_label = persistent_label,
                                     deny_label = .console_deny_label())
@@ -388,7 +396,7 @@ chat_approval_cb <- function(cwd = getwd()) {
             ans <- ""
         }
         ans <- trimws(ans)
-        if (ans == "") {
+        if (ans == "" || (once_only && ans == "2")) {
             ans <- "1"
         }
         if (ans == "2") {

@@ -149,12 +149,17 @@ load_config <- function(cwd = getwd()) {
         config$skill_paths <- character()
     }
 
-    # Default skill packages (R packages registered as tools)
+    # Default skill packages (R packages registered as tools). Each entry
+    # names the class of its functions, which decides who approves a
+    # call (R/policy.R).
     if (is.null(config$skill_packages)) {
         config$skill_packages <- list(
-                                      list(package = "base", functions = c("file.exists", "file.copy",
-                    "file.remove", "dir.create", "Sys.glob")),
-                                      list(package = "utils", functions = c("read.csv", "head", "tail"))
+                                      list(package = "base", functions = c("file.exists", "Sys.glob"),
+                class = "read"),
+                                      list(package = "base", functions = c("file.copy", "file.remove",
+                    "dir.create"), class = "write"),
+                                      list(package = "utils", functions = c("read.csv", "head", "tail"),
+                class = "read")
         )
     }
 

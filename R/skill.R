@@ -22,9 +22,13 @@
 #'   - required: TRUE/FALSE (default FALSE)
 #'   - enum: Optional list of allowed values
 #' @param handler Function(args, ctx) that returns a result
+#' @param class What the tool does, which decides who approves a call to
+#'   it (R/policy.R): "read", "write", "exec", "control" or "continue".
+#'   NULL leaves it "unknown", which asks.
 #' @return Skill specification list
 #' @noRd
-skill_spec <- function(name, description, params = list(), handler) {
+skill_spec <- function(name, description, params = list(), handler,
+                       class = NULL) {
     # Build required list from params
     required <- names(params)[vapply(params, function(p) {
         isTRUE(p$required)
@@ -49,7 +53,8 @@ skill_spec <- function(name, description, params = list(), handler) {
                             properties = properties,
                             required = if (length(required) > 0) as.list(required) else list()
         ),
-         handler = handler
+         handler = handler,
+         class = tool_class_check(class, name)
     )
 }
 

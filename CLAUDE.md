@@ -112,20 +112,41 @@ read files in an untrusted directory as tool results.
 
 Every tool call passes through `policy(call, config)` before dispatch.
 Returns `list(model, approval, reason)` where `approval` is
-`"allow"`, `"ask"`, or `"deny"`.
+`"allow"`, `"ask"`, or `"deny"`. Nothing routes on `model` yet.
 
-**Precedence (most specific wins):**
-1. Hard safety rules — credential paths (`~/.ssh`, `~/.aws`, etc.)
-   are always `ask` on local model; cannot be overridden.
-2. Plan-mode gate — write/exec tools denied in plan mode.
+Every tool has a class, declared where it is registered: `class =` in
+`skill_spec()` and `register_skill_from_fn()`, `class` in a
+`skill_packages` entry. `read`, `write`, `exec`, `control` (acts on the
+session's own work: subagents it starts, tasks, `exit_plan_mode`) or
+`continue` (runs work in a child, a worker or a room whose mode was set
+elsewhere: `query_subagent`, `delegate`, `job_resume`). A tool that
+names none is `unknown`. `classify_op()` reads the class from the
+registry; a room host's tools (`send_room_file` and 3 more) are in
+`.session_tool_classes`. A new built-in tool needs a class and a row in
+`test_tool_classes.R`'s table, or that file fails.
+
+**Order (`policy()`); nothing later lifts an earlier deny:**
+1. The mode. Plan mode refuses `write`, `exec`, `continue` and
+   `unknown` (`.mode_verdicts`, `check_plan_mode()`).
+2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
+   and the rest asks, marked `rule = "credential"`. No saved "always"
+   answers it: both approval callbacks ask each time and offer none.
 3. User policy function via `options(corteza.policy = function(call) ...)`.
-4. Default tensor on `(data_class, op, channel)`:
-   - `data_class`: `"personal"`, `"code"`, or `"random"` (sticky
-     within a turn — personal contaminates all later calls).
-   - `op`: `"read"`, `"write"`, `"exec"`.
-   - `channel`: `"cli"`, `"console"`, `"matrix"`.
-5. Config overlay from `.corteza/config.json` (`approval_mode`,
-   `dangerous_tools`, per-tool `permissions`).
+   Final when it answers.
+4. The table: `read`, `control`, `continue` allow; `write`, `exec`,
+   `unknown` ask. Personal data (`"personal"`, sticky within a turn)
+   refuses a write or a command on the `matrix` channel. A personal
+   read is allowed.
+5. The config overlay (`.apply_config_overlay()`): a `permissions`
+   entry replaces the verdict for its tool; for a tool without one,
+   `dangerous_tools` makes an allow ask and `approval_mode` says what
+   "ask" becomes. Nothing allows a tool nobody named.
+
+`resolve_paths()` reads a built-in tool's paths by argument name. For a
+tool corteza did not write (a package function, a skill) every string
+argument counts as a path, for the credential rule, the data class and
+the supervisor's rules. `serve()` calls no `policy()`: an MCP client
+asks its own user.
 
 ## Supervision of unattended calls (`R/supervisor.R`)
 
