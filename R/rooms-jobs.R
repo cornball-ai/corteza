@@ -668,20 +668,25 @@ bot_job_result_text <- function(job) {
 }
 
 bot_job_restored_text <- function(restore) {
+    # A conversation's starting checkpoint (R/job-conversation.R) was
+    # saved at a /clear, not at the end of a job.
+    from <- "as this conversation began"
+    if (!is.null(restore$job)) {
+        from <- sprintf("from the end of job %s", restore$job)
+    }
     # Closed for sitting idle, between jobs: nothing was interrupted.
     if (isTRUE(restore$retired)) {
         return(sprintf(paste("The job worker had been closed after sitting",
                              "idle. It is running again with its workspace",
-                             "from the end of job %s (%d objects); objects",
-                             "holding connections or external pointers do",
-                             "not survive that."),
-                       restore$job %||% "?", length(restore$objects)))
+                             "%s (%d objects); objects holding connections",
+                             "or external pointers do not survive that."),
+                       from, length(restore$objects)))
     }
-    sprintf(paste("The job worker restarted and restored its workspace from",
-                  "the end of job %s (%d objects). Anything an unfinished",
-                  "job held in memory is gone; objects holding connections",
-                  "or external pointers do not survive a restore."),
-            restore$job %||% "?", length(restore$objects))
+    sprintf(paste("The job worker restarted and restored its workspace %s",
+                  "(%d objects). Anything an unfinished job held in memory",
+                  "is gone; objects holding connections or external",
+                  "pointers do not survive a restore."),
+            from, length(restore$objects))
 }
 
 # An approval request from a running job.

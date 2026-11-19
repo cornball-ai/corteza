@@ -16,6 +16,12 @@
     ctx$session$history <- list()
     ctx$session$sessionId <- fresh$sessionId
     ctx$session$disk_session <- fresh
+    # The doer follows: its checkpoint moves to the new conversation,
+    # which starts with the R objects and no history (R/job-conversation.R).
+    if (isTRUE(ctx$session$.repl_jobs_ready)) {
+        job_conversation_clear(ctx$session, fresh$sessionId,
+                               checkpoint_key = paste0("repl:", fresh$sessionId))
+    }
     # The reviewer's earlier calls were the old conversation's.
     ctx$session$.review_log <- NULL
     # Re-register the tool-buffer observer against the new

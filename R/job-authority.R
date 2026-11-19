@@ -58,7 +58,8 @@ job_authority_write <- function(session, id) {
         unlink(path)
         stop(conditionMessage(written), call. = FALSE)
     }
-    session$.job_authority <- list(job = id, conversation = session$sessionId,
+    session$.job_authority <- list(job = id,
+                                   conversation = session_conversation(session),
                                    values = now, seq = seq)
     invisible(seq)
 }
@@ -70,7 +71,7 @@ job_authority_sync <- function(session) {
     id <- session$.job_current
     last <- session$.job_authority
     if (is.null(id) || !identical(last$job, id) ||
-        !identical(last$conversation, session$sessionId)) {
+        !identical(last$conversation, session_conversation(session))) {
         return(invisible(FALSE))
     }
     if (identical(last$values, job_authority_now(session))) {
