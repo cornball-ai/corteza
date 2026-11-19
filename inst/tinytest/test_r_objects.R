@@ -23,55 +23,53 @@ local({
     env$e <- new.env()
     env$.hidden <- 1
 
-    # ---- Each object: name, class, shape and size --------------------------
-    note <- ns$r_objects_note(session(), envir = env)
-    lines <- strsplit(note, "\n", fixed = TRUE)[[1]]
-    expect_identical(lines[[1]],
-                     "R objects that run_r made, still in the session:")
-    expect_true(any(grepl("^- df: data.frame, 3 x 2, [0-9.]+ [kM]?B$", lines)))
-    expect_true(any(grepl("^- x: numeric, length 5, [0-9.]+ [kM]?B$", lines)))
-    expect_true(any(grepl("^- f: function, [0-9.]+ [kM]?B$", lines)))
-    expect_true("- e: environment" %in% lines)
-    expect_false(any(grepl("hidden", lines, fixed = TRUE)))
-    # Sorted by name, so the list reads the same each time.
-    expect_identical(sub(":.*", "", lines[-1]), c("- df", "- e", "- f", "- x"))
+    # ---- The names, sorted, hidden ones left out ----------------------------
+    expect_identical(ns$r_objects_note(session(), envir = env),
+                     "R objects that run_r made, still in the session: df, e, f, x.")
 
-    # ---- Nothing of an object's own code runs ------------------------------------
-    # An active binding is named, not read. A shape comes from attributes
-    # and storage, so a class's dim() and length() methods are not called.
-    # A list with a class has no length, and a vector with one keeps its
-    # own.
+    # ---- Nothing of an object's own code runs --------------------------------
+    # The list reads names only. An active binding's function and a
+    # delayed binding's expression do not run, and no method of a class
+    # is called. A name that is not syntactic is in backticks.
+    # Each records through a function of this block: an expression that
+    # delayedAssign() defers runs in this environment itself, where `<<-`
+    # would reach past it.
     ran <- character()
-    methods_made <- c("dim.wp25probe", "length.wp25probe")
-    on.exit(suppressWarnings(rm(list = methods_made, envir = globalenv())),
-            add = TRUE)
-    assign("dim.wp25probe", function(x) {
-        ran <<- c(ran, "dim")
-        c(9L, 9L)
-    }, envir = globalenv())
-    assign("length.wp25probe", function(x) {
-        ran <<- c(ran, "length")
-        99L
-    }, envir = globalenv())
+    record <- function(what) ran <<- c(ran, what)
     own <- new.env()
     makeActiveBinding("act", function() {
-        ran <<- c(ran, "active")
+        record("active")
         1
     }, own)
-    own$vec <- structure(1:4, class = "wp25probe")
-    own$rec <- structure(list(1, 2), class = "wp25probe")
-    own$when <- as.POSIXlt("2026-01-01", tz = "UTC")
-    own$m <- matrix(1:6, 2L)
-    lines <- strsplit(ns$r_objects_note(session(), envir = own), "\n")[[1]]
+    delayedAssign("lazy", {
+        record("delayed")
+        2
+    }, assign.env = own)
+    methods_made <- c("format.wp25probe", "print.wp25probe",
+                      "length.wp25probe", "as.character.wp25probe")
+    on.exit(suppressWarnings(rm(list = methods_made, envir = globalenv())),
+            add = TRUE)
+    for (m in methods_made) {
+        assign(m, local({
+            name <- m
+            function(x, ...) {
+                record(name)
+                "probe"
+            }
+        }), envir = globalenv())
+    }
+    own$probe <- structure(list(1), class = "wp25probe")
+    assign("a, b\nc", 3, envir = own)
+    note <- ns$r_objects_note(session(), envir = own)
     expect_identical(ran, character())
-    expect_true("- act: an active binding, not read" %in% lines)
-    expect_true(any(grepl("^- vec: wp25probe, length 4, [0-9.]+ [kM]?B$", lines)))
-    expect_true(any(grepl("^- rec: wp25probe, [0-9.]+ [kM]?B$", lines)))
-    expect_true(any(grepl("^- when: POSIXlt/POSIXt, [0-9.]+ [kM]?B$", lines)))
-    expect_true(any(grepl("^- m: matrix/array, 2 x 3, [0-9.]+ [kM]?B$", lines)))
-    # The probe's methods do run when called, so the test above can fail.
-    expect_identical(dim(own$vec), c(9L, 9L))
-    expect_identical(ran, "dim")
+    expect_identical(note, paste0("R objects that run_r made, still in the ",
+                                  "session: `a, b\\nc`, act, lazy, probe."))
+    # The bindings are as they were: each still runs its code when read,
+    # so the test above can fail.
+    expect_true(bindingIsActive("act", own))
+    expect_identical(get("lazy", envir = own), 2)
+    expect_identical(get("act", envir = own), 1)
+    expect_identical(ran, c("delayed", "active"))
 
     # ---- Whose objects --------------------------------------------------------
     # The terminal, chat() and a child own theirs. A room shares the bot's
@@ -88,9 +86,9 @@ local({
     # ---- Only what run_r made ---------------------------------------------------
     # What the environment held before the session's first run_r is left
     # out, and before any run_r there is nothing of the session's.
-    lines <- strsplit(ns$r_objects_note(session(before = c("df", "f")),
-                                        envir = env), "\n")[[1]]
-    expect_identical(sub(":.*", "", lines[-1]), c("- e", "- x"))
+    expect_identical(ns$r_objects_note(session(before = c("df", "f")),
+                                       envir = env),
+                     "R objects that run_r made, still in the session: e, x.")
     expect_identical(ns$r_objects_note(session(before = NULL), envir = env), "")
     expect_identical(ns$r_objects_note(session(), envir = new.env()), "")
     # The mark is taken once, at the first call.
@@ -103,15 +101,16 @@ local({
     # ---- The caps ---------------------------------------------------------------
     many <- new.env()
     for (i in 1:40) assign(sprintf("obj%02d", i), i, envir = many)
-    lines <- strsplit(ns$r_objects_note(session(), envir = many), "\n")[[1]]
-    expect_identical(length(grep("^- obj", lines)), 30L)
-    expect_identical(lines[[length(lines)]], "And 10 more; ls() lists them.")
-    lines <- strsplit(ns$r_objects_note(session(), envir = many, chars = 100L),
-                      "\n")[[1]]
-    shown <- length(grep("^- obj", lines))
-    expect_true(shown >= 1L && shown < 10L)
-    expect_identical(lines[[length(lines)]],
-                     sprintf("And %d more; ls() lists them.", 40L - shown))
+    note <- ns$r_objects_note(session(), envir = many)
+    expect_identical(lengths(regmatches(note, gregexpr("obj[0-9]+", note))), 30L)
+    expect_true(endsWith(note, "obj30, and 10 more; ls() lists them."))
+    note <- ns$r_objects_note(session(), envir = many, chars = 30L)
+    expect_identical(note, paste("R objects that run_r made, still in the",
+                                 "session: obj01, obj02, obj03, obj04, and 36",
+                                 "more; ls() lists them."))
+    note <- ns$r_objects_note(session(), envir = many, chars = 3L)
+    expect_identical(note, paste("R objects that run_r made, still in the",
+                                 "session: 40, which ls() lists."))
 
     # ---- Open handles ------------------------------------------------------------
     held <- new.env()
@@ -158,9 +157,12 @@ local({
     got <- compact(s)
     expect_true(got$done)
     expect_true(startsWith(got$first, "[compacted history]\n\nthe summary\n\n"))
-    expect_true(grepl("- a_wp25_made_before: data.frame, 4 x 1,", got$first,
-                      fixed = TRUE))
+    expect_true(grepl(paste("R objects that run_r made, still in the session:",
+                            "a_wp25_made_before"), got$first, fixed = TRUE))
     expect_false(grepl("a_wp25_was_there", got$first, fixed = TRUE))
+    # The compaction leaves the object itself in place.
+    expect_identical(get("a_wp25_made_before", envir = globalenv()),
+                     data.frame(id = 1:4))
     # A session that never ran R lists nothing, and neither does a room.
     got <- compact(session(before = NULL))
     expect_identical(got$first, "[compacted history]\n\nthe summary")

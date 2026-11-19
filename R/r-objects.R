@@ -2,9 +2,14 @@
 #
 # A compaction replaces the turns that made the session's R objects with
 # a summary, which may not name them, while the objects stay where
-# run_r put them. So the summary ends with a short list: each object's
-# name, class, dimensions or length and size, then the handles still
-# open. The model can then use an object instead of rebuilding it.
+# run_r put them, whatever their size. So the summary ends with their
+# names, then the handles still open. The model can then use an object
+# instead of rebuilding it.
+#
+# Names only, from ls(), which reads no binding. Reading a value would
+# run code the session did not ask for at that moment: an active
+# binding's function, the expression delayedAssign() deferred, a class's
+# own methods. So nothing about an object but its name is listed.
 #
 # Only where the session owns the environment run_r writes to: the
 # terminal and chat(), whose run_r writes to the global environment of
@@ -41,58 +46,24 @@ r_objects_owned <- function(session) {
     (session$channel %||% "") %in% c("cli", "console")
 }
 
-# One object: its name, class, shape (r_object_shape()) and size. An
-# environment has no size: object.size() does not count what it holds.
-r_object_line <- function(name, value) {
-    parts <- c(paste(class(value), collapse = "/"), r_object_shape(value))
-    if (!is.environment(value)) {
-        parts <- c(parts, format(utils::object.size(value), units = "auto",
-                                 standard = "SI"))
+# A name as R prints it: in backticks unless it is syntactic, so a name
+# holding a comma or a line break cannot break the list.
+r_object_label <- function(name) {
+    if (identical(make.names(name), name)) {
+        return(name)
     }
-    paste0("- ", name, ": ", paste(parts, collapse = ", "))
+    paste0("`", encodeString(name), "`")
 }
 
-# An object's shape, read from its attributes and its storage, never
-# from dim() or length(): both are generics, and a class's method may
-# run a query or read a file. A data frame's rows and columns, an
-# array's dimensions or a vector's length; NULL for anything else. A
-# list with a class has no length here, since its storage need not say
-# how many items the class holds (a POSIXlt date is a list of 11), and
-# neither has an S4 object.
-r_object_shape <- function(value) {
-    if (isS4(value)) {
-        return(NULL)
-    }
-    if (is.list(value) && inherits(value, "data.frame")) {
-        return(sprintf("%s x %s", .row_names_info(value, 2L),
-                       length(unclass(value))))
-    }
-    d <- attr(value, "dim", exact = TRUE)
-    if (!is.null(d)) {
-        return(paste(d, collapse = " x "))
-    }
-    if (is.atomic(value) || (is.list(value) && is.null(oldClass(value)))) {
-        return(paste("length", format(length(unclass(value)),
-                                      scientific = FALSE)))
-    }
-    NULL
-}
-
-# An object's line, or a note that it could not be read. An active
-# binding is named and not read, since reading one runs its function.
-r_object_entry <- function(name, envir) {
-    tryCatch({
-        if (bindingIsActive(name, envir)) {
-            paste0("- ", name, ": an active binding, not read")
-        } else {
-            r_object_line(name, get(name, envir = envir, inherits = FALSE))
-        }
-    }, error = function(e) paste0("- ", name, ": (could not be read)"))
+# The labels that fit in `max` entries and `chars` characters, in order.
+r_objects_fit <- function(labels, max, chars) {
+    used <- cumsum(nchar(labels) + 2L) - 2L
+    labels[seq_along(labels) <= max & used <= chars]
 }
 
 # The list a compaction's summary ends with, or "" when there is nothing
-# to list or the objects are not the session's. At most `max` objects
-# and `chars` characters; the rest are counted.
+# to list or the objects are not the session's. At most `max` names and
+# `chars` characters of them; the rest are counted.
 r_objects_note <- function(session, envir = globalenv(), max = R_OBJECTS_MAX,
                            chars = R_OBJECTS_CHARS) {
     if (!isTRUE(r_objects_owned(session))) {
@@ -106,26 +77,19 @@ r_objects_note <- function(session, envir = globalenv(), max = R_OBJECTS_MAX,
     if (!length(names) && !length(handles)) {
         return("")
     }
-    lines <- character()
-    used <- 0L
-    for (name in names) {
-        if (length(lines) >= max) {
-            break
-        }
-        line <- r_object_entry(name, envir)
-        if (used + nchar(line) > chars) {
-            break
-        }
-        lines <- c(lines, line)
-        used <- used + nchar(line) + 1L
-    }
     out <- character()
     if (length(names)) {
-        out <- c("R objects that run_r made, still in the session:", lines)
-        rest <- length(names) - length(lines)
-        if (rest > 0L) {
-            out <- c(out, sprintf("And %d more; ls() lists them.", rest))
+        shown <- r_objects_fit(vapply(names, r_object_label, "",
+                                      USE.NAMES = FALSE), max, chars)
+        rest <- length(names) - length(shown)
+        listed <- paste(shown, collapse = ", ")
+        if (rest > 0L && length(shown)) {
+            listed <- sprintf("%s, and %d more; ls() lists them", listed, rest)
+        } else if (rest > 0L) {
+            listed <- sprintf("%d, which ls() lists", rest)
         }
+        out <- paste0("R objects that run_r made, still in the session: ",
+                      listed, ".")
     }
     if (length(handles)) {
         shown <- utils::head(handles, max)
