@@ -185,6 +185,18 @@ config only (`supervisor_config()`); a project config cannot set them.
 one asks a person. `exec_scan()` is not a sandbox. A path built at run
 time is invisible to it.
 
+`approval_mode: "review"` (`R/review.R`) gives the terminal and
+`chat()` the same 3 steps for the calls that would prompt:
+`review_gate()` on `session$auto_gate`, the room's monitor process as
+the reviewer, and the prompt for what it passes on. It rules on read,
+write and exec calls only, and never on one the person allowed always
+(the callback's `answered` attribute). It is shown the conversation
+(`review_conversation()`): the person's lines instruct, the model's do
+not, and the task list is left out. `review_apply()` installs it when a
+loop starts and after `/permissions`, and leaves another gate (an
+`/auto` run's) alone. A project's config cannot set `"review"`
+(`load_config()`).
+
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 
 `voice_turn()` and `voice_turn_report()` are the voice brain: a turn

@@ -9,7 +9,7 @@ expect_null(res$mode)
 expect_true(grepl("Approval mode: ask", res$text))
 # The display names the toggle, so it is discoverable from the command
 # itself rather than only from /help.
-expect_true(grepl("/permissions allow\\|ask\\|deny", res$text))
+expect_true(grepl("/permissions allow\\|review\\|ask\\|deny", res$text))
 
 # ---- permissions_command: switching ----
 
@@ -138,6 +138,23 @@ out <- capture.output(corteza:::run_repl_loop(ctx))
 expect_equal(ctx$config$approval_mode, "deny")
 expect_equal(ctx$session$config$approval_mode, "deny")
 
+# "review" gives the session the reviewer's gate (R/review.R), and
+# leaving it takes the gate away.
+ctx <- toggle_ctx(c("/permissions review"))
+out <- capture.output(corteza:::run_repl_loop(ctx))
+expect_equal(ctx$session$config$approval_mode, "review")
+expect_true(is.function(ctx$session$auto_gate))
+expect_identical(ctx$session$auto_gate, ctx$session$.review_gate)
+expect_true(any(grepl("reviewer", out)))
+ctx <- toggle_ctx(c("/permissions review", "/permissions ask"))
+out <- capture.output(corteza:::run_repl_loop(ctx))
+expect_null(ctx$session$auto_gate)
+# A session whose config says "review" has the gate from its start.
+ctx <- toggle_ctx(character(), mode = "review")
+out <- capture.output(corteza:::run_repl_loop(ctx))
+expect_true(is.function(ctx$session$auto_gate))
+expect_true(is.function(ctx$session$on_review))
+
 # ---- what the toggle cannot waive ----
 #
 # check_safety() short-circuits before the config overlay, so a
@@ -148,7 +165,7 @@ expect_equal(ctx$session$config$approval_mode, "deny")
 secret_call <- list(tool = "read_file", channel = "console",
                     args = list(path = "~/.ssh/id_rsa"),
                     paths = "~/.ssh/id_rsa")
-for (mode in c("allow", "ask", "deny")) {
+for (mode in c("allow", "review", "ask", "deny")) {
     d <- corteza::policy(secret_call,
                          config = list(approval_mode = mode,
                                        dangerous_tools =

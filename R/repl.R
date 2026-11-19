@@ -148,6 +148,18 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     # Covers exits by error or interrupt; /quit and EOF call it directly
     # so its message comes before "Bye.". A second call is a no-op.
     on.exit(if (!keep_jobs) .repl_jobs_shutdown(ctx), add = TRUE)
+    # The reviewer (R/review.R), where the approval mode is "review".
+    # What it settles is said in a dim line; what it passes on prompts.
+    if (is.environment(ctx$session)) {
+        ctx$session$on_review <- function(rec) {
+            line <- review_line(rec)
+            if (!is.null(line)) {
+                cat(ctx$palette$dim, line, ctx$palette$reset, "\n", sep = "")
+            }
+        }
+        review_apply(ctx$session)
+        on.exit(if (!keep_jobs) review_close(ctx$session), add = TRUE)
+    }
     while (TRUE) {
         # Delegated jobs surface here, between commands: the input read
         # below blocks, and nothing can print while it waits.
@@ -463,6 +475,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                     # lying about itself.
                     ctx$session$config$approval_mode <- res$mode
                     ctx$config$approval_mode <- res$mode
+                    review_apply(ctx$session)
                 }
                 cat(res$text, "\n")
                 next

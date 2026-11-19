@@ -691,6 +691,14 @@ cli_approval_lines <- function(call, decision = NULL, gate_reason = NULL,
         lines <- c(lines, paste0("   ", .cli_wrap_lines(explanation, width - 6L)), "")
     }
 
+    # Why a gate asks the person (R/review.R): the reviewer passed the
+    # call on, or the rules flagged it. A reviewer's reason is a model's
+    # text, so it is cleaned like the explanation.
+    gate_reason <- .sanitize_inline(gate_reason %||% "", max_chars = 400L)
+    if (length(gate_reason) == 1L && nzchar(gate_reason)) {
+        lines <- c(lines, paste0("   ", .cli_wrap_lines(gate_reason, width - 6L)), "")
+    }
+
     if (length(details) > 0L) {
         lines <- c(lines, paste0("   ", details), "")
     }

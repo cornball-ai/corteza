@@ -16,6 +16,8 @@
     ctx$session$history <- list()
     ctx$session$sessionId <- fresh$sessionId
     ctx$session$disk_session <- fresh
+    # The reviewer's earlier calls were the old conversation's.
+    ctx$session$.review_log <- NULL
     # Re-register the tool-buffer observer against the new
     # session so subsequent tool calls land in the fresh
     # buffer.
