@@ -132,7 +132,13 @@ registry; a room host's tools (`send_room_file` and 3 more) are in
 
 **Order (`policy()`); nothing later lifts an earlier deny:**
 1. The mode. Plan mode refuses `write`, `exec`, `continue` and
-   `unknown` (`.mode_verdicts`, `check_plan_mode()`).
+   `unknown` (`.mode_verdicts`, `check_plan_mode()`). A Matrix room
+   with no directory (`session$unbound`, set where `bot_new_session()`
+   gives it the scratch folder) refuses all but `read` and the control
+   tools `.unbound_control` names (`check_unbound_room()`); a new
+   control tool is refused there until it is named.
+   `tool_delegate()` and `bot_job_handoff()` refuse such a room as well,
+   asking or asked.
 2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
    and the rest asks, marked `rule = "credential"`. No saved "always"
    answers it: both approval callbacks ask each time and offer none.

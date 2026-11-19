@@ -623,7 +623,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      args = as.list(args),
                      channel = session$channel,
                      context = list(recent_classes = session$recent_classes,
-                                    plan_mode = isTRUE(session$plan_mode)),
+                                    plan_mode = isTRUE(session$plan_mode),
+                                    unbound = isTRUE(session$unbound)),
                      # Read-only per-call snapshot from llm.api::agent (NULL
                      # with a two-arg call or older llm.api): assistant_text,
                      # agent_turn, call_index, call_count, provider. Drives the

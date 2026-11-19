@@ -38,13 +38,22 @@ for (name in known) {
 # ---- What each mode does with each class ------------------------------
 # The table the gate reads, through policy(), for every tool above. A
 # call with no path, in the terminal, with the user's default settings.
+# A room with no directory (WP10) refuses the control tools as well, but
+# for those it names, which act on the session's own conversation or
+# stop its own work: never one that starts a child.
 verdicts <- list(
                  default = c(read = "allow", write = "ask", exec = "ask",
                              control = "allow", continue = "allow", unknown = "ask"),
                  plan = c(read = "allow", write = "deny", exec = "deny",
-                          control = "allow", continue = "deny", unknown = "deny")
+                          control = "allow", continue = "deny", unknown = "deny"),
+                 unbound = c(read = "allow", write = "deny", exec = "deny",
+                             control = "deny", continue = "deny", unknown = "deny")
 )
 expect_identical(corteza:::.mode_verdicts, verdicts)
+unbound_control <- c("task_create", "task_update", "edit_context",
+                     "exit_plan_mode", "kill_subagent", "bg_kill", "job_cancel")
+expect_identical(corteza:::.unbound_control, unbound_control)
+expect_false("spawn_subagent" %in% unbound_control)
 local({
     op <- options(corteza.policy = NULL)
     on.exit(options(op), add = TRUE)
@@ -55,12 +64,70 @@ local({
         class <- corteza:::classify_op(name)
         for (mode in names(verdicts)) {
             d <- corteza::policy(list(tool = name, args = list(), channel = "cli",
-                                      context = list(plan_mode = mode == "plan")),
+                                      context = list(plan_mode = mode == "plan",
+                                                     unbound = mode == "unbound")),
                                  cfg)
-            expect_identical(d$approval, verdicts[[mode]][[class]],
-                             info = paste(name, mode))
+            want <- verdicts[[mode]][[class]]
+            if (mode == "unbound" && name %in% unbound_control) {
+                want <- "allow"
+            }
+            expect_identical(d$approval, want, info = paste(name, mode))
         }
     }
+})
+
+# ---- A room with no directory -------------------------------------------
+# Its refusal says why and how the room gets a directory, and nothing
+# after the mode lifts it: not the credential rule, the user's policy
+# function, a permissions entry or "allow". A read under a credential
+# path still asks, as anywhere. It refuses ahead of plan mode, whose
+# refusal it outlasts.
+local({
+    room <- function(tool, args = list(), plan = FALSE, config = list()) {
+        corteza::policy(list(tool = tool, args = args, channel = "matrix",
+                             context = list(unbound = TRUE, plan_mode = plan)),
+                        config)
+    }
+    d <- room("write_file", list(path = "notes.md", content = "x"))
+    expect_identical(d$approval, "deny")
+    expect_identical(d$rule, "unbound_room")
+    expect_true(grepl("this room has no directory, so it only reads and talks: write_file would write files",
+                      d$reason, fixed = TRUE))
+    expect_true(grepl("takes its directory from its topic", d$reason, fixed = TRUE))
+    expect_true(grepl("or from the bot's cwd", d$reason, fixed = TRUE))
+    expect_true(grepl("bash would run commands", room("bash", list(command = "ls"))$reason,
+                      fixed = TRUE))
+    expect_true(grepl("spawn_subagent would start work", room("spawn_subagent")$reason,
+                      fixed = TRUE))
+    expect_identical(room("write_file", list(path = "~/.ssh/config"))$rule,
+                     "unbound_room")
+    expect_identical(room("read_file", list(path = "~/.ssh/config"))$rule, "credential")
+    expect_identical(room("read_file", list(path = "notes.md"))$approval, "allow")
+    expect_identical(room("write_file", list(path = "x"), plan = TRUE)$rule,
+                     "unbound_room")
+    expect_identical(room("bash", config = list(approval_mode = "allow",
+                                                permissions = list(bash = "allow")))$approval,
+                     "deny")
+    op <- options(corteza.policy = function(call) {
+        list(model = "cloud", approval = "allow", reason = "mine")
+    })
+    on.exit(options(op), add = TRUE)
+    expect_identical(room("write_file", list(path = "x"))$approval, "deny")
+})
+# Through turn()'s tool handler: the session's mark reaches the gate, so
+# a write is refused before it runs and a read runs.
+local({
+    s <- corteza::new_session("matrix")
+    s$unbound <- TRUE
+    ran <- character()
+    h <- corteza:::.make_tool_handler(s, tool_executor = function(name, args) {
+        ran <<- c(ran, name)
+        list(content = list(list(type = "text", text = "ran")))
+    })
+    out <- h("write_file", list(path = "notes.md", content = "x"))
+    expect_true(grepl("this room has no directory", out, fixed = TRUE))
+    h("read_file", list(path = "notes.md"))
+    expect_identical(ran, "read_file")
 })
 
 # ---- A package tool, with a class and without --------------------------
@@ -73,14 +140,17 @@ local({
                                 class = "read")
     expect_identical(corteza:::classify_op("tools::file_ext"), "unknown")
     expect_identical(corteza:::classify_op("tools::file_path_sans_ext"), "read")
-    p <- function(tool, plan = FALSE) {
+    p <- function(tool, plan = FALSE, unbound = FALSE) {
         corteza::policy(list(tool = tool, args = list(x = "a.R"), channel = "cli",
-                             context = list(plan_mode = plan)), list())$approval
+                             context = list(plan_mode = plan, unbound = unbound)),
+                        list())$approval
     }
     expect_identical(p("tools::file_ext"), "ask")
     expect_identical(p("tools::file_ext", plan = TRUE), "deny")
+    expect_identical(p("tools::file_ext", unbound = TRUE), "deny")
     expect_identical(p("tools::file_path_sans_ext"), "allow")
     expect_identical(p("tools::file_path_sans_ext", plan = TRUE), "allow")
+    expect_identical(p("tools::file_path_sans_ext", unbound = TRUE), "allow")
     # A class nobody defined is refused when the entry loads.
     expect_message(corteza:::load_skill_packages(list(skill_packages = list(
                 list(package = "tools", functions = "file_ext",
