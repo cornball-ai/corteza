@@ -957,6 +957,27 @@ local({
                           text_of(no), fixed = TRUE))
     }
     expect_identical(length(corteza:::job_list(origin_key = "repl")), jobs)
+    # Nor does it run a job that reached its queue another way, or resume
+    # one. The dispatch refuses before any worker starts.
+    u <- corteza::new_session("matrix")
+    u$unbound <- TRUE
+    u$job_key <- "unbound-room"
+    u$job_owner <- "bot"
+    u$cwd <- tempdir()
+    u$config <- list()
+    queued <- corteza:::job_create("do w", workspace = u$cwd,
+                                   origin = list(session_key = "unbound-room"),
+                                   owner = "bot")
+    corteza:::job_pump(u)
+    j <- corteza:::job_read(queued)
+    expect_identical(j$status, "failed")
+    expect_true(grepl("this room has no directory, so it runs no jobs",
+                      j$outcome$error, fixed = TRUE))
+    expect_null(u$.job_worker)
+    resumed <- tryCatch(corteza:::job_resume(u, queued, by = "op"),
+                        error = conditionMessage)
+    expect_true(grepl("This room has no directory, so it resumes no job",
+                      resumed, fixed = TRUE))
 })
 
 if (is.na(old_state)) {

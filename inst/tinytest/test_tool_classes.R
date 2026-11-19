@@ -51,9 +51,12 @@ verdicts <- list(
 )
 expect_identical(corteza:::.mode_verdicts, verdicts)
 unbound_control <- c("task_create", "task_update", "edit_context",
-                     "exit_plan_mode", "kill_subagent", "bg_kill", "job_cancel")
+                     "exit_plan_mode", "job_cancel")
 expect_identical(corteza:::.unbound_control, unbound_control)
-expect_false("spawn_subagent" %in% unbound_control)
+# Not these: a child would not keep the room's limits, and the other 2
+# stop work in registries of the whole process, another room's included.
+expect_false(any(c("spawn_subagent", "kill_subagent", "bg_kill") %in%
+                 unbound_control))
 local({
     op <- options(corteza.policy = NULL)
     on.exit(options(op), add = TRUE)
@@ -128,6 +131,22 @@ local({
     expect_true(grepl("this room has no directory", out, fixed = TRUE))
     h("read_file", list(path = "notes.md"))
     expect_identical(ran, "read_file")
+    # Stopping a subagent or a background process reaches the whole
+    # process's registry, so it is refused, asking nobody. Cancelling a
+    # job the session may see runs.
+    asked <- 0L
+    s$approval_cb <- function(...) {
+        asked <<- asked + 1L
+        TRUE
+    }
+    for (tool in c("bg_kill", "kill_subagent")) {
+        out <- h(tool, list(id = "1"))
+        expect_true(grepl("this room has no directory", out, fixed = TRUE),
+                    info = tool)
+    }
+    h("job_cancel", list(id = "1"))
+    expect_identical(ran, c("read_file", "job_cancel"))
+    expect_identical(asked, 0L)
 })
 
 # ---- A package tool, with a class and without --------------------------

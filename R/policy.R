@@ -222,11 +222,13 @@ classify_data <- function(call, context = NULL) {
 )
 
 # The control tools a room with no directory may still use. Each acts on
-# the session's own conversation or task list, or stops work it started.
-# Not spawn_subagent: its child would not keep the room's limits.
+# the session's own conversation or task list, or stops a job the
+# session may see (job_cancel checks). Not spawn_subagent: its child
+# would not keep the room's limits. Not kill_subagent or bg_kill: their
+# registries belong to the process, and neither checks whose a subagent
+# or a background process is, so either could stop another room's work.
 .unbound_control <- c("task_create", "task_update", "edit_context",
-                      "exit_plan_mode", "kill_subagent", "bg_kill",
-                      "job_cancel")
+                      "exit_plan_mode", "job_cancel")
 
 # Run the gate of a room with no directory (WP10). It reads and talks:
 # a read passes, and so does a control tool .unbound_control names.
