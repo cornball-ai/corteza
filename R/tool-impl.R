@@ -1517,11 +1517,20 @@ tool_kill_subagent <- function(id) {
 #' Creates skill specs for all built-in tools and registers them.
 #' Called on package load.
 #'
+#' Each tool names its class, which decides who approves a call to it
+#' (R/policy.R). `read` reports and changes nothing; `write` changes
+#' files or state a later session reads; `exec` runs code; `control`
+#' acts on this session's own work; `continue` runs work in a child, a
+#' worker or another room, whose mode was set elsewhere.
+#'
 #' @return Invisible character vector of registered skill names
 #' @noRd
 register_builtin_skills <- function() {
+    .registry_state$builtin <- TRUE
+    on.exit(.registry_state$builtin <- FALSE, add = TRUE)
+
     # File tools
-    register_skill_from_fn("read_file", tool_read_file)
+    register_skill_from_fn("read_file", tool_read_file, class = "read")
     register_skill(skill_spec(
                               "skill_instructions",
                               paste(
@@ -1545,14 +1554,16 @@ register_builtin_skills <- function() {
             ),
                               handler = function(args, ctx) {
         tool_skill_instructions(args$id, args$resource %||% NULL, ctx = ctx)
-    }
+    },
+                              class = "read"
         ))
-    register_skill_from_fn("write_file", tool_write_file)
-    register_skill_from_fn("replace_in_file", tool_replace_in_file)
-    register_skill_from_fn("list_files", tool_list_files)
+    register_skill_from_fn("write_file", tool_write_file, class = "write")
+    register_skill_from_fn("replace_in_file", tool_replace_in_file,
+                           class = "write")
+    register_skill_from_fn("list_files", tool_list_files, class = "read")
 
     # Search
-    register_skill_from_fn("grep_files", tool_grep_files)
+    register_skill_from_fn("grep_files", tool_grep_files, class = "read")
 
     # Code execution
     # `envir` remains a host-owned capability boundary on tool_run_r(). The
@@ -1580,7 +1591,8 @@ register_builtin_skills <- function() {
                 )),
                               handler = function(args, ctx) {
         .tool_run_r_session(args$code, args$timeout %||% NULL, ctx)
-    }
+    },
+                              class = "exec"
         ))
     register_skill(skill_spec(
                               "read_handle",
@@ -1614,9 +1626,10 @@ register_builtin_skills <- function() {
         .tool_read_handle_session(args$handle, args$op %||% "str", ctx,
                                   pattern = args$pattern, start = args$start,
                                   end = args$end)
-    }
+    },
+                              class = "read"
         ))
-    register_skill_from_fn("run_r_script", tool_run_r_script)
+    register_skill_from_fn("run_r_script", tool_run_r_script, class = "exec")
 
     # Shell tool: prefer bash everywhere for cross-OS consistency. On
     # Windows we register bash only if we can find a real bash (Rtools
@@ -1625,26 +1638,28 @@ register_builtin_skills <- function() {
     use_bash <- .Platform$OS.type != "windows" ||
     file.exists(.find_bash_exe())
     if (use_bash) {
-        register_skill_from_fn("bash", tool_bash)
+        register_skill_from_fn("bash", tool_bash, class = "exec")
     } else {
-        register_skill_from_fn("cmd", tool_cmd)
+        register_skill_from_fn("cmd", tool_cmd, class = "exec")
     }
 
-    # Background process management
-    register_skill_from_fn("bg_status", tool_bg_status)
-    register_skill_from_fn("bg_kill", tool_bg_kill)
+    # Background process management. bg_kill stops a process this
+    # session started, by its own id for it.
+    register_skill_from_fn("bg_status", tool_bg_status, class = "read")
+    register_skill_from_fn("bg_kill", tool_bg_kill, class = "control")
 
     # R-specific
-    register_skill_from_fn("r_help", tool_r_help)
-    register_skill_from_fn("installed_packages", tool_installed_packages)
+    register_skill_from_fn("r_help", tool_r_help, class = "read")
+    register_skill_from_fn("installed_packages", tool_installed_packages,
+                           class = "read")
 
     # Web. web_search needs a Tavily API key; hide it from the LLM
     # payload when the key isn't set so the model doesn't try calling
     # a tool that can't work.
     .have_tavily <- function() nzchar(Sys.getenv("TAVILY_API_KEY"))
     register_skill_from_fn("web_search", tool_web_search,
-                           available = .have_tavily)
-    register_skill_from_fn("fetch_url", tool_fetch_url)
+                           available = .have_tavily, class = "read")
+    register_skill_from_fn("fetch_url", tool_fetch_url, class = "read")
 
     # Git tools only make sense inside a working tree. Check both the
     # cheap `.git` directory case and the more general `git rev-parse`
@@ -1662,39 +1677,54 @@ register_builtin_skills <- function() {
         isTRUE(identical(trimws(status[1]), "true"))
     }
     register_skill_from_fn("git_status", tool_git_status,
-                           available = .in_git_repo)
-    register_skill_from_fn("git_diff", tool_git_diff, available = .in_git_repo)
-    register_skill_from_fn("git_log", tool_git_log, available = .in_git_repo)
+                           available = .in_git_repo, class = "read")
+    register_skill_from_fn("git_diff", tool_git_diff, available = .in_git_repo,
+                           class = "read")
+    register_skill_from_fn("git_log", tool_git_log, available = .in_git_repo,
+                           class = "read")
 
     # Continual harness: one-line lesson capture, approval-gated via
-    # the per-tool permissions default ("ask") in load_config().
-    register_skill_from_fn("harness_note", tool_harness_note)
+    # the per-tool permissions default ("ask") in load_config(). It
+    # writes text that later sessions read.
+    register_skill_from_fn("harness_note", tool_harness_note, class = "write")
 
-    # Subagent tools
-    register_skill_from_fn("spawn_subagent", tool_spawn_subagent)
-    register_skill_from_fn("query_subagent", tool_query_subagent)
-    register_skill_from_fn("collect_subagent", tool_collect_subagent)
-    register_skill_from_fn("list_subagents", tool_list_subagents)
-    register_skill_from_fn("kill_subagent", tool_kill_subagent)
+    # Subagent tools. A child takes its parent's mode when it is spawned,
+    # and every call it makes passes the gate in that mode. A query runs
+    # an existing child, whose mode may predate the parent's, so it is a
+    # continuation. Collecting reads work that already ran.
+    register_skill_from_fn("spawn_subagent", tool_spawn_subagent,
+                           class = "control")
+    register_skill_from_fn("query_subagent", tool_query_subagent,
+                           class = "continue")
+    register_skill_from_fn("collect_subagent", tool_collect_subagent,
+                           class = "read")
+    register_skill_from_fn("list_subagents", tool_list_subagents,
+                           class = "read")
+    register_skill_from_fn("kill_subagent", tool_kill_subagent,
+                           class = "control")
 
     # Talker job tools: exposed only to talker-mode sessions
-    # (see .talker_filter_tools).
-    register_skill_from_fn("delegate", tool_delegate)
-    register_skill_from_fn("job_status", tool_job_status)
-    register_skill_from_fn("job_cancel", tool_job_cancel)
-    register_skill_from_fn("job_resume", tool_job_resume)
+    # (see .talker_filter_tools). A job may run in a worker started
+    # before the caller's mode changed, or in another room, so delegate
+    # and job_resume are continuations.
+    register_skill_from_fn("delegate", tool_delegate, class = "continue")
+    register_skill_from_fn("job_status", tool_job_status, class = "read")
+    register_skill_from_fn("job_cancel", tool_job_cancel, class = "control")
+    register_skill_from_fn("job_resume", tool_job_resume, class = "continue")
 
     # Plan mode: exit_plan_mode is registered always but exposed in the
     # tool list only when session$plan_mode is TRUE
-    # (see .plan_mode_filter_tools).
-    register_skill_from_fn("exit_plan_mode", tool_exit_plan_mode)
+    # (see .plan_mode_filter_tools). It asks the person to leave plan
+    # mode, so plan mode lets it through.
+    register_skill_from_fn("exit_plan_mode", tool_exit_plan_mode,
+                           class = "control")
 
     # Task tracker: schema only -- the real handlers live in
     # task_tool_intercept() called from .make_tool_handler(), so they
     # mutate the live session env directly (a registered stub handler
     # only ever sees ctx = list(), not the session).
-    register_skill_from_fn("task_create", tool_task_create)
-    register_skill_from_fn("task_update", tool_task_update)
+    register_skill_from_fn("task_create", tool_task_create, class = "control")
+    register_skill_from_fn("task_update", tool_task_update, class = "control")
 
     invisible(list_skills())
 }

@@ -12,6 +12,16 @@
 #' @noRd
 .skill_registry <- new.env(parent = emptyenv())
 
+# `builtin` is TRUE while register_builtin_skills() runs. A tool
+# registered then is corteza's own, and resolve_paths() reads its
+# arguments by name. Every string argument of any other tool counts as a
+# path (R/policy.R).
+.registry_state <- new.env(parent = emptyenv())
+
+registering_builtin <- function() {
+    isTRUE(.registry_state$builtin)
+}
+
 #' Register a skill in the global registry.
 #' @param skill Skill spec from skill_spec().
 #' @return Invisible skill name.
@@ -20,6 +30,8 @@ register_skill <- function(skill) {
     if (is.null(skill$name)) {
         stop("Skill must have a name")
     }
+    skill$class <- tool_class_check(skill$class, skill$name)
+    skill$builtin <- registering_builtin()
     .skill_registry[[skill$name]] <- skill
     invisible(skill$name)
 }

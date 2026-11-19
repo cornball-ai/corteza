@@ -1,3 +1,54 @@
+# corteza 0.8.0.12
+
+- **"Allow always for this project" is kept in the user's config, by
+  directory.** The terminal keeps those answers in `approvals.json`
+  under `tools::R_user_dir("corteza", "config")`, keyed by the
+  directory with links resolved, and no longer reads a project's own
+  `.corteza/approvals.json`, trusted or not, so a repository cannot
+  arrive with answers already given. A tool allowed always through the
+  project's file asks once more.
+- The terminal offers "Allow always for this project" in every
+  directory, an untrusted one included. Saving makes no folder in the
+  project.
+- Where a project holds the old file, the terminal says at start that
+  it is not read. `/permissions` and `/status` list what is saved for
+  the directory.
+- Terminals that save at once each keep their answer. A store that
+  cannot be read is set aside as `approvals.json.unreadable`, and an
+  answer that cannot be saved holds for the session.
+- In a room, a worker's R code that names the approvals file goes to a
+  person.
+
+# corteza 0.8.0.11
+
+- **Every tool has a class, and approvals follow it.** A tool reads,
+  writes, runs code (`exec`), acts on the session's own work
+  (`control`), or runs work in a child, a worker or another room
+  (`continue`).
+  `skill_spec()` and `register_skill_from_fn()` take `class`, and a
+  `skill_packages` entry takes one for all its functions. A tool that
+  names none is `unknown` and asks: a skill, or a package tool whose
+  entry names no class, used to run unasked.
+- **Changed default: `send_room_file` asks**, as any write does. A
+  person answers by reaction, or the monitor where `auto_approve_asks`
+  is on. `"permissions": {"send_room_file": "allow"}` in the user's
+  config lets it send unasked.
+- Plan mode refuses `write`, `exec`, `continue` and `unknown` tools,
+  among them `query_subagent`, `delegate`, `job_resume` and
+  `harness_note`, and a write under a credential path, which used to
+  ask.
+- A read or write under a credential path asks each time. No saved
+  "always" answers it, and its prompt offers none.
+- `base::file.copy`, `base::file.remove`, `base::dir.create` and `cmd`
+  ask, as `write_file` does. For a tool corteza did not write, every
+  string argument counts as a path.
+- A `permissions` entry replaces its tool's verdict, unless that
+  verdict refuses: nothing in the config lifts a refusal. Taking a tool
+  off `dangerous_tools` no longer stops it asking; a `permissions`
+  entry does.
+- In a room, `harness_note` and a tool with no class go to a person,
+  never to the monitor.
+
 # corteza 0.8.0.10
 
 - **A host can take a room's messages for itself.** `bot_run_init()`

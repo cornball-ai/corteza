@@ -311,10 +311,15 @@ schema_from_fn <- function(fn_name, pkg = "corteza", max_desc_chars = 200L) {
 #'   payload. Used for context-aware pruning (e.g. git tools gated on
 #'   a real git repo, web tools on an API key being set). The tool
 #'   stays registered and callable regardless.
+#' @param class What the tool does, which decides who approves a call:
+#'   `"read"`, `"write"`, `"exec"`, `"control"` or `"continue"`. `NULL`
+#'   leaves the tool `"unknown"`, so a call to it asks, and plan mode
+#'   refuses it. See [policy()].
 #' @return Invisible tool name.
 #' @keywords internal
 #' @export
-register_skill_from_fn <- function(tool_name, fn, available = NULL) {
+register_skill_from_fn <- function(tool_name, fn, available = NULL,
+                                   class = NULL) {
     fn_name <- deparse(substitute(fn))
     derived <- schema_from_fn(fn_name)
     skill <- list(
@@ -334,7 +339,9 @@ register_skill_from_fn <- function(tool_name, fn, available = NULL) {
             fn_formals, ctx)
         do.call(fn, call_args)
     },
-                  available = available
+                  available = available,
+                  class = tool_class_check(class, tool_name),
+                  builtin = registering_builtin()
     )
     .skill_registry[[tool_name]] <- skill
     invisible(tool_name)

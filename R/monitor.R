@@ -458,7 +458,8 @@ monitor_in_envelope <- function(call, decision, config = list(),
     #    Un-overridable by user config today; stays un-overridable by a
     #    supervisor.
     reason <- decision$reason %||% ""
-    if (startsWith(reason, "safety:")) {
+    if (identical(decision$rule, "credential") ||
+        startsWith(reason, "safety:")) {
         return(outside(sprintf("hard safety rule (%s)", reason)))
     }
 
@@ -475,12 +476,12 @@ monitor_in_envelope <- function(call, decision, config = list(),
                                tool)))
     }
 
-    # 4. Unknown tools are unbrokerable. classify_op() knows the built-in
-    #    read/write/exec sets; everything else -- every package tool
-    #    registered through skill_packages, base::file.remove among them
-    #    -- lands here. An unrecognized tool may well mutate, and we
-    #    cannot tell what it touches, so a human decides.
-    if (identical(op, "unknown")) {
+    # 4. Only read, write and exec tools are brokerable. A tool with no
+    #    class (a skill, or a package tool whose skill_packages entry
+    #    names none) may well mutate, and we cannot tell what it touches.
+    #    A control or continue tool starts, stops or drives other work,
+    #    which a path check cannot bound. A human decides either.
+    if (!op %in% c("read", "write", "exec")) {
         return(outside(sprintf(
                                "%s is not a recognized read/write/exec tool, so its effect can't be bounded",
                                tool)))

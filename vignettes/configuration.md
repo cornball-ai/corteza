@@ -108,7 +108,6 @@ What trust covers:
 | `.corteza/skills/` | R files are sourced at start; `SKILL.md` files join the instruction catalog |
 | `AGENTS.md` or `CLAUDE.md` | Added to the system prompt |
 | `.corteza/harness.json` | Its lessons are added to the system prompt, and `/refine` and the lesson tool may write it |
-| `.corteza/approvals.json` | The terminal's saved "Allow always for this project" answers apply |
 | `DESCRIPTION` and commit subjects | Summarized in the briefing at the top of the prompt |
 | Files your global `context_files` names by a relative path, or by a path inside the project | Added to the system prompt |
 
@@ -211,9 +210,11 @@ restarts that goal in the same conversation.
 The startup display names the working-directory scope and whether shell/R
 execution is enabled. `/auto --exec` explicitly permits the monitor to assess
 shell/R calls; a project restriction can still veto it. Without that grant,
-those tools are omitted. Unclassified package tools are also omitted rather
-than offered to the model and then stopping the run when selected. Path,
-credential, policy, and monitor checks still apply to every dispatched call.
+those tools are omitted. Tools with no class, the session's control and
+continue tools, and writes that name no path the monitor can check are
+also omitted rather than offered to the model and then stopping the run
+when selected. Path, credential, policy, and monitor checks still apply to
+every dispatched call.
 
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
@@ -691,11 +692,35 @@ automatic deletion policy. See `vignette("audit-records")` for the record format
 
 ### Safety
 
+Every tool has a class, which decides who approves a call to it:
+`read`, `write`, `exec`, `control` (the session's own subagents, tasks
+and jobs) or `continue` (work that goes on in a child, a worker or
+another room). Reads, control and continue run; writes and commands
+ask. A tool that names no class, such as a skill or a package tool
+whose `skill_packages` entry gives none, asks too.
+
+Plan mode refuses writes, commands, continuations and tools with no
+class, and nothing below lifts that. A path under a credential store
+(`~/.ssh`, `~/.aws/credentials` and others) asks next, each time: a
+saved "always" never answers it, and its prompt offers none. Personal
+paths (`~/Documents`, `~/Downloads`) can be read; a write or a command
+touching them in a room is refused.
+
+At the terminal, "Allow always for this project" saves the answer in
+`approvals.json` in your config directory, by directory, and later
+sessions there skip that prompt. A project's own `.corteza/approvals.json`,
+where earlier versions kept these answers, is not read, trusted or not:
+the terminal says so when it starts. `/permissions` lists what is saved
+for the directory.
+
+The keys below apply to what is left. None of them turns a refusal into
+a run.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `approval_mode` | string | `"ask"` | `"ask"`, `"allow"`, or `"deny"` |
-| `dangerous_tools` | string[] | `["bash", "run_r", "run_r_script", "write_file", "replace_in_file", "base::writeLines"]` | Tools requiring approval |
-| `permissions` | object | `{}` | Per-tool overrides, e.g. `{"bash": "deny"}` |
+| `approval_mode` | string | `"ask"` | What "ask" means for a tool with no `permissions` entry: `"ask"`, `"allow"`, or `"deny"` |
+| `dangerous_tools` | string[] | `["bash", "run_r", "run_r_script", "write_file", "replace_in_file", "base::writeLines"]` | Tools that ask even where their class would run. Leaving a tool off this list does not stop it asking |
+| `permissions` | object | `{"harness_note": "ask"}` | Per-tool verdicts, e.g. `{"bash": "deny"}` or `{"bash": "allow"}`. An entry replaces the verdict for its tool |
 | `denied_paths` | string[] | `["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.kube", "~/.docker"]` | Blocked paths |
 | `allowed_paths` | string[] or null | null | If set, only these paths allowed |
 
@@ -767,7 +792,7 @@ or a value that is not one non-negative number, turns retention off.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `skill_paths` | string[] | `[]` | Legacy executable/file-skill configuration |
-| `skill_packages` | object[] | `[{"package":"base", ...}, {"package":"utils", ...}]` | R packages registered as tools |
+| `skill_packages` | object[] | `[{"package":"base", ..., "class":"read"}, {"package":"base", ..., "class":"write"}, {"package":"utils", ..., "class":"read"}]` | R packages registered as tools. An entry's `class` applies to all its functions; an entry without one leaves them asking |
 | `skill_timeout` | number | `30` | Default skill execution timeout (seconds) |
 | `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
@@ -1406,8 +1431,11 @@ and receipt, and explicitly says that image bytes are absent from that text.
 Room conversations offer `send_room_file(path)` to configured bot operators.
 It sends an existing file to the current room using the host's chat identity;
 the model does not load credentials or select another destination. Tool policy
-and supervision still apply. Credential files and runtime configuration files
-are refused, and the file limit is 25 MiB. Workers do not receive this tool.
+and supervision still apply: it is a write, so each send asks, and goes to the
+monitor where `auto_approve_asks` is on. `"permissions": {"send_room_file":
+"allow"}` in your config lets it send unasked. Credential files and runtime
+configuration files are refused, and the file limit is 25 MiB. Workers do not
+receive this tool.
 
 Encrypted Matrix attachments require chat.api 0.1.0.4, mx.client 0.2.1.4,
 and mx.crypto 0.2.2.2. Uploads contain ciphertext; the file metadata travels
