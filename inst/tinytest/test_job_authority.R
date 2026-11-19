@@ -209,6 +209,10 @@ local({
 })
 
 # ---- A warm worker, through real turns ------------------------------------
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
 # One worker process runs every job below. Its model is a script: the
 # task names the calls to make, in order, and its last reply reports the
 # model it was asked for, whether exit_plan_mode was offered, whether
@@ -310,6 +314,7 @@ local({
         })
     on.exit(corteza:::job_worker_close_all(s), add = TRUE)
     at <- function(x) file.path(root, x)
+    unasked <- 0L
     pump_until <- function(done, on_event = function(ev) NULL) {
         deadline <- Sys.time() + 60
         repeat {
@@ -328,8 +333,15 @@ local({
             writeLines("go", at(gate))
         }
         final <- function() ns$job_read(id)$status %in% ns$JOB_STATUSES_FINAL
+        # Only the approval test expects a question. Any other is
+        # declined, so the job ends, and counted, so the test fails.
         if (is.null(on_event)) {
-            on_event <- function(ev) NULL
+            on_event <- function(ev) {
+                if (identical(ev$type, "approval")) {
+                    unasked <<- unasked + 1L
+                    ns$job_answer(s, ev$job$id, ev$request$id, FALSE)
+                }
+            }
         }
         pump_until(final, on_event)
         ns$job_read(id)
@@ -417,4 +429,6 @@ local({
     j <- run("script: read")
     expect_true(grepl("model=model-b", j$outcome$result, fixed = TRUE))
     expect_identical(s$.job_worker$get_pid(), pid)
+    # No job but the approval test asked anyone anything.
+    expect_identical(unasked, 0L)
 })
