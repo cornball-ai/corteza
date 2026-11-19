@@ -34,11 +34,13 @@ bot_job_auto_grant <- function(chat, cfg, s, job) {
 }
 
 bot_job_auto_answer <- function(chat, cfg, s, job, req) {
-    if (!is.null(req$local_approval) || !is.null(.approval_remote_problem(
-                list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg)))) {
+    call <- job_request_call(req)
+    problem <- req$local_approval %||%
+    .approval_remote_problem(call, list(reason = req$reason),
+                             .secret_values(cfg))
+    if (!is.null(problem)) {
         return(FALSE)
     }
-    call <- list(tool = req$tool, args = req$args)
     check <- tryCatch(supervisor_route(call, list(approval = "ask",
                 reason = req$reason),
                                        cwd = job$workspace %||% getwd(), mode = "human"),

@@ -105,6 +105,17 @@ local({
     expect_identical(exists("tools::file_ext", envir = reg, inherits = FALSE),
                      had_pkg)
 
+    # A filter by package name selects from the same table: the package's
+    # category is built from the session's tools, not the registry's.
+    by_pkg <- function(filter, table) {
+        vapply(ns$skills_as_api_tools(filter, table), function(t) t$name, "")
+    }
+    expect_identical(by_pkg("tools", ta), "tools__file_ext")
+    expect_identical(by_pkg("tools::file_ext", ta), "tools__file_ext")
+    if (!had_pkg) {
+        expect_identical(by_pkg("tools", NULL), character())
+    }
+
     # ---- A name is taken once ----------------------------------------------
     # A project's read_file and a user's web_search are skipped, and the
     # person is told which source lost the name to which.
@@ -170,6 +181,20 @@ local({
     expect_true(grepl("Unknown skill: late_tool", out, fixed = TRUE))
     expect_identical(seen$class, "unknown")
     rm("late_tool", envir = reg)
+
+    # A worker's approval request keeps the call's class and origin, so the
+    # process that answers it reads the entry the worker runs, not the
+    # registry's.
+    job <- ns$job_create("fixture", workspace = b)
+    ns$job_approval_request(job, list(tool = "proj_tool", args = list(),
+                                      class = "write", origin = "project"),
+                            list(reason = "ask"))
+    req <- ns$job_approval_pending(job)[[1]]
+    call <- ns$job_request_call(req)
+    expect_identical(call$class, "write")
+    expect_identical(call$origin, "project")
+    expect_identical(ns$call_class(call), "write")
+    expect_identical(ns$call_class(list(tool = "proj_tool")), "unknown")
 
     # ---- What turn() offers the model -----------------------------------------
     # The model call is stubbed, so this stays offline. A session offers

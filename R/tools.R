@@ -28,13 +28,17 @@ hidden_tools <- function(cwd = getwd()) {
 #' Get tool categories (built-in + package-derived)
 #'
 #' Built-in tools keep named categories. Package tools are auto-categorized
-#' by package name (e.g., base::readLines -> "base" category).
+#' by package name (e.g., base::readLines -> "base" category), from the
+#' same tools the filter selects among: the session's table, or the
+#' registry without one.
 #'
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return Named list of category -> tool name vectors
 #' @noRd
-get_tool_categories <- function() {
+get_tool_categories <- function(table = NULL) {
     cats <- .builtin_categories
-    all_names <- list_skills()
+    all_names <- tool_names(table)
     pkg_tools <- all_names[grepl("::", all_names, fixed = TRUE)]
     for (tool_name in pkg_tools) {
         pkg <- sub("::.*", "", tool_name)
@@ -83,7 +87,7 @@ get_tools <- function(filter = NULL, table = NULL) {
     }
 
     # Expand categories to tool names
-    cats <- get_tool_categories()
+    cats <- get_tool_categories(table)
     tool_names <- character()
     for (f in filter) {
         if (f %in% names(cats)) {
