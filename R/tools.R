@@ -51,14 +51,15 @@ get_tool_categories <- function() {
 #' @param filter Character vector of tool names or categories to include.
 #'   Categories: file, code, r, search, web, git, subagent.
 #'   Use "core" for file+code+git, "all" for everything.
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return List of tool definitions with names, descriptions, and schemas
 #' @noRd
-get_tools <- function(filter = NULL) {
-    # Get tools from skill registry
-    all_tools <- skills_as_tools()
+get_tools <- function(filter = NULL, table = NULL) {
+    all_tools <- skills_as_tools(table)
 
     # If no skills registered, register built-ins and try again
-    if (length(all_tools) == 0) {
+    if (length(all_tools) == 0 && is.null(table)) {
         register_builtin_skills()
         all_tools <- skills_as_tools()
     }
@@ -120,18 +121,20 @@ ensure_skills <- function() {
 #' expected by llm.api::agent() (input_schema).
 #'
 #' @param filter Character vector of tool names or categories to include.
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return List of tool definitions for llm.api::agent()
 #' @noRd
-skills_as_api_tools <- function(filter = NULL) {
+skills_as_api_tools <- function(filter = NULL, table = NULL) {
     # Drop tools whose `available()` predicate returns FALSE so chat()
     # and the CLI advertise the same set. Without this, chat() saw
     # tools the CLI (via schema_from_registry) had already filtered
     # out — e.g. git_* when not in a repo — and the /status tool count
     # disagreed between surfaces. Predicates default to TRUE on
     # error so a broken check doesn't hide a tool.
-    mcp_tools <- get_tools(filter)
+    mcp_tools <- get_tools(filter, table)
     mcp_tools <- Filter(function(t) {
-        entry <- get_skill(t$name)
+        entry <- tool_entry(t$name, table)
         if (is.null(entry$available)) return(TRUE)
         isTRUE(tryCatch(entry$available(), error = function(e) TRUE))
     }, mcp_tools)

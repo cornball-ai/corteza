@@ -63,7 +63,7 @@ supervisor_route <- function(call, decision, cwd = getwd(), mode = "monitor",
         flags <- c(flags,
                    sprintf("is covered by a hard safety rule (%s)", reason))
     }
-    op <- classify_op(tool)
+    op <- call_class(call)
     if (tool %in% .MONITOR_EXEC_TOOLS) {
         found <- exec_scan(tool, call$args, root, cwd, write_roots)
         flags <- c(flags, found$flags)

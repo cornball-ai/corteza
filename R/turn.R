@@ -559,10 +559,12 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             # embedded session rarely shares the process working
             # directory. Falls back to getwd() when the session
             # doesn't carry one.
+            # The handler that runs is the session's (R/tool-table.R),
+            # the one whose definition was offered.
             call_skill(name, as.list(args),
                        ctx = list(session = session, cwd = session$cwd %||% getwd()),
                        timeout = session$config$skill_timeout %||% 30L,
-                       dry_run = session_dry_run())
+                       dry_run = session_dry_run(), table = session$tool_table)
         }
     }
     # A custom executor may need the provider's read-only call metadata to
@@ -630,6 +632,14 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      # approval rationale and the silent-streak narration guard.
                      model_context = context
         )
+        # The class and origin of the entry this call runs, from the
+        # session's table (R/tool-table.R). Every reader of the call
+        # asks these (call_class(), R/policy.R).
+        entry <- tool_entry(internal_name, session$tool_table)
+        call$class <- classify_op(internal_name, session$tool_table)
+        if (!is.null(entry)) {
+            call$origin <- tool_origin_kind(entry)
+        }
         call <- c(call, ids)
 
         # Silent-streak narration guard: bookkeep once per model turn
@@ -1221,7 +1231,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
 
     if (is.null(tools)) {
         ensure_skills()
-        tools <- skills_as_api_tools(session$tools_filter)
+        tools <- skills_as_api_tools(session$tools_filter, session$tool_table)
     }
     tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode))
     tools <- .task_filter_tools(tools, session$channel)
@@ -1230,7 +1240,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     tools <- .delegation_tools(tools, session)
     tools <- .room_consult_tools(tools, session)
     tools <- .room_media_tools(tools, session)
-    tools <- .auto_filter_tools(tools, session$auto_config)
+    tools <- .auto_filter_tools(tools, session$auto_config, session$tool_table)
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api

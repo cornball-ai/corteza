@@ -29,6 +29,11 @@
 #   context   - list, optional; context$recent_classes carries sticky
 #               classifications from earlier calls in the same turn, and
 #               context$plan_mode the session's mode
+#   class     - character, optional: the tool's class, as the session's
+#               table holds it (turn() sets it, R/tool-table.R). Without
+#               it the class is read from the registry.
+#   origin    - character, optional: where the tool came from ("builtin",
+#               "host", "user", "package", "project"), set with class
 
 # ---- Hard safety ----
 
@@ -86,16 +91,20 @@ tool_class_check <- function(class, name = "") {
 .session_tool_classes <- c(send_room_file = "write", ask_room = "continue",
                            delegate_to = "continue", edit_context = "control")
 
-# The registry's entry for a tool, registering the built-in tools first
-# when nothing is registered yet.
-.registered_tool <- function(tool_name) {
+# A tool's entry: the session's table's (R/tool-table.R) where it has
+# one, else the registry's, registering the built-in tools first when
+# nothing is registered yet.
+.registered_tool <- function(tool_name, table = NULL) {
+    if (!is.null(table)) {
+        return(tool_entry(tool_name, table))
+    }
     ensure_skills()
     get_skill(tool_name)
 }
 
 # Whether corteza wrote the tool's arguments, so that resolve_paths()
 # can read its paths by argument name.
-.args_named_by_corteza <- function(tool_name) {
+.args_named_by_corteza <- function(tool_name, table = NULL) {
     if (!is.character(tool_name) || length(tool_name) != 1L ||
         is.na(tool_name) || !nzchar(tool_name)) {
         return(FALSE)
@@ -103,7 +112,7 @@ tool_class_check <- function(class, name = "") {
     if (tool_name %in% names(.session_tool_classes)) {
         return(TRUE)
     }
-    isTRUE(.registered_tool(tool_name)$builtin)
+    isTRUE(.registered_tool(tool_name, table)$builtin)
 }
 
 # ---- Path / URL resolution ----
@@ -130,7 +139,7 @@ tool_class_check <- function(class, name = "") {
 # argument name is not missed.
 resolve_paths <- function(call) {
     args <- call$args %||% list()
-    if (!.args_named_by_corteza(call$tool %||% "")) {
+    if (!call_named_by_corteza(call)) {
         return(.string_args(args))
     }
     out <- character()
@@ -159,8 +168,10 @@ resolve_urls <- function(call) {
 # ---- Classifiers ----
 
 # The class of a tool: the one it declared where it was registered, or
-# "unknown". A session tool a host adds is looked up first.
-classify_op <- function(tool_name) {
+# "unknown". A session tool a host adds is looked up first. With a
+# session's table, the table's entry decides, whatever the registry
+# holds.
+classify_op <- function(tool_name, table = NULL) {
     if (!is.character(tool_name) || length(tool_name) != 1L ||
         is.na(tool_name) || !nzchar(tool_name)) {
         return("unknown")
@@ -168,7 +179,33 @@ classify_op <- function(tool_name) {
     if (tool_name %in% names(.session_tool_classes)) {
         return(.session_tool_classes[[tool_name]])
     }
-    .registered_tool(tool_name)$class %||% "unknown"
+    .registered_tool(tool_name, table)$class %||% "unknown"
+}
+
+# turn() resolves a call's tool in the session's table once, when it
+# dispatches the call, and records on the call the class and the origin
+# of the entry it found: `call$class` and `call$origin`. Every reader of
+# a call (the gate, the supervisor, the monitors, the approval prompt)
+# asks these two, so all of them see the entry that runs. A call built
+# elsewhere, with neither, is read from the registry.
+call_class <- function(call) {
+    class <- call$class
+    if (is.character(class) && length(class) == 1L &&
+        class %in% c(.tool_classes, "unknown")) {
+        return(class)
+    }
+    classify_op(call$tool %||% "")
+}
+
+# Whether corteza wrote the call's tool, so that its paths are read by
+# argument name. A tool a host adds to a room session is corteza's.
+call_named_by_corteza <- function(call) {
+    origin <- call$origin
+    if (is.character(origin) && length(origin) == 1L) {
+        return(identical(origin, "builtin") ||
+               isTRUE((call$tool %||% "") %in% names(.session_tool_classes)))
+    }
+    .args_named_by_corteza(call$tool %||% "")
 }
 
 # Classify the data class of a tool call. Sticky: if any prior call in the
@@ -225,7 +262,7 @@ check_plan_mode <- function(call) {
         return(NULL)
     }
     tool <- call$tool %||% ""
-    op <- classify_op(tool)
+    op <- call_class(call)
     if (!identical(.mode_verdicts$plan[[op]], "deny")) {
         return(NULL)
     }
@@ -284,7 +321,7 @@ check_safety <- function(call) {
 # would answer is not at a prompt. A read of it is allowed.
 default_policy <- function(call) {
     data_class <- classify_data(call, call$context)
-    op <- classify_op(call$tool %||% "")
+    op <- call_class(call)
     channel <- call$channel %||% "cli"
 
     approval <- .mode_verdicts$default[[op]]

@@ -232,6 +232,7 @@ run_memory_flush <- function(ctx) {
                                  max_turns = 20L
     )
     flush_session$config <- config
+    flush_session$tool_table <- session$tool_table
     .audit_safe({
         flush_session$audit_enabled <- session$audit_enabled
         flush_session$config$audit <- session$config$audit %||% config$audit
@@ -472,7 +473,8 @@ chat_handle_copy <- function(text) {
 #' Format the active tool list for /tools.
 #' @noRd
 chat_format_tools_list <- function(turn_session) {
-    api_tools <- tryCatch(skills_as_api_tools(turn_session$tools_filter),
+    api_tools <- tryCatch(skills_as_api_tools(turn_session$tools_filter,
+            turn_session$tool_table),
                           error = function(e) list())
     if (length(api_tools) == 0L) {
         return("No tools active.\n")
