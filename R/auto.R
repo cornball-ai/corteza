@@ -497,10 +497,13 @@ auto_validate_bounds <- function(auto) {
 #'   iteration cap is lifted: the run governs on the monitor envelope and
 #'   the resource caps (tool calls, tokens, time, cost, stall) instead of
 #'   a loop count -- the Codex "Auto" model. `max_loops` still wins if set.
+#' @param typed Character. What the person typed to start the run, after
+#'   `/auto`: the goal, unless corteza wrote the goal (a bare `/auto`) or
+#'   took it from the last run (`/auto resume`).
 #' @return Invisibly, the final loop state.
 #' @noRd
 run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
-                          continuous = FALSE) {
+                          continuous = FALSE, typed = goal) {
     cwd <- ctx$cwd %||% getwd()
     palette <- ctx$palette %||% list()
     say <- function(fmt, ...) {
@@ -679,6 +682,12 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     # every record keeps ids from colliding across runs.
     ctx$session$auto_call_seq <- 0L
     on.exit(ctx$session$auto_run_id <- prev_run_id, add = TRUE)
+    # What the person typed to start the run is what they typed of each
+    # prompt the driver writes, and the transcript keeps it so
+    # (run_repl_loop()). The reviewer (R/review.R) reads it after the run.
+    prev_typed <- ctx$session$auto_typed
+    ctx$session$auto_typed <- typed
+    on.exit(ctx$session$auto_typed <- prev_typed, add = TRUE)
 
     # A spawn failure is an ordinary error the operator will see, but
     # the run record must say it too -- this is the named case where "no
