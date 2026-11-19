@@ -177,11 +177,12 @@ local({
     expect_identical(corteza:::classify_op("tools::file_ext"), "unknown")
 })
 
-# ---- The default package tools ------------------------------------------
-# Each default entry names its class, so file.copy and friends ask as
+# ---- Package tools a config lists ---------------------------------------
+# None by default: a function becomes a tool when a config lists it,
+# with its class. Listed as writes, file.copy and friends ask as
 # write_file does, and plan mode refuses them. In a room with a monitor,
-# a copy inside the checkout goes to the monitor, where it used to run
-# unseen, and one outside it goes to a person.
+# a copy inside the checkout goes to the monitor, and one outside it
+# goes to a person.
 local({
     Sys.setenv(R_USER_CONFIG_DIR = tempfile("corteza_config_"))
     proj <- tempfile("classes-proj")
@@ -189,8 +190,17 @@ local({
     proj <- normalizePath(proj)
     on.exit(unlink(proj, recursive = TRUE), add = TRUE)
     cfg <- corteza:::load_config(proj)
-    expect_true(all(vapply(cfg$skill_packages, function(e) !is.null(e$class),
-                           logical(1))))
+    expect_identical(cfg$skill_packages, list())
+    before <- ls(corteza:::.skill_registry)
+    corteza:::load_skill_packages(cfg)
+    expect_identical(ls(corteza:::.skill_registry), before)
+    cfg$skill_packages <- list(
+        list(package = "base", functions = c("file.exists", "Sys.glob"),
+             class = "read"),
+        list(package = "base", functions = c("file.copy", "file.remove",
+                                             "dir.create"), class = "write"),
+        list(package = "utils", functions = c("read.csv", "head", "tail"),
+             class = "read"))
     corteza:::load_skill_packages(cfg)
     on.exit(suppressWarnings(rm(list = grep("^(base|utils)::", ls(corteza:::.skill_registry),
                                             value = TRUE),
