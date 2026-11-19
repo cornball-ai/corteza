@@ -365,9 +365,12 @@ ended, worker folders with no checkpoint, and remote-control sessions
 that closed or whose process here ended. A chain with an incomplete job
 nothing resumed waits `retention$incomplete_days` (180). A folder is
 judged only when its name and record are corteza's; anything else stays
-and is listed as `"unknown"`. A removal takes the record that makes a
-folder live first (`intent.json`, `request.json`). Checkout lock
-generations are never removed (`R/job-lock.R`).
+and is listed as `"unknown"`. A record is read only where it is a file
+of the folder itself (`retention_record()`), never through a link. A
+removal takes the record that makes a folder live first (`intent.json`,
+`request.json`), and where that record is there but may not go (a
+link, a folder), it removes nothing. Checkout lock generations are
+never removed (`R/job-lock.R`).
 
 A test that hands retention a clock in the future points
 `CORTEZA_STATE_DIR` and `CORTEZA_REMOTE_DIR` into its own temporary
