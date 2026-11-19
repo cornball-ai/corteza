@@ -480,6 +480,9 @@
             return(err(paste("A run_r timeout requires run_r_mode = 'worker';",
                              "the in-process compatibility mode cannot enforce it safely.")))
         }
+        # What was there before the session's first call is not its own
+        # to list after a compaction (R/r-objects.R).
+        r_objects_mark(ctx$session)
         return(tool_run_r(code))
     }
     effective <- tryCatch(.run_r_timeout(timeout, ctx), error = function(e) e)
