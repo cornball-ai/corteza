@@ -21,13 +21,21 @@ clock_reset <- function() {
     }
 }
 
+# The run also prunes corteza's state and remote-control folders
+# (R/retention-state.R), and the clock here is 100 days on. Each is put
+# where the data folder puts it, so a value set where these tests run (a
+# bot's service environment) is never read.
 retention_fixture <- function() {
     root <- tempfile("corteza_retention_")
     dir.create(root)
-    vars <- c("R_USER_DATA_DIR", "R_USER_CONFIG_DIR")
+    vars <- c("R_USER_DATA_DIR", "R_USER_CONFIG_DIR", "CORTEZA_STATE_DIR",
+              "CORTEZA_REMOTE_DIR")
     old <- Sys.getenv(vars, unset = NA)
     Sys.setenv(R_USER_DATA_DIR = file.path(root, "data"),
                R_USER_CONFIG_DIR = file.path(root, "config"))
+    data <- corteza:::corteza_data_dir()
+    Sys.setenv(CORTEZA_STATE_DIR = file.path(data, "state"),
+               CORTEZA_REMOTE_DIR = file.path(data, "remote-control"))
     clock_reset()
     list(root = root, data = corteza:::corteza_data_dir(),
          config = corteza:::corteza_config_dir(),
@@ -644,7 +652,7 @@ local({
                    "No session has gone unused for 90 days.", fixed = TRUE)
     expect_identical(names(found), c("agent", "session", "kind", "path",
                                      "last_use", "idle_days", "bytes",
-                                     "removed"))
+                                     "incomplete", "removed"))
     expect_identical(nrow(found), 0L)
     expect_false(dir.exists(fx$data))
     expect_message(corteza::sessions_prune(days = 0), "Retention is off")

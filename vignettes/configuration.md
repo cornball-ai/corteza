@@ -818,16 +818,38 @@ A session's audit records are kept in its journal folder, under
 `audit/`. Retention leaves them and the folder in place:
 `audit_payload_expire()` removes audit payloads, and only when called.
 
+The same run clears corteza's state folder (`state/` beside the sessions,
+or `CORTEZA_STATE_DIR`) and its remote-control folder:
+
+- A delegated job's records go with every job linked to it as a resume,
+  a review or a delegation, once all of them have ended and none has
+  changed for `session_days`. While one of them is queued or running,
+  all stay.
+- A job that ended incomplete and was never resumed holds the snapshot a
+  resume starts from. Its chain waits `incomplete_days` instead, and
+  never fewer than `session_days`. The terminal names each such job when
+  it goes.
+- A worker process's folder with no checkpoint loses its journal, less
+  its audit records. A folder with a checkpoint stays.
+- A remote-control session goes once it was closed, or once its process
+  on this machine has ended. One from another machine stays.
+
+A folder there whose name and record are not of the form corteza writes
+stays whole. Once it is old enough the terminal counts it, and
+`sessions_prune(dry_run = TRUE)` lists it with kind `"unknown"`.
+
 `sessions_prune(dry_run = TRUE)` reports what a run would remove.
 `sessions_prune()` runs one now.
 
-This key is read from the user's config file only. A project's
-`.corteza/config.json` cannot set it. A config file that does not parse,
-or a value that is not one non-negative number, turns retention off.
+These keys are read from the user's config file only. A project's
+`.corteza/config.json` cannot set them. A config file that does not
+parse turns retention off, and a value that is not one non-negative
+number keeps everything that key governs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed. `0` keeps everything |
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` keeps everything |
+| `retention.incomplete_days` | number | `180` | Days a job chain that ended incomplete, and was never resumed, is kept for its resume snapshot. Never fewer than `session_days`. `0` keeps it |
 
 ### Skills
 
