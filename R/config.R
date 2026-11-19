@@ -63,6 +63,12 @@ load_config <- function(cwd = getwd()) {
     if (is.list(global$context_edit) && is.list(project$context_edit)) {
         config$context_edit <- utils::modifyList(global$context_edit, project$context_edit)
     }
+    # Who approves the agent's calls is the user's to choose, never the
+    # project's: a project's "review" is ignored (R/review.R), and the
+    # user's own setting stands.
+    if (identical(project$approval_mode, "review")) {
+        config$approval_mode <- global$approval_mode
+    }
 
     # Apply defaults
     if (is.null(config$context_files)) {
@@ -125,7 +131,7 @@ load_config <- function(cwd = getwd()) {
     }
     # Tool approval settings
     if (is.null(config$approval_mode)) {
-        config$approval_mode <- "ask" # "ask", "allow", "deny"
+        config$approval_mode <- "ask" # "ask", "allow", "deny", "review"
     }
     if (is.null(config$dangerous_tools)) {
         config$dangerous_tools <- default_dangerous_tools()

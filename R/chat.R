@@ -370,14 +370,20 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 chat_approval_cb <- function(cwd = getwd()) {
     approved <- new.env(parent = emptyenv())
     color <- ansi_colors()
+    # Has the person answered this call for good, "allow always" for its
+    # tool in this session? The credential rule's ask is answered each
+    # time: an "always" given for the tool, for any file, does not
+    # answer it, and its prompt offers none. The reviewer (R/review.R)
+    # asks this first, so it never rules on an answer the person gave.
+    answered <- function(call, decision) {
+        !identical(decision$rule, "credential") &&
+        isTRUE(approved[[call$tool %||% ""]])
+    }
 
-    function(call, decision) {
+    cb <- function(call, decision) {
         key <- call$tool %||% ""
-        # The credential rule's ask is answered each time: an "always"
-        # given for the tool, for any file, does not answer it, and its
-        # prompt offers none.
         once_only <- identical(decision$rule, "credential")
-        if (!once_only && isTRUE(approved[[key]])) {
+        if (answered(call, decision)) {
             return(TRUE)
         }
 
@@ -386,7 +392,9 @@ chat_approval_cb <- function(cwd = getwd()) {
         } else {
             persistent_label <- "Allow always for this session"
         }
-        lines <- cli_approval_lines(call, decision, cwd = cwd,
+        lines <- cli_approval_lines(call, decision,
+                                    gate_reason = decision$gate_reason,
+                                    cwd = cwd,
                                     persistent_label = persistent_label,
                                     deny_label = .console_deny_label())
         cat(paste(lines, collapse = "\n"), "\n")
@@ -417,6 +425,8 @@ chat_approval_cb <- function(cwd = getwd()) {
         }
         ans %in% c("1", "2")
     }
+    attr(cb, "answered") <- answered
+    cb
 }
 
 # Resolve the on-disk session, returning list(session, sessionId, history,
