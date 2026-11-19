@@ -971,10 +971,16 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         # auto_run_id is set for the life of an auto run and NULL
         # otherwise, so attended messages keep their exact format while
         # a run's worker conversation partitions cleanly from disk --
-        # including two runs with the same goal in one session.
+        # including two runs with the same goal in one session. In a run
+        # the driver writes the prompt, and what the person typed is the
+        # run's goal.
+        person_typed <- typed
+        if (!is.null(ctx$session$auto_run_id)) {
+            person_typed <- ctx$session$auto_goal
+        }
         transcript_append(ctx$disk_session$session, "user", prompt,
                           auto_run_id = ctx$session$auto_run_id,
-                          typed = typed)
+                          typed = person_typed)
         # The first prompt names the conversation in lists: what the
         # person typed, without the R context sent along with it.
         if (!is.null(ctx$disk_session$session)) {

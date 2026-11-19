@@ -750,11 +750,13 @@ session the same three steps for each call that would prompt. The
 monitor there is called the reviewer. It rules on reads, writes and
 commands that the rules leave open. It reads the conversation to judge
 them, from the session's transcript: every message you sent, whole,
-each after the end of the reply it answers. Only your words are taken
-as instructions. It is not shown these:
+each after the whole reply it answers. Only your words are taken as
+instructions. It is not shown these:
 
 - a compaction's summary, which the agent wrote;
 - output you staged with `/r` or `!`;
+- an `/auto` run's prompts, which its driver wrote. It sees the goal
+  you gave the run, and the run's replies;
 - the agent's task list.
 
 An approval runs the call and prints a dim line saying so. A refusal
@@ -764,8 +766,10 @@ with its reason. These still prompt without it:
 - a call the rules flag;
 - a tool with no class;
 - a credential path;
-- any call while the conversation runs past 100,000 characters, or
-  has no transcript: the reviewer judges only what it can read whole.
+- any call while the reviewer cannot read the whole conversation: one
+  past 100,000 characters, one with no transcript or with a line it
+  cannot read, or one begun before 0.8.1, whose transcript does not
+  mark what you typed. `/clear` starts a conversation it can read.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by

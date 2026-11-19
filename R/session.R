@@ -741,10 +741,13 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #'   run; NULL (the attended default) writes no field, so the attended
 #'   message format is unchanged. This is what lets two runs with the
 #'   same goal in one session be partitioned from the transcript alone.
-#' @param typed For a prompt sent with staged R or shell output, what the
-#'   person typed, kept as `typed` beside the whole `content`; the
-#'   reviewer (R/review.R) reads it. NULL, or the content itself, writes
-#'   no field.
+#' @param typed For a prompt, what the person typed. The entry then says
+#'   whether anything was sent with it, `staged` FALSE when the content
+#'   is what was typed, and TRUE with `typed` beside the whole content
+#'   when it is not: R or shell output staged with the prompt, or an
+#'   /auto run's driver text around its goal. NULL writes neither field,
+#'   as every entry before 0.8.1 has neither. The reviewer
+#'   (R/review.R) reads them.
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
@@ -766,8 +769,11 @@ transcript_append <- function(session, role, content, provider = NULL,
     if (!is.null(auto_run_id)) {
         msg$auto_run_id <- auto_run_id
     }
-    if (!is.null(typed) && !identical(typed, content)) {
-        msg$typed <- typed
+    if (!is.null(typed)) {
+        msg$staged <- !identical(typed, content)
+        if (msg$staged) {
+            msg$typed <- typed
+        }
     }
 
     if (role == "assistant") {
@@ -837,6 +843,40 @@ transcript_load <- function(id, agent_id = DEFAULT_AGENT_ID,
     # For now, return all messages
 
     messages
+}
+
+#' Load a transcript for a decision that has to see all of it: the
+#' reviewer's (R/review.R). transcript_load() passes over a line it
+#' cannot read; this one counts it.
+#' @param id Session ID
+#' @param agent_id Agent ID
+#' @return NULL when there is no transcript. Otherwise list(entries,
+#'   bad): the messages in order, and the number of lines that are
+#'   neither the header nor a message, a line that is not JSON among
+#'   them.
+#' @noRd
+transcript_load_strict <- function(id, agent_id = DEFAULT_AGENT_ID) {
+    path <- session_transcript_path(id, agent_id)
+    if (!file.exists(path)) {
+        return(NULL)
+    }
+    lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+    entries <- list()
+    bad <- 0L
+    for (line in lines[nzchar(trimws(lines))]) {
+        e <- tryCatch(jsonlite::fromJSON(line, simplifyVector = FALSE),
+                      error = function(err) NULL)
+        if (!is.list(e) || is.null(names(e))) {
+            bad <- bad + 1L
+        } else if (identical(e$type, "session") && is.null(e$role)) {
+            next
+        } else if (is.character(e$role) && length(e$role) == 1L) {
+            entries[[length(entries) + 1L]] <- e
+        } else {
+            bad <- bad + 1L
+        }
+    }
+    list(entries = entries, bad = bad)
 }
 
 #' Count messages in transcript

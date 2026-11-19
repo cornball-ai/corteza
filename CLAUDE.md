@@ -194,10 +194,15 @@ write and exec calls only, and never on one the person allowed always
 the transcript (`review_conversation()`), never from
 `session$history`: a compaction leaves its summary there as a user
 message, which would pass for the person's words. Every prompt goes in
-whole, each after the end of the reply it answers; a conversation too
-long to send whole, or with no transcript, goes to the person instead.
-Each request is its own scope, so the reviewer keeps nothing between
-calls. A wait cut short (an interrupt, an error) cancels the request
+whole, each after the whole reply it answers. Each prompt in the
+transcript says how it was sent (`staged`, and `typed` when more went
+with it: staged output, or an `/auto` run's driver text around its
+goal), and the reviewer reads the file with `transcript_load_strict()`,
+which counts a line it cannot read. A conversation it cannot read whole
+goes to the person: too long, no transcript, a line or message it
+cannot read, or a prompt that does not say how it was sent, as none
+before 0.8.1 does. Each request is its own scope, so the reviewer keeps
+nothing between calls. A wait cut short (an interrupt, an error) cancels the request
 (`review_cancel()`), which a room's monitor never does. `review_apply()`
 installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set

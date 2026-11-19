@@ -202,113 +202,125 @@ review_question <- function(session, call, decision, notes, conversation) {
 
 # The conversation as the reviewer reads it, from the session's
 # transcript (R/session.R), a line each, oldest first: every prompt of
-# the person's, whole, as "Person: ...", and before each the end of the
-# reply it follows, as "Worker: ...", so that a "yes" comes with its
-# question.
+# the person's, whole, as "Person: ...", and before each the whole reply
+# it follows, as "Worker: ...", so that a "yes" comes with what it
+# agreed to.
 #
 # The transcript is appended to and never rewritten. A compaction or a
 # context edit rewrites the history the model sees, and leaves a summary
 # there as a user message; read from there, the model's words could pass
 # for the person's, and the person's own could be gone. Here a summary
-# is not shown, nor an /auto run's prompts, which its driver wrote. A
-# prompt sent with staged R or shell output shows what was typed, and
-# says output came with it. A task list is the model's own, and is not
-# shown.
+# is not shown. A prompt is shown as the person typed it, and the
+# transcript says how each was sent (`staged`, `typed`): one sent with
+# staged R or shell output shows what was typed and says output came
+# with it, and an /auto run shows its goal once, as "/auto <goal>", and
+# its replies, but not the driver's prompts. A task list is the model's
+# own, and is not shown.
 #
 # Returns list(lines, why). `why` says why the reviewer cannot judge the
-# call, and is NULL when it can. Without a transcript it cannot, nor when
-# the conversation runs past `budget` characters: nothing is left out to
-# make it fit.
-review_conversation <- function(session_id, tail_chars = 800L,
-                                budget = 100000L) {
-    path <- NULL
+# call, and is NULL when it can. It cannot when the conversation cannot
+# be read whole: no transcript, a line or message it cannot read, a
+# prompt that does not say how it was sent (every one written before
+# 0.8.1), or more than `budget` characters. Nothing is left out to make
+# it fit.
+review_conversation <- function(session_id, budget = 100000L) {
+    unread <- function(why) list(lines = character(), why = why)
+    record <- NULL
     if (is.character(session_id) && length(session_id) == 1L &&
         !is.na(session_id) && nzchar(session_id)) {
-        path <- session_transcript_path(session_id)
+        record <- tryCatch(transcript_load_strict(session_id),
+                           error = function(e) conditionMessage(e))
     }
-    if (is.null(path) || !file.exists(path)) {
-        return(list(lines = character(),
-                    why = "there is no transcript of the conversation to judge it by"))
+    if (is.null(record)) {
+        return(unread("there is no transcript of the conversation to judge it by"))
     }
-    entries <- tryCatch(transcript_load(session_id), error = function(e) NULL)
-    if (is.null(entries)) {
-        return(list(lines = character(),
-                    why = "the transcript of the conversation could not be read"))
+    if (is.character(record)) {
+        return(unread(paste("the transcript could not be read:", record)))
+    }
+    if (record$bad > 0L) {
+        return(unread(sprintf("%d %s of the transcript could not be read",
+                              record$bad,
+                    if (record$bad == 1L) "line" else "lines")))
     }
     lines <- character()
     reply <- ""
-    for (e in entries) {
-        if (!is.null(e$auto_run_id)) {
-            next
+    runs <- character()
+    for (e in record$entries) {
+        said <- review_message_text(e)
+        if (is.na(said)) {
+            return(unread("a message in the transcript could not be read"))
         }
         if (identical(e$role, "assistant")) {
             if (!identical(e$model, "compaction")) {
-                reply <- review_message_text(e)
+                reply <- said
             }
             next
         }
         if (!identical(e$role, "user")) {
-            next
+            return(unread("the transcript holds a message from neither you nor the agent"))
         }
-        staged <- is.character(e$typed) && length(e$typed) == 1L
-        if (staged) {
-            said <- e$typed
-        } else {
-            said <- review_message_text(e)
+        typed <- e$typed
+        typed_ok <- isTRUE(e$staged) && is.character(typed) &&
+        length(typed) == 1L && !is.na(typed)
+        if (!is.null(e$auto_run_id)) {
+            # The driver's later prompts restate the goal.
+            if (as.character(e$auto_run_id)[1L] %in% runs) {
+                next
+            }
+            runs <- c(runs, as.character(e$auto_run_id)[1L])
+            if (!typed_ok) {
+                return(unread("an /auto run's prompt does not say what you asked it"))
+            }
+            said <- paste("/auto", typed)
+        } else if (typed_ok) {
+            said <- paste(typed, "[sent with R or shell output, not shown]")
+        } else if (!identical(e$staged, FALSE)) {
+            return(unread(paste("the transcript has messages from before corteza",
+                                "0.8.1, which do not mark what you typed")))
         }
         said <- .sanitize_inline(said, max_chars = budget)
         if (!nzchar(said)) {
             next
         }
-        if (staged) {
-            said <- paste(said, "[sent with R or shell output, not shown]")
-        }
         if (nzchar(trimws(reply))) {
-            lines <- c(lines, paste("Worker:", review_tail(reply, tail_chars)))
+            lines <- c(lines, paste("Worker:",
+                                    .sanitize_inline(reply, max_chars = budget)))
         }
         reply <- ""
         lines <- c(lines, paste("Person:", said))
     }
     if (!length(lines)) {
-        return(list(lines = character(),
-                    why = "the transcript holds no message of the person's"))
+        return(unread("the transcript holds no message of yours"))
     }
     if (sum(nchar(lines)) > budget) {
-        return(list(lines = character(),
-                    why = sprintf("the conversation runs past the %s characters it reads",
-                                  format(budget, big.mark = ","))))
+        return(unread(sprintf("the conversation runs past the %s characters it reads",
+                              format(budget, big.mark = ","))))
     }
     list(lines = lines, why = NULL)
 }
 
-# The last `n` characters of a reply, on one line, marked where cut.
-review_tail <- function(text, n) {
-    text <- .sanitize_inline(text, max_chars = .Machine$integer.max)
-    if (nchar(text) <= n) {
-        return(text)
-    }
-    paste0("...", substr(text, nchar(text) - n + 1L, nchar(text)))
-}
-
-# The text of a message: its content when that is a string, otherwise
-# its text blocks.
+# The text of a transcript message: its content when that is a string,
+# otherwise its text blocks, joined. NA when it holds anything else.
 review_message_text <- function(m) {
     content <- m$content
-    if (is.character(content)) {
-        return(paste(content, collapse = "\n"))
+    if (is.character(content) && length(content) == 1L && !is.na(content)) {
+        return(content)
     }
-    if (!is.list(content)) {
-        return("")
+    if (!is.list(content) || !length(content)) {
+        return(NA_character_)
     }
     parts <- vapply(content, function(b) {
-        if (is.list(b) && is.character(b$text) &&
-                    (is.null(b$type) || b$type %in% c("text", "input_text"))) {
-            paste(b$text, collapse = "\n")
+        if (is.list(b) && (is.null(b$type) || identical(b$type, "text")) &&
+                    is.character(b$text) && length(b$text) == 1L && !is.na(b$text)) {
+            b$text
         } else {
-            ""
+            NA_character_
         }
     }, character(1))
-    paste(parts[nzchar(parts)], collapse = "\n")
+    if (anyNA(parts)) {
+        return(NA_character_)
+    }
+    paste(parts, collapse = "\n")
 }
 
 # Keep what came of a reviewed call, for the reviewer's next request and

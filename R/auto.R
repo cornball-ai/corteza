@@ -679,6 +679,12 @@ run_auto_loop <- function(ctx, goal, max_loops = NULL, allow_exec = NULL,
     # every record keeps ids from colliding across runs.
     ctx$session$auto_call_seq <- 0L
     on.exit(ctx$session$auto_run_id <- prev_run_id, add = TRUE)
+    # The goal is what the person typed of each prompt the driver writes,
+    # and the transcript keeps it so (run_repl_loop()). The reviewer
+    # (R/review.R) reads it after the run.
+    prev_goal <- ctx$session$auto_goal
+    ctx$session$auto_goal <- goal
+    on.exit(ctx$session$auto_goal <- prev_goal, add = TRUE)
 
     # A spawn failure is an ordinary error the operator will see, but
     # the run record must say it too -- this is the named case where "no

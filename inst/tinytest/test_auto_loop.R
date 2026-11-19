@@ -116,6 +116,19 @@ expect_equal(turns, 3L)
 expect_null(ctx$session$auto_gate)
 expect_null(ctx$auto_halt)
 
+# The transcript keeps the goal as what the person typed of each prompt
+# the driver wrote, and the reviewer (R/review.R) shows it once. The
+# goal leaves the session with the run.
+rec <- corteza:::transcript_load_strict(ctx$disk_session$session$sessionId)
+prompts <- Filter(function(e) identical(e$role, "user"), rec$entries)
+expect_equal(length(prompts), 3L)
+expect_true(all(vapply(prompts, function(e) {
+    isTRUE(e$staged) && identical(e$typed, "do a thing") && !is.null(e$auto_run_id)
+}, logical(1))))
+expect_identical(corteza:::review_conversation(ctx$disk_session$session$sessionId)$lines,
+                 "Person: /auto do a thing")
+expect_null(ctx$session$auto_goal)
+
 # ---- stops when the monitor says stop ----
 
 reset_wt()
