@@ -504,6 +504,78 @@ local({
     }
 })
 
+# A record that is a link is not read: a job whose intent is a link does
+# not read as a job, and nothing of it goes, so a finished job never
+# reads as queued. A removal refuses a folder whose intent is a link by
+# the time it gets there. An outcome that is a link counts as none, and
+# a remote session's request or closed record likewise. Skipped where a
+# link cannot be made.
+local({
+    fx <- state_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    away <- file.path(fx$root, "away")
+    dir.create(away)
+    relink <- function(record, target) {
+        write_record(target, corteza:::job_read_file(record))
+        unlink(record)
+        isTRUE(file.symlink(target, record))
+    }
+
+    job <- make_job(fx, jid(1))
+    intent <- file.path(job, "intent.json")
+    if (relink(intent, file.path(away, "intent-1.json"))) {
+        expect_identical(corteza:::job_read(jid(1))$status, "done")
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_identical(paste(found$kind, found$session),
+                         paste("unknown", jid(1)))
+        expect_true(file.exists(file.path(job, "outcome.json")))
+        expect_true(file.exists(file.path(job, "dispatch.json")))
+        expect_identical(corteza:::job_read(jid(1))$status, "done")
+        # The removal itself refuses it, whatever a scan said.
+        expect_false(corteza:::retention_state_remove(job, "job"))
+        expect_true(file.exists(file.path(job, "outcome.json")))
+        expect_true(file.exists(file.path(job, "progress", "00000001.json")))
+        expect_true(file.exists(file.path(away, "intent-1.json")))
+        expect_identical(corteza:::job_read(jid(1))$status, "done")
+        # So does a folder in place of the intent.
+        unlink(intent)
+        dir.create(intent)
+        writeLines("{}", file.path(intent, "x.json"))
+        expect_false(corteza:::retention_state_remove(job, "job"))
+        expect_true(file.exists(file.path(job, "outcome.json")))
+    }
+
+    # An outcome reached through a link counts as none: the job is open,
+    # and its chain stays.
+    open <- make_job(fx, jid(2))
+    if (relink(file.path(open, "outcome.json"),
+               file.path(away, "outcome-2.json"))) {
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_false(jid(2) %in% found$session)
+        expect_true(file.exists(file.path(open, "intent.json")))
+        expect_true(file.exists(file.path(open, "dispatch.json")))
+    }
+
+    # A remote session whose request is a link is no session of
+    # corteza's; one whose closed record is a link is not closed (its
+    # process is this one, still running).
+    linked <- make_remote(fx, jid(3), closed = TRUE)
+    if (relink(file.path(linked, "request.json"),
+               file.path(away, "request-3.json"))) {
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_identical(found$kind[found$session %in% jid(3)], "unknown")
+        expect_true(file.exists(file.path(linked, "closed.json")))
+        expect_true(file.exists(file.path(linked, "out", "000000000001.json")))
+    }
+    running <- make_remote(fx, jid(4), closed = TRUE)
+    if (relink(file.path(running, "closed.json"),
+               file.path(away, "closed-4.json"))) {
+        found <- corteza:::retention_prune(90, now = fx$later)
+        expect_false(jid(4) %in% found$session)
+        expect_true(file.exists(file.path(running, "request.json")))
+    }
+})
+
 # The state folder itself may be a link, as the data folder may: it is
 # read from where it points.
 local({

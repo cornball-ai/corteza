@@ -144,6 +144,24 @@ retention_job_rows <- function(days, incomplete_days, now) {
     retention_rows(Filter(Negate(is.null), rows))
 }
 
+# Is `name` a file of the folder itself? A link, or a path that leads out
+# of the folder, is not: retention reads no record through one, and a
+# removal does not take one as the record that goes first.
+retention_record_here <- function(d, name) {
+    path <- file.path(d$dir, name)
+    !is.null(retention_step(path, d$real, name)) && file.exists(path) &&
+    !dir.exists(path)
+}
+
+# The record `name` of a state folder, read only where it is a file of
+# the folder itself; NULL otherwise, or where it cannot be read.
+retention_record <- function(d, name) {
+    if (!retention_record_here(d, name)) {
+        return(NULL)
+    }
+    tryCatch(job_read_file(file.path(d$dir, name)), error = function(e) NULL)
+}
+
 # A job folder's record: the ids it names, whether and how it ended, its
 # newest change, and the size of what may go. NULL for a folder that
 # does not read as a job's. TRUE for one that holds nothing but the
@@ -156,14 +174,12 @@ retention_job_read <- function(d) {
     if (identical(entries, "audit")) {
         return(TRUE)
     }
-    intent <- tryCatch(job_read_file(file.path(d$dir, "intent.json")),
-                       error = function(e) NULL)
+    intent <- retention_record(d, "intent.json")
     if (!is.list(intent) || !identical(intent$id, d$name)) {
         return(NULL)
     }
     # An outcome that cannot be read counts as none: the job stays open.
-    outcome <- tryCatch(job_read_file(file.path(d$dir, "outcome.json")),
-                        error = function(e) NULL)
+    outcome <- retention_record(d, "outcome.json")
     links <- unlist(intent[c("resume_of", "review_of", "parent")],
                     use.names = FALSE)
     links <- Filter(retention_is_id, as.list(as.character(links)))
@@ -267,8 +283,7 @@ retention_remote_rows <- function(days, now) {
                                    .remote_root())) {
         request <- NULL
         if (retention_is_id(d$name)) {
-            request <- tryCatch(job_read_file(file.path(d$dir, "request.json")),
-                                error = function(e) NULL)
+            request <- retention_record(d, "request.json")
         }
         if (!is.list(request) || !identical(request$id, d$name)) {
             rows <- c(rows, list(retention_unknown_row(d, days, now)))
@@ -276,8 +291,7 @@ retention_remote_rows <- function(days, now) {
         }
         newest <- retention_newest(d$dir, d$real)
         idle <- retention_idle(now, newest)
-        if (is.na(idle) || idle < days || !retention_remote_ended(d$dir,
-                request)) {
+        if (is.na(idle) || idle < days || !retention_remote_ended(d, request)) {
             next
         }
         own <- retention_state_own(d$dir, d$real, "remote")
@@ -292,9 +306,10 @@ retention_remote_rows <- function(days, now) {
 # names this host and a process id and that process is gone. Anything
 # else may still be in use, however old: a record from another host, one
 # with no process id, and on Windows, where the check cannot be made,
-# every session that was not closed.
-retention_remote_ended <- function(dir, request) {
-    if (file.exists(file.path(dir, "closed.json"))) {
+# every session that was not closed. `d` is the session's folder, as
+# retention_store_dirs() gives it.
+retention_remote_ended <- function(d, request) {
+    if (retention_record_here(d, "closed.json")) {
         return(TRUE)
     }
     pid <- request$pid
@@ -349,9 +364,13 @@ retention_state_remove <- function(path, kind) {
     real <- normalizePath(path, winslash = "/", mustWork = FALSE)
     own <- retention_state_own(path, real, kind)
     # A job whose intent stays while its outcome goes would read as
-    # queued, and run again.
-    first <- intersect(own$first, own$files)
-    if (length(first) && !retention_unlink(first)) {
+    # queued, and run again. So the record that goes first goes before
+    # anything else, and where it is there and is not among the files
+    # that may go (a link, a folder, a path that leads out), nothing does.
+    first <- own$first
+    there <- length(first) &&
+    (file.exists(first) || retention_is_link(first))
+    if (there && (!first %in% own$files || !retention_unlink(first))) {
         return(FALSE)
     }
     retention_unlink(setdiff(own$files, first))
