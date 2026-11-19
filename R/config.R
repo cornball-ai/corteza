@@ -155,18 +155,11 @@ load_config <- function(cwd = getwd()) {
         config$skill_paths <- character()
     }
 
-    # Default skill packages (R packages registered as tools). Each entry
-    # names the class of its functions, which decides who approves a
-    # call (R/policy.R).
+    # R package functions registered as tools: none unless the config
+    # lists them. Each entry names the class of its functions, which
+    # decides who approves a call (R/policy.R).
     if (is.null(config$skill_packages)) {
-        config$skill_packages <- list(
-                                      list(package = "base", functions = c("file.exists", "Sys.glob"),
-                class = "read"),
-                                      list(package = "base", functions = c("file.copy", "file.remove",
-                    "dir.create"), class = "write"),
-                                      list(package = "utils", functions = c("read.csv", "head", "tail"),
-                class = "read")
-        )
+        config$skill_packages <- list()
     }
 
     # Default timeout for skill execution (seconds)

@@ -1,3 +1,14 @@
+# corteza 0.8.0.15
+
+- **Changed default: no package functions are registered as tools
+  unless a config lists them.** `skill_packages` is now empty. Up to
+  0.8.0 the default registered 8 functions of base and utils in every
+  session: `file.exists`, `Sys.glob`, `read.csv`, `head` and `tail`,
+  and `file.copy`, `file.remove` and `dir.create`. To keep any of them,
+  list it with its class, as in `{"skill_packages": [{"package":
+  "utils", "functions": ["head"], "class": "read"}]}`. A config that
+  sets `skill_packages` is unchanged.
+
 # corteza 0.8.0.14
 
 - **A reviewer can answer what would prompt, at the terminal and in
