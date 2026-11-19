@@ -1,3 +1,25 @@
+# corteza 0.8.0.13
+
+- **The host files a room's conversation.** `bot_run_init()` takes a
+  fourth hook, `on_archive(chat, cfg, room_id, archive)`, handed each
+  range of a room's or thread's conversation that nothing has filed, at
+  `/clear` and at a flush (`bot_request_flush()`). `list(archived =
+  TRUE, ref)` takes the range, and `ref` goes to `on_clear`. Anything
+  else, an error included, leaves the range waiting in
+  `<state>/archive/<session id>.pending.json`, written before the host
+  is asked, and the next `/clear` or flush offers it again.
+- **Changed default: with no `on_archive` hook, nothing is filed.**
+  corteza no longer calls `pensar::ingest()`.
+- `/clear` keeps a session whose conversation is neither with the host
+  nor on disk, and says so in the room.
+- After each flush the log says how many ranges wait for the host, the
+  size of their files and how long ago the oldest was first kept.
+  Retention never removes a waiting range.
+- `thread_context` may return `kind = "summary"`, and a thread restored
+  from one is told it continues a conversation archived as a summary.
+- `bot_archive_all()` and `matrix_archive_all()` take `on_archive` and
+  `cfg`.
+
 # corteza 0.8.0.12
 
 - **"Allow always for this project" is kept in the user's config, by
