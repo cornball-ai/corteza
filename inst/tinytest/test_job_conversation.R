@@ -162,6 +162,81 @@ local({
                                              "checkpoint.json")), stamp)
 })
 
+# ---- A queued job keeps what its conversation allowed -----------------------
+# Codex's finding on #281: a job queued in one conversation started after
+# /clear under the next one's settings. job_conversation_hold() keeps,
+# for each job the ending conversation queued, the spec and authority it
+# gives now; job_dispatch() starts the job under them, and refuses one
+# from an ended conversation that nothing was kept for.
+local({
+    root <- normalizePath(tempfile("conversation-hold-"), mustWork = FALSE)
+    dir.create(root)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    s <- corteza::new_session("cli", provider = "anthropic")
+    s$cwd <- root
+    s$job_key <- "hold-fixture"
+    s$job_checkpoint_owner <- "local:fixture"
+    s$job_checkpoint_key <- "repl:conv-a"
+    s$sessionId <- "conv-a"
+    s$config <- list(approval_mode = "ask")
+    queue <- function(conversation) {
+        ns$job_create("fixture task", workspace = root,
+                      origin = list(session_key = ns$job_worker_key(s),
+                                    conversation = conversation),
+                      owner = ns$job_worker_owner(s))
+    }
+    mine <- queue("conv-a")
+    other <- queue("conv-x")
+    ended <- queue("conv-a")
+    ns$job_settle(ended, "done", result = "r")
+    # Plan mode turned on after the job was queued: the hold takes it.
+    s$plan_mode <- TRUE
+    expect_identical(ns$job_conversation_hold(s), 1L)
+    held <- s$.job_held[[mine]]
+    expect_identical(held$conversation, "conv-a")
+    expect_true(isTRUE(held$spec$plan_mode))
+    expect_identical(held$spec$conversation, "conv-a")
+    expect_identical(held$spec$identity$key, "repl:conv-a")
+    expect_true(isTRUE(held$authority$plan_mode))
+    expect_identical(held$authority$approval_mode, "ask")
+    expect_null(s$.job_held[[other]])
+    expect_null(s$.job_held[[ended]])
+    # The next conversation holds nothing of the last one's again.
+    s$sessionId <- "conv-b"
+    s$job_checkpoint_key <- "repl:conv-b"
+    s$plan_mode <- FALSE
+    expect_identical(ns$job_conversation_hold(s), 0L)
+    expect_true(isTRUE(s$.job_held[[mine]]$spec$plan_mode))
+    # A held job's record is written from what was held, and the next
+    # conversation's pump does not write it again.
+    ns$job_authority_write(s, mine, values = held$authority,
+                           conversation = "conv-a")
+    expect_true(isTRUE(ns$job_read_file(ns$job_authority_path(mine))$plan_mode))
+    s$.job_current <- mine
+    expect_false(ns$job_authority_sync(s))
+    expect_true(isTRUE(ns$job_read_file(ns$job_authority_path(mine))$plan_mode))
+    s$.job_current <- NULL
+    # A job from an ended conversation that nothing was held for does
+    # not run, and says why.
+    invisible(ns$job_dispatch(s, ns$job_read(other), NULL))
+    out <- ns$job_read(other)
+    expect_identical(out$status, "failed")
+    expect_true(grepl("ended before it started", out$outcome$error,
+                      fixed = TRUE))
+    expect_false(file.exists(ns$job_authority_path(other)))
+    # What is held moves with the jobs to a session that replaces this
+    # one (a room's reset).
+    moved <- new.env(parent = emptyenv())
+    ns$job_state_move(s, moved)
+    expect_true(isTRUE(moved$.job_held[[mine]]$spec$plan_mode))
+    expect_null(s$.job_held)
+    ns$job_state_move(moved, s)
+    # A held job that is no longer queued is let go at the next hold.
+    ns$job_settle(mine, "cancelled", reason = "fixture")
+    ns$job_conversation_hold(s)
+    expect_null(s$.job_held[[mine]])
+})
+
 # ---- The terminal's /clear goes through it ---------------------------------
 local({
     calls <- list()
@@ -174,12 +249,22 @@ local({
     }, ns = "corteza")
     on.exit(assignInNamespace("job_conversation_clear", real, ns = "corteza"),
             add = TRUE)
+    # The queued jobs are held first, while the session is still the old
+    # conversation's.
+    real_hold <- ns$job_conversation_hold
+    assignInNamespace("job_conversation_hold", function(session) {
+        calls[[length(calls) + 1L]] <<- list(held = session$sessionId)
+        invisible(0L)
+    }, ns = "corteza")
+    on.exit(assignInNamespace("job_conversation_hold", real_hold,
+                              ns = "corteza"), add = TRUE)
     ctx <- new.env(parent = emptyenv())
     ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "", cyan = "", yellow = "")
     ctx$session <- new.env(parent = emptyenv())
     ctx$session$on_tool <- list()
     ctx$session$.repl_jobs_ready <- TRUE
+    ctx$session$sessionId <- "old-sess"
     ctx$disk_session <- list(session = list(sessionId = "old-sess"),
                              sessionId = "old-sess")
     ctx$new_session_fn <- function() {
@@ -187,12 +272,13 @@ local({
              resumed = FALSE)
     }
     invisible(capture.output(ns$.repl_clear(ctx)))
-    expect_identical(calls, list(list(conversation = "new-sess",
+    expect_identical(calls, list(list(held = "old-sess"),
+                                 list(conversation = "new-sess",
                                       key = "repl:new-sess")))
     # A session without jobs is left alone.
     ctx$session$.repl_jobs_ready <- NULL
     invisible(capture.output(ns$.repl_clear(ctx)))
-    expect_identical(length(calls), 1L)
+    expect_identical(length(calls), 2L)
 })
 
 # ---- A result that settles after /clear ------------------------------------
@@ -389,6 +475,7 @@ local({
     }
     # The terminal's /clear, as far as jobs see it (R/repl-clear.R).
     clear_to <- function(id) {
+        ns$job_conversation_hold(s)
         s$sessionId <- id
         ns$job_conversation_clear(s, id, checkpoint_key = paste0("repl:", id))
     }
@@ -506,6 +593,42 @@ local({
     j <- run("script: r cat('z=', z)")
     expect_true(has(j, "z= 9"))
     expect_true(has(j, "tasks=1"))
+
+    # Codex's case on #281: a job queued behind one in flight, its
+    # conversation turns plan mode on, /clear, and the new conversation
+    # turns it off. The queued job runs under what its own conversation
+    # allowed as it ended: plan mode, so its write is refused.
+    s$plan_mode <- FALSE
+    asked <- s$sessionId
+    first <- ns$job_submit(s, "script: write h1 go-h1")
+    pump_until(function() file.exists(at("go-h1.waiting")))
+    second <- ns$job_submit(s, "script: write h2")
+    expect_identical(ns$job_read(second)$status, "queued")
+    s$plan_mode <- TRUE
+    ns$job_pump(s)
+    clear_to("conv-j")
+    s$plan_mode <- FALSE
+    writeLines("go", at("go-h1"))
+    pump_until(function() {
+        ns$job_read(second)$status %in% ns$JOB_STATUSES_FINAL
+    })
+    expect_identical(ns$job_read(first)$status, "done")
+    expect_identical(ns$job_read(second)$status, "done")
+    expect_identical(ns$job_read(second)$origin$conversation, asked)
+    record <- ns$job_read_file(ns$job_authority_path(second))
+    expect_true(isTRUE(record$plan_mode))
+    expect_false(file.exists(at("h2")))
+    expect_identical(length(s$.job_held), 0L)
+    # It ran in its own conversation's history: the job before the
+    # scenario, the one it waited behind, and itself.
+    expect_true(has(ns$job_read(second), "tasks=3"),
+                info = ns$job_read(second)$outcome$result)
+    expect_identical(checkpoint(asked)$conversation, asked)
+    expect_true(checkpoint(asked)$history)
+    # The next job is the new conversation's, under its settings.
+    j <- run("script: write h3")
+    expect_identical(j$origin$conversation, "conv-j")
+    expect_true(file.exists(at("h3")))
 
     # --resume: a conversation's doer comes back as its last job left it.
     # Codex's case: clear P into Q, quit, resume P and change an object,

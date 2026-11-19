@@ -1,5 +1,11 @@
 # Shared by the local slash dispatcher and the remote input reader.
 .repl_clear <- function(ctx) {
+    # Jobs this conversation queued and has not started keep what it
+    # allows them, taken now, while the session is still this one's
+    # (R/job-conversation.R).
+    if (isTRUE(ctx$session$.repl_jobs_ready)) {
+        job_conversation_hold(ctx$session)
+    }
     # Archive the current session's workspace so it stays
     # resumable, then spin up a fresh on-disk + in-memory
     # session. The old transcript is left on disk.
