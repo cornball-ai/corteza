@@ -78,7 +78,8 @@ rx <- function(key, target, sender = "@troy:ex", room = "!room:ex",
 job_waiting <- function(s, cmd = "rm x", route = NULL) {
     id <- corteza:::job_create("rm stale files",
                                origin = list(session_key = s$job_key,
-                                             room = s$room_id))
+                                             room = s$room_id,
+                                             conversation = s$conversation_id))
     corteza:::job_mark_dispatched(id)
     req <- corteza:::job_approval_request(
         id, list(tool = "bash", args = list(cmd = cmd)),
@@ -143,12 +144,28 @@ fake_monitor <- function(task) {
     list(reply = sprintf("REQUEST: %s\nVERDICT: %s\nREASON: because %s", id,
                          verdict, verdict))
 }
+# The monitor reads the conversation that asked for the job
+# (R/room-record.R): a record that begins with it, holding a line from
+# someone who may approve. test_room_record.R covers the rest.
 monitored <- function(key) {
     s <- make_session(key)
     s$cwd <- tempdir()
+    s$conversation_id <- corteza:::job_new_id()
+    corteza:::bot_record_attach(s, cfg, key, "conversation")
+    corteza:::bot_transcript_add(s, "$asked", "user", "tidy the package",
+                                 event = list(sender = "@troy:ex",
+                                              body = "tidy the package"))
     s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
                               run_fn = fake_monitor)
     s
+}
+# Who may approve, as the room's members would say; the returned
+# function puts the real lookup back.
+approvers_are <- function(who) {
+    real <- corteza:::bot_room_approvers
+    assignInNamespace("bot_room_approvers", function(cfg, room_id) who,
+                      "corteza")
+    function() assignInNamespace("bot_room_approvers", real, "corteza")
 }
 auto_cfg <- c(cfg, list(auto_approve_asks = TRUE))
 # Collect the monitor's answer the way the bot's loop does.
@@ -165,6 +182,8 @@ monitor_answer <- function(chat, s, timeout = 20) {
 local({
     rec <- new.env()
     chat <- make_chat(rec)
+    undo <- approvers_are("@troy:ex")
+    on.exit(undo(), add = TRUE)
     s <- monitored("!mon:ex")
     on.exit(corteza:::job_worker_close_all(s), add = TRUE)
     reg <- registry(s)
@@ -253,6 +272,8 @@ local({
 local({
     rec <- new.env()
     chat <- make_chat(rec)
+    undo <- approvers_are("@troy:ex")
+    on.exit(undo(), add = TRUE)
     s <- monitored("!nomon:ex")
     s$job_worker_spec$init_fn <- function(spec) stop("no provider key")
     w <- job_waiting(s, "git add R/x.R", route = "monitor")

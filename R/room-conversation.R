@@ -127,6 +127,10 @@ bot_conversation_open <- function(cfg, key, room_id) {
     if (is.null(record)) {
         record <- bot_conversation_new()
         bot_conversation_save(cfg, key, room_id, record)
+        # Made now, so its record for the monitor begins now too
+        # (bot_get_or_create_session()). Not saved: it describes this
+        # process's call.
+        attr(record, "made") <- TRUE
     }
     record
 }

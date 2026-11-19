@@ -598,7 +598,15 @@ bot_msg_record <- function(m, addressed = FALSE) {
 # So the ledger is appended at the moments a Matrix event is seen or
 # successfully sent, and nowhere else. Backfill produces the same shape
 # from the server, which is what makes restart dedup exact.
-bot_transcript_add <- function(session, event_id, role, content) {
+#
+# The conversation's record for its monitor (R/room-record.R) is
+# written here too, unless `record` is FALSE: the backfill writes its
+# own. `event` is the message someone else sent, which gives the record
+# its sender and its text as sent, `note` what the bot made of it, and
+# `kind` says when it is a peer's request rather than a message.
+bot_transcript_add <- function(session, event_id, role, content,
+                               event = NULL, note = NULL, kind = NULL,
+                               record = TRUE) {
     # A send can create several events (attachments, then the text). Only
     # one of them is the conversational turn, and it is the last: the
     # attachments are remembered for echo suppression but are not
@@ -618,6 +626,17 @@ bot_transcript_add <- function(session, event_id, role, content) {
     session$transcript <- c(session$transcript %||% list(),
                             list(list(event_id = as.character(event_id), role = role,
                                       content = text)))
+    if (isTRUE(record)) {
+        if (is.null(kind)) {
+            if (identical(role, "assistant")) {
+                kind <- "post"
+            } else {
+                kind <- "message"
+            }
+        }
+        bot_record_write(session, bot_record_event_line(event_id, text, kind,
+                event = event, note = note))
+    }
     invisible(NULL)
 }
 
@@ -1573,6 +1592,10 @@ bot_supervise_session <- function(s, cfg, room_id) {
         log_event("supervisor_decision", tool = record$tool,
                   action = record$action, by = record$by,
                   route = record$route, reason = record$reason)
+        # What came of the session's calls, for the monitor's next
+        # request (bot_supervised_earlier()).
+        s$.supervised_log <- utils::tail(c(s$.supervised_log, list(record)),
+            15L)
     })
     invisible(s)
 }
@@ -1580,27 +1603,40 @@ bot_supervise_session <- function(s, cfg, room_id) {
 # How a call made in a room session's own turn gets answered. The turn
 # holds the bot's loop, so this waits: for the monitor, then, if the
 # monitor passes the call on or cannot be asked, for a reaction.
+#
+# The monitor reads the conversation (R/room-record.R), whole, as the
+# terminal's reviewer does, and each request is a scope of its own. A
+# conversation it cannot judge by goes to a person, with the reason.
 bot_supervisor_ask <- function(s, cfg, room_id) {
     force(room_id)
     function(route, call, decision, notes) {
-        if (identical(route, "monitor")) {
-            goal <- s$supervisor_goal %||% list()
-            v <- job_monitor_ask_wait(s, list(
-                    scope = paste0("turn:", goal$id %||% ""),
-                    request_id = sprintf("t%06d", sample.int(999999L, 1L)),
-                    goal = goal$text %||% "(a message in the room)",
-                    tool = call$tool, args = job_approval_args(call$args),
-                    reason = decision$reason, notes = notes))
-            if (v$verdict %in% c("approve", "refuse")) {
-                return(list(approved = identical(v$verdict, "approve"),
-                            by = "monitor", reason = v$reason))
-            }
-            decision$reason <- sprintf("the monitor passed this to you: %s",
-                                       v$reason %||% "no reason given")
-        }
         # Derived at the point of use: the token rotates (see
         # bot_approval_cb()).
         live <- tryCatch(bot_load_config(), error = function(e) cfg)
+        if (identical(route, "monitor")) {
+            review <- bot_record_conversation(s$review_record$path,
+                bot_room_approvers(live, room_id))
+            if (is.null(review$why)) {
+                s$.review_seq <- (s$.review_seq %||% 0L) + 1L
+                id <- sprintf("t%06d", s$.review_seq)
+                v <- job_monitor_ask_wait(s, list(
+                        scope = paste0("review:", id), request_id = id,
+                        conversation = review$lines, room = TRUE,
+                        narration = call$model_context$assistant_text,
+                        tool = call$tool, args = job_approval_args(call$args),
+                        reason = decision$reason, notes = notes,
+                        earlier = bot_supervised_earlier(s)))
+                if (v$verdict %in% c("approve", "refuse")) {
+                    return(list(approved = identical(v$verdict, "approve"),
+                                by = "monitor", reason = v$reason))
+                }
+                decision$reason <- sprintf("the monitor passed this to you: %s",
+                    v$reason %||% "no reason given")
+            } else {
+                decision$reason <- sprintf("the monitor was not asked (%s); policy said: %s",
+                    review$why, decision$reason %||% "ask")
+            }
+        }
         approved <- bot_reaction_approval(live, call, decision,
             room_id = room_id)
         list(approved = isTRUE(approved), by = "person",
@@ -2067,10 +2103,24 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # The conversation it holds (R/room-conversation.R): the one on
     # record, so a restart goes on with it, unless /clear hands in a new
     # one.
-    if (is.null(conversation)) {
+    cleared <- !is.null(conversation)
+    if (!cleared) {
         conversation <- bot_conversation_open(cfg, key, room_id)
     }
     bot_conversation_attach(s, conversation)
+    # And its record for the monitor (R/room-record.R). One with no file
+    # yet begins with the conversation when /clear started it, or when
+    # the conversation is new and the session holds nothing from before;
+    # otherwise it begins `partial`, and the monitor rules on nothing
+    # until /clear.
+    whole <- cleared || (isTRUE(attr(conversation, "made")) &&
+        !length(s$history))
+    if (whole) {
+        start <- "conversation"
+    } else {
+        start <- "partial"
+    }
+    bot_record_attach(s, cfg, key, start, cleared = cleared)
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
@@ -2370,7 +2420,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
-        bot_transcript_add(session, m$id, "user", ingest_body)
+        bot_transcript_add(session, m$id, "user", ingest_body, event = m,
+                           note = media$receipt)
         if (!bot_should_respond(m, self_id, members, bots = bots,
                                 engaged_until = engaged_until,
                                 now = now,
@@ -2675,10 +2726,6 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             function(id) bot_job_resume(sessions, request_session, cfg,
                                         request_sender, request_event, id)
         })
-        # What was asked, for a monitor ruling on a call this turn makes
-        # itself (bot_supervisor_ask()). The message id marks where one
-        # request's calls end and the next one's begin.
-        session$supervisor_goal <- list(text = ingest_body, id = m$id)
         # And how to hand a job to another room's doer, should this turn
         # ask to (`delegate` with `room`). Per turn, like the two fields
         # above, and removed after it: it holds this poll's client and
@@ -2879,24 +2926,37 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
             # the kept file's path. None goes to the model and nothing is
             # posted: backfill answers nothing. The event is marked seen
             # below, so the live path never sees the picture.
+            receipt <- NULL
             if (!is_self && length(m$attachments)) {
-                content <- tryCatch({
+                media <- tryCatch({
                     key <- bot_session_key(rid, m$thread)
                     bot_message_media(chat, m, content, session$provider,
                                       cfg = cfg,
                                       save_dir = bot_attachments_dir(cfg, key),
-                                      not_shown = "received while the bot was not running")$text
+                                      not_shown = "received while the bot was not running")
                 }, error = function(e) {
                     message("bot_run: backfill kept no attachment of ", m$id,
                             ": ", conditionMessage(e))
-                    content
+                    list(text = content)
                 })
+                content <- media$text
+                receipt <- media$receipt
             }
             session$history <- c(
                                  session$history %||% list(),
                                  list(list(role = role, content = content))
             )
-            bot_transcript_add(session, m$id, role, content)
+            bot_transcript_add(session, m$id, role, content, record = FALSE)
+            # The conversation's record (R/room-record.R) takes what it
+            # does not hold yet, and says when the window leaves a break.
+            if (is_self) {
+                line <- bot_record_event_line(m$id, body, "post",
+                    via = "backfill")
+            } else {
+                line <- bot_record_event_line(m$id, content, "message",
+                    event = m, note = receipt, via = "backfill")
+            }
+            bot_record_backfill(session, ids, i, line)
             session$seen_event_ids <- bot_remember_event(
                 session$seen_event_ids, m$id
             )

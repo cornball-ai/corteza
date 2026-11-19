@@ -194,6 +194,24 @@ call unseen: `auto_approve_asks` chooses between steps 2 and 3 for what
 step 1 leaves open. Settings live under `supervisor` in the user's
 config only (`supervisor_config()`); a project config cannot set them.
 
+The monitor reads the room's conversation (`R/room-record.R`), never
+`session$transcript`, which the archive empties at a flush and at
+`/clear`. Each conversation keeps `conversation-<id>.jsonl` in the
+room's journal folder, written where the transcript queue is fed
+(`bot_transcript_add()`; the backfill writes its own through
+`bot_record_backfill()`): the sender from the event, the text as sent,
+the bot's note (an attachment's receipt) apart, and the kind (`message`,
+`request` for a peer's, `post` for the bot's). Its first line says
+`conversation` or `partial`, and a break is a `gap` line.
+`bot_record_conversation()` gives the monitor `Person:` lines for the
+room's approvers (`bot_approvers()`, membership read fresh), `Other
+(<id>):` for anyone else and `Worker:` for posts, or a reason to ask a
+person instead: nobody may approve, a partial start, a gap, an
+unreadable line, no person's line, or past 100,000 characters. A job is
+judged by `origin$conversation` (a hand-off by `origin$from`), read
+when its request comes. Each request is a scope of its own
+(`review:<id>`), with `earlier` for what came of the calls before it.
+
 `R/monitor.R` is the older hall monitor for `/auto` runs in the CLI and
 `chat()`. Same idea, another failure rule: it ends the run where this
 one asks a person. `exec_scan()` is not a sandbox. A path built at run

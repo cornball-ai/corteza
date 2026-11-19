@@ -589,8 +589,10 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
     }
     # `label`, not `room_name`: `$room` on a record holding only the
     # latter would match it by prefix and return a name as a room id.
+    # The asking conversation too: the job's calls are judged by its
+    # record (bot_job_conversation()).
     from <- list(session_key = job_worker_key(session), room = origin$room,
-                 label = from_label)
+                 label = from_label, conversation = session_conversation(session))
     if (!is.null(origin$thread)) {
         from$thread <- origin$thread
     }
@@ -725,22 +727,35 @@ bot_job_approval <- function(chat, cfg, s, ev) {
         return(invisible(NULL))
     }
     if (identical(req$route, "monitor") && isTRUE(cfg$auto_approve_asks)) {
-        asked <- tryCatch({
-            job_monitor_ask(s, bot_monitor_question(job, req))
-            TRUE
-        }, error = function(e) conditionMessage(e))
-        if (isTRUE(asked)) {
-            return(invisible(NULL))
+        # The conversation that asked for the job, read now
+        # (R/room-record.R). One the monitor cannot judge by goes to a
+        # person.
+        review <- bot_job_conversation(cfg, job)
+        if (is.null(review$why)) {
+            asked <- tryCatch({
+                job_monitor_ask(s, bot_monitor_question(job, req, review$lines))
+                TRUE
+            }, error = function(e) conditionMessage(e))
+            if (isTRUE(asked)) {
+                return(invisible(NULL))
+            }
+            req$reason <- sprintf("the monitor could not be asked (%s); policy said: %s",
+                                  asked, req$reason %||% "ask")
+        } else {
+            req$reason <- sprintf("the monitor was not asked (%s); policy said: %s",
+                                  review$why, req$reason %||% "ask")
         }
-        req$reason <- sprintf("the monitor could not be asked (%s); policy said: %s",
-                              asked, req$reason %||% "ask")
     }
     bot_job_ask_person(chat, cfg, s, job, req)
 }
 
-# What the monitor is asked about a job's request.
-bot_monitor_question <- function(job, req) {
-    list(scope = job$id, request_id = req$id, job = job$id, req = req,
+# What the monitor is asked about a job's request: the conversation that
+# asked for the job, and the task the talker wrote from it. Each request
+# is a scope of its own, so the monitor starts each ruling from the
+# request alone; `earlier` says how the job's earlier calls went.
+bot_monitor_question <- function(job, req, conversation = character()) {
+    list(scope = paste0("review:", job$id, ":", req$id), request_id = req$id,
+         job = job$id, req = req, conversation = conversation, room = TRUE,
          goal = job$task %||% "", tool = req$tool, args = req$args,
          reason = req$reason, notes = req$notes,
          earlier = tryCatch(job_monitor_earlier(job$id),

@@ -215,11 +215,13 @@ retention_attachment_files <- function(dir) {
 # What the journal's writer makes in a journal folder (R/journal.R): the
 # live snapshot and the segments, each with the copy a replacement parks
 # and the temp file it is written through, and the folder of shared
-# entries. Anything else there is someone else's, the audit records
-# first of all.
+# entries. And a room's records of its conversations, kept beside them
+# for the room's monitor (R/room-record.R). Anything else there is
+# someone else's, the audit records first of all.
 retention_journal_files <- function(journal) {
     names <- list.files(journal, all.files = TRUE, no.. = TRUE)
     own <- grepl("^(live|segment-[0-9]+)[.]json([.]tmp|[.]prev)?$", names) |
+    grepl("^conversation-[A-Za-z0-9-]+[.]jsonl$", names) |
     names == "entries"
     file.path(journal, names[own])
 }

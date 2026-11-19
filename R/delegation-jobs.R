@@ -153,7 +153,10 @@
             restricted <- intersect(restricted, spec$tools)
         }
     }
+    # The conversation the request came into, whose record the monitor
+    # reads for the job's calls (R/room-record.R).
     origin <- list(room = m$channel, thread = m$thread, session_key = key,
+                   conversation = session_conversation(s),
                    delegation = list(id = fields$id, peer = m$sender, channel = m$channel,
                                      thread = m$thread, transport = transport, message = m$id,
                                      hop = hop, root = root, tools = restricted))
@@ -163,7 +166,8 @@
                      review = isTRUE(allow$review) || identical(fields$review, "true"))
     request_text <- paste0("Delegated task from ", m$sender, " (job ", id, "):\n", p$text)
     s$history <- c(s$history, list(list(role = "user", content = request_text)))
-    bot_transcript_add(s, m$id, "user", request_text)
+    bot_transcript_add(s, m$id, "user", request_text, event = m,
+                       kind = "request")
     .context_room_snapshot(s)
     .delegation_worker_reply(chat, job_read(id))
     invisible(id)
