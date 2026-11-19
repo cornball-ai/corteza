@@ -372,36 +372,6 @@ print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, c
 # approval_cb hand-off in corteza::new_session() so this local copy is
 # no longer needed.
 
-# Load approvals from project-local file. Called for a trusted directory
-# only (cli_approval_cb): the file travels with the repository.
-load_approvals <- function(cwd) {
-  path <- corteza:::project_approvals_path(cwd)
-  if (file.exists(path)) {
-    tryCatch(
-      jsonlite::fromJSON(path, simplifyVector = FALSE),
-      error = function(e) list()
-    )
-  } else {
-    list()
-  }
-}
-
-# Save approval to project-local file
-save_approval <- function(cwd, tool_name) {
-  approvals <- load_approvals(cwd)
-  approvals[[tool_name]] <- TRUE
-
-  path <- corteza:::project_approvals_path(cwd)
-  dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
-  jsonlite::write_json(approvals, path, auto_unbox = TRUE, pretty = TRUE)
-}
-
-# Check if tool is already approved for this project
-is_approved <- function(cwd, tool_name) {
-  approvals <- load_approvals(cwd)
-  isTRUE(approvals[[tool_name]])
-}
-
 # The CLI's memory-flush helper moved into package R code as
 # corteza:::run_memory_flush(ctx) (R/chat-slash.R) so chat() and the
 # CLI share one /flush implementation through run_repl_loop(). The
@@ -416,18 +386,13 @@ is_approved <- function(cwd, tool_name) {
 # in chat() and CLI alike, including per-tool overrides like
 # permissions = list(read_file = "ask") or list(bash = "allow").
 #
-# The callback persists "Allow always for this project" choices to
-# .corteza/approvals.json via save_approval(), and short-circuits
-# subsequent prompts via is_approved().
-#
-# In a trusted directory only. That file travels with the repository,
-# and one that arrives with answers already in it would approve calls
-# nobody here was asked about. In any other directory the file is
-# neither read nor written: "always" lasts for the session and the
-# project gets no folder. Decided once, when the session starts, like
-# everything else trust decides.
+# "Allow always for this project" is kept in the user's config
+# directory, by directory (corteza:::approval_save(), R/approvals.R),
+# trusted or not: a repository brings no answers along, and saving one
+# makes no folder in the project. The project's own
+# .corteza/approvals.json, where 0.8.0 kept them, is not read. An answer
+# that cannot be saved holds for this session.
 cli_approval_cb <- function(cwd) {
-  trusted <- corteza:::project_trusted(cwd)
   for_session <- character()
   function(call, decision) {
     name <- call$tool %||% ""
@@ -436,16 +401,14 @@ cli_approval_cb <- function(cwd) {
     # offers none.
     once_only <- identical(decision$rule, "credential")
     if (!once_only &&
-        (name %in% for_session || (trusted && is_approved(cwd, name)))) {
+        (name %in% for_session || name %in% corteza:::approvals_saved(cwd))) {
       return(TRUE)
     }
 
     persistent_label <- if (once_only) {
       NULL
-    } else if (trusted) {
-      "Allow always for this project"
     } else {
-      "Allow always for this session"
+      "Allow always for this project"
     }
     # Terminal CLI catches Ctrl+C as the interrupt that aborts the
     # turn -- same outcome as picking Deny. Surface the shortcut so
@@ -465,15 +428,12 @@ cli_approval_cb <- function(cwd) {
     response <- trimws(response)
     if (response == "" || (once_only && response == "2")) response <- "1"
 
-    # "Allow always for this project" persists to .corteza/approvals.json
-    # so future runs skip the prompt for this tool. In an untrusted
-    # directory the answer is kept here, for this session.
-    if (response == "2") {
-      if (trusted) {
-        save_approval(cwd, name)
-      } else {
-        for_session <<- c(for_session, name)
-      }
+    # "Allow always for this project" is saved so that later sessions
+    # here skip the prompt for this tool.
+    if (response == "2" && !corteza:::approval_save(cwd, name)) {
+      for_session <<- c(for_session, name)
+      cat(sprintf("%sCould not save it in %s; allowed for this session.%s\n",
+                  color$dim, corteza:::approvals_file(), color$reset))
     }
 
     # Replace the verbose approval block with a one-line `User replied:`
@@ -791,6 +751,13 @@ run_agent <- function(opts) {
       print_context_indicator(session_tokens, context_limit,
                               opts$context_warn_pct, opts$context_high_pct, opts$context_crit_pct)
     }
+  }
+
+  # Where the project holds the file 0.8.0 kept saved approvals in,
+  # say once that it is not read, and where answers are kept now.
+  approvals_notice <- corteza:::approvals_project_notice(cwd)
+  if (!is.null(approvals_notice)) {
+    cat(sprintf("%s%s%s\n", color$dim, approvals_notice, color$reset))
   }
 
   # Build the shared REPL context and hand off to corteza:::run_repl_loop

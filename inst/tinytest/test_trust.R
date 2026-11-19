@@ -432,10 +432,10 @@ local({
     if (has_git) {
         expect_true(any(grepl("commit subjects", offers, fixed = TRUE)))
     }
-    expect_false(any(grepl("approvals", offers, fixed = TRUE)))
+    # A project's saved approvals are not read even when it is trusted,
+    # so trusting it offers none.
     put(ns$project_approvals_path(proj), '{"bash": true}')
-    expect_true(any(grepl(".corteza/approvals.json", ns$project_offers(proj),
-                          fixed = TRUE)))
+    expect_false(any(grepl("approvals", ns$project_offers(proj), fixed = TRUE)))
     note_lines <- ns$project_trust_note(proj)
     expect_true(grepl("Not trusted", note_lines[[1L]], fixed = TRUE))
     expect_true(grepl(proj, note_lines[[1L]], fixed = TRUE))
@@ -614,21 +614,81 @@ local({
     untrust()
 
     # ---- The saved approvals, as displays say them -------------------------
-    expect_true(grepl("not read", ns$project_approvals_label(proj), fixed = TRUE))
-    expect_equal(ns$project_approvals_label(other), "none")
-    ns$project_trust_add(proj)
-    expect_equal(ns$project_approvals_label(proj), ns$project_approvals_path(proj))
-    untrust()
+    # The project's file ('{"bash": true}' was put in this one above) is
+    # not read, trusted or not. Answers are the user's, by directory.
+    for (trusted in c(FALSE, TRUE)) {
+        if (trusted) ns$project_trust_add(proj)
+        expect_equal(ns$approvals_saved(proj), character(), info = trusted)
+        label <- ns$approvals_label(proj)
+        expect_true(grepl("^none; ", label), info = trusted)
+        expect_true(grepl(".corteza/approvals.json is not read", label,
+                          fixed = TRUE), info = trusted)
+        expect_true(grepl("is not read", ns$approvals_project_notice(proj),
+                          fixed = TRUE), info = trusted)
+        untrust()
+    }
+    expect_equal(ns$approvals_label(other), "none")
+    expect_null(ns$approvals_project_notice(other))
+
+    # ---- The user's store ---------------------------------------------------
+    # Kept in the user's config directory, by directory as trust compares
+    # them: a link to a directory has its answers, a directory inside it
+    # has its own.
+    store <- ns$approvals_file()
+    expect_true(startsWith(store, file.path(root, "config-home")))
+    expect_false(file.exists(store))
+    expect_true(ns$approval_save(other, "bash"))
+    expect_true(ns$approval_save(other, "run_r"))
+    expect_true(ns$approval_save(other, "bash"))
+    expect_equal(ns$approvals_saved(other), c("bash", "run_r"))
+    expect_equal(ns$approvals_saved(file.path(other, ".")), c("bash", "run_r"))
+    expect_equal(ns$approvals_saved(proj), character())
+    expect_equal(ns$approvals_saved(file.path(proj, "sub")), character())
+    if (.Platform$OS.type != "windows") {
+        alias <- file.path(root, "other-link")
+        stopifnot(file.symlink(other, alias))
+        expect_equal(ns$approvals_saved(alias), c("bash", "run_r"))
+        unlink(alias)
+    }
+    expect_true(grepl("bash, run_r (kept in", ns$approvals_label(other),
+                      fixed = TRUE))
+    expect_false(dir.exists(file.path(other, ".corteza")))
+    # A save reads, changes and writes the file under one lock, so two at
+    # once each keep their answer (test_approvals.R runs 2 processes).
+    # One that cannot get the lock in time saves nothing.
+    lock <- paste0(store, ".lock")
+    dir.create(lock)
+    expect_false(ns$approval_save(other, "git_status", timeout = 0.2))
+    expect_equal(ns$approvals_saved(other), c("bash", "run_r"))
+    unlink(lock, recursive = TRUE)
+    expect_true(ns$approval_save(other, "git_status", timeout = 0.2))
+    expect_equal(ns$approvals_saved(other), c("bash", "git_status", "run_r"))
+    expect_equal(list.files(dirname(store), pattern = "tmp$"), character())
+    # A store that cannot be read gives none and is set aside, not
+    # overwritten by the next answer.
+    writeLines("{ not json", store)
+    expect_equal(ns$approvals_saved(other), character())
+    expect_true(file.exists(paste0(store, ".unreadable")))
+    expect_true(ns$approval_save(other, "bash"))
+    expect_equal(ns$approvals_saved(other), "bash")
+    expect_equal(readLines(paste0(store, ".unreadable")), "{ not json")
+    unlink(c(store, paste0(store, ".unreadable")))
+    # A store that cannot be written saves nothing, and says so.
+    blocker <- file.path(root, "not-a-dir")
+    writeLines("x", blocker)
+    Sys.setenv(R_USER_CONFIG_DIR = file.path(blocker, "config"))
+    expect_false(ns$approval_save(other, "bash"))
+    Sys.setenv(R_USER_CONFIG_DIR = file.path(root, "config-home"))
+    expect_equal(ns$approvals_saved(other), character())
 
     # ---- The saved approvals, as the terminal's prompt reads them ----------
     # The callback is the installed command's own, with the read of the
     # terminal replaced. A project's approvals.json arrives with the
-    # repository ('{"bash": true}' was put in this one above): untrusted,
-    # it answers nothing, and "always" is kept for the session in memory.
+    # repository: it answers nothing, trusted or not. "Always" is saved
+    # in the user's store for the directory.
     bin <- system.file("bin", "corteza", package = "corteza")
     if (nzchar(bin)) {
-        wanted <- c("load_approvals", "save_approval", "is_approved",
-                    "cli_approval_cb")
+        wanted <- "cli_approval_cb"
         defs <- Filter(function(e) {
             is.call(e) && identical(e[[1L]], as.name("<-")) &&
                 is.name(e[[2L]]) && as.character(e[[2L]]) %in% wanted
@@ -665,21 +725,28 @@ local({
         saved <- ns$project_approvals_path(proj)
         before <- readLines(saved)
 
+        for (trusted in c(FALSE, TRUE)) {
+            if (trusted) ns$project_trust_add(proj)
+            # The project's '{"bash": true}' answers nothing.
+            got <- ask(cli$cli_approval_cb(proj), "bash", "1")
+            expect_true(got$ok)
+            expect_equal(got$asked, 1L, info = trusted)
+            expect_true(any(grepl("Allow always for this project", got$said,
+                                  fixed = TRUE)), info = trusted)
+            untrust()
+        }
         cb <- cli$cli_approval_cb(proj)
-        got <- ask(cb, "bash", "1")
-        expect_true(got$ok)
-        expect_equal(got$asked, 1L)
-        expect_true(any(grepl("Allow always for this session", got$said,
-                              fixed = TRUE)))
-        expect_false(any(grepl("for this project", got$said, fixed = TRUE)))
         # Once is once.
         expect_equal(ask(cb, "bash", "1")$asked, 1L)
-        # "Always" holds for that tool until the session ends, and the
-        # project's file is as it was.
+        # "Always" is saved for the directory, in the user's store: this
+        # session and the next skip the prompt, and the project's file is
+        # as it was.
         expect_equal(ask(cb, "bash", "2")$asked, 1L)
         got <- ask(cb, "bash")
         expect_true(got$ok)
         expect_equal(got$asked, 0L)
+        expect_equal(ns$approvals_saved(proj), "bash")
+        expect_equal(ask(cli$cli_approval_cb(proj), "bash")$asked, 0L)
         expect_equal(ask(cb, "run_r", "1")$asked, 1L)
         # The credential rule's ask is answered each time: the session's
         # "always" for the tool does not answer it, and its prompt
@@ -702,39 +769,27 @@ local({
         expect_equal(got$asked, 1L)
         expect_equal(key(cb, "1", "run_r")$asked, 1L)
         expect_equal(ask(cb, "run_r", "1")$asked, 1L)
+        expect_equal(ns$approvals_saved(proj), "bash")
+        # Nor does the saved one in a new session.
+        expect_equal(key(cli$cli_approval_cb(proj), "1")$asked, 1L)
         expect_equal(ask(cb, "bash")$asked, 0L)
         expect_equal(readLines(saved), before)
-        expect_equal(ask(cli$cli_approval_cb(proj), "bash", "1")$asked, 1L)
         # Where the project has no folder, "always" makes none.
         cb <- cli$cli_approval_cb(other)
         expect_equal(ask(cb, "run_r", "2")$asked, 1L)
         expect_equal(ask(cb, "run_r")$asked, 0L)
         expect_false(dir.exists(file.path(other, ".corteza")))
-
-        # Trusted: the saved answer stands, and "always" saves one for
-        # the sessions after this.
-        ns$project_trust_add(proj)
+        # An answer that cannot be saved holds for this session, and the
+        # person is told.
+        Sys.setenv(R_USER_CONFIG_DIR = file.path(blocker, "config"))
         cb <- cli$cli_approval_cb(proj)
-        got <- ask(cb, "bash")
-        expect_true(got$ok)
-        expect_equal(got$asked, 0L)
-        # Nor does a saved one, and a "2" there saves nothing.
-        expect_equal(key(cb, "1")$asked, 1L)
-        expect_equal(key(cb, "2", "run_r")$asked, 1L)
-        expect_null(jsonlite::fromJSON(saved)$run_r)
         got <- ask(cb, "run_r", "2")
         expect_equal(got$asked, 1L)
-        expect_true(any(grepl("Allow always for this project", got$said,
-                              fixed = TRUE)))
-        expect_true(isTRUE(jsonlite::fromJSON(saved)$run_r))
-        expect_equal(ask(cli$cli_approval_cb(proj), "run_r")$asked, 0L)
-        # A session that started untrusted stays as it started.
-        writeLines(before, saved)
-        untrust()
-        cb <- cli$cli_approval_cb(proj)
-        ns$project_trust_add(proj)
-        expect_equal(ask(cb, "bash", "1")$asked, 1L)
-        untrust()
+        expect_true(any(grepl("Could not save it", got$said, fixed = TRUE)))
+        expect_equal(ask(cb, "run_r")$asked, 0L)
+        expect_equal(ask(cli$cli_approval_cb(proj), "run_r", "1")$asked, 1L)
+        Sys.setenv(R_USER_CONFIG_DIR = file.path(root, "config-home"))
+        unlink(ns$approvals_file())
     }
 
     # ---- The command's entry point -----------------------------------------
@@ -854,8 +909,9 @@ local({
                         "project_offers")))
     expect_equal(callers("project_harness_path"),
                  sort(c("harness_path", "project_offers")))
+    # Only to report that the file is there: nothing reads it.
     expect_equal(callers("project_approvals_path"),
-                 sort(c("project_approvals_label", "project_offers")))
+                 sort(c("approvals_label", "approvals_project_notice")))
     # And each read is behind the decision.
     for (reader in c("project_config", "load_project_skills", "harness_path")) {
         expect_true("project_trusted" %in% all.names(body(get(reader, ns))))
@@ -866,7 +922,9 @@ local({
     if (nzchar(bin)) {
         code <- parse(bin, keep.source = FALSE)
         expect_false(names_folder(code))
-        expect_true("project_approvals_path" %in% all.names(code))
+        expect_false("project_approvals_path" %in% all.names(code))
+        expect_true(all(c("approvals_saved", "approval_save",
+                          "approvals_project_notice") %in% all.names(code)))
         expect_true("trust_at_start" %in% all.names(code))
         # It builds its session by hand, so it records how the session
         # started itself: /status reads that.

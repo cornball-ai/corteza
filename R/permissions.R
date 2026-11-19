@@ -289,7 +289,7 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
          changed = FALSE, mode = NULL,
          text = paste(c(
                         format_permissions(config),
-                        sprintf("Project approvals: %s", project_approvals_label(cwd)),
+                        sprintf("Project approvals: %s", approvals_label(cwd)),
                         sprintf("Change for this session: /permissions %s",
                                 paste(.approval_modes, collapse = "|"))
             ), collapse = "\n")
