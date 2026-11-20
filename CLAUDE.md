@@ -519,6 +519,22 @@ Implications:
   each `subagent_spawn()` opens a private `callr::r_session` so child
   work can't leak into the parent's R session.
 
+Every other tool runs under `skill_run()`'s `setTimeLimit()`
+(`skill_timeout`, 30 s). R checks that limit only between R calls,
+never inside `readLines()` or `grep()`, so a limit passed in a long C
+call fires at the next R code, wherever that is. A calling handler
+outside the tool (`.agent_call()`'s for warnings, a host's
+`suppressMessages()`) runs with the tool's `tryCatch` out of reach, and
+a limit that fired there ended the turn, not the tool. So
+`.held_conditions()` holds the tool's warnings and messages while the
+limit is armed and passes them on once it is off, and the limit goes off
+as soon as the tool returns or fails. Where warnings are errors
+(`options(warn = 2)`), a warning stops the tool where it is raised, as
+R stops it, inside the `tryCatch`; a held warning passes on under the
+`warn` setting it was raised under. A tool that can run long bounds
+itself as well: `grep_files` skips binary files and files over 10 MB and
+stops at 500 matches or 20 s (`.grep_limits`).
+
 ## Subagent registry is in-memory only
 
 `.subagent_registry` is a package-level environment. Spawned subagents
