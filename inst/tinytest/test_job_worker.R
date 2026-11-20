@@ -87,6 +87,13 @@ expect_identical(cp$identity$owner, "local")
 expect_identical(cp$identity$workspace, normalizePath(tempdir()))
 expect_identical(cp$job, b)
 expect_true("jobs_seen" %in% cp$objects)
+# The worker named its process in its folder when it started, so
+# retention leaves the folder while it lives (R/retention-state.R).
+held_by <- jsonlite::fromJSON(file.path(cp_dir, "worker.json"))
+expect_identical(held_by$host, Sys.info()[["nodename"]])
+expect_true(held_by$pid != Sys.getpid())
+expect_true(isTRUE(tools::pskill(as.integer(held_by$pid), signal = 0L)) ||
+            .Platform$OS.type == "windows")
 
 # --- Checkpoints are isolated by owner, workspace, key, and role ---
 # Each part alone gives a different directory: two bots in one room, two

@@ -139,8 +139,11 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     journal_install(ctx$session, agent_id = DEFAULT_AGENT_ID)
     # Once a day, what old sessions no longer need goes (R/retention.R).
     # Said here because files were removed. The session this loop has
-    # open is left alone.
-    pruned <- retention_tick(keep = as.character(ctx$session$sessionId))
+    # open is left alone, and so is its worker's folder, named by the
+    # on-disk session (.repl_jobs_setup()).
+    keep <- unique(as.character(c(ctx$session$sessionId,
+                                  ctx$disk_session$sessionId)))
+    pruned <- retention_tick(keep = keep)
     if (!is.null(pruned)) {
         cat(ctx$palette$dim, pruned, ctx$palette$reset, "\n", sep = "")
     }

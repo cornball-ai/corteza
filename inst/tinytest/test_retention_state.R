@@ -326,7 +326,8 @@ local({
     used(file.path(first, "progress", "00000001.json"), fx$later - DAY)
     real <- corteza:::retention_state_scan
     assignInNamespace("retention_state_scan",
-                      function(days, incomplete_days, now = Sys.time()) stale,
+                      function(days, incomplete_days, now = Sys.time(),
+                               keep = character()) stale,
                       ns = "corteza")
     on.exit(assignInNamespace("retention_state_scan", real, ns = "corteza"),
             add = TRUE, after = FALSE)
@@ -354,7 +355,8 @@ local({
                              "workspace.RData.tmp-123"))
     plain <- make_worker(fx, strrep("b", 24))
     empty <- make_worker(fx, strrep("e", 24), character())
-    # A checkpoint waits for its conversation (retention part 2b).
+    # A checkpoint that names no identity is not of the form corteza
+    # writes (part 2b, below, for one that does): listed, and left.
     doer <- make_worker(fx, strrep("c", 24),
                         c("checkpoint.json", "workspace.RData", "history.rds",
                           "journal/live.json"))
@@ -368,7 +370,7 @@ local({
     found <- corteza:::retention_prune(90, now = fx$later)
     expect_identical(sort(paste(found$kind, found$session)),
                      sort(c(paste("worker", strrep(c("a", "b", "e"), 24)),
-                            paste("unknown", c(strrep("f", 24),
+                            paste("unknown", c(strrep(c("c", "f"), 24),
                                                "not-a-digest")))))
     expect_true(all(found$removed[found$kind == "worker"]))
     expect_identical(list.files(monitor, recursive = TRUE, all.files = TRUE),
@@ -383,7 +385,7 @@ local({
     expect_true(file.exists(file.path(stranger, "journal", "live.json")))
     expect_true(file.exists(file.path(named, "journal", "live.json")))
     again <- corteza:::retention_prune(90, now = fx$later + DAY)
-    expect_identical(again$kind, c("unknown", "unknown"))
+    expect_identical(again$kind, c("unknown", "unknown", "unknown"))
 
     # A worker that writes a checkpoint after the scan is left whole.
     late <- make_worker(fx, strrep("9", 24))
@@ -392,6 +394,204 @@ local({
     writeLines("{}", file.path(late, "checkpoint.json"))
     expect_false(corteza:::retention_state_remove(late, "worker"))
     expect_true(file.exists(file.path(late, "journal", "live.json")))
+})
+
+# ---- Worker folders with a checkpoint (part 2b) ----
+# A checkpoint's folder goes once it and the place its identity names
+# have both gone unused for the limit: a terminal's conversation, or a
+# room's or thread's session, by its journal.
+
+ident <- function(owner, key, workspace, role = "doer") {
+    list(owner = owner, key = key, workspace = workspace, role = role)
+}
+# A worker's folder as it writes it: named for the identity, with the
+# checkpoint that records it, and, given `worker`, its process record.
+make_checkpoint <- function(fx, identity, worker = NULL) {
+    name <- basename(corteza:::job_worker_state_dir(identity))
+    dir <- make_worker(fx, name, c("workspace.RData", "history.rds",
+                                   "journal/live.json",
+                                   "journal/audit/one.json"))
+    write_record(file.path(dir, "checkpoint.json"),
+                 list(identity = identity, job = jid(1), at = "then",
+                      objects = "x", conversation = "c"))
+    if (!is.null(worker)) {
+        write_record(file.path(dir, "worker.json"), worker)
+    }
+    dir
+}
+owner <- "@bot:example.invalid"
+room_journal <- function(key) {
+    corteza:::bot_journal_dir(list(user_id = owner), key)
+}
+here <- Sys.info()[["nodename"]]
+
+local({
+    fx <- state_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    ws <- normalizePath(fx$root, winslash = "/")
+    sessions <- file.path(fx$data, "agents", "main", "sessions")
+    dir.create(sessions, recursive = TRUE)
+    # A terminal's conversation used yesterday, and one long unused.
+    fresh_term <- make_checkpoint(fx, ident("local:host", "repl:fresh", ws))
+    writeLines("{}", file.path(sessions, "fresh.jsonl"))
+    used(file.path(sessions, "fresh.jsonl"), fx$later - DAY)
+    stale_term <- make_checkpoint(fx, ident("local:host", "repl:stale", ws))
+    writeLines("{}", file.path(sessions, "stale.jsonl"))
+    # A room whose conversation record changed yesterday, a thread past a
+    # sidebar (its epoch on the key) whose journal did, and a room long
+    # unused.
+    fresh_room <- make_checkpoint(fx, ident(owner, "!fresh:example.invalid", ws))
+    record <- file.path(room_journal("!fresh:example.invalid"),
+                        "conversation-1.jsonl")
+    write_record(record, list(kind = "conversation"))
+    used(record, fx$later - DAY)
+    thread <- "!side:example.invalid\r$root"
+    sidebar <- make_checkpoint(fx, ident(owner,
+                                         paste0(thread, ":after-sidebar:3"), ws))
+    write_record(file.path(room_journal(thread), "live.json"), list())
+    used(file.path(room_journal(thread), "live.json"), fx$later - DAY)
+    stale_room <- make_checkpoint(fx, ident(owner, "!stale:example.invalid", ws))
+    write_record(file.path(room_journal("!stale:example.invalid"), "live.json"),
+                 list())
+    # No place left: the folder's own age decides.
+    orphan <- make_checkpoint(fx, ident(owner, "!gone:example.invalid", ws))
+    recent <- make_checkpoint(fx, ident(owner, "!gone2:example.invalid", ws))
+    used(file.path(recent, "checkpoint.json"), fx$later - DAY)
+
+    dry <- corteza:::retention_prune(90, dry_run = TRUE, now = fx$later)
+    expect_identical(sort(dry$path[dry$kind == "checkpoint"]),
+                     sort(c(stale_term, stale_room, orphan)))
+    found <- corteza:::retention_prune(90, now = fx$later)
+    cp <- found[found$kind == "checkpoint",, drop = FALSE]
+    expect_identical(sort(cp$path), sort(c(stale_term, stale_room, orphan)))
+    expect_true(all(cp$removed))
+    # What the worker wrote goes; the journal's audit records stay.
+    for (dir in cp$path) {
+        expect_identical(list.files(dir, recursive = TRUE, all.files = TRUE),
+                         "journal/audit/one.json", info = dir)
+    }
+    for (dir in c(fresh_term, fresh_room, sidebar, recent)) {
+        expect_identical(sort(list.files(dir, recursive = TRUE)),
+                         c("checkpoint.json", "history.rds",
+                           "journal/audit/one.json", "journal/live.json",
+                           "workspace.RData"), info = dir)
+    }
+    # A transcript is never removed.
+    expect_true(file.exists(file.path(sessions, "stale.jsonl")))
+    expect_true(grepl("3 worker checkpoints",
+                      corteza:::retention_state_line(found, 90, FALSE),
+                      fixed = TRUE))
+})
+
+# Held, whatever its age: a session the caller has open, a live worker,
+# a job open in its workspace or running under its identity. A
+# checkpoint that cannot be read, or names another folder's identity,
+# is listed as unknown and left.
+local({
+    fx <- state_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    ws <- normalizePath(fx$root, winslash = "/")
+    open_term <- make_checkpoint(fx, ident("local:host", "repl:open", ws))
+    open_room <- make_checkpoint(fx, ident(owner, "!open:example.invalid", ws))
+    room_id <- sub("[.]journal$", "",
+                   basename(room_journal("!open:example.invalid")))
+    live <- make_checkpoint(fx, ident(owner, "!live:example.invalid", ws),
+                            worker = list(pid = Sys.getpid(), host = here))
+    p <- processx::process$new(file.path(R.home("bin"), "Rscript"),
+                               c("--vanilla", "-e", "invisible(0)"))
+    p$wait()
+    dead <- make_checkpoint(fx, ident(owner, "!dead:example.invalid", ws),
+                            worker = list(pid = p$get_pid(), host = here))
+    far <- make_checkpoint(fx, ident(owner, "!far:example.invalid", ws),
+                           worker = list(pid = 1L, host = "elsewhere.invalid"))
+    # Another directory, where a job is queued.
+    project <- normalizePath(file.path(fx$root, "data"), winslash = "/")
+    queued <- make_checkpoint(fx, ident(owner, "!queued:example.invalid",
+                                        project))
+    write_record(file.path(fx$state, "jobs", jid(7), "intent.json"),
+                 list(id = jid(7), task = "t", workspace = project))
+    # A plain worker folder (no checkpoint) whose job runs elsewhere, by
+    # the identity its dispatch names, and one whose worker is alive.
+    runner <- ident(owner, "!run:example.invalid", "/nowhere/else")
+    running <- make_worker(fx, basename(corteza:::job_worker_state_dir(runner)))
+    write_record(file.path(fx$state, "jobs", jid(8), "intent.json"),
+                 list(id = jid(8), task = "t", workspace = "/nowhere/else"))
+    write_record(file.path(fx$state, "jobs", jid(8), "dispatch.json"),
+                 list(at = "then", worker = list(identity = runner)))
+    monitor <- make_worker(fx, strrep("6", 24))
+    write_record(file.path(monitor, "worker.json"),
+                 list(pid = Sys.getpid(), host = here))
+    unreadable <- make_worker(fx, strrep("7", 24))
+    writeLines("{ not json", file.path(unreadable, "checkpoint.json"))
+    elsewhere <- make_worker(fx, strrep("8", 24))
+    write_record(file.path(elsewhere, "checkpoint.json"),
+                 list(identity = ident(owner, "!other:example.invalid", ws)))
+
+    found <- corteza:::retention_prune(90, keep = c("open", room_id),
+                                       now = fx$later)
+    gone <- if (.Platform$OS.type == "windows") character() else dead
+    expect_identical(found$path[found$kind == "checkpoint"], gone)
+    expect_identical(found$path[found$kind == "worker"], character())
+    expect_identical(sort(found$path[found$kind == "unknown"]),
+                     sort(c(unreadable, elsewhere)))
+    for (dir in c(open_term, open_room, live, far, queued, unreadable,
+                  elsewhere)) {
+        expect_true(file.exists(file.path(dir, "checkpoint.json")), info = dir)
+    }
+    expect_true(file.exists(file.path(running, "journal", "live.json")))
+    expect_true(file.exists(file.path(monitor, "journal", "live.json")))
+    if (length(gone)) {
+        expect_identical(list.files(dead, recursive = TRUE),
+                         "journal/audit/one.json")
+    }
+    # Without the caller's sessions, theirs go too.
+    again <- corteza:::retention_prune(90, dry_run = TRUE, now = fx$later)
+    expect_identical(sort(again$path[again$kind == "checkpoint"]),
+                     sort(c(open_term, open_room)))
+    # A bot passes its registry's rooms, by the id their journals have.
+    registry <- corteza:::bot_new_session_registry()
+    s <- new.env()
+    s$job_owner <- owner
+    assign("!open:example.invalid", s, envir = registry)
+    assign("!other:example.invalid\r$root", 1, envir = registry)
+    expect_identical(corteza:::bot_retention_keep(registry), room_id)
+    held <- corteza:::retention_prune(90, dry_run = TRUE, now = fx$later,
+                                      keep = corteza:::bot_retention_keep(registry))
+    expect_identical(held$path[held$kind == "checkpoint"], open_term)
+})
+
+# Read again just before it goes: a place used since the scan, a
+# session opened or a worker started since, leaves the folder.
+local({
+    fx <- state_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    ws <- normalizePath(fx$root, winslash = "/")
+    sessions <- file.path(fx$data, "agents", "main", "sessions")
+    dir.create(sessions, recursive = TRUE)
+    cp <- make_checkpoint(fx, ident("local:host", "repl:later", ws))
+    transcript <- file.path(sessions, "later.jsonl")
+    writeLines("{}", transcript)
+    other <- make_checkpoint(fx, ident("local:host", "repl:other", ws))
+    scan <- corteza:::retention_state_scan(90, 180, now = fx$later)
+    row <- scan[scan$kind == "checkpoint" & scan$path == cp,, drop = FALSE]
+    expect_equal(nrow(row), 1L)
+    expect_false(corteza:::retention_checkpoint_moved(cp, row$last_use))
+    used(transcript, fx$later - DAY)
+    expect_true(corteza:::retention_checkpoint_moved(cp, row$last_use))
+    row <- scan[scan$kind == "checkpoint" & scan$path == other,, drop = FALSE]
+    expect_false(corteza:::retention_checkpoint_moved(other, row$last_use))
+    expect_true(corteza:::retention_checkpoint_moved(other, row$last_use,
+                                                     keep = "other"))
+    write_record(file.path(other, "worker.json"),
+                 list(pid = Sys.getpid(), host = here))
+    expect_true(corteza:::retention_checkpoint_moved(other, row$last_use))
+    cp <- other
+    # The checkpoint goes first, so a removal that stops partway leaves
+    # a folder judged by its own age.
+    own <- corteza:::retention_state_own(cp, normalizePath(cp, winslash = "/"),
+                                         "checkpoint")
+    expect_identical(own$first, file.path(cp, "checkpoint.json"))
+    expect_true(file.path(cp, "worker.json") %in% own$files)
 })
 
 # ---- Remote-control sessions ----

@@ -1,3 +1,15 @@
+# corteza 0.8.0.35
+
+- Retention removes a worker's folder with a checkpoint once the folder
+  and the session its checkpoint belongs to have both gone unused for
+  `retention$session_days`: the terminal session, or the room. A folder
+  whose checkpoint names no session of its own stays and is listed as
+  `"unknown"`.
+- A worker folder stays while its worker is alive, its session is open
+  in the process that prunes, or a job is open in it. A worker writes
+  `worker.json` when it starts and with each checkpoint, so the folder a
+  `/clear` moves it to is marked too.
+
 # corteza 0.8.0.34
 
 - The terminal answers through a talker by default, as a bot's room

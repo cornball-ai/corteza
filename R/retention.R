@@ -96,12 +96,22 @@ retention_config <- function() {
 #'     (default 180; never fewer than \code{days}; 0 keeps it);
 #'   \item a worker process's folder that holds no checkpoint, unchanged
 #'     for \code{days}: its journal, less its audit records;
+#'   \item a worker's folder with a checkpoint (the R objects and history
+#'     a delegated job's worker left), once both the folder and the
+#'     session it belongs to have gone unused for \code{days}: at the
+#'     terminal the conversation's session, in a chat room the room's or
+#'     thread's session, judged by its journal. The checkpoint goes first,
+#'     then the rest, less the journal's audit records;
 #'   \item a remote-control session unchanged for \code{days} that was
 #'     closed, or whose process on this machine has ended.
 #' }
 #'
-#' Transcripts, session stores, workspaces, config, audit records and
-#' crypto state are never removed. A session whose journal is gone still
+#' A worker's folder stays, whatever its age, while its worker process
+#' is alive, while its session is open in the process doing the removing,
+#' and while a job is open in its directory.
+#'
+#' Transcripts, session stores, the terminal's saved workspaces, config,
+#' audit records and crypto state are never removed. A session whose journal is gone still
 #' resumes from its transcript. A chat room that restores its context
 #' from its journal starts its next conversation fresh.
 #'
@@ -117,8 +127,9 @@ retention_config <- function() {
 #' with kind \code{"unknown"}, so it can be looked at.
 #'
 #' corteza runs this itself at most once a day: when a terminal session
-#' starts, and while a chat bot runs. The session a terminal has open is
-#' left alone. The number of days is \code{retention$session_days} in
+#' starts, and while a chat bot runs. The session a terminal has open, and
+#' the rooms a bot has open, are left alone. The number of days is
+#' \code{retention$session_days} in
 #' the user's config file (default 90; 0 keeps everything). A project's
 #' config cannot change either setting.
 #'
@@ -135,7 +146,7 @@ retention_config <- function() {
 #'   folder, invisibly: \code{agent} (\code{NA} outside a session's
 #'   files), \code{session} (for a job, its chain's newest job),
 #'   \code{kind} (\code{"journal"}, \code{"trace"}, \code{"attachments"},
-#'   \code{"job"}, \code{"worker"}, \code{"remote"} or
+#'   \code{"job"}, \code{"worker"}, \code{"checkpoint"}, \code{"remote"} or
 #'   \code{"unknown"}), \code{path}, \code{last_use}, \code{idle_days},
 #'   \code{bytes}, \code{incomplete} (a job chain kept longer for its
 #'   resume snapshot) and \code{removed}.
@@ -193,7 +204,7 @@ retention_prune <- function(days, dry_run = FALSE, keep = character(),
                             now = Sys.time(),
                             incomplete_days = RETENTION_INCOMPLETE_DAYS) {
     found <- rbind(retention_scan(days, now = now),
-                   retention_state_scan(days, incomplete_days, now = now))
+                   retention_state_scan(days, incomplete_days, now = now, keep = keep))
     found <- found[!found$session %in% keep,, drop = FALSE]
     found$removed <- rep(FALSE, nrow(found))
     if (dry_run) {
@@ -211,8 +222,19 @@ retention_prune <- function(days, dry_run = FALSE, keep = character(),
             next
         }
         if (kind %in% RETENTION_STATE_KINDS) {
-            if (retention_state_moved(found$path[rows],
-                                      found$last_use[[first]])) {
+            # A checkpoint's place is read again with its folder, and a
+            # worker folder that a live worker, an open session or an
+            # open job holds now is left.
+            path <- found$path[[first]]
+            folder <- list(name = basename(path), dir = path,
+                           real = normalizePath(path, winslash = "/", mustWork = FALSE))
+            moved <- if (kind == "checkpoint") {
+                retention_checkpoint_moved(path, found$last_use[[first]], keep)
+            } else {
+                retention_state_moved(found$path[rows], found$last_use[[first]]) ||
+                (kind == "worker" && retention_worker_held(folder, keep = keep))
+            }
+            if (moved) {
                 next
             }
             for (i in rows) {
@@ -414,6 +436,7 @@ retention_state_line <- function(found, days, dry_run) {
     units <- function(x, kind) length(unique(x$session[x$kind == kind]))
     nouns <- list(job = c("job chain", "job chains"),
                   worker = c("worker folder", "worker folders"),
+                  checkpoint = c("worker checkpoint", "worker checkpoints"),
                   remote = c("remote-control session", "remote-control sessions"))
     what <- character()
     left <- 0L

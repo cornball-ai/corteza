@@ -640,7 +640,18 @@ The same run clears the state stores (`R/retention-state.R`): job
 chains (jobs linked by `resume_of`, `review_of` or `parent`) once all
 ended, worker folders with no checkpoint, and remote-control sessions
 that closed or whose process here ended. A chain with an incomplete job
-nothing resumed waits `retention$incomplete_days` (180). A folder is
+nothing resumed waits `retention$incomplete_days` (180). A worker folder
+with a checkpoint (kind `"checkpoint"`) goes once it and the place its
+identity names have both gone unused: `repl:<id>` is the terminal's
+session `<id>`, any other key a room's or thread's journal under agent
+`matrix` (`retention_checkpoint_place()`, by `bot_session_id()`'s
+naming, a sidebar's epoch taken off the key). Any worker folder is
+held (`retention_worker_held()`) while its worker lives
+(`worker.json`, written by `.job_worker_child_mark()`), its session is
+in the caller's `keep` (the terminal's ids, a bot's registry through
+`bot_retention_keep()`), or a job is open in its workspace or runs
+under its identity; the holds and both last uses are read again just
+before removal (`retention_checkpoint_moved()`). A folder is
 judged only when its name and record are corteza's; anything else stays
 and is listed as `"unknown"`. A record is read only where it is a file
 of the folder itself (`retention_record()`), never through a link. A
