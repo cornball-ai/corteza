@@ -749,11 +749,15 @@ transcript_write_header <- function(id, cwd, agent_id = DEFAULT_AGENT_ID,
 #'   typed after /auto (maybe nothing). NULL writes neither field, as
 #'   every entry before 0.8.1 has neither. The reviewer (R/review.R)
 #'   reads them.
+#' @param job For a delegated job's result, the job's id, written as
+#'   `job`. The result is not the reply to a prompt, and the reviewer
+#'   reads it as such.
 #' @noRd
 transcript_append <- function(session, role, content, provider = NULL,
                               model = NULL, usage = NULL,
                               agent_id = DEFAULT_AGENT_ID,
-                              auto_run_id = NULL, audit = NULL, typed = NULL) {
+                              auto_run_id = NULL, audit = NULL, typed = NULL,
+                              job = NULL) {
     path <- session_transcript_path(session$sessionId, agent_id)
 
     # Ensure header exists
@@ -775,6 +779,9 @@ transcript_append <- function(session, role, content, provider = NULL,
         if (msg$staged) {
             msg$typed <- typed
         }
+    }
+    if (!is.null(job)) {
+        msg$job <- as.character(job)
     }
 
     if (role == "assistant") {

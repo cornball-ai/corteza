@@ -193,7 +193,8 @@
                         p$cyan %||% "", text, p$reset %||% "", p$dim %||% "",
                         asked, p$reset %||% ""))
             record <- list(sessionId = asked, cwd = ctx$session$cwd)
-            tryCatch(transcript_append(record, "assistant", text),
+            tryCatch(transcript_append(record, "assistant", text,
+                                       job = ev$job$id),
                      error = function(e) NULL)
             return(invisible(NULL))
         }
@@ -207,7 +208,7 @@
                                  list(list(role = "assistant", content = text)))
         if (!is.null(ctx$disk_session)) {
             tryCatch(transcript_append(ctx$disk_session$session, "assistant",
-                                       text),
+                                       text, job = ev$job$id),
                      error = function(e) NULL)
         }
     },

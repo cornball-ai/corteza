@@ -274,6 +274,16 @@ res <- with_stubs(stub_monitor(character()),
 expect_equal(turns, 2L)
 expect_true(any(grepl("turn errored", res)))
 expect_true(any(grepl("the model exploded", res)))
+# The failed turn's prompt gets a line after it, as every other prompt
+# does, so the reviewer reads no reply as lost (review_conversation()).
+entries <- corteza:::transcript_load_strict(
+    ctx$disk_session$session$sessionId)$entries
+expect_identical(vapply(entries, function(e) e$role, ""),
+                 rep(c("user", "assistant"), 2L))
+expect_identical(entries[[4L]]$content[[1L]]$text, "Error: the model exploded")
+expect_identical(entries[[4L]]$auto_run_id, entries[[3L]]$auto_run_id)
+expect_null(corteza:::review_conversation(
+    ctx$disk_session$session$sessionId)$why)
 
 # ---- an interrupted turn is terminal ----
 #
