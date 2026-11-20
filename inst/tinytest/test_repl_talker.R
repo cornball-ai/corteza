@@ -266,6 +266,190 @@ local({
     expect_identical(answer$approved, FALSE)
     ns$job_settle(job, "cancelled")
 })
+
+# ---- "Allow always" and the doer's calls -----------------------------------
+# A tool the person allowed always in this directory is allowed for a
+# job's call as for the session's own: without a prompt, and before the
+# reviewer. Never for the credential rule's ask, nor for a request that
+# names no rule, as none did before 0.8.1. The job's prompt offers
+# "always" and keeps it as the session's own prompt does: the installed
+# command's callback saves it for the directory, chat()'s holds it for
+# the session.
+local({
+    config <- tempfile("repl-talker-config")
+    old <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+    Sys.setenv(R_USER_CONFIG_DIR = config)
+    on.exit({
+        if (is.na(old)) {
+            Sys.unsetenv("R_USER_CONFIG_DIR")
+        } else {
+            Sys.setenv(R_USER_CONFIG_DIR = old)
+        }
+        unlink(config, recursive = TRUE)
+    }, add = TRUE)
+    ctx <- talker_ctx()
+    type(ctx)
+    s <- ctx$session
+    prompts <- character()
+    replies <- character()
+    recorder <- function(p) {
+        prompts <<- c(prompts, p)
+        if (!length(replies)) {
+            return(character())
+        }
+        reply <- replies[[1L]]
+        replies <<- replies[-1L]
+        reply
+    }
+    # One request from a job of this session, answered. `rule` NA is a
+    # request from before 0.8.1, which names none.
+    ask <- function(tool, rule = "", reply = character(), route = NULL) {
+        # type() leaves its own script in place.
+        ctx$read_input <- recorder
+        replies <<- reply
+        n <- length(prompts)
+        job <- ns$job_create("Run the checks.", workspace = ctx$cwd,
+                             owner = s$job_owner,
+                             origin = list(session_key = s$job_key))
+        decision <- list(approval = "ask", reason = "config: needs approval")
+        if (!is.na(rule) && nzchar(rule)) {
+            decision$rule <- rule
+        }
+        extra <- if (is.null(route)) list() else list(route = route)
+        ns$job_approval_request(job,
+            list(tool = tool, class = "exec", args = list(command = "make check")),
+            decision, extra = extra)
+        req <- ns$job_approval_pending(job)[[1L]]
+        if (is.na(rule)) {
+            req$rule <- NULL
+        }
+        said <- capture.output(ns$.repl_job_approval(ctx,
+            list(job = ns$job_read(job), request = req)))
+        answer <- ns$job_read_file(ns$job_approval_path(job, req$id, "answer"))
+        ns$job_settle(job, "done", result = "ran")
+        list(approved = isTRUE(answer$approved), by = answer$by, said = said,
+             asked = prompts[seq_along(prompts) > n])
+    }
+    offered <- "Approve? [y/a(lways)/N] "
+    plain <- "Approve? [y/N] "
+
+    bin <- system.file("bin", "corteza", package = "corteza")
+    if (nzchar(bin)) {
+        defs <- Filter(function(e) {
+            is.call(e) && identical(e[[1L]], as.name("<-")) &&
+                is.name(e[[2L]]) && identical(as.character(e[[2L]]), "cli_approval_cb")
+        }, as.list(parse(bin, keep.source = FALSE)))
+        expect_equal(length(defs), 1L)
+        cli <- new.env(parent = globalenv())
+        eval(defs[[1L]], envir = cli)
+        cli$color <- list(yellow = "", reset = "", cyan = "", dim = "")
+        cli$cli_read_line <- function(prompt_str = "> ") {
+            stop("the session's own prompt is not asked here")
+        }
+        s$approval_cb <- cli$cli_approval_cb(ctx$cwd)
+        # Nothing saved: asked, with "always" offered. Once is once.
+        got <- ask("bash", reply = "y")
+        expect_identical(got$asked, offered)
+        expect_true(got$approved)
+        expect_identical(got$by, "local")
+        expect_identical(ns$approvals_saved(ctx$cwd), character())
+        # "a" approves and saves it for the directory.
+        got <- ask("bash", reply = "a")
+        expect_true(got$approved)
+        expect_identical(ns$approvals_saved(ctx$cwd), "bash")
+        expect_true(any(grepl("bash is allowed always in this project",
+                              got$said, fixed = TRUE)))
+        # From then on, without a prompt.
+        got <- ask("bash")
+        expect_identical(got$asked, character())
+        expect_true(got$approved)
+        expect_identical(got$by, "always")
+        expect_true(any(grepl("bash allowed, as you allowed it always here",
+                              got$said, fixed = TRUE)))
+        # The session's own calls take it as well, in a new session too.
+        expect_true(isTRUE(attr(cli$cli_approval_cb(ctx$cwd), "answered")(
+            list(tool = "bash"), list(approval = "ask"))))
+        # Not the credential rule's ask, which offers no "always": an "a"
+        # there is no yes.
+        got <- ask("bash", rule = "credential", reply = "a")
+        expect_identical(got$asked, plain)
+        expect_false(got$approved)
+        got <- ask("bash", rule = "credential", reply = "y")
+        expect_true(got$approved)
+        expect_identical(got$by, "local")
+        # Nor a request that names no rule.
+        got <- ask("bash", rule = NA, reply = "y")
+        expect_identical(got$asked, plain)
+        expect_identical(got$by, "local")
+        # Codex's case on #297: under review, the doer's gate files the
+        # request. The credential rule goes with it, so the saved "always"
+        # for the tool does not answer it there either. A write in the
+        # project, through the same gate, it does answer.
+        ns$approval_save(ctx$cwd, "write_file")
+        worker <- ns$.job_worker_state
+        gate <- ns$.job_worker_child_review_gate(ctx$cwd)
+        filed <- function(path) {
+            call <- list(tool = "write_file", class = "write",
+                         args = list(path = path, content = "x"))
+            job <- ns$job_create("Write it.", workspace = ctx$cwd,
+                                 owner = s$job_owner,
+                                 origin = list(session_key = s$job_key))
+            worker$job_id <- job
+            worker$approval_timeout <- 0.2
+            on.exit({
+                worker$job_id <- NULL
+                worker$approval_timeout <- NULL
+                ns$job_settle(job, "done", result = "ran")
+            })
+            gate(call, corteza::policy(call))
+            files <- list.files(file.path(ns$job_dir(job), "approvals"),
+                                "[.]request[.]json$", full.names = TRUE)
+            ns$job_read_file(files[[1L]])
+        }
+        secret <- filed("~/.ssh/config")
+        expect_identical(secret$rule, "credential")
+        expect_false(ns$.repl_job_answered(s$approval_cb, secret,
+                                           ns$job_request_call(secret)))
+        expect_null(ns$.repl_job_always(s$approval_cb, secret))
+        notes <- filed(file.path(ctx$cwd, "notes.md"))
+        expect_identical(notes$rule, "")
+        expect_true(ns$.repl_job_answered(s$approval_cb, notes,
+                                          ns$job_request_call(notes)))
+        # Another tool is asked.
+        expect_identical(ask("run_r", reply = "n")$asked, offered)
+        # Under review, a call the person allowed always goes by the
+        # reviewer; one they did not goes to it.
+        reviewed <- 0L
+        type(ctx, "/permissions review")
+        with_stub(".repl_job_review", function(ctx, job, req) {
+            reviewed <<- reviewed + 1L
+            list(reason = "The reviewer passed this to you: unsure")
+        }, {
+            got <- ask("bash", route = "monitor")
+            expect_identical(got$by, "always")
+            expect_identical(reviewed, 0L)
+            got <- ask("run_r", route = "monitor", reply = "n")
+            expect_identical(reviewed, 1L)
+            expect_false(got$approved)
+        })
+        type(ctx, "/permissions ask")
+    }
+
+    # chat()'s callback holds "always" for the session.
+    s$approval_cb <- ns$chat_approval_cb(ctx$cwd)
+    got <- ask("write_file", reply = "a")
+    expect_true(got$approved)
+    expect_true(any(grepl("write_file is allowed always in this session",
+                          got$said, fixed = TRUE)))
+    expect_identical(ask("write_file")$by, "always")
+    s$approval_cb <- ns$chat_approval_cb(ctx$cwd)
+    expect_identical(ask("write_file", reply = "y")$asked, offered)
+    # A callback with neither offers no "always", and answers nothing.
+    s$approval_cb <- function(call, decision) TRUE
+    got <- ask("write_file", reply = "a")
+    expect_identical(got$asked, plain)
+    expect_false(got$approved)
+})
 local({
     ctx <- talker_ctx(list(enabled = TRUE, model = "talker-model"))
     type(ctx)

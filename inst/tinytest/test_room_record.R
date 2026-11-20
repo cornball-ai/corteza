@@ -12,6 +12,12 @@ library(tinytest)
 
 ns <- asNamespace("corteza")
 
+# The same folder, its separators made alike: on Windows dirname() gives
+# forward slashes, and a temporary folder backslashes.
+same_dir <- function(a, b) {
+    identical(gsub("\\", "/", a, fixed = TRUE), gsub("\\", "/", b, fixed = TRUE))
+}
+
 # Each block keeps the room records in a state folder of its own.
 with_state <- function() {
     state <- tempfile("room-record-state-")
@@ -89,7 +95,7 @@ local({
     path <- s$review_record$path
     # In the room's journal folder, a file for each conversation, and
     # nothing written until there is something to write.
-    expect_identical(dirname(path), ns$bot_journal_dir(cfg, room))
+    expect_true(same_dir(dirname(path), ns$bot_journal_dir(cfg, room)))
     expect_identical(basename(path),
                      paste0("conversation-", s$conversation_id, ".jsonl"))
     expect_false(file.exists(path))
@@ -286,7 +292,8 @@ local({
     # A thread keeps its own, in its own journal folder.
     key <- ns$bot_session_key(room, "$t")
     th <- ns$bot_get_or_create_session(reg, key, cfg, room_id = room)
-    expect_identical(dirname(th$review_record$path), ns$bot_journal_dir(cfg, key))
+    expect_true(same_dir(dirname(th$review_record$path),
+                         ns$bot_journal_dir(cfg, key)))
     # A session that holds a history from before begins partial: a room's
     # context restored from its journal.
     p <- patching()

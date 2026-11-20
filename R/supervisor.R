@@ -188,9 +188,12 @@ supervisor_gate <- function(ask, cwd = getwd(), mode = "monitor",
         } else {
             decision$reason %||% ""
         }
+        # The policy's rule goes with the ask: no saved "always" answers
+        # the credential rule's (.repl_job_answered()).
+        asked <- list(approval = "ask", reason = reason)
+        asked$rule <- decision$rule
         ans <- tryCatch(
-                        ask(v$route, call, list(approval = "ask", reason = reason),
-                            v$notes),
+                        ask(v$route, call, asked, v$notes),
                         # Nobody answered: that is never a yes.
                         error = function(e) {
             list(approved = FALSE, by = "error", reason = conditionMessage(e))
