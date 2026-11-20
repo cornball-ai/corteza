@@ -1,3 +1,13 @@
+# corteza 0.8.0.25
+
+- A Matrix room and each of its threads keep a record of the
+  conversation they hold, so a restart goes on with it and seeds
+  nothing from before its `/clear`. A room's `/clear` saves the new
+  record before it answers or replaces the session; when it cannot,
+  nothing is cleared and the room is told. A job the room asked for
+  finishes in the conversation that asked, and its result is posted
+  marked as asked before the `/clear`.
+
 # corteza 0.8.0.24
 
 - At the terminal, `/clear` starts a new conversation for a job's
