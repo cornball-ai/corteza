@@ -2,6 +2,13 @@
 # the new attempt, keeping the chain and its spending visible in the ledger.
 job_resume <- function(session, id, by, operators = character(),
                        event = NULL, source = session) {
+    # A room with no directory runs no job (check_unbound_room(),
+    # R/policy.R), a continuation included. Decided before the record is
+    # read.
+    if (isTRUE(source$unbound) || isTRUE(session$unbound)) {
+        stop(paste("This room has no directory, so it resumes no job.",
+                   bot_unbound_how()), call. = FALSE)
+    }
     j <- job_read(id)
     if ((!job_in_session(j, source) && !job_requested_by(j, source)) ||
         !job_in_session(j, session) ||
