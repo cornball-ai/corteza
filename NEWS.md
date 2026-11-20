@@ -1,3 +1,14 @@
+# corteza 0.8.0.19
+
+- A Matrix room with no directory (its topic names none, and the bot
+  has no `cwd`) reads and talks only. It works in a scratch folder, and
+  until now it could write files there, run commands, start subagents
+  and hand off or take jobs. Writes, commands, work in a child, a
+  worker or another room, and tools with no class are refused before
+  they run, and no later rule, setting or approval lifts the refusal,
+  which says how the room gets a directory. Room listings say "no
+  directory" in place of the scratch folder's path.
+
 # corteza 0.8.0.18
 
 - A compaction's summary ends with the names of the R objects `run_r`
