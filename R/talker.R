@@ -119,22 +119,29 @@ bot_talker_config <- function(cfg, tools_filter = NULL, unbound = FALSE) {
 }
 
 # Switch a session into talker mode. The session's current model and
-# provider become the doer's. The talker runs on the config's
+# provider become the doer's, unless the config's `jobs` block names a
+# worker model or provider. The talker runs on the config's
 # `talker.model`, else on the session's own model, or on its provider's
 # default model where `talker.provider` names another provider. Without
 # a model or provider of its own, the talker follows the session's
 # model through /model (bot_apply_model_command()).
+#
+# The doer's settings are read from the config here, once: /model and
+# /effort change them, /status shows them and job_worker_spec() runs a
+# job with them, so all 3 say the same.
 talker_enable <- function(session, talker = list()) {
     .context_conversation_enable(session, talker$context_edit,
                                  talker$context_vault %||% session$context_archive_vault)
     own <- session$provider %||% "anthropic"
     provider <- talker$provider %||% own
-    session$doer_model <- .resolve_model(session)
-    session$doer_provider <- session$provider
+    configured <- .resolve_model(session)
+    jobs <- session$config$jobs %||% list()
+    session$doer_model <- jobs$model %||% configured
+    session$doer_provider <- jobs$provider %||% session$provider
     model <- talker$model
     if (is.null(model)) {
         if (identical(provider, own)) {
-            model <- session$doer_model
+            model <- configured
         } else {
             model <- default_provider_model(provider)
             if (is.null(model)) {
@@ -150,12 +157,21 @@ talker_enable <- function(session, talker = list()) {
     # with the talker's model, and a fast model refuses them outright
     # ("This model does not support the effort parameter"), which fails
     # every reply. The talker runs on the provider's defaults unless the
-    # talker config names its own.
-    session$doer_reasoning_effort <- .session_reasoning_effort(session)
+    # talker config names its own. For the same reason a doer on the
+    # `jobs` block's own model starts from the provider's defaults, and
+    # takes a setting only where that block names one.
+    effort <- .session_reasoning_effort(session)
+    budget <- .session_thinking_budget(session)
+    thinking <- .session_thinking(session)
+    if (!identical(session$doer_model, configured)) {
+        effort <- budget <- thinking <- NULL
+    }
+    session$doer_reasoning_effort <- jobs$reasoning_effort %||% effort
     # What /effort default goes back to (.effort_command()).
     session$doer_reasoning_default <- session$doer_reasoning_effort
-    session$doer_thinking_budget <- .session_thinking_budget(session)
-    session$doer_thinking <- .session_thinking(session)
+    session$doer_thinking_budget <- jobs$thinking_budget_tokens %||% budget
+    # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
+    session$doer_thinking <- jobs[["thinking"]] %||% thinking
     session$reasoning_effort <- .check_reasoning_effort(
         talker$reasoning_effort, "talker$reasoning_effort")
     session$thinking_budget_tokens <- .check_max_tokens(

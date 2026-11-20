@@ -1451,7 +1451,10 @@ defaults unless the `talker` block names its own (`talker.reasoning_effort`
 and the others), since a model it names may refuse settings made for another.
 
 In a talker session `/model` and `/effort` change the work: the doer's model
-and effort, which the next job runs with. The talker follows `/model` unless
+and effort, which the next job runs with. The doer starts on the model and
+provider the config's `jobs` block names, if it names them, with that block's
+reasoning settings; the talker stays on the session's model, and the 2
+commands change the doer's from there. The talker follows `/model` unless
 the `talker` block names a model or a provider of its own, and its reasoning
 settings come from that block alone. `/status` names both models. Up to 0.8.0
 both commands changed the talker's alone. Column `talker` of the command

@@ -109,8 +109,10 @@ job_identity_text <- function(identity) {
 }
 
 # What a worker for this session and role is started with. Tools come
-# from the role; provider and model from the session unless the config
-# names a worker model. `session$job_worker_spec` overrides fields, and
+# from the role. Provider, model and reasoning settings come, in a
+# talker session, from the doer's fields (talker_enable(), which reads
+# the config's `jobs` block); otherwise from the session unless the
+# config names a worker model. `session$job_worker_spec` overrides fields, and
 # is also how tests replace the child's init and run functions with ones
 # that need no provider.
 job_worker_spec <- function(session, role = "doer") {
@@ -119,40 +121,35 @@ job_worker_spec <- function(session, role = "doer") {
                     reviewer = JOB_REVIEWER_TOOLS,
                     monitor = SUBAGENT_PRESETS$monitor,
                     stop("unknown job role: ", role, call. = FALSE))
-    # A talker session keeps its configured model for the doer
-    # (talker_enable() records it as doer_model).
-    provider <- cfg$provider %||% session$doer_provider %||%
-    session$provider %||% "anthropic"
-    configured <- session$doer_model %||% session$model_map$cloud
-    model <- cfg$model %||% configured
-    # Reasoning settings follow the model they were chosen for. For a
-    # talker session those are the ones talker_enable() set aside for
-    # the doer. A worker on some other model (`jobs$model`, or a
-    # reviewer's own below) gets the provider's defaults unless its
-    # config names a setting: effort tuned for one model can be an
-    # error on another.
-    effort <- if (isTRUE(session$talker)) {
-        session$doer_reasoning_effort
+    if (isTRUE(session$talker)) {
+        # The doer's settings as talker_enable() read them from the
+        # config and /model and /effort changed them: what /status
+        # shows is what the job runs with.
+        provider <- session$doer_provider %||% session$provider %||%
+        "anthropic"
+        model <- session$doer_model %||% session$model_map$cloud
+        effort <- session$doer_reasoning_effort
+        budget <- session$doer_thinking_budget
+        thinking <- session$doer_thinking
     } else {
-        .session_reasoning_effort(session)
+        provider <- cfg$provider %||% session$provider %||% "anthropic"
+        configured <- session$model_map$cloud
+        model <- cfg$model %||% configured
+        # Reasoning settings follow the model they were chosen for. A
+        # worker on some other model (`jobs$model`, or a reviewer's own
+        # below) gets the provider's defaults unless its config names a
+        # setting: effort tuned for one model can be an error on another.
+        effort <- .session_reasoning_effort(session)
+        budget <- .session_thinking_budget(session)
+        thinking <- .session_thinking(session)
+        if (!identical(model, configured)) {
+            effort <- budget <- thinking <- NULL
+        }
+        effort <- cfg$reasoning_effort %||% effort
+        budget <- cfg$thinking_budget_tokens %||% budget
+        # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
+        thinking <- cfg[["thinking"]] %||% thinking
     }
-    budget <- if (isTRUE(session$talker)) {
-        session$doer_thinking_budget
-    } else {
-        .session_thinking_budget(session)
-    }
-    thinking <- if (isTRUE(session$talker)) {
-        session$doer_thinking
-    } else {
-        .session_thinking(session)
-    }
-    if (!identical(model, configured)) {
-        effort <- budget <- thinking <- NULL
-    }
-    effort <- cfg$reasoning_effort %||% effort
-    budget <- cfg$thinking_budget_tokens %||% budget
-    # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
-    thinking <- cfg[["thinking"]] %||% thinking
     reviewer <- identical(role, "reviewer")
     monitor <- identical(role, "monitor")
     # Both read and neither writes: no network, nothing outside the
