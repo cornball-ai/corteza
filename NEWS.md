@@ -1,3 +1,10 @@
+# corteza 0.8.0.37
+
+- A job whose worker exits as its reply is read is settled
+  `indeterminate`, as one whose worker is seen dead first: it may have
+  acted before it stopped. It was settled `failed`, as though the job
+  had reported an error.
+
 # corteza 0.8.0.36
 
 - A talker's job takes the terminal's "allow always" answers, as the
