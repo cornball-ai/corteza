@@ -644,7 +644,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                      args = as.list(args),
                      channel = session$channel,
                      context = list(recent_classes = session$recent_classes,
-                                    plan_mode = isTRUE(session$plan_mode)),
+                                    plan_mode = isTRUE(session$plan_mode),
+                                    unbound = isTRUE(session$unbound)),
                      # Read-only per-call snapshot from llm.api::agent (NULL
                      # with a two-arg call or older llm.api): assistant_text,
                      # agent_turn, call_index, call_count, provider. Drives the
@@ -1199,6 +1200,13 @@ observer_progress <- function() {
 #' their actual model/provider; API-key fallbacks carry a prominent billable
 #' usage warning. Errors that are not limits are rethrown untouched.
 #'
+#' A turn that ends on an error leaves a history the next request can
+#' use. Before the error leaves \code{turn()}, each tool call the model
+#' made that has no result gets a placeholder result, and a note says
+#' the turn stopped on that error. A turn also closes, before its first
+#' request, any call that an earlier turn or an earlier process left
+#' without a result.
+#'
 #' @param prompt Character. User prompt.
 #' @param session A session environment created by \code{\link{new_session}}.
 #' @param tool_executor Function or NULL. Dispatcher with signature
@@ -1238,11 +1246,20 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         if (is.environment(session)) session$.audit_turn <- previous
         .audit_runtime$active <- previous_active
     }, add = TRUE)
+    # A call mirrored into the history before an error has no result,
+    # and the provider refuses every request made from a history that
+    # holds one (R/turn-repair.R).
+    on_error <- function(e) {
+        .turn_close_open_calls(session, .turn_error_marker(e), "turn_error")
+        .audit_safe(.audit_turn_end(session, audit, condition = e))
+    }
+    on_interrupt <- function(e) {
+        .audit_safe(.audit_turn_end(session, audit, condition = e))
+    }
     result <- withCallingHandlers(
                                   .turn_impl(prompt, session, tool_executor, tools),
-                                  error = function(e) .audit_safe(.audit_turn_end(session, audit,
-                condition = e)),
-                                  interrupt = function(e) .audit_safe(.audit_turn_end(session, audit, condition = e)))
+                                  error = on_error,
+                                  interrupt = on_interrupt)
     .audit_safe(.audit_turn_end(session, audit, result))
     if (!is.null(audit) && isTRUE(audit$request_seen)) {
         result$usage_coverage <- .audit_request_coverage(audit)
@@ -1332,6 +1349,11 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
         }
         isTRUE(do.call(maybe_compact_turn_session, args))
     }
+    # A call left without its result (a turn that ended on an error, a
+    # process stopped mid-call, a history restored from either) fails the
+    # first request and every turn after it. Close it before anything
+    # reads the history; compaction will not touch one that has it.
+    .turn_close_open_calls(session, .open_calls_marker(), "open_calls")
     .context_edit_prepare(session)
     compact_session_history(session$history %||% list(), reason = "preflight")
 

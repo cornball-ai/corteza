@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Sessions know the directory they were started in: what the store
 # records, what a list and a resume find from a directory, what happens
 # to sessions made before the store recorded it, and how the store file

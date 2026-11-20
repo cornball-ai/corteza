@@ -330,6 +330,7 @@ chat_help_text <- function() {
           "  /skill install <path|url>     Install a skill (--force to reinstall)",
           "  /skill remove <name>          Remove a skill",
           "  /skill test <path>            Run skill tests",
+          "  /skills ...                   Same as /skill",
           "",
           "Keys:",
           "  Esc                           Interrupt the current turn and return to the prompt.",
