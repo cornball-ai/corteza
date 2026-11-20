@@ -178,19 +178,16 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
 # budget .compact_trim_total() drops the oldest turns and says how
 # many.
 #
-# `byte_limit` is the session's limit on a request's bytes, NA where
-# it has none (maybe_compact_turn_session()). llm.api sends UTF-8, in
-# which a character is at most 4 bytes, so a quarter of the limit in
-# characters keeps the summary's own request under it.
-.compact_summary_chars <- function(window, byte_limit = NA_real_) {
+# This budget is about tokens. A limit on a request's bytes is a second
+# bound, kept on the serialized request itself by
+# compact_summarize_slice(): a character can take 6 bytes once JSON
+# escapes it, so no count of characters bounds the bytes.
+.compact_summary_chars <- function(window) {
     window <- .window_value(window) %||% CONTEXT_LIMIT_FALLBACK
     # The division comes first: the product of 2 integers this large is
     # NA in R.
     chars <- .compact_max_total_chars * (as.numeric(window) /
         CONTEXT_LIMIT_FALLBACK)
-    if (!is.na(byte_limit)) {
-        chars <- min(chars, byte_limit / 4)
-    }
     floor(max(.compact_max_total_chars, chars))
 }
 
@@ -209,13 +206,12 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
 #     once.
 .COMPACT_OVERFLOW_REASONS <- c("context_overflow", "request_buffer_overflow")
 
-.compact_summary_budget <- function(session, window, byte_limit = NA_real_,
-                                    reason = NULL) {
+.compact_summary_budget <- function(session, window, reason = NULL) {
     overflow <- (reason %||% "") %in% .COMPACT_OVERFLOW_REASONS
     if (overflow || !is.null(session$last_compaction_failure)) {
         return(as.numeric(.compact_max_total_chars))
     }
-    .compact_summary_chars(window, byte_limit)
+    .compact_summary_chars(window)
 }
 
 # What /context prints under its bar: where compaction starts and why

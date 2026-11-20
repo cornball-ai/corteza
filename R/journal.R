@@ -205,7 +205,11 @@ journal_rewritten_since <- function(session, mark, ignore = character()) {
         return(FALSE)
     }
     state <- tryCatch(.journal_state(session), error = function(e) NULL)
-    if (is.null(state) || identical(as.integer(state$seq), as.integer(mark$seq))) {
+    if (is.null(state)) {
+        return(FALSE)
+    }
+    since <- .journal_mark_seq(mark, state)
+    if (identical(as.integer(state$seq), since)) {
         return(FALSE)
     }
     if (!length(ignore)) {
@@ -214,7 +218,7 @@ journal_rewritten_since <- function(session, mark, ignore = character()) {
     seqs <- seq_len(state$seq)
     # Missing or corrupt metadata cannot prove that message positions stayed
     # stable. Conservatively skip archival while keeping this check no-throw.
-    tryCatch(any(vapply(seqs[seqs > as.integer(mark$seq)], function(seq) {
+    tryCatch(any(vapply(seqs[seqs > since], function(seq) {
         seg <- .journal_read_json(.journal_segment_path(state$dir, seq))
         is.null(seg$reason) || !seg$reason %in% ignore
     }, logical(1))), error = function(e) TRUE)
@@ -229,7 +233,18 @@ journal_mark <- function(session) {
     if (is.null(state)) {
         return(NULL)
     }
-    list(seq = state$seq, live_len = length(session$history %||% list()))
+    list(seq = state$seq, live_len = length(session$history %||% list()),
+         state = state)
+}
+
+# A mark's segment count, as the journal behind `state` counts. A mark
+# taken on a journal folder that has since been removed and started
+# again (.journal_state()) comes before every segment of the new one.
+.journal_mark_seq <- function(mark, state) {
+    if (!is.null(mark$state) && !identical(mark$state, state)) {
+        return(0L)
+    }
+    as.integer(mark$seq)
 }
 
 #' The entries added to a session's history since `mark`.
@@ -247,7 +262,7 @@ journal_entries_since <- function(session, mark) {
     }
     out <- list()
     seqs <- seq_len(state$seq)
-    seqs <- seqs[seqs > as.integer(mark$seq)]
+    seqs <- seqs[seqs > .journal_mark_seq(mark, state)]
     first <- TRUE
     segments <- if (length(seqs)) journal_load(state$dir)$segments else list()
     for (s in seqs) {
@@ -348,7 +363,8 @@ journal_history <- function(dir) {
         return(NULL)
     }
     state <- session$.journal
-    if (is.environment(state) && identical(state$dir, dir)) {
+    if (is.environment(state) && identical(state$dir, dir) &&
+        !.journal_removed(state)) {
         return(state)
     }
     state <- new.env(parent = emptyenv())
@@ -378,6 +394,23 @@ journal_history <- function(dir) {
     }
     session$.journal <- state
     state
+}
+
+# Has the journal been removed from under a session that is still
+# running? Retention does that to a session nobody has used for long
+# enough (R/retention.R), and so may a person. It shows as a live
+# snapshot this state wrote and that is no longer there. The state
+# counts segments that went with it, so the journal starts again from
+# nothing.
+#
+# Only when the folder that holds journals is still there. A whole data
+# directory that has dropped out of sight (a mount that went away) comes
+# back with its segments, and a count started again at nothing would
+# write over them. Until it is back the journal fails as it always has.
+.journal_removed <- function(state) {
+    live <- file.path(state$dir, JOURNAL_LIVE)
+    isTRUE(state$written) && !file.exists(live) &&
+    !file.exists(paste0(live, ".prev")) && dir.exists(dirname(state$dir))
 }
 
 # The two-write commit described at the top of the file. The state
@@ -457,7 +490,11 @@ journal_history <- function(dir) {
     if (!is.null(state$session$context_checkpoint)) {
         envelope$context <- state$session$context_checkpoint
     }
-    .journal_write_json(envelope, file.path(state$dir, JOURNAL_LIVE))
+    path <- .journal_write_json(envelope, file.path(state$dir, JOURNAL_LIVE))
+    # A snapshot is on disk: its absence later means something
+    # (.journal_removed()).
+    state$written <- TRUE
+    invisible(path)
 }
 
 # The live snapshot, allowing for a replacement cut off between parking

@@ -264,6 +264,23 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
                                  sep = "\n"
 )
 
+# A summary request's bytes, measured as the trigger measures a live
+# request (.estimate_live_request_bytes()), plus an allowance for what a
+# provider's body adds around the prompt and the system text: the
+# model, the flags and their keys. llm.api's Codex body adds under 300.
+# Inf when the size cannot be measured, so that nothing is sent then.
+.COMPACT_REQUEST_FRAMING <- 4096
+
+.compact_request_bytes <- function(prompt, system) {
+    bytes <- .estimate_live_request_bytes(
+        list(history = list(list(role = "user", content = prompt))),
+        system_prompt = system)
+    if (is.na(bytes)) {
+        return(Inf)
+    }
+    bytes + .COMPACT_REQUEST_FRAMING
+}
+
 #' Summarize the prefix of a history slice via the LLM.
 #'
 #' Returns the summary text on success or NULL on any error
@@ -283,30 +300,83 @@ compact_prefix_has_unmatched_tool_use <- function(history, cut) {
 #'   request may hold. Past it the oldest entries are left out and the
 #'   summarizer is told how many. The compactor passes a budget that
 #'   follows the model's window.
+#' @param max_request_bytes The most bytes the serialized request may
+#'   take, its framing included, or NA for no limit. Past it the oldest
+#'   entries are left out as well. A request that cannot fit is not sent,
+#'   nor one with room for no entry of the slice.
 #' @keywords internal
 compact_summarize_slice <- function(slice, provider = "anthropic",
                                     model = NULL, timeout_seconds = 60L,
                                     summary_prompt = NULL,
                                     error_callback = NULL, session = NULL,
-                                    max_total_chars = .compact_max_total_chars) {
+                                    max_total_chars = .compact_max_total_chars,
+                                    max_request_bytes = NA_real_) {
     if (length(slice) == 0L) {
         return(NULL)
     }
     rendered <- vapply(slice, .compact_render_entry, character(1L))
-    kept <- .compact_trim_total(rendered, max_total = max_total_chars)
-    conv_text <- paste(kept, collapse = "\n\n")
     instructions <- summary_prompt %||% .compact_summary_prompt
-    prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s",
-                      instructions, conv_text)
+    system <- paste("You are a helpful assistant that creates",
+                    "concise conversation summaries.")
+    frame <- function(conv_text) {
+        sprintf("%s\n\n---\nConversation to summarize:\n%s", instructions,
+                conv_text)
+    }
+    max_bytes <- Inf
+    if (!is.na(max_request_bytes)) {
+        max_bytes <- max_request_bytes - .compact_request_bytes(frame(""),
+            system)
+    }
+    kept <- .compact_trim_total(rendered, max_total = max_total_chars,
+                                max_bytes = max_bytes)
+    prompt <- frame(paste(kept, collapse = "\n\n"))
+    if (!is.na(max_request_bytes)) {
+        bytes <- .compact_request_bytes(prompt, system)
+        # Only when the request is over the limit with no conversation
+        # in it at all. Sent anyway, it would be refused for its size.
+        if (bytes > max_request_bytes) {
+            e <- simpleError(sprintf(
+                                     "the summary request would take %s bytes, over the limit of %s",
+                                     format(bytes, big.mark = ","),
+                                     format(max_request_bytes, big.mark = ",")))
+            if (is.function(error_callback)) {
+                error_callback(e)
+            }
+            log_event("subagent_compact_failed",
+                      reason = "summary_request_too_large",
+                      request_bytes = bytes, byte_limit = max_request_bytes,
+                      level = "warn")
+            return(NULL)
+        }
+    }
+    # Not one message fits. The request would hold the note about what
+    # was left out and nothing else, and its reply would still replace
+    # the history. The history stays as it is.
+    if (identical(attr(kept, "dropped"), length(rendered))) {
+        newest <- rendered[[length(rendered)]]
+        limit <- if (nchar(newest) + 2L > max_total_chars) {
+            sprintf("%s characters", format(max_total_chars, big.mark = ","))
+        } else {
+            sprintf("%s bytes", format(max_request_bytes, big.mark = ","))
+        }
+        e <- simpleError(sprintf(paste("not one message fits in the summary",
+                                       "request: the newest alone is over its limit of %s"),
+                                 limit))
+        if (is.function(error_callback)) {
+            error_callback(e)
+        }
+        log_event("subagent_compact_failed",
+                  reason = "summary_request_no_message",
+                  messages = length(rendered), level = "warn")
+        return(NULL)
+    }
     setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
     chat_args <- list(
                       prompt = prompt,
                       provider = provider,
                       model = model,
-                      system = paste(
-                                     "You are a helpful assistant that creates",
-                                     "concise conversation summaries."))
+                      system = system)
     # Compaction does not need a sampling override. Provider-default sampling
     # keeps it compatible with models that reject or deprecate `temperature`.
     result <- tryCatch(
@@ -515,7 +585,9 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                         format_age(idle_gap * 60), format_tokens(used)))
     }
     summary_error <- NULL
-    summary_chars <- .compact_summary_budget(session, limit, byte_limit, reason)
+    summary_chars <- .compact_summary_budget(session, limit, reason)
+    # The session's byte limit holds for the summary's own request too,
+    # in a recovery as at any other time.
     summary <- compact_summarize_slice(
                                        slice, provider = session$provider %||% "anthropic",
                                        model = model,
@@ -523,7 +595,8 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        summary_prompt = session$compaction_prompt %||% NULL,
                                        error_callback = function(e) summary_error <<- e,
                                        session = session,
-                                       max_total_chars = summary_chars)
+                                       max_total_chars = summary_chars,
+                                       max_request_bytes = byte_limit)
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",

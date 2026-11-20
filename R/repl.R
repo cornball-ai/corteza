@@ -137,6 +137,13 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     # The session journal (R/journal.R) follows ctx$session$sessionId,
     # so a /clear moves it with the new on-disk session.
     journal_install(ctx$session, agent_id = DEFAULT_AGENT_ID)
+    # Once a day, what old sessions no longer need goes (R/retention.R).
+    # Said here because files were removed. The session this loop has
+    # open is left alone.
+    pruned <- retention_tick(keep = as.character(ctx$session$sessionId))
+    if (!is.null(pruned)) {
+        cat(ctx$palette$dim, pruned, ctx$palette$reset, "\n", sep = "")
+    }
     .repl_jobs_setup(ctx)
     # Covers exits by error or interrupt; /quit and EOF call it directly
     # so its message comes before "Bye.". A second call is a no-op.
@@ -423,7 +430,10 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 next
             }
             if (cmd == "/sessions") {
-                cat(format_session_list(session_list()), "\n")
+                # This directory's, or every directory's with "all".
+                every <- length(parts) >= 2L && parts[2] %in% c("all", "--all")
+                listed <- session_list(cwd = ctx$cwd %||% getwd(), all = every)
+                cat(format_session_list(listed, how = "/sessions all"), "\n")
                 next
             }
             if (cmd == "/trace") {
@@ -461,6 +471,14 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                     ctx$config$approval_mode <- res$mode
                 }
                 cat(res$text, "\n")
+                next
+            }
+            if (cmd == "/trust") {
+                # Where this directory stands, and `/trust yes` to add it
+                # to the user's trusted directories. The session's prompt
+                # and tools were fixed when it started, so a new answer
+                # applies from the next start.
+                cat(trust_command(ctx$cwd %||% getwd(), parts[-1]), sep = "\n")
                 next
             }
             if (cmd == "/auto") {
@@ -575,6 +593,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                                     model = sprintf("%s @ %s", disp_model,
                         ctx$session$provider %||% ctx$provider),
                                     dir = ctx$cwd,
+                                    trusted = trust_status_word(
+                        ctx$session$project_trusted,
+                        project_trusted(ctx$cwd)),
                                     session = ctx$disk_session$session$sessionKey %||%
                                     ctx$disk_session$session$sessionId %||% "(unset)"
                 )
@@ -594,6 +615,11 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                         status_info = status_info,
                         note = .context_trigger_lines(trig)
                     ), "\n", sep = "")
+                left <- trust_left_alone(ctx$session, ctx$cwd)
+                if (length(left)) {
+                    cat(left, sep = "\n")
+                    cat("\n")
+                }
                 next
             }
             if (cmd == "/compact") {
@@ -930,6 +956,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             next
         }
 
+        typed <- prompt
         if (length(ctx$pending_r_context) > 0) {
             prompt <- paste(c(ctx$pending_r_context, prompt), collapse = "\n\n")
             ctx$pending_r_context <- character(0)
@@ -940,6 +967,12 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         # including two runs with the same goal in one session.
         transcript_append(ctx$disk_session$session, "user", prompt,
                           auto_run_id = ctx$session$auto_run_id)
+        # The first prompt names the conversation in lists: what the
+        # person typed, without the R context sent along with it.
+        if (!is.null(ctx$disk_session$session)) {
+            ctx$disk_session$session <- session_title_once(
+                ctx$disk_session$session, typed)
+        }
 
         cat(sprintf("%s\u25cf%s Thinking with %s%s%s\n",
                     ctx$palette$cyan, ctx$palette$reset,

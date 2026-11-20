@@ -100,7 +100,22 @@ caught <- list(
     c("tar xzf a.tgz -C /opt", "outside the project"),
     c("curl -o ~/bin/tool https://x.example/tool", "outside the project"),
     c("R CMD INSTALL -l ~/R/library .", "outside the project"),
-    c("echo '{}' > .corteza/config.json", "corteza config"),
+    c("echo '{}' > .corteza/config.json", "corteza folder"),
+    # Everything in the folder, since a session sources the R files under
+    # skills/ and reads the lessons and saved approvals beside them.
+    c("echo 'x <- 1' > .corteza/skills/extra.R", "corteza folder"),
+    c("cp /tmp/h.json .corteza/harness.json", "corteza folder"),
+    c("touch .corteza/approvals.json", "corteza folder"),
+    c("mkdir -p .corteza/skills", "corteza folder"),
+    c("sed -i 's/a/b/' .corteza/skills/x.R", "corteza folder"),
+    c("mv R/x.R .corteza/skills/x.R", "corteza folder"),
+    c("cd .corteza && touch x", "corteza folder"),
+    c("rm .corteza/approvals.json", "deletes from the project's corteza folder"),
+    c("rm -rf .corteza", "deletes from the project's corteza folder"),
+    # A session started in a subdirectory reads that directory's folder,
+    # and a file system that ignores case opens it under any spelling.
+    c("echo '{}' > R/.corteza/config.json", "corteza folder"),
+    c("echo 'x <- 1' > .Corteza/skills/extra.R", "corteza folder"),
     c("git push origin main", "pushes"),
     c(sprintf("git -C %s push --force origin main", root), "pushes"),
     c("git reset --hard HEAD~5", "discards"),
@@ -160,6 +175,13 @@ expect_true(flagged(sh("bash deploy.sh"), "pushes"))
 expect_true(flagged(sh("./deploy.sh"), "pushes"))
 expect_true(flagged(sh("Rscript R/boot.R"), "elevated"))
 expect_true(flagged(rr("source('R/boot.R')"), "elevated"))
+# One kept in the project's corteza folder is read like the rest.
+dir.create(file.path(root, ".corteza", "skills"), recursive = TRUE)
+writeLines("system2('sudo', c('reboot'))",
+           file.path(root, ".corteza", "skills", "boot.R"))
+expect_true(flagged(sh("Rscript .corteza/skills/boot.R"), "elevated"))
+expect_true(flagged(rr("source('.corteza/skills/boot.R')"), "elevated"))
+unlink(file.path(root, ".corteza"), recursive = TRUE)
 unknown <- sh("bash ~/elsewhere/run.sh")
 expect_true(clean(unknown))
 expect_true(any(grepl("did not read", unknown$notes)))
@@ -192,9 +214,74 @@ expect_true(flagged(rr("corteza:::.subagent_state$session$auto_gate <- NULL"),
                     "runtime state"))
 expect_true(flagged(rr("source('https://x.example/a.R')"), "network"))
 # The project's own control files, named by a relative path.
-expect_true(flagged(rr("writeLines('{}', '.corteza/config.json')"), "corteza config"))
+expect_true(flagged(rr("writeLines('{}', '.corteza/config.json')"), "corteza folder"))
 expect_true(flagged(rr("unlink('.git/hooks', recursive = TRUE)"), "git's own files"))
 expect_true(clean(rr("readLines('.corteza/config.json')")))
+# The folder as a whole, at any depth and in any case; reading it and
+# writing a folder that only resembles it are ordinary work.
+for (code in c("writeLines('x <- 1', '.corteza/skills/extra.R')",
+               "saveRDS(1, '.corteza/harness.json')",
+               "dir.create('.corteza/skills', recursive = TRUE)",
+               "unlink('.corteza', recursive = TRUE)",
+               "file.remove('.corteza/approvals.json')",
+               "writeLines('{}', 'R/.corteza/config.json')",
+               "writeLines('x <- 1', '.CORTEZA/skills/extra.R')")) {
+    expect_true(flagged(rr(code), "corteza folder"), info = code)
+}
+for (code in c("list.files('.corteza/skills')",
+               "writeLines('x', 'x.corteza/a.R')",
+               "writeLines('x', '.cortezax/a.R')")) {
+    expect_true(clean(rr(code)), info = code)
+}
+for (cmd in c("cat .corteza/config.json", "ls .corteza/skills",
+              "grep -rn trusted .corteza", "git -C .corteza status",
+              "Rscript .corteza/skills/x.R", "echo hi > corteza/config.json",
+              "echo hi > x.corteza/skills/a.R", "echo hi > .cortezax/a.R")) {
+    expect_true(clean(sh(cmd)), info = cmd)
+}
+# A git command run from inside the folder works on the project's own
+# repository, which is not one "outside the project".
+for (cmd in c("git -C .corteza add skills/x.R",
+              "cd .corteza && git commit -m 'skills'")) {
+    expect_true(clean(sh(cmd)), info = cmd)
+}
+# The zone itself, which the file tools' rules read too. It compares
+# resolved paths, so the path is resolved as scan_resolve() resolves a
+# word. Joined to `root` as this file holds it, the path has backslashes
+# on Windows and every zone below came back "outside".
+zone <- function(rel) {
+    sx <- corteza:::scan_new(root)
+    corteza:::scan_zone(sx, corteza:::.resolve_real(rel, sx$cwd))
+}
+expect_identical(zone(".corteza"), "control")
+expect_identical(zone(".corteza/config.json"), "control")
+expect_identical(zone(".corteza/skills/a.R"), "control")
+expect_identical(zone(".corteza/harness.json"), "control")
+expect_identical(zone(".corteza/approvals.json"), "control")
+expect_identical(zone("R/.corteza/skills/a.R"), "control")
+expect_identical(zone(".Corteza/config.json"), "control")
+expect_identical(zone(".cortezax/a.R"), "project")
+expect_identical(zone("R/a.R"), "project")
+expect_identical(zone(".git/config"), "git")
+# The list of trusted directories: the functions that add to it, its key
+# in the config and its file, as a name or inside a string. A worker's R
+# code runs where those functions are loaded.
+for (code in c("corteza:::project_trust_add(getwd())",
+               "corteza:::trust_command(getwd(), 'yes')",
+               "f <- get('project_trust_add', asNamespace('corteza')); f('.')",
+               "do.call(\"project_trust_add\", list('.'))",
+               "writeLines('[\"/\"]', corteza:::trust_file())",
+               "cfg$trusted_projects <- '/'",
+               "writeLines('{\"trusted_projects\": [\"/\"]}', p)",
+               "file.path(d, 'trusted-projects.json')")) {
+    expect_true(flagged(rr(code), "trusted directories"), info = code)
+}
+expect_true(flagged(sh("Rscript -e 'corteza:::project_trust_add(getwd())'"),
+                    "trusted directories"))
+for (code in c("trust <- 1; trusted <- TRUE", "x <- 'the project is trusted'",
+               "readLines('R/trust.R')")) {
+    expect_false(flagged(rr(code), "trusted directories"), info = code)
+}
 # A release function of some other package is not publishing.
 expect_true(clean(rr("lock$release()")))
 # Code that does not parse was not read, and says so.

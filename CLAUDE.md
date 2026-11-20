@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Corteza is an R-native AI agent runtime: a CLI binary
-(`inst/bin/corteza`, installed as `~/bin/corteza`) plus an in-R
+(`inst/bin/corteza`, copied into place by `install_cli()`) plus an in-R
 `corteza::chat()`, both backed by a CRAN-installable package. This
 file is what an agent (LLM or human) needs to know to work in this
 codebase effectively. `AGENTS.md` is a symlink to this file so both
@@ -70,7 +70,43 @@ them to `saber::context_manifest()`, which also discovers the shared
 instructions file and the project AGENTS.md/CLAUDE.md. saber drops a
 source that resolves to the same canonical path as an earlier one,
 then one with identical content; `saber::context_render()` produces
-the prompt.
+the prompt. In an untrusted directory (next section) the manifest is
+built with `discover = FALSE`: the shared file goes in as an explicit
+source (`context_shared_source()`) and nothing of the project's does.
+
+## Project trust (`R/trust.R`)
+
+A project's own files arrive with the repository, so a session loads
+them only where `project_trusted(cwd)` holds: `cwd` is, or lies inside,
+a directory under `trusted_projects` in the user's config or in
+`trusted-projects.json` beside it (which `/trust yes` writes). Paths are
+compared resolved, and `cwd` has to exist. The scratch folder of a room
+with no directory is never trusted.
+
+What that gates, each through one function in `R/trust.R`:
+
+- `.corteza/config.json`: `project_config()`. `load_config()`,
+  `instruction_session_config()`, `auto_envelope_config()` and
+  `context_config_origin()` all read through it.
+- `.corteza/skills/`: `load_project_skills()` (sourced R files and
+  skill docs), and the catalog's `project` root.
+- `.corteza/harness.json`: `harness_path("project")` stops for an
+  untrusted directory; `harness_scopes()` says which stores exist.
+- `.corteza/approvals.json`: the binary's `cli_approval_cb()`.
+- `AGENTS.md`/`CLAUDE.md`, the briefing, and the user's `context_files`
+  that point into the project: `load_context_bundle()` and
+  `project_context_files()`.
+
+A new reader of anything under `.corteza/` builds its path with one of
+the 4 `project_*_path()` builders and decides with `project_trusted()`
+first. `test_trust.R` walks the installed namespace and fails on a
+function that names the folder outside those builders and the rules.
+
+Trust is fixed when a session starts (`session$project_trusted`); a
+`/trust yes` applies to the next one. The terminal and `chat()` ask at
+start (`trust_at_start()`); a room is told once (`bot_trust_notice()`)
+and only an operator may answer. Trust is not a sandbox: tools still
+read files in an untrusted directory as tool results.
 
 ## Policy engine (`R/policy.R`)
 
@@ -100,7 +136,8 @@ steps, in order:
 
 1. **Rules in code** (`supervisor_route()`, `R/exec-scan.R`). They read
    path arguments and the text of shell commands and R code. A hit
-   (credentials, a write outside the checkout, sudo, another machine,
+   (credentials, a write outside the checkout, a write to a `.corteza`
+   folder, R code that names the trusted list, sudo, another machine,
    pushing or publishing, destructive git) goes to a person. No model
    decides what a model may decide.
 2. **The monitor** (`R/job-monitor.R`), only where the bot config has
@@ -143,7 +180,8 @@ which CRAN carries.
 ## Configuration
 
 Config merges global (`tools::R_user_dir("corteza", "config")/config.json`)
-with project (`.corteza/config.json`); project overrides global.
+with project (`.corteza/config.json`); project overrides global. The
+project file is read in a trusted directory only (Project trust above).
 Key fields: `provider`, `port` (default 7850), `context_warn_pct` /
 `context_high_pct` / `context_crit_pct` / `context_compact_pct`,
 `context_files`, `approval_mode`, `dangerous_tools`, `permissions`.
@@ -276,6 +314,50 @@ no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
 has no journal, so bare sessions in tests see no change.
 `journal_enabled: false` turns it off.
 
+## Retention (`R/retention.R`)
+
+Once a day, from `run_repl_loop()` and `bot_run_step()`,
+`retention_tick()` removes the journal and the tool trace of every
+session unused for `retention$session_days` (default 90, 0 for off).
+The setting is read from the user's config only (`retention_config()`),
+and a value it cannot read turns retention off. Transcripts always stay.
+`sessions_prune()` is the exported form.
+
+Two things to keep in mind when changing it or the journal:
+
+- A session's audit records live in its journal folder
+  (`<id>.journal/audit/`, `.audit_root()`), and their expiry never runs
+  by itself. So a journal is removed file by file
+  (`retention_journal_files()`), never as a folder.
+- The process that holds a session may outlive its journal. A journal
+  whose live snapshot is gone starts again from nothing
+  (`.journal_removed()`), and a mark taken on the old one counts as
+  before every segment of the new (`.journal_mark_seq()`).
+
+## Session records (`R/session.R`)
+
+`sessions.json` is each agent's index of conversations, and other
+programs read it (`vignette("configuration")`, "Session records"): add
+fields, never rename one.
+
+- A session belongs to the directory it was started in. `session_list()`
+  and `session_latest()` take `cwd` and `all`, and every surface
+  (`--resume`, `--list`, `/sessions`, `chat(session = TRUE)`) asks for
+  its own directory unless told otherwise. Compare directories through
+  `session_cwd()`, never as strings.
+- `session_new()` writes `cwd` and `surface`, `session_title_once()`
+  writes `title` from the first prompt, and `session_save()` leaves all
+  3 alone. An entry from before 0.8.1 gets its `cwd` from the
+  transcript's header the first time sessions are listed.
+- A Matrix room's session has a journal and no transcript. Its entry is
+  under agent `matrix`, keyed by the journal folder's name
+  (`bot_session_record()`).
+- `store_save()` writes beside the store and renames. Every session of
+  an agent shares the file: keep it that way, and go through
+  `store_update()` so an unreadable store is set aside, not replaced.
+  2 processes can still each read, change and write it, and the later
+  write wins.
+
 ## Test conventions and gotchas
 
 - `corteza:::env[[key]] <- value` doesn't parse the way you'd expect
@@ -304,8 +386,11 @@ off by default behind `config$legacy_memory_tools_enabled`.
 Project context comes from `saber::briefing()` and
 `saber::context_manifest()` (recent commits, package summary, the
 shared instructions file, AGENTS.md or CLAUDE.md) plus any files
-explicitly listed in `config$context_files`. The `/context` slash
-command shows live token usage broken into system / tools / history.
+explicitly listed in `config$context_files`. In an untrusted directory
+only the shared file and the user's own context files load. The
+`/context` slash command shows live token usage broken into system /
+tools / history, whether the directory was trusted, and what was left
+alone.
 
 ## Matrix credentials rotate: derive, never cache
 
@@ -360,6 +445,7 @@ session outlives many rotations.
 R/
 ├── turn.R             # Shared agent turn (entry point for all surfaces)
 ├── policy.R           # Tool-call policy engine (allow/ask/deny)
+├── trust.R            # Project trust: what loads from the working directory
 ├── supervisor.R       # Gate for unattended calls: rules, monitor, person
 ├── exec-scan.R        # Reads shell commands and R code for the rules
 │                      #   (shell-parse.R, shell-scan.R, r-code-scan.R)
@@ -376,6 +462,7 @@ R/
 ├── matrix.R           # Matrix channel adapter (mx.api)
 ├── config.R           # Config file loading + defaults
 ├── session.R          # Session persistence (transcripts, metadata)
+├── retention.R        # What leaves the data directory, and when
 ├── archival.R         # Retroactive-extraction runtime (opt-in)
 ├── log.R              # Structured JSON logging
 ├── tasks.R            # Task-tracker intercept in turn()

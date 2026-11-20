@@ -413,21 +413,38 @@ compact_message_text <- function(text,
 # (compact_message_text) handles one giant result; this handles the
 # case where many large messages still overflow in aggregate. Keeps the
 # most recent messages, which matter most for continuing the work.
+#
+# `max_bytes` bounds the joined text as a JSON request carries it
+# (.json_text_bytes()), the note about dropped messages included.
 .compact_trim_total <- function(rendered,
-                                max_total = .compact_max_total_chars) {
+                                max_total = .compact_max_total_chars,
+                                max_bytes = Inf) {
     n <- length(rendered)
     if (n == 0L) {
         return(rendered)
     }
     sep <- 2L # "\n\n" between messages
-    if (sum(nchar(rendered)) + sep * (n - 1L) <= max_total) {
+    bytes <- numeric(n)
+    sep_bytes <- 4 # "\n\n" as JSON writes it
+    if (is.finite(max_bytes)) {
+        bytes <- .json_text_bytes(rendered)
+    }
+    if (sum(nchar(rendered)) + sep * (n - 1L) <= max_total &&
+        sum(bytes) + sep_bytes * (n - 1L) <= max_bytes) {
         return(rendered)
     }
     keep <- logical(n)
     running <- 0L
+    # Room for the note, which is under 100 bytes.
+    if (is.finite(max_bytes)) {
+        running_bytes <- 100
+    } else {
+        running_bytes <- 0
+    }
     for (i in rev(seq_len(n))) {
         running <- running + nchar(rendered[i]) + sep
-        if (running > max_total) {
+        running_bytes <- running_bytes + bytes[i] + sep_bytes
+        if (running > max_total || running_bytes > max_bytes) {
             break
         }
         keep[i] <- TRUE
@@ -440,5 +457,17 @@ compact_message_text <- function(text,
                           dropped),
                   kept)
     }
+    # How many were left out, so a caller can tell a result that holds
+    # the note alone.
+    attr(kept, "dropped") <- dropped
     kept
+}
+
+# The bytes each string takes inside a JSON request, as jsonlite writes
+# it (llm.api serializes with jsonlite): UTF-8 after escaping, quotes
+# left out. A control character takes 6.
+.json_text_bytes <- function(x) {
+    vapply(x, function(s) {
+        nchar(jsonlite::toJSON(s, auto_unbox = TRUE), type = "bytes") - 2
+    }, numeric(1L), USE.NAMES = FALSE)
 }

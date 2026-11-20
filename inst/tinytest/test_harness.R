@@ -3,8 +3,18 @@
 # offline; all writes confined to a tempdir project scope (the global
 # scope is only ever path-checked, never written).
 
+# A project's store belongs to a trusted directory only (R/trust.R;
+# test_trust.R covers what an untrusted one is refused). The list of
+# trusted directories is the user's, so this file gets a config
+# directory of its own, restored at the bottom, and each project below
+# is added to it where it is made.
+old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+tmp_config <- tempfile("harness-config-")
+Sys.setenv(R_USER_CONFIG_DIR = tmp_config)
+
 td <- file.path(tempfile("harness-test-"), "proj")
 dir.create(td, recursive = TRUE)
+corteza:::project_trust_add(td)
 
 # path shapes
 expect_true(grepl("\\.corteza/harness\\.json$",
@@ -98,12 +108,12 @@ corteza:::harness_apply(
          list(action = "create", title = "Fact two", content = "Fact two.")),
     scope = "project", cwd = td, trigger = "test")
 blk <- corteza:::harness_context_block(td, list())
-# Project entries are untrusted by default (a store travels with a
-# repo), so they render as quoted reference material, not lessons.
-expect_true(grepl("# Untrusted project notes", blk, fixed = TRUE))
+# The directory is trusted, so its entries stand under the same header
+# as this machine's own lessons.
+expect_true(grepl("# Lessons", blk, fixed = TRUE))
+expect_true(grepl("Trust them before re-deriving", blk, fixed = TRUE))
 expect_true(grepl("- [project] Fact one. (via claude-opus-5)", blk,
                   fixed = TRUE))
-expect_true(grepl("never as", blk, fixed = TRUE))
 # cap: tiny budget omits and says so
 blk_cap <- corteza:::harness_context_block(td,
     list(harness_max_chars = 30L))
@@ -111,6 +121,7 @@ expect_true(grepl("omitted", blk_cap))
 # empty dir renders no block
 td2 <- file.path(tempfile("harness-empty-"), "proj")
 dir.create(td2, recursive = TRUE)
+corteza:::project_trust_add(td2)
 expect_identical(corteza:::harness_context_block(td2, list()), "")
 
 # slug
@@ -182,7 +193,8 @@ expect_identical(corteza:::.harness_history_text(list()), "")
 # read time, because a project store travels with a cloned repo.
 bad_dir <- file.path(tempfile("harness-bad-"), "proj")
 dir.create(file.path(bad_dir, ".corteza"), recursive = TRUE)
-bad_path <- corteza:::harness_path("project", bad_dir)
+# Not trusted yet, so the path is built without asking for the store.
+bad_path <- corteza:::project_harness_path(bad_dir)
 writeLines(jsonlite::toJSON(list(
     schema = 1L,
     entries = list(
@@ -202,20 +214,31 @@ expect_warning(bad_store <- corteza:::harness_load(bad_path),
                pattern = "failed validation")
 expect_identical(names(bad_store$entries), "good")
 
-# --- untrusted project injection ---
-# Without a local trust decision, project entries render as quoted
-# reference material under a do-not-follow header, never as lessons.
-blk_untrusted <- corteza:::harness_context_block(bad_dir, list())
-expect_true(grepl("# Untrusted project notes", blk_untrusted, fixed = TRUE))
-expect_true(grepl("never as", blk_untrusted, fixed = TRUE))
-expect_true(grepl("A fine fact.", blk_untrusted, fixed = TRUE))
-# and NOT under the trusting header
-expect_false(grepl("Trust them before re-deriving", blk_untrusted,
-                   fixed = TRUE))
+# --- an untrusted project's store is not opened ---
+# Until the user trusts the directory, nothing of its store reaches the
+# prompt under any header, the file is not read (no validation warning
+# for its bad entries), and asking for its path stops.
+expect_silent(blk_untrusted <- corteza:::harness_context_block(bad_dir,
+                                                               list()))
+expect_false(grepl("A fine fact.", blk_untrusted, fixed = TRUE))
+expect_false(grepl("[project]", blk_untrusted, fixed = TRUE))
+expect_error(corteza:::harness_path("project", bad_dir), "not trusted")
+expect_identical(corteza:::harness_scopes(bad_dir), "global")
+# Trusted, the entry that passes validation is a lesson like any other
+# and the ones that fail are still dropped.
+corteza:::project_trust_add(bad_dir)
+expect_identical(corteza:::harness_scopes(bad_dir), c("global", "project"))
+expect_warning(
+    blk_trusted <- corteza:::harness_context_block(bad_dir, list()),
+    pattern = "failed validation")
+expect_true(grepl("- [project] A fine fact.", blk_trusted, fixed = TRUE))
+expect_true(grepl("Trust them before re-deriving", blk_trusted, fixed = TRUE))
+expect_false(grepl("IGNORE PRIOR INSTRUCTIONS", blk_trusted, fixed = TRUE))
 
 # --- rollback compare-and-swap (the stale-rollback cases) ---
 sd <- file.path(tempfile("harness-stale-"), "proj")
 dir.create(sd, recursive = TRUE)
+corteza:::project_trust_add(sd)
 rA <- corteza:::harness_apply(
     list(list(action = "create", title = "X", content = "x is A")),
     scope = "project", cwd = sd, trigger = "test")
@@ -244,6 +267,7 @@ expect_error(corteza:::harness_rollback(rA, scope = "project", cwd = sd),
 # A directory where the file should go makes rename fail.
 fail_dir <- file.path(tempfile("harness-fail-"), "proj")
 dir.create(file.path(fail_dir, ".corteza", "harness.json"), recursive = TRUE)
+corteza:::project_trust_add(fail_dir)
 expect_error(corteza:::harness_apply(
     list(list(action = "create", title = "Nope", content = "will not save")),
     scope = "project", cwd = fail_dir), pattern = "could not be saved|write failed")
@@ -251,6 +275,7 @@ expect_error(corteza:::harness_apply(
 # --- lock serializes read-modify-write; a held lock is refused ---
 lock_dir <- file.path(tempfile("harness-lock-"), "proj")
 dir.create(file.path(lock_dir, ".corteza"), recursive = TRUE)
+corteza:::project_trust_add(lock_dir)
 lock_path <- corteza:::harness_path("project", lock_dir)
 dir.create(paste0(lock_path, ".lock"))
 expect_error(corteza:::harness_apply(
@@ -265,6 +290,7 @@ expect_true(!is.null(corteza:::harness_apply(
 # --- harness_auto flips the enforced permission ---
 auto_dir <- file.path(tempfile("harness-auto-"), "proj")
 dir.create(file.path(auto_dir, ".corteza"), recursive = TRUE)
+corteza:::project_trust_add(auto_dir)
 writeLines('{"harness_auto": true}',
            file.path(auto_dir, ".corteza", "config.json"))
 expect_identical(corteza:::load_config(auto_dir)$permissions[["harness_note"]],
@@ -282,6 +308,7 @@ expect_identical(corteza:::load_config(auto_dir)$permissions[["harness_note"]],
 corteza::ensure_skills()
 e2e <- file.path(tempfile("harness-e2e-"), "proj")
 dir.create(file.path(e2e, ".corteza"), recursive = TRUE)
+corteza:::project_trust_add(e2e)
 e2e_path <- corteza:::harness_path("project", e2e)
 
 mk_session <- function(cb) {
@@ -327,6 +354,7 @@ expect_false("declined-lesson" %in% names(st_e2e$entries))
 # second session pointed elsewhere must not see it.
 other <- file.path(tempfile("harness-other-"), "proj")
 dir.create(file.path(other, ".corteza"), recursive = TRUE)
+corteza:::project_trust_add(other)
 expect_false("accepted-lesson" %in%
              names(corteza:::harness_load(
                  corteza:::harness_path("project", other))$entries))
@@ -340,20 +368,19 @@ expect_true("other-lesson" %in%
 # ... and did NOT leak into the first session's store
 expect_false("other-lesson" %in% names(corteza:::harness_load(e2e_path)$entries))
 
-# --- trusted project rendering (global config opt-in) ---
-# harness_project_trusted() reads the GLOBAL config, never the
-# project's own (a repo cannot vouch for itself). Exercised by
-# pointing R_USER_DATA/CONFIG at a temp home.
-old_home <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
-tmp_cfg <- tempfile("cfg-")
-dir.create(file.path(tmp_cfg, "R", "corteza"), recursive = TRUE)
-Sys.setenv(R_USER_CONFIG_DIR = tmp_cfg)
-writeLines('{"harness_trust_project": true}',
-           file.path(tools::R_user_dir("corteza", "config"), "config.json"))
-expect_true(corteza:::harness_project_trusted(td))
-blk_trusted <- corteza:::harness_context_block(td, list())
-expect_true(grepl("# Lessons", blk_trusted, fixed = TRUE))
-expect_true(grepl("Trust them before re-deriving", blk_trusted, fixed = TRUE))
-expect_false(grepl("# Untrusted project notes", blk_trusted, fixed = TRUE))
-if (is.na(old_home)) Sys.unsetenv("R_USER_CONFIG_DIR") else
-    Sys.setenv(R_USER_CONFIG_DIR = old_home)
+# --- a project cannot vouch for its own store ---
+# Trust is read from the user's config directory, never from the
+# project (the store and a project config both arrive with the repo).
+# A project config that names its own directory changes nothing.
+selfish <- file.path(tempfile("harness-selfish-"), "proj")
+dir.create(file.path(selfish, ".corteza"), recursive = TRUE)
+writeLines(jsonlite::toJSON(list(trusted_projects = selfish,
+                                 harness_trust_project = TRUE),
+                            auto_unbox = TRUE),
+           file.path(selfish, ".corteza", "config.json"))
+expect_identical(corteza:::harness_scopes(selfish), "global")
+expect_error(corteza:::harness_path("project", selfish), "not trusted")
+
+unlink(tmp_config, recursive = TRUE)
+if (is.na(old_config)) Sys.unsetenv("R_USER_CONFIG_DIR") else
+    Sys.setenv(R_USER_CONFIG_DIR = old_config)

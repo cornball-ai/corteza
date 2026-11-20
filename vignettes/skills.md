@@ -65,6 +65,9 @@ The `metadata.requires` field is openclaw-compatible, so skills written for open
 | Global | `tools::R_user_dir("corteza", "data")/skills/` |
 | Project | `.corteza/skills/` |
 
+The project folder is read in a trusted directory only: send `/trust yes`
+there, or see "Trusted projects" in `vignette("configuration")`.
+
 Discovery is recursive and includes only files named exactly `SKILL.md`.
 Names do not override each other: lookup uses the stable id derived from the
 configured root id plus the skill directory's relative path. Additional

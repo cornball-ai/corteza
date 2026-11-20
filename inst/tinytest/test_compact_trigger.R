@@ -640,12 +640,31 @@ for (bad in list(NULL, "1000000", 0, NA_real_)) {
 # a 1M window reads all of it, on OpenAI's input limit too.
 expect_true(corteza:::.compact_summary_chars(922000L) >=
             4 * corteza:::CONTEXT_COMPACT_TOKENS)
-# A limit on a request's bytes bounds the budget at a quarter of it, in
-# characters, and never under 120,000.
-expect_equal(corteza:::.compact_summary_chars(272000L, 900000), 225000)
-expect_equal(corteza:::.compact_summary_chars(272000L, 2000000), 255000)
-expect_equal(corteza:::.compact_summary_chars(272000L, 200000), 120000)
-expect_equal(corteza:::.compact_summary_chars(272000L, NA_real_), 255000)
+# The budget is about tokens: a 272,000 window reads 255,000 characters
+# whatever the session's limit on bytes. That limit is kept on the
+# serialized request instead (below).
+expect_equal(corteza:::.compact_summary_chars(272000L), 255000)
+
+# Bytes as a JSON request carries them: a control character takes 6,
+# a quote 2, a character outside ASCII its UTF-8 bytes.
+expect_equal(corteza:::.json_text_bytes(c("abc", "\001\001", "a\"b", "é", "")),
+             c(3, 12, 4, 2, 0))
+# Trimming by bytes keeps the newest entries that fit, with the note.
+local({
+    rendered <- c(strrep("\001", 100), strrep("\001", 100), "newest")
+    kept <- corteza:::.compact_trim_total(rendered, max_total = 120000L,
+                                          max_bytes = 800)
+    expect_identical(kept[[1L]],
+                     "[1 earlier message(s) elided to fit the compaction budget]")
+    expect_identical(kept[-1L], rendered[2:3])
+    joined <- paste(kept, collapse = "\n\n")
+    expect_true(nchar(jsonlite::toJSON(joined, auto_unbox = TRUE),
+                      type = "bytes") - 2 <= 800)
+    # With no limit on bytes, characters alone decide, as before.
+    expect_identical(corteza:::.compact_trim_total(rendered,
+                                                   max_total = 120000L),
+                     rendered)
+})
 
 # 40 turns that can be told apart, 320,000 characters in all.
 numbered_history <- function(turns = 40L, chars = 4000L) {
@@ -669,8 +688,12 @@ summary_prompt_for <- function(session, config, ..., fail = FALSE) {
     original <- get("chat", envir = asNamespace("llm.api"))
     on.exit(assignInNamespace("chat", original, ns = "llm.api"), add = TRUE)
     seen <- NULL
-    assignInNamespace("chat", function(prompt, ...) {
+    seen_system <- NULL
+    calls <- 0L
+    assignInNamespace("chat", function(prompt, ..., system = NULL) {
         seen <<- prompt
+        seen_system <<- system
+        calls <<- calls + 1L
         if (fail) {
             stop("no answer in time")
         }
@@ -678,9 +701,35 @@ summary_prompt_for <- function(session, config, ..., fail = FALSE) {
     }, ns = "llm.api")
     done <- corteza:::maybe_compact_turn_session(
         session, config, tools = list(), system = "", ...)
-    list(done = isTRUE(done), prompt = seen)
+    list(done = isTRUE(done), prompt = seen, system = seen_system,
+         calls = calls)
 }
 has <- function(prompt, what) grepl(what, prompt, fixed = TRUE)
+
+# The bytes of the body llm.api 0.2.0 builds for the Codex backend from
+# a summary request, serialized as it serializes one.
+codex_body_bytes <- function(got, model = "gpt-6.1-sol") {
+    body <- list(model = model, instructions = got$system,
+                 input = list(list(role = "user", content = list(
+                     list(type = "input_text", text = got$prompt)))),
+                 stream = TRUE, text = list(verbosity = "low"),
+                 reasoning = NULL,
+                 include = list("reasoning.encrypted_content"),
+                 store = FALSE)
+    nchar(jsonlite::toJSON(body, auto_unbox = TRUE, null = "null"),
+          type = "bytes")
+}
+
+# 40 turns of control characters, each 6 bytes once JSON escapes it:
+# 320,000 characters, about 1.9 MB as a request carries them.
+control_history <- function(turns = 40L, chars = 4000L) {
+    h <- numbered_history(turns, chars)
+    for (i in seq_along(h)) {
+        h[[i]]$content <- sub("[ua]+$", strrep("\001", chars),
+                              h[[i]]$content)
+    }
+    h
+}
 
 # A 1M window: the summary reads every turn it replaces. The newest
 # turn is the kept tail and is not in it.
@@ -716,28 +765,135 @@ local({
     expect_true(has(got$prompt, "answer-39 "))
 })
 
-# The Codex backend limits a request's bytes (900,000 by default), so
-# its 272,000 window reads 225,000 characters and not 255,000.
+# The Codex backend limits a request's bytes (900,000 by default). Plain
+# text at its 272,000 window's 255,000 characters is far under that, so
+# the window decides, as it does with no limit at all.
+local({
+    for (limit in list(NULL, Inf)) {
+        s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+        s$history <- numbered_history()
+        got <- if (is.null(limit)) {
+            summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
+        } else {
+            summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L),
+                               byte_limit = limit)
+        }
+        expect_true(got$done)
+        expect_equal(s$last_compaction$summary_chars, 255000)
+        expect_false(has(got$prompt, "ask-8 "))
+        expect_true(has(got$prompt, "answer-8 "))
+        expect_true(has(got$prompt, "ask-9 "))
+    }
+})
+
+# Text that JSON escapes is where the bytes decide. The window's 255,000
+# characters would be about 1.5 MB; the request holds the newest turns
+# that fit under 900,000 bytes, framing included.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- control_history()
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
+    expect_true(got$done)
+    expect_true(codex_body_bytes(got) <= 900000)
+    expect_true(codex_body_bytes(got) > 800000)
+    expect_true(has(got$prompt, "elided to fit"))
+    expect_true(has(got$prompt, "answer-39 "))
+    expect_false(has(got$prompt, "ask-1 "))
+})
+
+# A limit the person set, 200,000 bytes. Before this bound the floor of
+# 120,000 characters let such a request reach about 350,000.
+local({
+    config <- trigger_config(context_compact_tokens = 10000L,
+                             context_compact_bytes = 200000L)
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- control_history()
+    got <- summary_prompt_for(s, config)
+    expect_true(got$done)
+    expect_equal(s$last_compaction$byte_limit, 200000)
+    expect_true(codex_body_bytes(got) <= 200000)
+    expect_true(has(got$prompt, "answer-39 "))
+    # A recovery from a refusal for size, which reads the smaller budget
+    # of characters, keeps the bound on bytes as well.
+    for (why in c("request_buffer_overflow", "context_overflow")) {
+        s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+        s$history <- control_history()
+        got <- summary_prompt_for(s, config, threshold = 0,
+                                  min_messages = 2L, reason = why)
+        expect_true(got$done, info = why)
+        expect_equal(s$last_compaction$summary_chars, 120000, info = why)
+        expect_true(codex_body_bytes(got) <= 200000, info = why)
+    }
+    # After a failed summary too.
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- control_history()
+    s$last_compaction_failure <- list(reason = "summarizer_error")
+    got <- summary_prompt_for(s, config)
+    expect_true(got$done)
+    expect_equal(s$last_compaction$summary_chars, 120000)
+    expect_true(codex_body_bytes(got) <= 200000)
+})
+
+# A limit under what the request takes with no conversation in it:
+# nothing is sent, and the failure says why.
 local({
     s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
     s$history <- numbered_history()
-    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L))
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L,
+                                                context_compact_bytes = 3000L))
+    expect_false(got$done)
+    expect_equal(got$calls, 0L)
+    expect_equal(length(s$history), 80L)
+    expect_true(grepl("over the limit of 3,000",
+                      s$last_compaction_failure$error, fixed = TRUE))
+})
+
+# A limit the framing fits under with no room for one turn of 4,000
+# characters. The request would hold only the note that 78 messages were
+# left out, and its reply would replace them all. Nothing is sent, and
+# the history stays as it was.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- numbered_history()
+    before <- s$history
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L,
+                                                context_compact_bytes = 8000L))
+    expect_false(got$done)
+    expect_equal(got$calls, 0L)
+    expect_identical(s$history, before)
+    expect_true(grepl("not one message fits",
+                      s$last_compaction_failure$error, fixed = TRUE))
+    expect_true(grepl("over its limit of 8,000 bytes",
+                      s$last_compaction_failure$error, fixed = TRUE))
+})
+
+# With room for a few turns the summary reads them, as before: the
+# newest turns of the slice and the note for the rest.
+local({
+    s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
+    s$history <- numbered_history()
+    got <- summary_prompt_for(s, trigger_config(context_compact_tokens = 10000L,
+                                                context_compact_bytes = 20000L))
     expect_true(got$done)
-    expect_equal(s$last_compaction$summary_chars, 225000)
+    expect_equal(got$calls, 1L)
+    expect_true(has(got$prompt, "answer-39 "))
     expect_true(has(got$prompt, "elided to fit"))
-    expect_false(has(got$prompt, "ask-12 "))
-    expect_true(has(got$prompt, "answer-12 "))
-    expect_true(has(got$prompt, "ask-13 "))
-    # With no limit on bytes the window alone decides: 255,000.
-    s2 <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
-    s2$history <- numbered_history()
-    got <- summary_prompt_for(s2,
-                              trigger_config(context_compact_tokens = 10000L),
-                              byte_limit = Inf)
-    expect_true(got$done)
-    expect_false(has(got$prompt, "ask-8 "))
-    expect_true(has(got$prompt, "answer-8 "))
-    expect_true(has(got$prompt, "ask-9 "))
+    expect_false(has(got$prompt, "ask-1 "))
+    expect_true(codex_body_bytes(got) <= 20000)
+})
+
+# The trim says how many it left out, all of them when the note is all
+# that is left.
+local({
+    kept <- corteza:::.compact_trim_total(c(strrep("a", 500), "b"),
+                                          max_total = 120000L, max_bytes = 300)
+    expect_equal(attr(kept, "dropped"), 1L)
+    expect_identical(kept[-1L], "b")
+    kept <- corteza:::.compact_trim_total(strrep("a", 500),
+                                          max_total = 120000L, max_bytes = 300)
+    expect_equal(attr(kept, "dropped"), 1L)
+    expect_equal(length(kept), 1L)
+    expect_true(grepl("elided", kept[[1L]], fixed = TRUE))
 })
 
 # A summary that fails costs the larger request once. The session's
@@ -787,13 +943,13 @@ local({
     expect_equal(corteza:::.compact_summary_budget(s, 1000000L), 120000)
 })
 
-# The Codex backend after a failure: 120,000 as well, under its byte
-# bound of 225,000.
+# The Codex backend after a failure: 120,000 as well, under its
+# window's 255,000.
 local({
     s <- trigger_session("gpt-6.1-sol", provider = "openai_codex")
-    expect_equal(corteza:::.compact_summary_budget(s, 272000L, 900000), 225000)
+    expect_equal(corteza:::.compact_summary_budget(s, 272000L), 255000)
     s$last_compaction_failure <- list(reason = "summarizer_error")
-    expect_equal(corteza:::.compact_summary_budget(s, 272000L, 900000), 120000)
+    expect_equal(corteza:::.compact_summary_budget(s, 272000L), 120000)
 })
 
 # A recovery after the provider refused a request for its size reads
