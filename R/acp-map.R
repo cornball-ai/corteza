@@ -67,10 +67,16 @@
     }
     brief <- trimws(brief)
     if (is.character(cwd) && length(cwd) == 1L && nzchar(cwd)) {
-        inside <- paste0(sub("/+$", "", normalizePath(cwd, winslash = "/",
-                    mustWork = FALSE)), "/")
-        if (startsWith(brief, inside)) {
-            brief <- substring(brief, nchar(inside) + 1L)
+        # The directory as given and as normalized: a call may name either
+        # (macOS's /var is /private/var), and on Windows normalizing adds
+        # a drive to a path that starts with a slash.
+        dirs <- unique(c(cwd, normalizePath(cwd, winslash = "/",
+                    mustWork = FALSE)))
+        for (inside in paste0(sub("[/\\\\]+$", "", dirs), "/")) {
+            if (startsWith(brief, inside)) {
+                brief <- substring(brief, nchar(inside) + 1L)
+                break
+            }
         }
     }
     sprintf("%s: %s", name, .sanitize_inline(brief, max_chars = 120L))
