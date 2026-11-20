@@ -1,3 +1,26 @@
+# corteza 0.8.0.30
+
+- A bot's room answers through a talker by default: a session with
+  read-only tools that hands work needing edits, commands or tests to a
+  doer, a worker process of the conversation's own. `"talker":
+  {"enabled": false}` in the bot's config turns it off. A bot whose
+  tools are restricted (`tools_filter`) and a room with no directory
+  are no talker unless the config turns talker mode on.
+- The talker runs on `talker.model`, else on the bot's own model;
+  `talker.provider` without a model takes that provider's default.
+  Up to 0.8.0 it ran on a fast model of its provider's and stopped with
+  an error on any other provider. A `talker` entry that is no object
+  stops with a message saying what it should be.
+- In a talker session `/model` and `/effort` change the doer's model
+  and effort, which the next job runs with. The doer starts on the
+  model, provider and reasoning settings the config's `jobs` block
+  names, where it names them. The talker follows `/model` unless its
+  config names a model or a provider of its own, and takes its
+  reasoning settings from the `talker` block alone. `/status` names
+  both models. Up to 0.8.0 both commands changed the talker's alone.
+- The command table (`corteza:::corteza_commands()`) has a `talker`
+  column: what a command acts on in a talker session.
+
 # corteza 0.8.0.29
 
 - The command table (`corteza:::corteza_commands()`) says that a bot's
