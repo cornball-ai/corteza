@@ -837,7 +837,8 @@ session the same three steps for each call that would prompt. The
 monitor there is called the reviewer. It rules on reads, writes and
 commands that the rules leave open. It reads the conversation to judge
 them, from the session's transcript: every message you sent, whole,
-each after the whole reply it answers. Only your words are taken as
+each after all the agent said since your message before it, the reply
+and any job's result that came after. Only your words are taken as
 instructions. It is not shown these:
 
 - a compaction's summary, which the agent wrote;
@@ -856,8 +857,10 @@ with its reason. These still prompt without it:
 - a credential path;
 - any call while the reviewer cannot read the whole conversation: one
   past 100,000 characters, one with no transcript or with a line it
-  cannot read, or one begun before 0.8.1, whose transcript does not
-  mark what you typed. `/clear` starts a conversation it can read.
+  cannot read, one where a reply to your message is missing (its write
+  failed, or corteza stopped mid-turn), or one begun before 0.8.1, whose
+  transcript does not mark what you typed. `/clear` starts a
+  conversation it can read; in an editor, a new session does.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by

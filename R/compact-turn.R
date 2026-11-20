@@ -611,6 +611,10 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        session = session,
                                        max_total_chars = summary_chars,
                                        max_request_bytes = byte_limit)
+    # The request runs with no hook, so a stop asked for while it ran is
+    # read when it returns, whatever it returned: a failed request is
+    # still recorded as one, and a summary is not installed.
+    stopped <- .compact_stopped(session, history)
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",
@@ -640,10 +644,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
         }
         return(invisible(FALSE))
     }
-    # Nor installs one asked for before the stop: the request runs with
-    # no hook, so the stop is read when it returns, and the history stays
-    # as it was.
-    if (.compact_stopped(session, history)) {
+    if (stopped) {
         return(invisible(FALSE))
     }
     summary_usage <- attr(summary, "usage", exact = TRUE)

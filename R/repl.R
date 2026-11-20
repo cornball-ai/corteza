@@ -1059,6 +1059,13 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             ctx$last_turn_error <- conditionMessage(e)
             message(sprintf("%sError:%s %s",
                             ctx$palette$bright_magenta, ctx$palette$reset, e$message))
+            # Every prompt gets a line after it, as the paths above
+            # write theirs: the reviewer reads a prompt with none before
+            # the next one as a reply the transcript lost
+            # (review_conversation()).
+            transcript_append(ctx$disk_session$session, "assistant",
+                              paste("Error:", conditionMessage(e)),
+                              auto_run_id = ctx$session$auto_run_id)
             NULL
         }
         )
