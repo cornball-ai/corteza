@@ -276,7 +276,8 @@ local({
     # /clear begins a whole one, and the old one keeps its lines.
     fresh <- ns$bot_reset_session(reg, room, cfg, "$ack",
                                   "Cleared. Starting a fresh session.",
-                                  start = msg("$c", "/clear"))
+                                  ns$bot_conversation_begin(cfg, room, room,
+                                                            msg("$c", "/clear")))
     expect_false(identical(fresh$review_record$path, s$review_record$path))
     expect_identical(types_of(fresh), c("start", "event"))
     expect_identical(lines_of(fresh)[[1L]]$start, "conversation")
@@ -423,6 +424,131 @@ with_room(function(lo, cfg) {
     expect_identical(types_of(r), c("start", "event", "gap", "event", "event"))
     expect_identical(judged(r)$why, paste("the record has a break: the bot was not",
                                           "running, and the backfill did not reach back to the last event on record"))
+})
+
+# A restart checks each record from before it when a session takes it
+# (Codex, #286): one whose room it could not read, or whose last event is
+# not in its room's window, gets a gap first, and the monitor does not
+# judge by it. Messages the backfill says, kept.
+backfill_saying <- function(lo, reg, cfg, limit = 100L) {
+    said <- character()
+    n <- withCallingHandlers(tryCatch(
+        ns$bot_backfill_sessions(lo, reg, cfg, model = "fixture",
+                                 provider = "ollama", limit = limit),
+        error = function(e) conditionMessage(e)),
+        message = function(m) {
+        said <<- c(said, conditionMessage(m))
+        invokeRestart("muffleMessage")
+    })
+    list(n = n, said = said)
+}
+unread_room <- paste("the record has a break: the bot restarted, and could",
+                     "not read the room's history")
+# A thread quiet for longer than the window: nothing of it is in the
+# window, which may have missed what was said in it.
+with_room(function(lo, cfg) {
+    reg <- ns$bot_new_session_registry()
+    root_id <- send(lo, "a thread's root")
+    tkey <- ns$bot_session_key(room, root_id)
+    t <- ns$bot_get_or_create_session(reg, tkey, cfg, room_id = room)
+    a <- chat.api::chat_send(lo, room, "in the thread",
+                             identity = list(name = person), thread = root_id)
+    says(t, a, "in the thread")
+    for (i in 1:3) {
+        send(lo, paste("main", i))
+    }
+    restarted <- ns$bot_new_session_registry()
+    backfill_saying(lo, restarted, cfg, limit = 2L)
+    expect_false(exists(tkey, envir = restarted, inherits = FALSE))
+    later <- ns$bot_get_or_create_session(restarted, tkey, cfg, room_id = room)
+    expect_identical(types_of(later), c("start", "event", "gap"))
+    expect_true(grepl("did not reach back", judged(later)$why, fixed = TRUE))
+})
+# The rooms could not be listed. A registry no restart made checks
+# nothing; the restart's gives the record a gap, once.
+with_room(function(lo, cfg) {
+    s <- ns$bot_get_or_create_session(ns$bot_new_session_registry(), room, cfg)
+    a <- send(lo, "tidy R/")
+    says(s, a, "tidy R/")
+    again <- ns$bot_get_or_create_session(ns$bot_new_session_registry(), room,
+                                          cfg)
+    expect_identical(types_of(again), c("start", "event"))
+    p <- patching()
+    on.exit(p$undo(), add = TRUE)
+    p$set("chat_channels", function(...) stop("fixture: no rooms"), "chat.api")
+    restarted <- ns$bot_new_session_registry()
+    out <- backfill_saying(lo, restarted, cfg)
+    expect_equal(out$n, 0L)
+    expect_true(any(grepl("could not list the rooms", out$said, fixed = TRUE)))
+    r <- ns$bot_get_or_create_session(restarted, room, cfg)
+    expect_identical(types_of(r), c("start", "event", "gap"))
+    expect_identical(judged(r)$why, unread_room)
+    rm(list = room, envir = restarted)
+    r <- ns$bot_get_or_create_session(restarted, room, cfg)
+    expect_identical(types_of(r), c("start", "event", "gap"))
+})
+# The room's history could not be read.
+with_room(function(lo, cfg) {
+    s <- ns$bot_get_or_create_session(ns$bot_new_session_registry(), room, cfg)
+    a <- send(lo, "tidy R/")
+    says(s, a, "tidy R/")
+    p <- patching()
+    on.exit(p$undo(), add = TRUE)
+    p$set("chat_history", function(...) stop("fixture: unreadable"),
+          "chat.api")
+    restarted <- ns$bot_new_session_registry()
+    out <- backfill_saying(lo, restarted, cfg)
+    expect_true(any(grepl(paste("could not read", room), out$said,
+                          fixed = TRUE)))
+    r <- ns$bot_get_or_create_session(restarted, room, cfg)
+    expect_identical(types_of(r), c("start", "event", "gap"))
+    expect_identical(judged(r)$why, unread_room)
+})
+# The backfill failed partway through a room: what it took says so, and
+# the next room is still backfilled.
+with_room(function(lo, cfg) {
+    s <- ns$bot_get_or_create_session(ns$bot_new_session_registry(), room, cfg)
+    a <- send(lo, "tidy R/")
+    says(s, a, "tidy R/")
+    send(lo, "and the docs")
+    other <- "!other:example.invalid"
+    chat.api::chat_send(lo, other, "elsewhere", identity = list(name = person))
+    p <- patching()
+    on.exit(p$undo(), add = TRUE)
+    p$set("bot_maybe_rehydrate", function(session, chat, rid, ...) {
+        if (identical(rid, room)) {
+            stop("fixture: rehydrate failed")
+        }
+        invisible(FALSE)
+    })
+    restarted <- ns$bot_new_session_registry()
+    out <- backfill_saying(lo, restarted, cfg)
+    expect_equal(out$n, 1L)
+    expect_true(any(grepl(paste("failed partway through", room), out$said,
+                          fixed = TRUE)))
+    r <- get(room, envir = restarted)
+    expect_identical(types_of(r), c("start", "event", "gap"))
+    expect_identical(judged(r)$why, paste("the record has a break: the backfill",
+                                          "failed partway through the room's history"))
+    expect_true(exists(other, envir = restarted, inherits = FALSE))
+})
+# bot_run_init() makes its registry a restart's before it reads anything:
+# with no config it reads nothing, and its records get the gap.
+if (requireNamespace("mx.client", quietly = TRUE)) with_room(function(lo, cfg) {
+    s <- ns$bot_get_or_create_session(ns$bot_new_session_registry(), room, cfg)
+    a <- send(lo, "tidy R/")
+    says(s, a, "tidy R/")
+    old <- Sys.getenv("CORTEZA_MATRIX_CONFIG", unset = NA)
+    Sys.setenv(CORTEZA_MATRIX_CONFIG = file.path(tempdir(), "absent-room.json"))
+    on.exit(if (is.na(old)) {
+        Sys.unsetenv("CORTEZA_MATRIX_CONFIG")
+    } else {
+        Sys.setenv(CORTEZA_MATRIX_CONFIG = old)
+    }, add = TRUE)
+    state <- suppressMessages(corteza::bot_run_init())
+    r <- ns$bot_get_or_create_session(state$sessions, room, cfg)
+    expect_identical(types_of(r), c("start", "event", "gap"))
+    expect_identical(judged(r)$why, unread_room)
 })
 
 # ---- The room's own calls ----------------------------------------------------

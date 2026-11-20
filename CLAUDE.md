@@ -202,7 +202,16 @@ room's journal folder, written where the transcript queue is fed
 `bot_record_backfill()`): the sender from the event, the text as sent,
 the bot's note (an attachment's receipt) apart, and the kind (`message`,
 `request` for a peer's, `post` for the bot's). Its first line says
-`conversation` or `partial`, and a break is a `gap` line.
+`conversation` or `partial`, and a break is a `gap` line. A restart
+(`bot_run_init()`, or the backfill itself) marks its registry
+(`bot_record_restart()`, an attribute, since the archive walks every
+name in the registry), and the backfill keeps each room's window on
+it. A record from before the restart continues only when its room's
+window holds its last event; any other gets a gap line when a session
+takes it (`bot_record_restart_check()`): the rooms could not be
+listed, the room's history could not be read, the backfill failed
+partway through the room (`bot_backfill_room()`), or the window does
+not reach back far enough, as for a quiet thread.
 `bot_record_conversation()` gives the monitor `Person:` lines for the
 room's approvers (`bot_approvers()`, membership read fresh), `Other
 (<id>):` for anyone else and `Worker:` for posts, or a reason to ask a

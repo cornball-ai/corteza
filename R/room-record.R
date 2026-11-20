@@ -171,11 +171,70 @@ bot_record_break <- function(session, why) {
     bot_record_write(session, list(type = "gap", at = job_now(), why = why))
 }
 
+# What a restart owes the records it finds (Codex, #286). A record from
+# before this process holds what the bot saw up to its last event, and
+# what was said while the bot was down reaches it only through the
+# restart's backfill. So a restart keeps, on its session registry, each
+# room's backfill window, and a record from before it continues whole
+# only when its room's window reaches back to the record's last event.
+# Any other gets a gap line when a session takes it: the rooms could not
+# be listed, the room's history could not be read, the backfill failed
+# partway, or the window does not reach back far enough, as for a thread
+# quiet for longer than the window. A registry no restart made has none
+# (bot_poll() building its own, which its cursor carries).
+#
+# Kept as an attribute of the registry, which is an environment, so it
+# is the registry's own and never one of its sessions.
+bot_record_restart <- function(registry, create = FALSE) {
+    if (!is.environment(registry)) {
+        return(NULL)
+    }
+    state <- attr(registry, "record_restart", exact = TRUE)
+    if (is.null(state) && isTRUE(create)) {
+        state <- new.env(parent = emptyenv())
+        state$windows <- list()
+        state$checked <- new.env(parent = emptyenv())
+        attr(registry, "record_restart") <- state
+    }
+    state
+}
+
+# Check the record `session` took, once a process: it continues whole,
+# or it gets a gap line now, before anything else is written to it.
+bot_record_restart_check <- function(session, restart, room_id) {
+    rec <- session$review_record
+    if (!is.environment(restart) || !is.list(rec) || is.null(rec$path) ||
+        exists(rec$path, envir = restart$checked, inherits = FALSE)) {
+        return(invisible(TRUE))
+    }
+    assign(rec$path, TRUE, envir = restart$checked)
+    # A record with no file yet begins in this process.
+    if (!isTRUE(rec$started)) {
+        return(invisible(TRUE))
+    }
+    window <- restart$windows[[room_id]]
+    if (!is.null(window) && !is.null(rec$last) && rec$last %in% window) {
+        return(invisible(TRUE))
+    }
+    why <- if (is.null(window)) {
+        "the bot restarted, and could not read the room's history"
+    } else {
+        paste("the bot was not running, and the backfill did not reach",
+              "back to the last event on record")
+    }
+    bot_record_write(session, list(type = "gap", at = job_now(), why = why))
+    rec <- session$review_record
+    rec$gapped <- TRUE
+    session$review_record <- rec
+    invisible(FALSE)
+}
+
 # An event the restart's backfill found: message `i` of the window whose
 # event ids are `ids`, in order. One already on record is not written
 # again, nor one older than the last on record, which would go in out of
 # order. A window that does not reach back to the last event on record
-# may have missed what came between, which a gap line says first.
+# may have missed what came between, which a gap line says first; in a
+# restart, the check above said it when the session took the record.
 bot_record_backfill <- function(session, ids, i, line) {
     rec <- session$review_record
     if (!is.list(rec) || is.null(rec$path) || line$event %in% rec$ids) {
