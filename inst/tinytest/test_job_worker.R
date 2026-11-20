@@ -87,6 +87,13 @@ expect_identical(cp$identity$owner, "local")
 expect_identical(cp$identity$workspace, normalizePath(tempdir()))
 expect_identical(cp$job, b)
 expect_true("jobs_seen" %in% cp$objects)
+# The worker named its process in its folder when it started, so
+# retention leaves the folder while it lives (R/retention-state.R).
+held_by <- jsonlite::fromJSON(file.path(cp_dir, "worker.json"))
+expect_identical(held_by$host, Sys.info()[["nodename"]])
+expect_true(held_by$pid != Sys.getpid())
+expect_true(isTRUE(tools::pskill(as.integer(held_by$pid), signal = 0L)) ||
+            .Platform$OS.type == "windows")
 
 # --- Checkpoints are isolated by owner, workspace, key, and role ---
 # Each part alone gives a different directory: two bots in one room, two
@@ -296,6 +303,48 @@ local({
     pump_until(stuck, nxt)
     expect_identical(corteza:::job_read(nxt)$status, "done")
     corteza:::job_worker_close(stuck)
+})
+
+# --- A worker that exits as the pump reads it ---
+# Alive when the pump checks, then ready, and its read is callr's crash
+# error, by when the process is gone: as macOS orders it. The job ends
+# indeterminate, as for a worker seen dead first, since it may have
+# acted; not failed, which would say it reported an error.
+local({
+    racing <- make_session("room-race", counting)
+    fake <- new.env()
+    fake$alive <- TRUE
+    fake$is_alive <- function() fake$alive
+    fake$get_pid <- function() 1L
+    fake$call <- function(...) invisible(NULL)
+    fake$poll_process <- function(timeout) "ready"
+    fake$read <- function() {
+        fake$alive <- FALSE
+        list(error = simpleError("R session crashed with exit code 1"))
+    }
+    fake$close <- function() invisible(NULL)
+    racing$.job_worker <- fake
+    racing$.job_worker_role <- "doer"
+    corteza:::job_worker_note(racing, "doer",
+                              dir = corteza:::job_worker_dir(racing))
+    r <- corteza:::job_submit(racing, "dies as it is read")
+    corteza:::job_pump(racing)
+    rj <- corteza:::job_read(r)
+    expect_identical(rj$status, "indeterminate")
+    expect_true(grepl("may have acted", rj$outcome$reason, fixed = TRUE))
+    expect_null(racing$.job_current)
+    expect_null(racing$.job_worker)
+    # One that is still alive after an error reported a failure.
+    fake$alive <- TRUE
+    fake$read <- function() list(error = simpleError("could not serialize"))
+    racing$.job_worker <- fake
+    corteza:::job_worker_note(racing, "doer",
+                              dir = corteza:::job_worker_dir(racing))
+    f <- corteza:::job_submit(racing, "fails")
+    corteza:::job_pump(racing)
+    expect_identical(corteza:::job_read(f)$status, "failed")
+    expect_true(grepl("could not serialize",
+                      corteza:::job_read(f)$outcome$error, fixed = TRUE))
 })
 
 # --- The approval bridge, end to end through a worker ---

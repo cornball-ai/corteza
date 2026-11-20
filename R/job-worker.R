@@ -309,7 +309,28 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     # Installed after the restore, so a restored history is what an
     # earlier live snapshot rolls over to rather than an empty one.
     .job_worker_child_journal(spec, state_dir)
+    .job_worker_child_mark(state_dir)
     restored
+}
+
+# Record in a folder the worker uses which process holds it. Retention
+# leaves a folder whose worker is alive, whatever its age
+# (R/retention-state.R): idle retirement can be turned off, and a running
+# job is never retired. A worker uses more than the folder it started in:
+# after a /clear its checkpoints go to the new conversation's folder,
+# the first of them written before any job, so each checkpoint marks its
+# folder too. While a job runs, the open job holds its folder. A worker
+# that cannot write the record still runs; its folder is then judged as
+# one with no live worker.
+.job_worker_child_mark <- function(state_dir) {
+    tryCatch({
+        dir.create(state_dir, recursive = TRUE, showWarnings = FALSE,
+                   mode = "0700")
+        job_write_file(file.path(state_dir, "worker.json"),
+                       list(pid = Sys.getpid(),
+                            host = Sys.info()[["nodename"]], at = job_now()))
+    }, error = function(e) NULL)
+    invisible(NULL)
 }
 
 # The child's turn session for `spec`'s conversation, built as a new
@@ -518,6 +539,7 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     conversation = .job_worker_state$conversation) {
     dir.create(state_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     Sys.chmod(state_dir, "0700")
+    .job_worker_child_mark(state_dir)
     objects <- .workspace_checkpoint_write(globalenv(),
         file.path(state_dir, "workspace.RData"))
     if (!is.null(history)) {
@@ -1189,17 +1211,27 @@ job_pump_current <- function(session, id) {
                         "exceeded its %s s wall-clock limit", format(wall))))
         }
     }
-    if (!job_worker_alive(session)) {
+    died <- function() {
         session$.job_worker <- NULL
-        return(finish("indeterminate",
-                      reason = paste("the worker process exited mid-job;",
-                                     "it may have acted before it stopped")))
+        finish("indeterminate",
+               reason = paste("the worker process exited mid-job;",
+                              "it may have acted before it stopped"))
+    }
+    if (!job_worker_alive(session)) {
+        return(died())
     }
     if (!identical(worker$poll_process(0L), "ready")) {
         return(NULL)
     }
     msg <- worker$read()
     if (!is.null(msg$error)) {
+        # A worker that exits between the check above and this read reads
+        # as an error (callr's "R session crashed"): that is the exit, not
+        # a failure the job reported, and it may have acted. Seen on macOS,
+        # where the process is reaped after its connection closes.
+        if (!job_worker_alive(session)) {
+            return(died())
+        }
         return(finish("failed", error = conditionMessage(msg$error)))
     }
     res <- msg$result

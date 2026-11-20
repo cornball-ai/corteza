@@ -606,6 +606,25 @@ local({
     expect_false(corteza:::retention_within(file.path(fx$root, "x")))
 })
 
+# On Windows one path may hold both separators, and case does not count:
+# tempfile() and tools::R_user_dir() give backslashes, and dirname() and
+# file.path() forward slashes. A store's folder named through dirname()
+# is still under the data directory, so the job, worker and remote
+# stores are pruned there too (test_retention_state.R).
+if (.Platform$OS.type == "windows") local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    make_session(fx, "here")
+    trace <- file.path(fx$data, "agents", "main", "sessions",
+                       "here_trace.jsonl")
+    expect_true(corteza:::retention_within(trace))
+    expect_true(corteza:::retention_within(gsub("/", "\\", trace,
+                                                fixed = TRUE)))
+    expect_true(corteza:::retention_within(trace, dirname(dirname(trace))))
+    expect_true(corteza:::retention_within(toupper(trace)))
+    expect_false(corteza:::retention_within(file.path(fx$root, "x")))
+})
+
 # The data directory itself may be a link, as when a person moves it to
 # another disk: what lies under it is corteza's.
 if (.Platform$OS.type != "windows") local({
