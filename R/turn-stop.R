@@ -11,6 +11,8 @@
 # first caller (WP26). Ctrl+C at the terminal and remote control's stop
 # keep their own handling (R/interrupt.R, .remote_check_stop()).
 #
+# A tool that waits long asks it too, while it waits (R/tool-stop.R).
+#
 # Not reachable: the wait for a reply before its first delta, and a
 # provider that does not stream. llm.api runs no hook there.
 

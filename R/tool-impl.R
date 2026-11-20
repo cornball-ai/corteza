@@ -911,33 +911,45 @@ tool_run_r_script <- function(code, timeout = 30L) {
 
     # Write code to temp file (avoids shell escaping issues)
     tmp <- tempfile(fileext = ".R")
-    on.exit(unlink(tmp))
+    out_file <- tempfile("corteza-rscript-", fileext = ".out")
+    on.exit(unlink(c(tmp, out_file)))
     writeLines(code, tmp)
 
+    proc <- NULL
+    on.exit(if (!is.null(proc) && proc$is_alive()) .tool_process_end(proc),
+            add = TRUE)
+    stopped <- FALSE
     result <- tryCatch({
-        # callr::rscript runs Rscript portably (Linux, macOS, Windows).
-        # stderr = "2>&1" merges stderr into stdout so the LLM sees both
-        # streams as a single text blob in res$stdout.
+        # callr runs Rscript portably (Linux, macOS, Windows), with
+        # callr::rscript()'s defaults. stderr = "2>&1" merges stderr into
+        # stdout so the LLM sees both streams as a single text blob.
         #
-        # stdout = NULL (not "|"): in CRAN callr <= 3.7.6 on Windows,
-        # stdout = "|" combined with stderr = "2>&1" hangs indefinitely
-        # when the child errors via stop() — internal timeout never
-        # fires (r-lib/callr#313, fixed upstream in e93efd1). Passing
-        # stdout = NULL skips the hanging cat(file = "|") call in
-        # setup_callbacks() while still populating res$stdout via the
-        # 2>&1 redirect. Can be reverted to "|" once corteza depends
-        # on a fixed callr release.
-        res <- callr::rscript(tmp, show = FALSE, fail_on_status = FALSE,
-                              timeout = timeout, stdout = NULL,
-                              stderr = "2>&1")
-        if (isTRUE(res$timeout)) {
+        # Output goes to a file, not "|": in CRAN callr <= 3.7.6 on
+        # Windows, stdout = "|" combined with stderr = "2>&1" hangs
+        # indefinitely when the child errors via stop() (r-lib/callr#313,
+        # fixed upstream in e93efd1). A file never takes that path, and
+        # no full pipe can block the child.
+        #
+        # The wait (.tool_process_wait()) asks between its slices whether
+        # the session's turn should stop (R/tool-stop.R).
+        proc <- callr::rscript_process$new(callr::rscript_process_options(
+            script = tmp, stdout = out_file, stderr = "2>&1"))
+        ended <- .tool_process_wait(proc, timeout)
+        if (identical(ended, "timeout")) {
             paste0("Error: timed out after ", timeout, "s")
+        } else if (identical(ended, "stopped")) {
+            stopped <- TRUE
+            paste0("[cancelled: the script's process was ended]\n",
+                   .tool_read_output(out_file))
         } else {
-            res$stdout
+            .tool_read_output(out_file)
         }
     }, error = function(e) {
         paste("Error:", e$message)
     })
+    if (stopped) {
+        return(err(result))
+    }
     ok(result)
 }
 
@@ -1037,29 +1049,39 @@ tool_shell_impl <- function(args, shell_name) {
     # each arg literally (no shell word-splitting), so the command goes
     # through as a single unquoted `-c` arg. (system2 needed shQuote
     # because it pastes args; processx does not.)
+    #
+    # A processx process, not system2(stdout = TRUE): the latter is a
+    # blocking C call R can't interrupt, so Ctrl+C during a foreground
+    # tool (e.g. `bash sleep 30`) halted the whole REPL. The wait
+    # (.tool_process_wait()) is interruptible, and between its slices it
+    # asks whether the session's turn should stop (R/tool-stop.R). An
+    # interrupt, the deadline or a stop ends the child's process tree.
+    # Output, stderr with stdout, goes to a file, which no full pipe can
+    # block. Status is surfaced structurally via err()/ok() rather than
+    # a warning.
+    out_file <- tempfile("corteza-shell-", fileext = ".out")
+    on.exit(unlink(out_file), add = TRUE)
+    proc <- NULL
+    on.exit(if (!is.null(proc) && proc$is_alive()) .tool_process_end(proc),
+            add = TRUE)
     tryCatch({
-        # processx::run() instead of system2(stdout = TRUE): the latter
-        # is a blocking C call R can't interrupt, so Ctrl+C during a
-        # foreground tool (e.g. `bash sleep 30`) halted the whole REPL.
-        # processx polls and is interruptible -- the interrupt propagates
-        # to the turn's handler in run_repl_loop, which returns to the
-        # prompt. cleanup_tree kills the child's descendants; status is
-        # surfaced structurally via err()/ok() rather than a warning.
-        res <- processx::run(shell_exe, exe_args,
-                             error_on_status = FALSE,
-                             stderr_to_stdout = TRUE,
-                             timeout = timeout,
-                             cleanup_tree = TRUE)
-        status <- res$status %||% 0L
-        text <- res$stdout %||% ""
-        if (!is.null(status) && status != 0L) {
-            err(sprintf("[exit status %d]\n%s", status, text))
+        proc <- processx::process$new(shell_exe, exe_args, stdout = out_file,
+                                      stderr = "2>&1", cleanup_tree = TRUE)
+        ended <- .tool_process_wait(proc, timeout)
+        text <- .tool_read_output(out_file)
+        if (identical(ended, "timeout")) {
+            err(sprintf("[timed out after %ss]\n%s", timeout, text))
+        } else if (identical(ended, "stopped")) {
+            err(sprintf("[cancelled: the command and its children were ended]\n%s",
+                        text))
         } else {
-            ok(text)
+            status <- proc$get_exit_status() %||% 0L
+            if (!is.na(status) && status != 0L) {
+                err(sprintf("[exit status %d]\n%s", status, text))
+            } else {
+                ok(text)
+            }
         }
-    }, system_command_timeout_error = function(e) {
-        partial <- tryCatch(e$stdout %||% "", error = function(e2) "")
-        err(sprintf("[timed out after %ss]\n%s", timeout, partial))
     }, error = function(e) {
         err(paste("Error:", e$message))
     })

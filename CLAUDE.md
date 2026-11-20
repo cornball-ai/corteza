@@ -467,12 +467,18 @@ returns with the history so far. `turn()` catches both, repairs the
 history with `apply_exit_marker()` and returns status `cancelled`.
 Ctrl+C and remote control's stop keep their own path. ACP's
 `session/cancel` sets it (`.acp_stop()`), and the reviewer's wait
-(`job_monitor_ask_wait()`) reads it too. No turn waits on a doer
-today (`delegate` returns at once), and a loop that does must read the
-same function and call `job_cancel()`. A cancelled job's reason
-(`job_cancel_reason()`) names the checkpoint the next job starts from,
-read through the identity in the job's dispatch record, since the
-session's may have moved with a `/clear`.
+(`job_monitor_ask_wait()`) reads it too. So does a tool that waits long
+(`R/tool-stop.R`): the in-process executor names the session for the
+call's length (`.tool_stop_with()`), and `bash`, `cmd`, `run_r_script`
+and `run_r`'s worker ask `.tool_stop_requested()` every 200 ms. A stop
+ends a command's process tree; `run_r` interrupts its worker and ends
+it after 5 s (`.run_r_worker_stopped()`), saying the objects are lost.
+Each returns a result, and the turn stops at its next check. No turn
+waits on a doer today (`delegate` returns at once), and a loop that
+does must read the same function and call `job_cancel()`. A cancelled
+job's reason (`job_cancel_reason()`) names the checkpoint the next job
+starts from, read through the identity in the job's dispatch record,
+since the session's may have moved with a `/clear`.
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 

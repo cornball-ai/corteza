@@ -984,6 +984,13 @@ set `R_DEFAULT_PACKAGES` in `run_r_worker_options$env` to override. A model may
 request a different timeout on an individual call; `skill_timeout_max` is the
 host-owned ceiling. A host may narrow it further for an expiring external lease.
 
+A turn that is asked to stop (an ACP client's cancel, below) interrupts the
+worker, as its deadline does, and the worker keeps its R objects. A worker that
+does not come back within 5 seconds of the interrupt, because its code is in C
+that never checks for one or catches the interrupt and goes on, is ended: all
+of the session's R objects are lost, the call's result says so, and the next
+`run_r` starts a new worker. Files the code wrote stay.
+
 `run_r_worker_options` shapes that worker process without touching the host:
 a private environment or library path, extra command-line arguments, or
 `arch`, which callr resolves to `R.home("bin")/<arch>/R`. A strict host can
@@ -1363,7 +1370,7 @@ What a client gets:
 - Prompts of text, and links to files, which reach the model as the file's path. A prompt with an image, audio or an embedded resource is refused.
 - The reply as it streams, with the secrets corteza knows hidden, and each tool call: announced, run, and finished with its result (cut to 4,000 characters for the client; the model reads all of it) and, for an edit, its diff.
 - Modes, which set the session's `approval_mode`. In `ask`, each call that would prompt at the terminal becomes a permission request with the terminal's 3 answers: allow, allow always for this project (kept where the terminal keeps it), deny. In `review`, the reviewer rules first, as under `approval_mode: "review"`, and the client is asked what it passes on. A config whose `approval_mode` is `"allow"` or `"deny"` adds that mode, and its sessions start in it. The credential rule's request offers no "always", and no saved answer covers it.
-- `session/cancel`. The turn stops at the next piece of the streamed reply, before the next model request or tool call, or during a wait for permission or for the reviewer. A tool that is already running finishes first, so a cancel loses none of the session's R objects.
+- `session/cancel`. The turn stops at the next piece of the streamed reply, before the next model request or tool call, during a wait for permission or for the reviewer, or while a long tool runs: `bash` and `run_r_script` end their process and its children, and `run_r` interrupts its worker. A worker that does not come back within 5 seconds is ended, and the session's R objects go with it (`run_r_mode`, under JSON config keys, Skills, above); the call's result says so. Files written stay. Other tools finish first, within their own time limits.
 
 corteza connects to no MCP server a client names. A `session/new` or `session/resume` that lists one is refused, naming each server by its `name` alone; send an empty `mcpServers` list.
 
