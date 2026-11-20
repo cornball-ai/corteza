@@ -413,6 +413,16 @@ cli_approval_cb <- function(cwd) {
     !identical(decision$rule, "credential") &&
       (name %in% for_session || name %in% corteza:::approvals_saved(cwd))
   }
+  # "Allow always for this project": saved for the directory so that
+  # later sessions here skip the prompt for the tool, or, where it cannot
+  # be saved, held for this session. TRUE when it was saved.
+  keep_always <- function(name) {
+    if (corteza:::approval_save(cwd, name)) {
+      return(TRUE)
+    }
+    for_session <<- c(for_session, name)
+    FALSE
+  }
   cb <- function(call, decision) {
     name <- call$tool %||% ""
     once_only <- identical(decision$rule, "credential")
@@ -444,10 +454,7 @@ cli_approval_cb <- function(cwd) {
     response <- trimws(response)
     if (response == "" || (once_only && response == "2")) response <- "1"
 
-    # "Allow always for this project" is saved so that later sessions
-    # here skip the prompt for this tool.
-    if (response == "2" && !corteza:::approval_save(cwd, name)) {
-      for_session <<- c(for_session, name)
+    if (response == "2" && !keep_always(name)) {
       cat(sprintf("%sCould not save it in %s; allowed for this session.%s\n",
                   color$dim, corteza:::approvals_file(), color$reset))
     }
@@ -476,6 +483,18 @@ cli_approval_cb <- function(cwd) {
     response %in% c("1", "2")
   }
   attr(cb, "answered") <- answered
+  # A job's prompt keeps "always" the same way (R/repl-jobs.R) and prints
+  # what this returns.
+  attr(cb, "always") <- function(call) {
+    name <- call$tool %||% ""
+    if (keep_always(name)) {
+      sprintf("%s is allowed always in this project (kept in %s).", name,
+              corteza:::approvals_file())
+    } else {
+      sprintf("Could not save it in %s; %s is allowed for this session.",
+              corteza:::approvals_file(), name)
+    }
+  }
   cb
 }
 

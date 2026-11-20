@@ -427,6 +427,13 @@ chat_approval_cb <- function(cwd = getwd()) {
         ans %in% c("1", "2")
     }
     attr(cb, "answered") <- answered
+    # A job's prompt keeps "always" the same way, for this session
+    # (R/repl-jobs.R), and prints what this returns.
+    attr(cb, "always") <- function(call) {
+        name <- call$tool %||% ""
+        approved[[name]] <- TRUE
+        sprintf("%s is allowed always in this session.", name)
+    }
     cb
 }
 

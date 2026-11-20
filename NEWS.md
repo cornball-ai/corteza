@@ -1,3 +1,13 @@
+# corteza 0.8.0.36
+
+- A talker's job takes the terminal's "allow always" answers, as the
+  session's own calls do, before the reviewer is asked. Never for a
+  call the credential rule asks about: the rule now goes with the
+  job's request, through the supervisor too.
+- The job's prompt offers "always" (`Approve? [y/a(lways)/N]`): the
+  terminal saves it for the directory, and `chat()` holds it for the
+  session. A room's jobs are answered in the room, as before.
+
 # corteza 0.8.0.35
 
 - Retention removes a worker's folder with a checkpoint once the folder

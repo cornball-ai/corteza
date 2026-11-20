@@ -230,14 +230,29 @@
 }
 
 # Ask about one approval request at the prompt. Only an explicit y/yes
-# approves; anything else, including EOF, declines. Under review
-# (R/review.R), the reviewer rules first on a read, write or exec call
-# the doer's rules left open (`route` "monitor"), as a room's monitor
-# does (bot_job_approval()); what it passes on, or cannot judge, comes
-# to the person with its reason.
+# approves, or "a" where "always" is offered; anything else, including
+# EOF, declines. A tool the person allowed always in this directory is
+# allowed for a job's call as for the session's own, before the reviewer
+# and without a prompt. Under review (R/review.R), the reviewer rules
+# first on a read, write or exec call the doer's rules left open
+# (`route` "monitor"), as a room's monitor does (bot_job_approval());
+# what it passes on, or cannot judge, comes to the person with its
+# reason.
 .repl_job_approval <- function(ctx, ev) {
     req <- ev$request
     call <- job_request_call(req)
+    p <- ctx$palette
+    cb <- ctx$session$approval_cb
+    if (.repl_job_answered(cb, req, call)) {
+        recorded <- tryCatch(job_answer(ctx$session, ev$job$id, req$id,
+                                        TRUE, by = "always"),
+                             error = function(e) FALSE)
+        if (isTRUE(recorded)) {
+            cat(sprintf("%sJob %s: %s allowed, as you allowed it always here.%s\n",
+                        p$dim %||% "", ev$job$id, call$tool, p$reset %||% ""))
+        }
+        return(invisible(recorded))
+    }
     if (identical(req$route, "monitor") && review_mode(ctx$session) &&
         call_class(call) %in% c("read", "write", "exec")) {
         ruled <- .repl_job_review(ctx, ev$job, req)
@@ -256,13 +271,30 @@
     if (!is.null(ctx$remote_dir)) {
         approved <- .remote_approve(ctx, call, list(reason = req$reason))
     } else {
+        always <- .repl_job_always(cb, req)
+        question <- if (is.function(always)) {
+            "Approve? [y/a(lways)/N] "
+        } else {
+            "Approve? [y/N] "
+        }
         # A Ctrl+C at the question is a no, as EOF is. Each request is
         # asked once (job_pump_approvals()), and one left open would hold
         # the worker until its wait ran out.
-        answer <- tryCatch(ctx$read_input("Approve? [y/N] "),
+        answer <- tryCatch(ctx$read_input(question),
                            interrupt = function(e) character())
-        approved <- length(answer) == 1L &&
-        tolower(trimws(answer)) %in% c("y", "yes")
+        answer <- if (length(answer) == 1L) {
+            tolower(trimws(answer))
+        } else {
+            ""
+        }
+        kept <- is.function(always) && answer %in% c("a", "always")
+        approved <- kept || answer %in% c("y", "yes")
+        if (kept) {
+            said <- tryCatch(always(call), error = function(e) {
+                paste("It was not kept:", conditionMessage(e))
+            })
+            cat(sprintf("%s%s%s\n", p$dim %||% "", said, p$reset %||% ""))
+        }
     }
     recorded <- tryCatch(job_answer(ctx$session, ev$job$id, req$id,
                                     approved, by = "local"),
@@ -272,6 +304,38 @@
                     ctx$palette$dim, ctx$palette$reset))
     }
     invisible(recorded)
+}
+
+# Did the person answer a job's call for good: its tool allowed always in
+# this directory, saved or held for the session? The session's approval
+# callback says, by the rule it keeps for its own calls (its `answered`
+# attribute, which the reviewer reads too), given the rule the worker's
+# policy gave the call. That never covers the credential rule's ask, and
+# a request that names no rule, from before 0.8.1, is asked.
+.repl_job_answered <- function(cb, req, call) {
+    answered <- attr(cb, "answered")
+    rule <- req$rule
+    if (!is.function(answered) || !is.character(rule) || length(rule) != 1L) {
+        return(FALSE)
+    }
+    decision <- list(approval = "ask", reason = req$reason)
+    if (nzchar(rule)) {
+        decision$rule <- rule
+    }
+    isTRUE(tryCatch(answered(call, decision), error = function(e) FALSE))
+}
+
+# How a job's prompt keeps "always": the callback's own (its `always`
+# attribute), which keeps it as its own prompt does. NULL where it has
+# none, and for the credential rule's ask, which no "always" answers.
+.repl_job_always <- function(cb, req) {
+    always <- attr(cb, "always")
+    rule <- req$rule
+    if (!is.function(always) || !is.character(rule) || length(rule) != 1L ||
+        identical(rule, "credential")) {
+        return(NULL)
+    }
+    always
 }
 
 # The reviewer's ruling on a doer's request: the conversation that asked
