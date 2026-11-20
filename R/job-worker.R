@@ -309,7 +309,24 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     # Installed after the restore, so a restored history is what an
     # earlier live snapshot rolls over to rather than an empty one.
     .job_worker_child_journal(spec, state_dir)
+    .job_worker_child_mark(state_dir)
     restored
+}
+
+# Record in the worker's folder which process holds it. Retention leaves
+# a folder whose worker is alive, whatever its age (R/retention-state.R):
+# idle retirement can be turned off, and a running job is never retired.
+# A worker that cannot write it still runs; its folder is then judged as
+# one with no live worker.
+.job_worker_child_mark <- function(state_dir) {
+    tryCatch({
+        dir.create(state_dir, recursive = TRUE, showWarnings = FALSE,
+                   mode = "0700")
+        job_write_file(file.path(state_dir, "worker.json"),
+                       list(pid = Sys.getpid(),
+                            host = Sys.info()[["nodename"]], at = job_now()))
+    }, error = function(e) NULL)
+    invisible(NULL)
 }
 
 # The child's turn session for `spec`'s conversation, built as a new

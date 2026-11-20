@@ -1919,6 +1919,24 @@ bot_session_id <- function(cfg, key) {
                    algo = "sha256", serialize = FALSE)
 }
 
+# The sessions a bot's registry holds open, by the id retention knows
+# them by (bot_session_id(), from the owner each session was made with),
+# so a daily run leaves them and their workers' folders alone.
+bot_retention_keep <- function(sessions) {
+    if (!is.environment(sessions)) {
+        return(character())
+    }
+    ids <- vapply(ls(sessions, all.names = TRUE), function(key) {
+        s <- get(key, envir = sessions, inherits = FALSE)
+        if (!is.environment(s) || is.null(s$job_owner)) {
+            return(NA_character_)
+        }
+        digest::digest(paste(s$job_owner, key, sep = "\n"), algo = "sha256",
+                       serialize = FALSE)
+    }, character(1), USE.NAMES = FALSE)
+    ids[!is.na(ids)]
+}
+
 # Where a room or thread session's journal lives.
 bot_journal_dir <- function(cfg, key) {
     file.path(sessions_dir("matrix"),
@@ -3422,8 +3440,9 @@ bot_run_step <- function(state, timeout = 30000L) {
     bot_handle_flush_signal(state$flush_signal, state$sessions, flush_chat,
                             o$hooks$on_archive, flush_cfg)
     # Once a day, what old sessions no longer need goes (R/retention.R).
-    # It looks at the clock on most steps and does nothing else.
-    pruned <- retention_tick()
+    # It looks at the clock on most steps and does nothing else. The
+    # rooms this bot has open stay, and so do their workers' folders.
+    pruned <- retention_tick(keep = bot_retention_keep(state$sessions))
     if (!is.null(pruned)) {
         message("retention: ", pruned)
     }
