@@ -235,6 +235,9 @@ local({
     side <- ns$bot_get_or_create_session(sessions, tkey, cfg, room_id = room)
     expect_identical(main$cwd, bot_dir)
     before <- c(main$conversation_id, side$conversation_id)
+    # A doer that worked here before the move, as the session notes it.
+    ns$job_worker_note(main, "doer", dir = ns$job_worker_dir(main))
+    expect_true(ns$job_worker_in_place(main, "doer"))
     cd <- function(body, sender = op, thread = NULL) {
         ns$bot_cd_command(msg(paste0("$", gsub("[^a-z]", "", body)), body,
                               thread), sender, sessions, cfg)
@@ -274,6 +277,10 @@ local({
     expect_identical(side2$cwd, proj)
     expect_false(any(c(main2$conversation_id, side2$conversation_id) %in% before))
     expect_identical(main2$conversation_record$since, move$state$main$since)
+    # The note moved with the room's job state and no longer matches, so
+    # the next job starts a doer in the new directory
+    # (job_worker_activate()).
+    expect_false(ns$job_worker_in_place(main2, "doer"))
     # A room with a directory is a talker by default (WP20b).
     expect_true(isTRUE(main2$talker))
     restarted <- ns$bot_get_or_create_session(ns$bot_new_session_registry(), room, cfg)

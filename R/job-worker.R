@@ -920,10 +920,11 @@ JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
 # by key, and the pump runs them through whichever session holds that
 # key, so the worker handles and the job in flight have to be there.
 #
-# The replacement may work in another directory (the room's topic was
-# edited). The job in flight finishes where it started; after that
-# job_worker_activate() sees the worker is not in the session's
-# directory and starts one that is.
+# The replacement may work in another directory: /cd moved the room, or
+# the bot's `cwd` changed. /cd refuses while a job is open, so only an
+# idle worker moves with it; a job in flight otherwise finishes where it
+# started. Either way job_worker_activate() sees the worker is not in
+# the session's directory and starts one that is.
 job_state_move <- function(from, to) {
     for (field in JOB_SESSION_STATE) {
         if (exists(field, envir = from, inherits = FALSE)) {
