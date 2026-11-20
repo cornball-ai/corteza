@@ -1,3 +1,14 @@
+# corteza 0.8.0.24
+
+- At the terminal, `/clear` starts a new conversation for a job's
+  worker too: its R objects stay and its history does not, and the
+  next job gets the instructions and tools a session started now would
+  have. A job still running finishes, and its result goes to the
+  conversation that asked for it; a job still queued runs under the
+  settings its conversation had when it ended. Each conversation keeps
+  its own checkpoint, so `--resume` brings back that conversation's
+  worker as its last job left it.
+
 # corteza 0.8.0.23
 
 - A turn that ends on an error no longer leaves a tool call without a
