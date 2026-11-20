@@ -1,3 +1,15 @@
+# corteza 0.8.0.40
+
+- Over ACP, a cancel reaches a tool while it runs. `bash` and `cmd` end
+  the command and its children, and `run_r_script` ends its process.
+  `run_r`, which runs in a worker under ACP, interrupts it: the worker
+  keeps its R objects, and one that does not answer within 5 seconds is
+  ended and loses them. Other tools finish first. Elsewhere a tool runs
+  as before.
+- `bash` and `cmd` run their command through processx, and
+  `run_r_script` through `callr::rscript_process()`. Their output and
+  their time limits are as before.
+
 # corteza 0.8.0.39
 
 - `corteza acp` serves an Agent Client Protocol client (protocol
