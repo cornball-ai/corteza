@@ -11,7 +11,7 @@
         if (!length(operators)) stop("No configured operator may control this session.")
         managed <- is.null(request$room)
         room <- if (managed) .remote_room(request, cfg, chat, operators) else
-            chat.api::chat_resolve(chat, request$room)
+        chat.api::chat_resolve(chat, request$room)
         if (!is.character(room) || length(room) != 1L ||
                        !nzchar(room)) stop("Room not found.")
         others <- Filter(function(x) !identical(x$id, request$id),

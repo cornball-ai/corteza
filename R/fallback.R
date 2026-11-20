@@ -59,7 +59,8 @@
                       "Subscriptions are limited; using ", model, " via ", provider, "."
             ))
     }
-    sprintf("\u26a1 Automatic subscription failover: %s via %s.", model, provider)
+    sprintf("\u26a1 Automatic subscription failover: %s via %s.", model,
+            provider)
 }
 
 .fallback_reply <- function(response) {

@@ -302,18 +302,18 @@ rooms_activity_flush <- function(acc, chat, channel, now = Sys.time(),
         if (is.null(acc$message_id)) {
             send <- send %||% chat.api::chat_send
             id <- .audit_delivery(channel, text,
-                send(chat, channel, text, markup = "plain", rich = html,
-                       kind = "notice", thread = acc$thread), thread = acc$thread,
-                rich = html, session = acc$session, ref = acc$audit)
+                                  send(chat, channel, text, markup = "plain", rich = html,
+                                       kind = "notice", thread = acc$thread), thread = acc$thread,
+                                  rich = html, session = acc$session, ref = acc$audit)
             acc$message_id <- bot_event_id(id)
             if (is.null(acc$message_id)) return(invisible(FALSE))
         } else {
             edit <- edit %||% chat.api::chat_edit
             id <- .audit_delivery(channel, text,
-                edit(chat, channel, acc$message_id, text, markup = "plain",
-                       rich = html, kind = "notice"), operation = "edit",
-                event_id = acc$message_id, thread = acc$thread, rich = html,
-                session = acc$session, ref = acc$audit)
+                                  edit(chat, channel, acc$message_id, text, markup = "plain",
+                                       rich = html, kind = "notice"), operation = "edit",
+                                  event_id = acc$message_id, thread = acc$thread, rich = html,
+                                  session = acc$session, ref = acc$audit)
             if (identical(id, FALSE) || is.null(id)) return(invisible(FALSE))
         }
         TRUE

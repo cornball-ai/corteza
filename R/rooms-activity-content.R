@@ -51,7 +51,9 @@ rooms_activity_add <- function(acc, record) {
     if (is.null(record)) {
         return(invisible(NULL))
     }
-    if (!is.null(record$audit)) acc$audit <- record$audit
+    if (!is.null(record$audit)) {
+        acc$audit <- record$audit
+    }
     if (identical(acc$detail, FALSE)) {
         record$narration <- ""
         if (!is.null(record$tool)) {

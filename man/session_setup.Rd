@@ -98,10 +98,8 @@ message. Loads the skill docs from the same folders.
 
 }
 \examples{
-\dontrun{
-# Requires the relevant provider API key in the environment.
-s <- session_setup("cli", provider = "anthropic",
-                   load_project_context = FALSE)
-s$model
-}
+# Reads the user's config and builds the tool table; sends nothing.
+s <- session_setup("console", cwd = tempdir(), provider = "anthropic",
+                   load_project_context = FALSE, validate_api_key = FALSE)
+s$provider
 }

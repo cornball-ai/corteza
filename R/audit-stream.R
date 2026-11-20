@@ -19,8 +19,7 @@
         return(invisible(NULL))
     }
     .audit_runtime$noticed[[kind]] <- TRUE
-    tryCatch(message(text),
-             error = function(e) NULL)
+    tryCatch(message(text), error = function(e) NULL)
     invisible(NULL)
 }
 
@@ -48,7 +47,8 @@
         return(NULL)
     }
     root <- path.expand(.audit_root(session))
-    if (!startsWith(root, "/") && !startsWith(root, "\\\\") && !grepl("^[A-Za-z]:", root)) {
+    if (!startsWith(root, "/") && !startsWith(root, "\\\\") &&
+        !grepl("^[A-Za-z]:", root)) {
         root <- file.path(getwd(), root)
     }
     # Resolve symlinked ancestors only after the directory exists. Otherwise

@@ -8,17 +8,19 @@
         return(tools)
     }
     c(tools, list(list(name = "send_room_file", description = paste(
-        "Send an existing file requested by the user to this conversation.",
-        "Use this for images and attachments instead of loading chat credentials or running Matrix code.",
-        "The host uses this room and bot identity, encrypting attachments for encrypted rooms.",
-        "Maximum size is 25 MiB. This tool cannot choose another room or send credential files.",
-        "Only report success after the tool returns an event ID."),
-        input_schema = list(type = "object", properties = list(
-            path = list(type = "string", description = "Local path to the requested file.")),
-            required = list("path"), additionalProperties = FALSE))))
+                    "Send an existing file requested by the user to this conversation.",
+                    "Use this for images and attachments instead of loading chat credentials or running Matrix code.",
+                    "The host uses this room and bot identity, encrypting attachments for encrypted rooms.",
+                    "Maximum size is 25 MiB. This tool cannot choose another room or send credential files.",
+                    "Only report success after the tool returns an event ID."),
+                       input_schema = list(type = "object", properties = list(
+                        path = list(type = "string",
+                                    description = "Local path to the requested file.")),
+                    required = list("path"), additionalProperties = FALSE))))
 }
 
-.room_media_bind <- function(session, cfg, chat_now, sender, room, thread = NULL) {
+.room_media_bind <- function(session, cfg, chat_now, sender, room,
+                             thread = NULL) {
     force(chat_now)
     force(room)
     force(thread)
@@ -35,7 +37,8 @@
 }
 
 .room_media_send <- function(session, chat, room, thread, path) {
-    if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+    if (!is.character(path) || length(path) != 1L || is.na(path) ||
+        !nzchar(path)) {
         return(err("Name one existing local file."))
     }
     cwd <- session$cwd %||% getwd()
@@ -48,7 +51,7 @@
         .path_within(path, file.path(cwd, ".corteza"))) {
         return(err("Credential and runtime configuration files cannot be sent as room attachments."))
     }
-    if (size$size > 25 * 1024^2) {
+    if (size$size > 25 * 1024 ^ 2) {
         return(err("The attachment exceeds the 25 MiB limit."))
     }
     caps <- chat.api::chat_capabilities(chat)
@@ -60,8 +63,9 @@
         # quietly move a private thread's file to the main room timeline.
         return(err("File sending is currently available in the room's main conversation only."))
     }
-    ids <- .audit_delivery(room, "", chat.api::chat_send(chat, room, "", files = path),
-        session = session, attachment = list(name = basename(path), bytes = size$size,
+    ids <- .audit_delivery(room, "", chat.api::chat_send(chat, room, "",
+            files = path),
+                           session = session, attachment = list(name = basename(path), bytes = size$size,
             hash = .audit_safe(digest::digest(file = path, algo = "sha256"))))
     ids <- as.character(unlist(ids, use.names = FALSE))
     if (!length(ids) || anyNA(ids) || any(!nzchar(ids))) {

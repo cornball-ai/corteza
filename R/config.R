@@ -61,7 +61,8 @@ load_config <- function(cwd = getwd()) {
         config[[name]] <- project[[name]]
     }
     if (is.list(global$context_edit) && is.list(project$context_edit)) {
-        config$context_edit <- utils::modifyList(global$context_edit, project$context_edit)
+        config$context_edit <- utils::modifyList(global$context_edit,
+            project$context_edit)
     }
     # Who approves the agent's calls is the user's to choose, never the
     # project's: a project's "review" is ignored (R/review.R), and the

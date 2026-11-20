@@ -10,8 +10,7 @@
     # resumable, then spin up a fresh on-disk + in-memory
     # session. The old transcript is left on disk.
     if (ctx$ws_enabled) {
-        tryCatch(ws_save(ctx$disk_session$sessionId),
-                 error = function(e) NULL)
+        tryCatch(ws_save(ctx$disk_session$sessionId), error = function(e) NULL)
     }
     # Drop the tool-output buffer for the outgoing session
     # so a /clear actually clears (otherwise /last would
@@ -56,8 +55,7 @@
     # /spent still counts it.
     killed <- 0L
     for (sid in ls(.subagent_registry)) {
-        if (isTRUE(tryCatch(subagent_kill(sid),
-                            error = function(e) FALSE))) {
+        if (isTRUE(tryCatch(subagent_kill(sid), error = function(e) FALSE))) {
             killed <- killed + 1L
         }
     }

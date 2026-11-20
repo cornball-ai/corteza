@@ -23,7 +23,9 @@
 }
 
 .audit_payload_put <- function(audit, text, kind, format = "text") {
-    if (is.null(audit)) return(NULL)
+    if (is.null(audit)) {
+        return(NULL)
+    }
     bytes <- charToRaw(enc2utf8(text))
     size <- length(bytes)
     hash <- digest::digest(bytes, algo = "sha256", serialize = FALSE)
@@ -40,11 +42,13 @@
         ref
     }
     limits <- audit$limits %||% .audit_limits(NULL)
-    if (identical(kind, "tool_full") &&
-        size > limits$result_bytes) return(omit("per_result"))
+    if (identical(kind, "tool_full") && size > limits$result_bytes) {
+        return(omit("per_result"))
+    }
     already <- hash %in% (audit$payload_hashes %||% character())
-    if (!already &&
-        (audit$payload_bytes %||% 0) + size > limits$turn_bytes) return(omit("per_turn"))
+    if (!already && (audit$payload_bytes %||% 0) + size > limits$turn_bytes) {
+        return(omit("per_turn"))
+    }
     path <- .audit_payload_path(ref)
     tryCatch({
         if (!file.exists(path)) {
@@ -68,7 +72,8 @@
             tryCatch(writeBin(bytes, con), finally = close(con))
             if (!file.rename(tmp, path)) stop("Could not commit audit payload")
             audit$state$payload_used <- used + size
-        } else if (!already && !identical(digest::digest(file = path, algo = "sha256"), hash)) {
+        } else if (!already &&
+             !identical(digest::digest(file = path, algo = "sha256"), hash)) {
             stop("Existing audit payload failed its content hash")
         }
         if (!already) Sys.setFileTime(path, Sys.time())
@@ -94,23 +99,44 @@
 #' @return The decoded JSON object or UTF-8 text, as recorded.
 #' @export
 #' @examples
-#' \dontrun{
+#' # A payload as an audit event records it: bytes named by their SHA-256
+#' # in a writer's store, under a folder called "payloads".
+#' store <- file.path(tempfile("audit"), "payloads", "example")
+#' dir.create(store, recursive = TRUE)
+#' text <- "the full output of a tool call"
+#' hash <- digest::digest(charToRaw(text), algo = "sha256", serialize = FALSE)
+#' writeBin(charToRaw(text), file.path(store, hash))
+#' ref <- list(store = store, hash = hash, format = "text", status = "stored")
 #' audit_payload_read(ref)
-#' }
+#' audit_payload_pin(ref)
+#' audit_payload_pin(ref, pin = FALSE)
+#' # A dry run lists what is older than 30 days and unpinned: nothing here.
+#' audit_payload_expire(store)
+#' unlink(dirname(dirname(store)), recursive = TRUE)
 audit_payload_read <- function(ref, redact = TRUE, secrets = character()) {
     if (!identical(ref$status, "stored")) {
         stop("Audit payload omitted: ", ref$reason %||% "unknown",
              call. = FALSE)
     }
     path <- .audit_payload_path(ref)
-    if (!file.exists(path)) stop("Audit payload missing or expired", call. = FALSE)
+    if (!file.exists(path)) {
+        stop("Audit payload missing or expired", call. = FALSE)
+    }
     if (!identical(digest::digest(file = path, algo = "sha256"), ref$hash)) {
         stop("Audit payload content hash mismatch", call. = FALSE)
     }
     bytes <- readBin(path, "raw", n = file.info(path)$size)
-    value <- if (identical(ref$format, "json")) jsonlite::fromJSON(rawToChar(bytes), simplifyVector = FALSE) else
-    rawToChar(bytes)
-    if (isTRUE(redact)) .redact_object(value, secrets) else value
+    if (identical(ref$format, "json")) {
+        value <- jsonlite::fromJSON(rawToChar(bytes), simplifyVector = FALSE)
+    } else {
+        value <- rawToChar(bytes)
+    }
+
+    if (isTRUE(redact)) {
+        .redact_object(value, secrets)
+    } else {
+        value
+    }
 }
 
 #' Pin or unpin an audit payload
@@ -122,17 +148,31 @@ audit_payload_read <- function(ref, redact = TRUE, secrets = character()) {
 #' @return The payload reference, invisibly.
 #' @export
 #' @examples
-#' \dontrun{
+#' # A payload as an audit event records it: bytes named by their SHA-256
+#' # in a writer's store, under a folder called "payloads".
+#' store <- file.path(tempfile("audit"), "payloads", "example")
+#' dir.create(store, recursive = TRUE)
+#' text <- "the full output of a tool call"
+#' hash <- digest::digest(charToRaw(text), algo = "sha256", serialize = FALSE)
+#' writeBin(charToRaw(text), file.path(store, hash))
+#' ref <- list(store = store, hash = hash, format = "text", status = "stored")
+#' audit_payload_read(ref)
 #' audit_payload_pin(ref)
-#' }
+#' audit_payload_pin(ref, pin = FALSE)
+#' # A dry run lists what is older than 30 days and unpinned: nothing here.
+#' audit_payload_expire(store)
+#' unlink(dirname(dirname(store)), recursive = TRUE)
 audit_payload_pin <- function(ref, pin = TRUE) {
     path <- .audit_payload_path(ref)
-    if (!identical(ref$status, "stored") ||
-        !file.exists(path)) stop("Cannot pin a missing payload", call. = FALSE)
+    if (!identical(ref$status, "stored") || !file.exists(path)) {
+        stop("Cannot pin a missing payload", call. = FALSE)
+    }
     if (isTRUE(pin)) {
         .private_record_write(paste0(path, ".pin"), .audit_now(),
                               append = FALSE)
-    } else unlink(paste0(path, ".pin"))
+    } else {
+        unlink(paste0(path, ".pin"))
+    }
     invisible(ref)
 }
 
@@ -149,9 +189,20 @@ audit_payload_pin <- function(ref, pin = TRUE) {
 #' @return Character vector of eligible (or deleted) hashes.
 #' @export
 #' @examples
-#' \dontrun{
-#' audit_payload_expire(ref$store)
-#' }
+#' # A payload as an audit event records it: bytes named by their SHA-256
+#' # in a writer's store, under a folder called "payloads".
+#' store <- file.path(tempfile("audit"), "payloads", "example")
+#' dir.create(store, recursive = TRUE)
+#' text <- "the full output of a tool call"
+#' hash <- digest::digest(charToRaw(text), algo = "sha256", serialize = FALSE)
+#' writeBin(charToRaw(text), file.path(store, hash))
+#' ref <- list(store = store, hash = hash, format = "text", status = "stored")
+#' audit_payload_read(ref)
+#' audit_payload_pin(ref)
+#' audit_payload_pin(ref, pin = FALSE)
+#' # A dry run lists what is older than 30 days and unpinned: nothing here.
+#' audit_payload_expire(store)
+#' unlink(dirname(dirname(store)), recursive = TRUE)
 audit_payload_expire <- function(store, days = 30, now = Sys.time(),
                                  dry_run = TRUE) {
     stopifnot(is.character(store), length(store) == 1L, dir.exists(store),
@@ -161,14 +212,18 @@ audit_payload_expire <- function(store, days = 30, now = Sys.time(),
     age <- as.numeric(difftime(now, file.info(paths)$mtime, units = "days"))
     paths <- paths[!is.na(age) & age > days &
         !file.exists(paste0(paths, ".pin"))]
-    if (isTRUE(dry_run) || !length(paths)) return(basename(paths))
+    if (isTRUE(dry_run) || !length(paths)) {
+        return(basename(paths))
+    }
     session <- new.env(parent = emptyenv())
     session$audit_dir <- file.path(dirname(dirname(store)), "maintenance")
     state <- .audit_state(session)
     removed <- character()
     for (path in paths) {
         if (!.audit_append(state, "payload_expiry", store = store,
-                           hash = basename(path), reason = "expiry", status = "intent")) break
+                           hash = basename(path), reason = "expiry", status = "intent")) {
+            break
+        }
         success <- unlink(path) == 0L
         .audit_append(state, "payload_expiry", store = store,
                       hash = basename(path), reason = "expiry", status = if (success) {
@@ -176,7 +231,9 @@ audit_payload_expire <- function(store, days = 30, now = Sys.time(),
             } else {
                 "failed"
             })
-        if (success) removed <- c(removed, basename(path))
+        if (success) {
+            removed <- c(removed, basename(path))
+        }
     }
     removed
 }

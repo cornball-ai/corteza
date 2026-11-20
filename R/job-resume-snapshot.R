@@ -15,7 +15,8 @@ job_resume_path <- function(id) {
     }
     attrs <- attributes(x)
     if (length(attrs) && any(vapply(attrs, .job_resume_unsafe, TRUE,
-        root = root, seen = seen, depth = depth + 1L))) {
+                                    root = root, seen = seen,
+                                    depth = depth + 1L))) {
         return(TRUE)
     }
     if (is.function(x)) {

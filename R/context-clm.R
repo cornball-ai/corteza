@@ -18,7 +18,7 @@
         base <- .context_edit_config(session$config, session$context_edit)
         effective <- .context_edit_config(list(context_edit = base), editing)
         if (isTRUE(effective$enabled) && identical(effective$strategy, "clm") &&
-            is.null(vault)) {
+                         is.null(vault)) {
             stop("A pure CLM conversation needs an explicit context_vault",
                  call. = FALSE)
         }

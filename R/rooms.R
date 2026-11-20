@@ -346,9 +346,8 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
     }
     posted <- .redact_text(text, .secret_values(cfg))
     bot_event_id(.audit_delivery(room_id, posted,
-        chat.api::chat_send(bot_chat_client(cfg), room_id, posted,
-                                     markup = bot_markup(markdown),
-                                     kind = kind), generated = text))
+                                 chat.api::chat_send(bot_chat_client(cfg), room_id, posted,
+                markup = bot_markup(markdown), kind = kind), generated = text))
 }
 
 # The poll loop's send. Everything goes through the transport contract,
@@ -385,9 +384,9 @@ bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
         }
     }
     bot_event_id(.audit_delivery(room_id, text, chat.api::chat_send(chat, room_id, text,
-                                     markup = bot_markup(markdown),
-                                     thread = thread), session = session, thread = thread,
-        ref = audit, generated = generated))
+                markup = bot_markup(markdown),
+                thread = thread), session = session, thread = thread,
+                                 ref = audit, generated = generated))
 }
 
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
@@ -1792,7 +1791,7 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
         # model changing its mind.
         notice <- bot_no_approver_notice(call)
         tryCatch(.audit_delivery(room_id, notice,
-            chat.api::chat_send(chat, room_id, notice), ref = call$audit),
+                                 chat.api::chat_send(chat, room_id, notice), ref = call$audit),
                  error = function(e) NULL)
         return(FALSE)
     }
@@ -1812,7 +1811,7 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
 
     msg <- bot_approval_prompt(call, decision, timeout_sec)
     eid <- tryCatch(bot_event_id(.audit_delivery(room_id, msg,
-        chat.api::chat_send(chat, room_id, msg), ref = call$audit)),
+                chat.api::chat_send(chat, room_id, msg), ref = call$audit)),
                     error = function(e) NULL)
     if (is.null(eid)) {
         return(FALSE)
