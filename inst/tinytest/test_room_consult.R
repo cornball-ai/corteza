@@ -254,8 +254,13 @@ local({
     a$auto_gate <- gate
     expect_equal(length(jobs()), count)
     a$plan_mode <- FALSE
+    # A message from someone else keeps the tool bound, so the list stays
+    # the session's (WP14), and the call is refused; nothing is queued.
     f(".room_consult_bind")(a, cfg, chat, "stranger", list(room = "alpha"), factory)
-    expect_null(a$ask_room)
+    expect_true(is.function(a$ask_room))
+    count <- length(jobs())
+    expect_true(a$ask_room("Beta", "from a stranger")$isError)
+    expect_equal(length(jobs()), count)
 
     # Failed sends use the existing durable notice queue. Re-pumping does
     # not call the model again or queue another copy of each notice.

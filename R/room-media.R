@@ -22,9 +22,15 @@
     force(chat_now)
     force(room)
     force(thread)
-    session$send_room_file <- if (isTRUE(sender %in% bot_operators(cfg))) {
-        function(path) .room_media_send(session, chat_now(), room, thread, path)
-    } else NULL
+    # Bound whoever sent the message, so the tool list stays the
+    # session's (WP14); anyone but an operator is refused at the call.
+    operator <- isTRUE(sender %in% bot_operators(cfg))
+    session$send_room_file <- function(path) {
+        if (!operator) {
+            return(err("Only an operator of this bot can have it send a file to the room."))
+        }
+        .room_media_send(session, chat_now(), room, thread, path)
+    }
     invisible(session)
 }
 
