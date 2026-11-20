@@ -553,7 +553,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                     next
                 }
                 result <- .repl_interruptible(.compact_now(ctx$session, ctx$config),
-                                              ctx$palette)
+                    ctx$palette)
                 if (inherits(result, "repl_interrupted")) {
                     next
                 }

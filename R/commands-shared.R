@@ -32,7 +32,7 @@
                                         ctx$session$provider %||% ctx$provider),
                         dir = ctx$cwd,
                         trusted = trust_status_word(ctx$session$project_trusted,
-                                                    project_trusted(ctx$cwd)),
+            project_trusted(ctx$cwd)),
                         session = ctx$disk_session$session$sessionKey %||%
                         ctx$disk_session$session$sessionId %||% "(unset)"
     )
@@ -40,7 +40,7 @@
                              used = total_tok,
                              limit = limit,
                              breakdown = list(system = sys_tok, tools = tools_tok,
-                                              history = hist_tok),
+                history = hist_tok),
                              compact_pct = trig$effective_pct,
                              warn_pct = ctx$config$context_warn_pct %||% 75L,
                              high_pct = ctx$config$context_high_pct %||% 90L,
@@ -74,7 +74,7 @@
         return(invisible(NULL))
     }
     rendered <- format_task_list_display(ctx$session$tasks %||% list(),
-                                         palette = ctx$palette)
+        palette = ctx$palette)
     if (is.null(rendered)) {
         cat("No tasks.\n")
     } else {
@@ -91,9 +91,9 @@
                                         config,
                                         kind = session$kind %||% NULL,
                                         tools = tryCatch(session_request_parts(session)$tools,
-                    error = function(e) NULL),
+                error = function(e) NULL),
                                         system = tryCatch(session_request_parts(session)$system,
-                    error = function(e) session$system),
+                error = function(e) session$system),
                                         threshold = 0,
                                         min_messages = 2L,
                                         reason = "manual"

@@ -31,7 +31,7 @@
 # The update that tells the client which commands a session takes.
 .acp_commands_update <- function() {
     tbl <- corteza_commands()
-    rows <- tbl[tbl$acp & !nzchar(tbl$same_as), , drop = FALSE]
+    rows <- tbl[tbl$acp & !nzchar(tbl$same_as),, drop = FALSE]
     list(sessionUpdate = "available_commands_update",
          availableCommands = lapply(seq_len(nrow(rows)), function(i) {
         cmd <- list(name = rows$name[[i]], description = rows$description[[i]])
@@ -44,11 +44,10 @@
 
 .acp_help <- function() {
     tbl <- corteza_commands()
-    rows <- tbl[tbl$acp & !nzchar(tbl$same_as), , drop = FALSE]
+    rows <- tbl[tbl$acp & !nzchar(tbl$same_as),, drop = FALSE]
     usage <- trimws(paste0("/", rows$name, " ", rows$argument))
-    c("Commands:",
-      sprintf("  %-18s %s", usage, rows$description),
-      "To start over, or to work in another directory, start a new session.")
+    c("Commands:", sprintf("  %-18s %s", usage, rows$description),
+        "To start over, or to work in another directory, start a new session.")
 }
 
 # What the terminal's commands read, for an ACP session: the session,
