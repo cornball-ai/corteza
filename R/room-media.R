@@ -2,7 +2,9 @@
 # identity, destination, encryption, and event bookkeeping stay in the host.
 .room_media_tools <- function(tools, session) {
     tools <- Filter(function(t) !identical(t$name, "send_room_file"), tools)
-    if (!is.function(session$send_room_file) || isTRUE(session$plan_mode)) {
+    # Listed in plan mode too, where policy() refuses the call (`write`):
+    # the list stays the session's (WP14).
+    if (!is.function(session$send_room_file)) {
         return(tools)
     }
     c(tools, list(list(name = "send_room_file", description = paste(

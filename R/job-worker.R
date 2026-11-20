@@ -556,9 +556,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     # to name (job_authority_read()).
     .job_worker_state$session_key <- job$origin$session_key
     on.exit(.job_worker_state$session_key <- NULL, add = TRUE)
+    search_reset <- FALSE
     if (is.environment(session)) {
         .job_worker_child_apply_spec(session, spec)
-        old_tools <- session$tools_filter
         old_allowed <- session$job_allowed_tools
         old_search <- session$web_search
         old_max_turns <- session$max_turns
@@ -580,16 +580,30 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             if (!is.null(spec$tools)) {
                 allowed <- intersect(allowed, spec$tools)
             }
-            session$tools_filter <- allowed
+            # The tool list stays the worker's (WP14): a call outside
+            # the job's tools is refused at the call. The provider runs
+            # its own search tool, so a job that may not search sends a
+            # request without it, a new prefix on purpose.
             session$job_allowed_tools <- allowed
-            if (!"web_search" %in% allowed) {
+            if (!"web_search" %in% allowed &&
+                !identical(session$web_search, FALSE)) {
                 session$web_search <- FALSE
+                .prefix_search_reset(session, "job_search_off")
+                search_reset <- TRUE
+            }
+        }
+        # Search comes back right after the run, before the checkpoint
+        # keeps the history; here only when the run did not return.
+        restore_search <- function() {
+            if (search_reset) {
+                session$web_search <- old_search
+                .prefix_search_reset(session, "job_search_restored")
+                search_reset <<- FALSE
             }
         }
         on.exit({
-            session$tools_filter <- old_tools
             session$job_allowed_tools <- old_allowed
-            session$web_search <- old_search
+            restore_search()
             session$max_turns <- old_max_turns
         }, add = TRUE)
         before <- session$on_tool
@@ -615,6 +629,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
              audit = if (is.environment(session) &&
                 !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
+    if (search_reset) {
+        restore_search()
+    }
     resume <- if (identical(res$termination$status, "incomplete")) {
         tryCatch(.job_resume_save(job_id, spec$identity, session),
                  error = function(e) list(ready = FALSE, error = conditionMessage(e)))

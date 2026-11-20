@@ -63,8 +63,11 @@ local({
     expect_true(grepl("denied", handler("send_room_file", list(path = path))))
     expect_length(sent, 1L)
     s$config <- list()
+    # Listed in plan mode too, so the list stays the session's (WP14);
+    # policy() refuses the call, a write.
     s$plan_mode <- TRUE
-    expect_length(f(".room_media_tools")(schemas, s), 0L)
+    expect_identical(utils::tail(f(".room_media_tools")(schemas, s), 1)[[1]]$name,
+                     "send_room_file")
     expect_true(grepl("denied", handler("send_room_file", list(path = path))))
     s$plan_mode <- FALSE
     f(".room_media_bind")(s, cfg, function() current, "stranger", "fixture-room")

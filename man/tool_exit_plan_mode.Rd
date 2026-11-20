@@ -19,8 +19,9 @@ mode and the LLM proceeds with the work. On decline the session
 stays in plan mode and the LLM iterates.
 }
 \details{
-This tool is only exposed when the session is in plan mode. Outside
-plan mode it is hidden from the LLM's tool list.
+Every session that can be in plan mode is offered this tool, so its
+tool list stays the same when plan mode starts or ends. Outside plan
+mode the call is refused.
 
 }
 \keyword{internal}

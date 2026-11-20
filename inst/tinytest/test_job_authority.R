@@ -202,10 +202,10 @@ local({
                                                          offer_exit = FALSE)),
                      "read_file")
     expect_true(grepl("Only the person can end plan mode",
-                      ns$.plan_mode_compose_system("base", TRUE, locked = TRUE),
-                      fixed = TRUE))
-    expect_false(grepl("Only the person",
-                       ns$.plan_mode_compose_system("base", TRUE), fixed = TRUE))
+                      ns$.plan_mode_note(TRUE, locked = TRUE), fixed = TRUE))
+    expect_false(grepl("exit_plan_mode", ns$.plan_mode_note(TRUE, locked = TRUE),
+                       fixed = TRUE))
+    expect_false(grepl("Only the person", ns$.plan_mode_note(TRUE), fixed = TRUE))
 })
 
 # ---- A warm worker, through real turns ------------------------------------
@@ -282,9 +282,15 @@ local({
                         if (is.null(t$name)) "" else t$name
                     }, "")
                     prompt <- paste(unlist(system), collapse = " ")
-                    text <- sprintf("model=%s exit_offered=%s plan_prompt=%s results=%s",
+                    asked <- paste(vapply(Filter(function(m) identical(m$role, "user"),
+                                                 messages), text_of, ""),
+                                   collapse = " ")
+                    # Plan mode reaches a worker as a note in its job's
+                    # prompt; the system text stays as it is (WP14).
+                    text <- sprintf("model=%s exit_offered=%s plan_note=%s plan_system=%s results=%s",
                                     model, "exit_plan_mode" %in% offered,
-                                    grepl("# Plan mode", prompt, fixed = TRUE),
+                                    grepl("[Plan mode is on", asked, fixed = TRUE),
+                                    grepl("Plan mode", prompt, fixed = TRUE),
                                     seen)
                     return(list(text = text, tool_calls = list(), usage = usage,
                                 assistant_message = list(role = "assistant",
@@ -362,8 +368,8 @@ local({
     expect_identical(s$.job_worker$get_pid(), pid)
     expect_false(file.exists(at("b1")))
     expect_true(grepl("plan mode", j$outcome$result, fixed = TRUE))
-    expect_true(grepl("exit_offered=FALSE plan_prompt=TRUE", j$outcome$result,
-                      fixed = TRUE))
+    expect_true(grepl("exit_offered=FALSE plan_note=TRUE plan_system=FALSE",
+                      j$outcome$result, fixed = TRUE))
 
     # exit_plan_mode, called anyway, is refused, and plan mode holds.
     j <- run("script: exit ; write e1")

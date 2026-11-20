@@ -134,21 +134,24 @@ local({
     expect_equal(length(s$tasks), 0L)
 })
 
-# The addendum has an unattended variant with no ask-first or
-# wait-for-approval steps, which would hang an auto run.
-att_add <- corteza:::.task_tool_addendum(auto = FALSE)
-aut_add <- corteza:::.task_tool_addendum(auto = TRUE)
+# The system text describes the attended flow. An /auto run is told at
+# the head of its first prompt that nobody answers (WP14), with no
+# ask-first or wait-for-approval steps, which would hang it.
+att_add <- corteza:::.task_tool_addendum()
+aut_note <- corteza:::.auto_note(TRUE)
 expect_true(grepl("Ask clarifying questions first", att_add, fixed = TRUE))
-expect_false(grepl("Ask clarifying questions first", aut_add, fixed = TRUE))
-expect_true(grepl("unattended run", aut_add, fixed = TRUE))
-expect_true(grepl("accepted automatically", aut_add, fixed = TRUE))
-# task_compose_system threads the flag through to the right variant.
-expect_true(grepl("unattended run",
-                  compose("BASE", list(), channel = "console", auto = TRUE),
-                  fixed = TRUE))
+expect_false(grepl("Ask clarifying questions first", aut_note, fixed = TRUE))
+expect_true(grepl("unattended /auto run", aut_note, fixed = TRUE))
+expect_true(grepl("accepted automatically", aut_note, fixed = TRUE))
+expect_true(grepl("ask before you assume", corteza:::.auto_note(FALSE), fixed = TRUE))
 expect_true(grepl("Ask clarifying questions first",
-                  compose("BASE", list(), channel = "console", auto = FALSE),
+                  compose("BASE", list(), channel = "console"),
                   fixed = TRUE))
+# The task list's note: the whole list, or that it is empty.
+expect_identical(corteza:::.task_list_note(list()), "[The task list is empty.]")
+listed <- corteza:::.task_list_note(list(list(text = "a", status = "pending"),
+                                         list(text = "b", status = "completed")))
+expect_true(grepl("^\\[Task list:\n1\\. \\[.\\] a\n2\\. \\[.\\] b\\]$", listed))
 
 # task_create prompts the user via readline. Tests stub that prompt
 # through options(corteza.task_approve = "y" | "n") so the intercept

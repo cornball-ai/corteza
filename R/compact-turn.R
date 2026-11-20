@@ -504,15 +504,14 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     # next API call all reason about the same model identity.
     model <- session$model_map$cloud %||%
     default_provider_model(session$provider)
-    # Estimate against the same tools turn() will send. turn()
-    # resolves tools from session$tools_filter when tools is NULL,
-    # so passing NULL here would undercount the live context for any
-    # subagent with an active tool filter.
-    tools_for_estimate <- tools %||% tryCatch(
-        skills_as_api_tools(session$tools_filter, session$tool_table),
-        error = function(e) NULL
-    )
-    system_for_estimate <- system %||% session$system
+    # Estimate against the same system text and tools turn() will send
+    # (R/request-prefix.R). Passing NULL here would undercount the live
+    # context for any subagent with an active tool filter.
+    parts <- if (is.null(tools) || is.null(system)) {
+        tryCatch(session_request_parts(session), error = function(e) NULL)
+    }
+    tools_for_estimate <- tools %||% parts$tools
+    system_for_estimate <- system %||% parts$system %||% session$system
     used <- estimate_live_context_tokens(list(history = history),
         system_prompt = system_for_estimate, tools = tools_for_estimate)
     if (missing(byte_limit)) {

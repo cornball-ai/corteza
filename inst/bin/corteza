@@ -857,6 +857,9 @@ run_agent <- function(opts) {
   ctx$disk_session <- list(session = session, sessionId = session$sessionId,
                            resumed = !is.null(opts$session))
   ctx$config <- config
+  # What the flags set over the config file, kept when /clear builds the
+  # next conversation's config (corteza:::.repl_session_rebuild()).
+  ctx$config_set <- c("dry_run", "base_url")
   ctx$cwd <- cwd
   ctx$ws_enabled <- ws_enabled
   ctx$provider <- provider

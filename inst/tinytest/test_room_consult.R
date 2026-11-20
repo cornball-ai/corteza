@@ -239,8 +239,20 @@ local({
     expect_true(grepl("Dry run", h("ask_room", list(room = "Beta", question = "dry"))))
     expect_equal(length(jobs()), count + 1L)
     a$dry_run <- FALSE
+    # Listed in plan mode too, so the list stays the session's (WP14);
+    # policy() refuses the call, a continuation, and nothing is queued.
     a$plan_mode <- TRUE
-    expect_length(f(".room_consult_tools")(list(), a), 0L)
+    expect_identical(utils::tail(f(".room_consult_tools")(list(), a), 1)[[1]]$name,
+                     "ask_room")
+    # Without the fixture's gate, which answers "proceed" to everything:
+    # each real gate refuses a call policy() refused, first.
+    count <- length(jobs())
+    gate <- a$auto_gate
+    a$auto_gate <- NULL
+    expect_true(grepl("corteza policy denied: plan mode",
+                      h("ask_room", list(room = "Beta", question = "plan")), fixed = TRUE))
+    a$auto_gate <- gate
+    expect_equal(length(jobs()), count)
     a$plan_mode <- FALSE
     f(".room_consult_bind")(a, cfg, chat, "stranger", list(room = "alpha"), factory)
     expect_null(a$ask_room)
