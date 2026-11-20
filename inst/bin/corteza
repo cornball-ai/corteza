@@ -3,6 +3,8 @@
 # corteza - An open-source interactive CLI agent in R
 #
 # Usage: corteza [options]
+#        corteza acp [--provider P] [--model M] [--tools T]
+#   acp          Serve an Agent Client Protocol client on stdin and stdout
 #   --provider   anthropic|openai|moonshot|openai_codex|ollama (default: anthropic)
 #   --model      model name (default: provider-specific)
 #   --port       MCP server port (default: 7850)
@@ -106,6 +108,10 @@ parse_args <- function() {
 corteza - An open-source interactive CLI agent
 
 Usage: corteza [options]
+       corteza acp [--provider P] [--model M] [--tools T]
+
+  acp             Serve an editor or another Agent Client Protocol client
+                  on standard input and output (vignette(\"configuration\"))
 
 Options:
   --provider      LLM provider: anthropic, openai, moonshot, openai_codex, ollama, openai_compatible (default: anthropic)
@@ -927,6 +933,16 @@ run_agent <- function(opts) {
 # ============================================================================
 
 if (!interactive()) {
+  # `corteza acp`: the agent an Agent Client Protocol client starts
+  # (R/acp.R). Standard input and output carry the protocol, so nothing
+  # is asked and nothing printed here; each session the client opens
+  # decides trust for its own directory.
+  if (identical(commandArgs(trailingOnly = TRUE)[1L], "acp")) {
+    acp <- corteza:::.acp_args(commandArgs(trailingOnly = TRUE)[-1L])
+    corteza:::.acp_main(provider = acp$provider, model = acp$model,
+                        tools = acp$tools)
+    quit(save = "no", status = 0L)
+  }
   # Trust is decided before anything of the project's is read, and
   # parse_args() takes its defaults from the config. A person at the
   # terminal is asked once. --help and --list load nothing of the

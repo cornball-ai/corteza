@@ -19,9 +19,9 @@ r -e 'rformat::rformat_dir("R", control_braces = "multi", expand_if = TRUE); tin
 r -e 'tinypkgr::install(); tinytest::run_test_file("inst/tinytest/test_policy.R")'
 ```
 
-## Architecture: three surfaces, one `turn()`
+## Architecture: four surfaces, one `turn()`
 
-All three user-facing surfaces share `turn()` as the single entry point
+All four user-facing surfaces share `turn()` as the single entry point
 (`R/turn.R`). Each surface constructs a session environment via
 `new_session()`, wires up a channel-specific `approval_cb`, then calls
 `turn(prompt, session)`.
@@ -47,7 +47,29 @@ matrix adapter  (R/matrix.R)
   │  mx.api long-poll, tool_executor = NULL (in-process)
   v
 turn(prompt, session)
+
+corteza acp  (R/acp.R; the `acp` verb in inst/bin/corteza)
+  │  approval_cb = session/request_permission to the client
+  │  tool_executor = NULL (in-process); run_r in a worker per session
+  v
+turn(prompt, session)  <- one per session/prompt
 ```
+
+**ACP** (`R/acp*.R`): JSON-RPC on standard input and output, one R
+thread. Each session is `session_setup()`'s for the client's directory,
+with the terminal's records (`session_new(surface = "acp")`, a journal)
+and its own `handle_store`; `run_r_mode` is `"worker"` so sessions share
+no R objects. Between turns the loop takes messages in order. While a
+turn runs, `session$stop_requested` (`.acp_stop()`) and the waits for
+the client or the reviewer call `.acp_service()`, which handles what
+came: a cancel, an answer, and the requests that need no turn. A prompt
+waits for the running one; one for the running session is refused. The
+approval callback follows the terminal's (`answered`, no "always" under
+the credential rule). An MCP server a client names is refused, by name
+alone. Commands are the table's `acp` rows (`R/acp-commands.R`), run
+through the functions the terminal shares (`R/commands-shared.R`) and
+captured as the reply; `/clear` and `/cd` answer with a sentence. Protocol lines go through a connection of their own to fd 1, and
+R's standard output is sunk to standard error.
 
 **CLI and chat() share one in-process loop**: both build a `ctx` and call
 `run_repl_loop()` (`R/repl.R`) in a single R process; tools run in-process
@@ -278,7 +300,11 @@ write and exec calls only, and never on one the person allowed always
 the transcript (`review_conversation()`), never from
 `session$history`: a compaction leaves its summary there as a user
 message, which would pass for the person's words. Every prompt goes in
-whole, each after the whole reply it answers. Each prompt in the
+whole, each after all the agent said since the prompt before it: the
+reply and a job's result (marked `job`). Every surface writes a line
+after each prompt, an error included, so a prompt with none before the
+next is a reply the transcript lost, and the person decides for the
+rest of the conversation. Each prompt in the
 transcript says how it was sent (`staged`, and `typed` when more went
 with it: staged output, or an `/auto` run's driver text around its
 goal), and the reviewer reads the file with `transcript_load_strict()`,
@@ -451,13 +477,20 @@ runs, after any wait at the gate or the approval prompt (audited as
 notifier let it through; the sink raises `llm_cancelled`, and `agent()`
 returns with the history so far. `turn()` catches both, repairs the
 history with `apply_exit_marker()` and returns status `cancelled`.
-Ctrl+C and remote control's stop keep their own path. Nothing sets the
-function yet; ACP's `session/cancel` will. No turn waits on a doer
-today (`delegate` returns at once), and a loop that does must read the
-same function and call `job_cancel()`. A cancelled job's reason
-(`job_cancel_reason()`) names the checkpoint the next job starts from,
-read through the identity in the job's dispatch record, since the
-session's may have moved with a `/clear`.
+Ctrl+C and remote control's stop keep their own path. ACP's
+`session/cancel` sets it (`.acp_stop()`), and the reviewer's wait
+(`job_monitor_ask_wait()`) reads it too. So does a tool that waits long
+(`R/tool-stop.R`): the in-process executor names the session for the
+call's length (`.tool_stop_with()`), and `bash`, `cmd`, `run_r_script`
+and `run_r`'s worker ask `.tool_stop_requested()` every 200 ms. A stop
+ends a command's process tree; `run_r` interrupts its worker and ends
+it after 5 s (`.run_r_worker_stopped()`), saying the objects are lost.
+Each returns a result, and the turn stops at its next check. No turn
+waits on a doer today (`delegate` returns at once), and a loop that
+does must read the same function and call `job_cancel()`. A cancelled
+job's reason (`job_cancel_reason()`) names the checkpoint the next job
+starts from, read through the identity in the job's dispatch record,
+since the session's may have moved with a `/clear`.
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 
@@ -762,9 +795,11 @@ CLI-only) now work in `chat()` too.
 `corteza_commands()` (`R/commands.R`) is the table of every surface's
 commands: a row a name, with what it is the same as, its argument, a
 line saying what it does, and whether the terminal and `chat()`, a bot's
-room, or a room controlling a terminal takes it. Nothing dispatches
-from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
-and `.remote_bot_route()` for the names they compare with, asks each
+room, a room controlling a terminal, or an ACP session takes it. Nothing
+dispatches from it, though ACP's help and the commands it offers its
+client are made from it. `test_commands.R` reads `run_repl_loop()`,
+`.remote_input()`, `.remote_bot_route()` and `.acp_command()` for the
+names they compare with, asks each
 room parser, holds its list of parsers to the ones `bot_poll()` calls
 (a name matching `bot_is_*_command`, `bot_parse_*` or `*_parse_command`),
 and checks both `/help` texts, so a new command needs a row, a line in

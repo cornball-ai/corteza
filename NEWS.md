@@ -1,3 +1,49 @@
+# corteza 0.8.0.40
+
+- Over ACP, a cancel reaches a tool while it runs. `bash` and `cmd` end
+  the command and its children, and `run_r_script` ends its process.
+  `run_r`, which runs in a worker under ACP, interrupts it: the worker
+  keeps its R objects, and one that does not answer within 5 seconds is
+  ended and loses them. Other tools finish first. Elsewhere a tool runs
+  as before.
+- `bash` and `cmd` run their command through processx, and
+  `run_r_script` through `callr::rscript_process()`. Their output and
+  their time limits are as before.
+
+# corteza 0.8.0.39
+
+- `corteza acp` serves an Agent Client Protocol client (protocol
+  version 1) on standard input and output: a session for each directory
+  the client names, prompts of text and file links, the reply streamed,
+  tool calls and their results, the terminal's approval answers, and the
+  `ask` and `review` modes. A session keeps the terminal's records, so
+  `corteza --resume` and a client's resume take up each other's
+  conversations in the same directory. Sessions in one process share no
+  R objects: each session's `run_r` runs in a worker of its own. Not on
+  Windows.
+- The reviewer (`approval_mode: "review"`) is shown everything the agent
+  said since the prompt before the call, a job's result included. A
+  reply missing from the transcript hands the call to the person.
+- The terminal writes a failed turn's error to the transcript, so every
+  prompt there has an answer.
+- A compaction asked to stop before or during its summary leaves the
+  conversation as it was.
+
+# corteza 0.8.0.38
+
+- On Windows, retention of the state stores removed nothing: no job
+  chain, worker folder or remote-control session ever went. A path
+  there mixes `\` and `/`, and the check that it lies inside the data
+  folder compared it as text with one that does not. The check now
+  compares with forward slashes, and on Windows in any case.
+
+# corteza 0.8.0.37
+
+- A job whose worker exits as its reply is read is settled
+  `indeterminate`, as one whose worker is seen dead first: it may have
+  acted before it stopped. It was settled `failed`, as though the job
+  had reported an error.
+
 # corteza 0.8.0.36
 
 - A talker's job takes the terminal's "allow always" answers, as the

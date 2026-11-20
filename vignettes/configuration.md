@@ -903,7 +903,8 @@ session the same three steps for each call that would prompt. The
 monitor there is called the reviewer. It rules on reads, writes and
 commands that the rules leave open. It reads the conversation to judge
 them, from the session's transcript: every message you sent, whole,
-each after the whole reply it answers. Only your words are taken as
+each after all the agent said since your message before it, the reply
+and any job's result that came after. Only your words are taken as
 instructions. It is not shown these:
 
 - a compaction's summary, which the agent wrote;
@@ -922,8 +923,10 @@ with its reason. These still prompt without it:
 - a credential path;
 - any call while the reviewer cannot read the whole conversation: one
   past 100,000 characters, one with no transcript or with a line it
-  cannot read, or one begun before 0.8.1, whose transcript does not
-  mark what you typed. `/clear` starts a conversation it can read.
+  cannot read, one where a reply to your message is missing (its write
+  failed, or corteza stopped mid-turn), or one begun before 0.8.1, whose
+  transcript does not mark what you typed. `/clear` starts a
+  conversation it can read; in an editor, a new session does.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by
@@ -1065,6 +1068,13 @@ like `str()`, `tail()`, and `setNames()` work exactly as in a standard session;
 set `R_DEFAULT_PACKAGES` in `run_r_worker_options$env` to override. A model may
 request a different timeout on an individual call; `skill_timeout_max` is the
 host-owned ceiling. A host may narrow it further for an expiring external lease.
+
+A turn that is asked to stop (an ACP client's cancel, below) interrupts the
+worker, as its deadline does, and the worker keeps its R objects. A worker that
+does not come back within 5 seconds of the interrupt, because its code is in C
+that never checks for one or catches the interrupt and goes on, is ended: all
+of the session's R objects are lost, the call's result says so, and the next
+`run_r` starts a new worker. Files the code wrote stay.
 
 `run_r_worker_options` shapes that worker process without touching the host:
 a private environment or library path, extra command-line arguments, or
@@ -1415,6 +1425,45 @@ Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
   }
 }
 ```
+
+## Editors and other ACP clients
+
+`corteza acp` runs corteza as an agent of the Agent Client Protocol (ACP, version 1): an editor, or any other client that speaks it, starts the command and talks to it over standard input and output. It runs on Linux and macOS in this release; on Windows it says so and exits. Each session the client opens is a corteza session in the directory the client names, set up as `chat()` sets one up, with that directory's config, trust, tools and instructions. The directory must be an absolute path that exists; corteza creates none.
+
+```sh
+corteza acp
+corteza acp --provider openai --tools core,git
+```
+
+A client needs the command's full path: the one `install_cli()` reports ("Installed corteza to: ...") and returns. The command reads `~/.Renviron` as the terminal does, so the provider's key need not be in the editor's environment. In Zed, for example, a custom agent goes under `agent_servers` in `settings.json` (Zed's page "External Agents", section "Custom Agents"):
+
+```json
+{
+  "agent_servers": {
+    "corteza": {
+      "type": "custom",
+      "command": "/home/you/.local/share/R/corteza/bin/corteza",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+What a client gets:
+
+- `session/new`, `session/resume`, `session/list` and `session/close`. ACP sessions are kept with the terminal's (Session records below), so `corteza --resume` takes up a conversation a client started in that directory, and a client can resume a terminal's. A resume sends the model the conversation's history and the client none of it.
+- Prompts of text, and links to files, which reach the model as the file's path. A prompt with an image, audio or an embedded resource is refused.
+- The reply as it streams, with the secrets corteza knows hidden, and each tool call: announced, run, and finished with its result (cut to 4,000 characters for the client; the model reads all of it) and, for an edit, its diff.
+- Modes, which set the session's `approval_mode`. In `ask`, each call that would prompt at the terminal becomes a permission request with the terminal's 3 answers: allow, allow always for this project (kept where the terminal keeps it), deny. In `review`, the reviewer rules first, as under `approval_mode: "review"`, and the client is asked what it passes on. A config whose `approval_mode` is `"allow"` or `"deny"` adds that mode, and its sessions start in it. The credential rule's request offers no "always", and no saved answer covers it.
+- Commands: `/help`, `/trust [yes]`, `/status` (or `/context`), `/tools`, `/tasks [clear]`, `/spent` and `/compact`, offered to the client after each session opens. A prompt that begins with one runs it in place of a turn, as the terminal does, and what it prints is the reply. Only `/compact` asks a model, for its summary; a cancel stops it before the request, or leaves the summary it returns uninstalled, and the prompt ends `cancelled`. A `/trust yes` applies to the sessions opened after it. `/clear` and `/cd` answer that a client starts a new session to begin again or to move; any other word after a slash is text for the model.
+- `session/cancel`. The turn stops at the next piece of the streamed reply, before the next model request or tool call, during a wait for permission or for the reviewer, or while a long tool runs: `bash` and `run_r_script` end their process and its children, and `run_r` interrupts its worker. A worker that does not come back within 5 seconds is ended, and the session's R objects go with it (`run_r_mode`, under JSON config keys, Skills, above); the call's result says so. Files written stay. Other tools finish first, within their own time limits.
+
+corteza connects to no MCP server a client names. A `session/new` or `session/resume` that lists one is refused, naming each server by its `name` alone; send an empty `mcpServers` list.
+
+One process can hold several sessions, and they share no R objects: each session's `run_r` runs in a worker process of its own, whatever `run_r_mode` says, and a session whose config asks for `"in_process"` is told so when it opens. What corteza's own process holds is still shared: the options it sets and the packages a skill loads in it, which trusted R code can change for every session. One prompt runs at a time. A prompt for another session waits until the running one ends, and a second prompt for the running session is refused. The requests that need no turn (opening, listing, closing, setting a mode) are answered while a prompt runs, each time the turn checks for a cancel. A close of the running session cancels its prompt and is answered after it.
+
+Nothing corteza or a tool prints reaches the protocol: while the command runs, R's standard output goes to standard error.
 
 ## Session tuning
 

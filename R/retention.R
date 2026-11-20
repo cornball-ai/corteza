@@ -610,9 +610,16 @@ retention_removable <- function(path, kind) {
 # Windows. The real path tells on both: a part that is no link resolves
 # to its parent's real path and its own name, and a link resolves to its
 # target, inside the data directory or out of it. So does "..".
+#
+# On Windows one path may hold both separators (tools::R_user_dir() and
+# tempfile() give backslashes, dirname() and file.path() forward ones),
+# and case does not matter, so the two are compared with forward slashes
+# and, there, in any case.
 retention_within <- function(path, root = corteza_data_dir()) {
+    path <- retention_slashes(path)
+    root <- retention_slashes(root)
     prefix <- paste0(root, "/")
-    if (!startsWith(path, prefix)) {
+    if (!retention_same_path(substr(path, 1L, nchar(prefix)), prefix)) {
         return(FALSE)
     }
     here <- root
@@ -645,6 +652,14 @@ retention_step <- function(here, real, part) {
 retention_is_link <- function(path) {
     link <- Sys.readlink(path)
     is.na(link) || nzchar(link)
+}
+
+# A path with forward slashes alone on Windows, and as it is elsewhere.
+retention_slashes <- function(path) {
+    if (.Platform$OS.type == "windows") {
+        return(gsub("\\", "/", path, fixed = TRUE))
+    }
+    path
 }
 
 # Windows file names ignore case, so a real path there may differ from

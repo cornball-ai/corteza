@@ -5,12 +5,16 @@ if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
 if (!requireNamespace("chat.api", quietly = TRUE)) exit_file("chat.api unavailable")
 
 local({
-    root <- tempfile("remote-control-")
+    # Short names: under R CMD check on Windows the temporary folder is
+    # deep, and a room's conversation record (a 64-character key, then
+    # its own name) passed the 260 characters a path may have there.
+    root <- tempfile("rc-")
     dir.create(root)
     vars <- c("CORTEZA_REMOTE_DIR", "CORTEZA_STATE_DIR", "R_USER_DATA_DIR",
               "R_USER_CONFIG_DIR", "R_USER_CACHE_DIR")
     old <- Sys.getenv(vars, unset = NA)
-    do.call(Sys.setenv, setNames(as.list(file.path(root, vars)), vars))
+    dirs <- file.path(root, c("remote", "state", "data", "config", "cache"))
+    do.call(Sys.setenv, setNames(as.list(dirs), vars))
     on.exit({
         for (i in seq_along(vars)) if (is.na(old[[i]])) Sys.unsetenv(vars[[i]]) else
             do.call(Sys.setenv, setNames(list(old[[i]]), vars[[i]]))

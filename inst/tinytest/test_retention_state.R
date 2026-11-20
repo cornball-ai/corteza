@@ -645,8 +645,10 @@ local({
 
 # ---- Links ----
 # A link is never removed, nor anything behind one, and a folder holding
-# one stays. Skipped where a link cannot be made.
-local({
+# one stays. Skipped where a link cannot be made, and on Windows, where R
+# makes links that its unlink() cannot remove (the reparse point's tag
+# does not match), so a test could not undo its own.
+if (.Platform$OS.type != "windows") local({
     fx <- state_fixture()
     on.exit(fx$restore(), add = TRUE)
     away <- file.path(fx$root, "away")
@@ -709,8 +711,8 @@ local({
 # reads as queued. A removal refuses a folder whose intent is a link by
 # the time it gets there. An outcome that is a link counts as none, and
 # a remote session's request or closed record likewise. Skipped where a
-# link cannot be made.
-local({
+# link cannot be made, and on Windows (above).
+if (.Platform$OS.type != "windows") local({
     fx <- state_fixture()
     on.exit(fx$restore(), add = TRUE)
     away <- file.path(fx$root, "away")
@@ -777,8 +779,8 @@ local({
 })
 
 # The state folder itself may be a link, as the data folder may: it is
-# read from where it points.
-local({
+# read from where it points. Not on Windows (above).
+if (.Platform$OS.type != "windows") local({
     root <- tempfile("corteza_state_link_")
     dir.create(root)
     on.exit(unlink(root, recursive = TRUE), add = TRUE)

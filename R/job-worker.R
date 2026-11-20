@@ -1211,17 +1211,27 @@ job_pump_current <- function(session, id) {
                         "exceeded its %s s wall-clock limit", format(wall))))
         }
     }
-    if (!job_worker_alive(session)) {
+    died <- function() {
         session$.job_worker <- NULL
-        return(finish("indeterminate",
-                      reason = paste("the worker process exited mid-job;",
-                                     "it may have acted before it stopped")))
+        finish("indeterminate",
+               reason = paste("the worker process exited mid-job;",
+                              "it may have acted before it stopped"))
+    }
+    if (!job_worker_alive(session)) {
+        return(died())
     }
     if (!identical(worker$poll_process(0L), "ready")) {
         return(NULL)
     }
     msg <- worker$read()
     if (!is.null(msg$error)) {
+        # A worker that exits between the check above and this read reads
+        # as an error (callr's "R session crashed"): that is the exit, not
+        # a failure the job reported, and it may have acted. Seen on macOS,
+        # where the process is reaped after its connection closes.
+        if (!job_worker_alive(session)) {
+            return(died())
+        }
         return(finish("failed", error = conditionMessage(msg$error)))
     }
     res <- msg$result

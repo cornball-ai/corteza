@@ -305,6 +305,48 @@ local({
     corteza:::job_worker_close(stuck)
 })
 
+# --- A worker that exits as the pump reads it ---
+# Alive when the pump checks, then ready, and its read is callr's crash
+# error, by when the process is gone: as macOS orders it. The job ends
+# indeterminate, as for a worker seen dead first, since it may have
+# acted; not failed, which would say it reported an error.
+local({
+    racing <- make_session("room-race", counting)
+    fake <- new.env()
+    fake$alive <- TRUE
+    fake$is_alive <- function() fake$alive
+    fake$get_pid <- function() 1L
+    fake$call <- function(...) invisible(NULL)
+    fake$poll_process <- function(timeout) "ready"
+    fake$read <- function() {
+        fake$alive <- FALSE
+        list(error = simpleError("R session crashed with exit code 1"))
+    }
+    fake$close <- function() invisible(NULL)
+    racing$.job_worker <- fake
+    racing$.job_worker_role <- "doer"
+    corteza:::job_worker_note(racing, "doer",
+                              dir = corteza:::job_worker_dir(racing))
+    r <- corteza:::job_submit(racing, "dies as it is read")
+    corteza:::job_pump(racing)
+    rj <- corteza:::job_read(r)
+    expect_identical(rj$status, "indeterminate")
+    expect_true(grepl("may have acted", rj$outcome$reason, fixed = TRUE))
+    expect_null(racing$.job_current)
+    expect_null(racing$.job_worker)
+    # One that is still alive after an error reported a failure.
+    fake$alive <- TRUE
+    fake$read <- function() list(error = simpleError("could not serialize"))
+    racing$.job_worker <- fake
+    corteza:::job_worker_note(racing, "doer",
+                              dir = corteza:::job_worker_dir(racing))
+    f <- corteza:::job_submit(racing, "fails")
+    corteza:::job_pump(racing)
+    expect_identical(corteza:::job_read(f)$status, "failed")
+    expect_true(grepl("could not serialize",
+                      corteza:::job_read(f)$outcome$error, fixed = TRUE))
+})
+
 # --- The approval bridge, end to end through a worker ---
 # The job asks the way a tool call under an "ask" verdict would: through
 # the worker's approval callback, which writes a request and waits.

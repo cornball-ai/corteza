@@ -428,6 +428,17 @@ compact_rewrite_history <- function(history, cut, summary) {
     c(list(summary_entry), kept)
 }
 
+# Whether a stop was asked for the session's turn (R/turn-stop.R), logged
+# as a compaction skipped. Never for a session with no stop function.
+.compact_stopped <- function(session, history) {
+    if (!.turn_stop_requested(session)) {
+        return(FALSE)
+    }
+    log_event("subagent_compact_skipped", reason = "stopped",
+              history_len = length(history))
+    TRUE
+}
+
 #' Maybe compact a turn_session's in-memory history.
 #'
 #' Decision points:
@@ -583,6 +594,10 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                         "context: idle for %s with about %s tokens of context; summarizing the older turns first",
                         format_age(idle_gap * 60), format_tokens(used)))
     }
+    # A turn asked to stop (R/turn-stop.R) asks for no summary.
+    if (.compact_stopped(session, history)) {
+        return(invisible(FALSE))
+    }
     summary_error <- NULL
     summary_chars <- .compact_summary_budget(session, limit, reason)
     # The session's byte limit holds for the summary's own request too,
@@ -596,6 +611,10 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                                        session = session,
                                        max_total_chars = summary_chars,
                                        max_request_bytes = byte_limit)
+    # The request runs with no hook, so a stop asked for while it ran is
+    # read when it returns, whatever it returned: a failed request is
+    # still recorded as one, and a summary is not installed.
+    stopped <- .compact_stopped(session, history)
     if (is.null(summary) || !nzchar(summary)) {
         failure <- list(
                         reason = "summarizer_error",
@@ -623,6 +642,9 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
                     "subagent_compact_failure_hook_failed",
                     error = conditionMessage(e), level = "warn"))
         }
+        return(invisible(FALSE))
+    }
+    if (stopped) {
         return(invisible(FALSE))
     }
     summary_usage <- attr(summary, "usage", exact = TRUE)
