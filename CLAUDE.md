@@ -404,6 +404,24 @@ The setting is read from the user's config only (`retention_config()`),
 and a value it cannot read turns retention off. Transcripts always stay.
 `sessions_prune()` is the exported form.
 
+The same run clears the state stores (`R/retention-state.R`): job
+chains (jobs linked by `resume_of`, `review_of` or `parent`) once all
+ended, worker folders with no checkpoint, and remote-control sessions
+that closed or whose process here ended. A chain with an incomplete job
+nothing resumed waits `retention$incomplete_days` (180). A folder is
+judged only when its name and record are corteza's; anything else stays
+and is listed as `"unknown"`. A record is read only where it is a file
+of the folder itself (`retention_record()`), never through a link. A
+removal takes the record that makes a folder live first (`intent.json`,
+`request.json`), and where that record is there but may not go (a
+link, a folder), it removes nothing. Checkout lock generations are
+never removed (`R/job-lock.R`).
+
+A test that hands retention a clock in the future points
+`CORTEZA_STATE_DIR` and `CORTEZA_REMOTE_DIR` into its own temporary
+folder, as `test_retention.R` does: run where either names a bot's live
+state, it would otherwise remove that.
+
 Two things to keep in mind when changing it or the journal:
 
 - A session's audit records live in its journal folder
