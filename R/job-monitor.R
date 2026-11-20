@@ -264,6 +264,9 @@ job_monitor_ask_wait <- function(session, q,
                     reason = paste("the monitor could not be asked:", asked)))
     }
     repeat {
+        # A stop asked for (an ACP client's cancel, R/turn-stop.R) ends
+        # the wait, and review_ask() cancels the request on its way out.
+        .turn_stop_check(session)
         v <- job_monitor_poll(session, timeout)
         if (!is.null(v)) {
             return(v)
