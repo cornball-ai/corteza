@@ -313,8 +313,13 @@ talker following `/model` where `talker_follows`. Column `talker` of
 `bot_room_cwd(cfg, room_id)`: the directory an operator bound the room
 to with `/cd`, while it exists inside a root (`bot_project_roots()`:
 the run's `project_roots`, else the saved ones, links resolved); the
-scratch folder for `/cd none` or a binding that no longer holds; else
-the bot's `cwd`, else the scratch folder. A topic names no directory:
+scratch folder for `/cd none`, a binding that no longer holds, or one
+that is unknown; else the bot's `cwd`, else the scratch folder. Only a
+room with no binding on record takes the default: a state file that
+cannot be read is copied aside and replaced, in one rename, by a
+binding of state `unknown` (`bot_room_state_read()`), and a binding
+there but malformed reads the same way, until an operator's `/cd`
+writes a new one. A topic names no directory:
 `bot_parse_topic()` gives a description only, and `bot_topic_path()`
 reads a leading path only for the one-time notice. The binding is
 `binding` in the room's state file (`R/room-conversation.R`), beside the

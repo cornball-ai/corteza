@@ -168,6 +168,54 @@ local({
     expect_true(grepl("medium (configuration)", out, fixed = TRUE))
 })
 
+# ---- The jobs block: what /model and /effort change, a job runs with ----------
+# The corteza config's `jobs` block names the doer's model and effort.
+# /model and /effort change them, /status shows them, and the next job
+# runs with them: talker_enable() reads the block once, and
+# job_worker_spec() reads the doer's fields alone. The room reads the
+# corteza config from its folder, here a temporary one, so the user's
+# own config stays out of it.
+local({
+    old <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA)
+    Sys.setenv(R_USER_CONFIG_DIR = tempfile("talker-config-"))
+    on.exit(if (is.na(old)) Sys.unsetenv("R_USER_CONFIG_DIR") else
+        Sys.setenv(R_USER_CONFIG_DIR = old), add = TRUE)
+    dir <- tools::R_user_dir("corteza", "config")
+    dir.create(dir, recursive = TRUE)
+    writeLines(jsonlite::toJSON(list(jobs = list(model = "fixture-worker",
+                                                 reasoning_effort = "low")),
+                                auto_unbox = TRUE),
+               file.path(dir, "config.json"))
+    s <- in_project(base_cfg())
+    expect_true(isTRUE(s$talker))
+    # The talker stays on the bot's model; the doer takes the block's.
+    expect_identical(s$model_map$cloud, "fixture-model")
+    spec <- ns$job_worker_spec(s)
+    expect_identical(spec$model, "fixture-worker")
+    expect_identical(spec$reasoning_effort, "low")
+    st <- ns$bot_status_text(s)
+    expect_true(grepl("model: fixture-worker\nprovider: ollama\n", st,
+                      fixed = TRUE))
+    expect_true(grepl("replies: fixture-model (ollama)", st, fixed = TRUE))
+    # /model moves the work, and the next job runs on it.
+    model_cmd(s, "/model claude-opus-5-5 anthropic")
+    spec <- ns$job_worker_spec(s)
+    expect_identical(spec$model, "claude-opus-5-5")
+    expect_identical(spec$provider, "anthropic")
+    expect_true(grepl("model: claude-opus-5-5\nprovider: anthropic\n",
+                      ns$bot_status_text(s), fixed = TRUE))
+    # /effort likewise; default goes back to the block's.
+    effort <- function(text) {
+        ns$.effort_command(s, ns$.effort_parse_command(text), cfg = base_cfg())
+    }
+    expect_true(grepl("high (session override)", effort("/effort high"),
+                      fixed = TRUE))
+    expect_identical(ns$job_worker_spec(s)$reasoning_effort, "high")
+    expect_true(grepl("low (configuration)", effort("/effort default"),
+                      fixed = TRUE))
+    expect_identical(ns$job_worker_spec(s)$reasoning_effort, "low")
+})
+
 # ---- /context-edit: the conversation's, which the doer inherits ---------------
 local({
     s <- in_project(base_cfg())

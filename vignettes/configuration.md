@@ -1110,7 +1110,10 @@ A room works in the first of these that applies:
    directory. Room lists show it as having none, and it is named by its
    id or name, never by the scratch folder. A room an operator bound with
    `/cd none` works here, as does one whose bound directory is gone or lies
-   outside every root now.
+   outside every root now. So does a room whose state file the bot could
+   not read: the file is copied aside, and the room stays here, across
+   restarts, until an operator runs `/cd`, since what was lost may have
+   been `/cd none`.
 
 The project roots are `project_roots`, existing directories inside which a
 room may be bound. `bot_configure(project_roots = )` saves them, and
@@ -1482,7 +1485,10 @@ defaults unless the `talker` block names its own (`talker.reasoning_effort`
 and the others), since a model it names may refuse settings made for another.
 
 In a talker session `/model` and `/effort` change the work: the doer's model
-and effort, which the next job runs with. The talker follows `/model` unless
+and effort, which the next job runs with. The doer starts on the model and
+provider the config's `jobs` block names, if it names them, with that block's
+reasoning settings; the talker stays on the session's model, and the 2
+commands change the doer's from there. The talker follows `/model` unless
 the `talker` block names a model or a provider of its own, and its reasoning
 settings come from that block alone. `/status` names both models. Up to 0.8.0
 both commands changed the talker's alone. Column `talker` of the command

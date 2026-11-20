@@ -183,11 +183,37 @@ expect_null(other$thinking_budget_tokens)
 e$config$jobs$reviewer$reasoning_effort <- "low"
 expect_identical(corteza:::job_worker_spec(e, "reviewer")$reasoning_effort,
                  "low")
-# A doer moved to another model by jobs$model does not inherit them.
-e$config$jobs <- list(model = "claude-sonnet-5-5")
-expect_null(corteza:::job_worker_spec(e)$reasoning_effort)
-e$config$jobs$reasoning_effort <- "high"
-expect_identical(corteza:::job_worker_spec(e)$reasoning_effort, "high")
+# A doer moved to another model by jobs$model does not inherit them;
+# the talker stays on the session's model. talker_enable() reads the
+# jobs block, so the config is set before it.
+moved <- function(jobs) {
+    j <- corteza::new_session("matrix", provider = "anthropic",
+                              model_map = list(cloud = "claude-opus-5"),
+                              reasoning_effort = "xhigh")
+    j$config <- list(jobs = jobs)
+    corteza:::talker_enable(j, list(enabled = TRUE))
+    j
+}
+j <- moved(list(model = "claude-sonnet-5-5"))
+expect_identical(j$model_map$cloud, "claude-opus-5")
+expect_identical(j$doer_model, "claude-sonnet-5-5")
+expect_identical(corteza:::job_worker_spec(j)$model, "claude-sonnet-5-5")
+expect_null(corteza:::job_worker_spec(j)$reasoning_effort)
+j <- moved(list(model = "claude-sonnet-5-5", reasoning_effort = "high"))
+expect_identical(corteza:::job_worker_spec(j)$reasoning_effort, "high")
+expect_identical(j$doer_reasoning_default, "high")
+# A jobs block that names the session's own model keeps its settings.
+j <- moved(list(model = "claude-opus-5"))
+expect_identical(corteza:::job_worker_spec(j)$reasoning_effort, "xhigh")
+# Without talker mode the jobs block is read when a job starts, as before.
+n0 <- corteza::new_session("matrix", provider = "anthropic",
+                           model_map = list(cloud = "claude-opus-5"),
+                           reasoning_effort = "xhigh")
+n0$config <- list(jobs = list(model = "claude-sonnet-5-5"))
+expect_identical(corteza:::job_worker_spec(n0)$model, "claude-sonnet-5-5")
+expect_null(corteza:::job_worker_spec(n0)$reasoning_effort)
+n0$config$jobs$reasoning_effort <- "high"
+expect_identical(corteza:::job_worker_spec(n0)$reasoning_effort, "high")
 # Only the config's own effort when nothing was set on the session.
 c2 <- corteza::new_session("matrix", provider = "anthropic",
                            model_map = list(cloud = "claude-opus-5"))
