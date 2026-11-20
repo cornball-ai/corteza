@@ -1342,7 +1342,7 @@ Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
 
 ## Editors and other ACP clients
 
-`corteza acp` runs corteza as an agent of the Agent Client Protocol (ACP, version 1): an editor, or any other client that speaks it, starts the command and talks to it over standard input and output. Each session the client opens is a corteza session in the directory the client names, set up as `chat()` sets one up, with that directory's config, trust, tools and instructions. The directory must be an absolute path that exists; corteza creates none.
+`corteza acp` runs corteza as an agent of the Agent Client Protocol (ACP, version 1): an editor, or any other client that speaks it, starts the command and talks to it over standard input and output. It runs on Linux and macOS in this release; on Windows it says so and exits. Each session the client opens is a corteza session in the directory the client names, set up as `chat()` sets one up, with that directory's config, trust, tools and instructions. The directory must be an absolute path that exists; corteza creates none.
 
 ```sh
 corteza acp
