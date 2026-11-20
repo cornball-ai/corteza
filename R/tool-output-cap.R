@@ -225,7 +225,9 @@ admit_tool_result <- function(text, tool = "tool", store = .handle_store,
         return(text)
     }
     admitted <- text
-    on.exit(.audit_safe(.audit_tool_payload(.audit_runtime$active, text, admitted, tool)), add = TRUE)
+    on.exit(.audit_safe(.audit_tool_payload(.audit_runtime$active, text,
+                admitted, tool)),
+            add = TRUE)
     n_chars <- nchar(text)
     lines <- strsplit(text, "\n", fixed = TRUE)[[1L]]
     n_lines <- length(lines)
@@ -253,16 +255,16 @@ admit_tool_result <- function(text, tool = "tool", store = .handle_store,
         paste(.tool_output_how_read(stash$handle, whole), "Or use /last.")
     }
     admitted <- sprintf(paste0(
-                   "[tool output truncated]\n",
-                   "tool: %s\n",
-                   "original: %d lines, %d chars\n",
-                   "showing: first %d lines / %d chars\n",
-                   "full output stored as: %s\n",
-                   "%s\n\n%s"
+                               "[tool output truncated]\n",
+                               "tool: %s\n",
+                               "original: %d lines, %d chars\n",
+                               "showing: first %d lines / %d chars\n",
+                               "full output stored as: %s\n",
+                               "%s\n\n%s"
         ),
-            tool, n_lines, n_chars,
-            shown, min(preview_chars, n_chars),
-            stash$handle, how_line, preview)
+                        tool, n_lines, n_chars,
+                        shown, min(preview_chars, n_chars),
+                        stash$handle, how_line, preview)
     admitted
 }
 

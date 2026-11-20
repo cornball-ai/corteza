@@ -25,8 +25,8 @@
              call. = FALSE)
     }
     if (!is.null(value$strategy) && (!is.character(value$strategy) ||
-        length(value$strategy) != 1L || is.na(value$strategy) ||
-        !value$strategy %in% c("hybrid", "clm"))) {
+            length(value$strategy) != 1L || is.na(value$strategy) ||
+            !value$strategy %in% c("hybrid", "clm"))) {
         stop("context_edit strategy must be hybrid or clm", call. = FALSE)
     }
     if (!is.logical(value$enabled) || length(value$enabled) != 1L ||
@@ -215,9 +215,9 @@
                               state$messages[[id]]))
         if (length(found) == 1L && found < boundary &&
             (!.context_edit_human(history[[found]]) ||
-             (.context_edit_archives(session) &&
-              .context_edit_archivable_human(history[[found]]) &&
-              found < .context_edit_last_human(history)))) {
+                (.context_edit_archives(session) &&
+                    .context_edit_archivable_human(history[[found]]) &&
+                    found < .context_edit_last_human(history)))) {
             targets[[id]] <- list(kind = "message", index = found)
         }
     }
@@ -245,7 +245,8 @@
     label <- paste0("[", id, "]\n")
     if (inherits(content, "llm_content")) {
         part <- structure(list(text = label), class = "llm_text")
-        return(structure(c(list(part), unclass(content)), class = class(content)))
+        return(structure(c(list(part), unclass(content)),
+                         class = class(content)))
     }
     if (is.list(content)) {
         return(c(list(list(type = "text", text = label)), content))
@@ -280,13 +281,18 @@
     for (i in seq_len(max(0L, boundary - 1L))) {
         m <- history[[i]]
         human <- .context_edit_archives(session) &&
-            .context_edit_archivable_human(m) && i < .context_edit_last_human(history)
+        .context_edit_archivable_human(m) &&
+        i < .context_edit_last_human(history)
         if ((!human && !.context_edit_plain(m)) || identical(m, state$note) ||
             startsWith(.compact_entry_body(m), "[context note]\n") ||
             any(vapply(state$messages, identical, logical(1), m))) {
             next
         }
-        prefix <- if (human) "u" else "m"
+        if (human) {
+            prefix <- "u"
+        } else {
+            prefix <- "m"
+        }
         id <- .context_edit_label(.compact_entry_body(m), prefix)
         if (is.null(id) || id %in% names(state$messages)) {
             id <- .context_edit_id(state, prefix)
@@ -328,9 +334,9 @@
                              "drop removes entries (tool calls and results together).",
                              "replace summarizes entries, keeping the first ID and its tool call if any.",
                              "note replaces the working note with concise task facts, decisions, and next actions.",
-                             if (archive) {
-                                 "Older human turns [uN] may be dropped after vault filing; never replace them. The latest human turn is protected."
-                             } else "Human messages are protected.",
+            if (archive) {
+                "Older human turns [uN] may be dropped after vault filing; never replace them. The latest human turn is protected."
+            } else "Human messages are protected.",
                              "Instructions and the current tool batch are protected.",
                              "Edits are queued and validated after the complete tool batch."),
          input_schema = list(type = "object", properties = list(
@@ -452,11 +458,14 @@
     if (length(ids) && !all(ids %in% names(targets))) {
         stop("Unknown, stale, or protected context id", call. = FALSE)
     }
-    if (!is.null(args$text) && (!is.character(args$text) || length(args$text) != 1L || is.na(args$text))) {
+    if (!is.null(args$text) &&
+        (!is.character(args$text) || length(args$text) != 1L ||
+            is.na(args$text))) {
         stop("text must be a single string", call. = FALSE)
     }
     if (op == "replace" && any(vapply(targets[ids], function(target) {
-        target$kind == "message" && .context_edit_human(session$history[[target$index]])
+        target$kind == "message" &&
+        .context_edit_human(session$history[[target$index]])
     }, logical(1)))) {
         stop("Human turns may be filed and dropped, never replaced", call. = FALSE)
     }
@@ -483,8 +492,11 @@
     }
     for (edit in pending) {
         if (edit$op == "replace" && any(vapply(edit$targets, function(target) {
-            target$kind == "message" && .context_edit_human(history[[target$index]])
-        }, logical(1)))) stop("Human turns cannot be replaced", call. = FALSE)
+            target$kind == "message" &&
+            .context_edit_human(history[[target$index]])
+        }, logical(1)))) {
+            stop("Human turns cannot be replaced", call. = FALSE)
+        }
     }
     state <- .context_edit_state(session)
     drop_calls <- character()
@@ -723,7 +735,11 @@
         status <- "unavailable: journal_enabled is false"
     }
     sprintf("Context editing: %s (cadence: %s)%s.", status, cfg$cadence,
-            if (identical(cfg$strategy, "clm")) "; pure CLM, automatic summaries off" else "")
+        if (identical(cfg$strategy, "clm")) {
+            "; pure CLM, automatic summaries off"
+        } else {
+            ""
+        })
 }
 
 .context_edit_command <- function(session, arg = "status") {

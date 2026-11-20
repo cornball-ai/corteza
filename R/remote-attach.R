@@ -1,15 +1,20 @@
 .remote_attach <- function(ctx, choice) {
     id <- ctx$disk_session$sessionId %||% ctx$session$sessionId
     dir <- .remote_request(choice$bot$owner, choice$room,
-        unlist(choice$bot$operators), session_id = id, cwd = ctx$cwd)
+                           unlist(choice$bot$operators), session_id = id,
+                           cwd = ctx$cwd)
     ctx$remote_dir <- dir
     ctx$session$remote_dir <- dir
     ctx$remote_consumed <- character()
     cat("Waiting for ", choice$bot$owner, " to attach ",
         choice$room %||% paste("session", id), "...\n", sep = "")
     accepted <- .remote_wait(ctx, function() .remote_read_file(file.path(dir, "accepted.json")))
-    if (is.null(accepted)) stop("Bot did not acknowledge within 60 seconds.", call. = FALSE)
-    if (!is.null(accepted$error)) stop(accepted$error, call. = FALSE)
+    if (is.null(accepted)) {
+        stop("Bot did not acknowledge within 60 seconds.", call. = FALSE)
+    }
+    if (!is.null(accepted$error)) {
+        stop(accepted$error, call. = FALSE)
+    }
     cat("Matrix room: ", accepted$room, "\n", sep = "")
     accepted
 }
@@ -22,9 +27,10 @@
     .repl_clear(ctx)
     accepted <- .remote_attach(ctx, list(bot = bot, room = NULL))
     .remote_append(old_dir, "out", list(type = "text", text = paste0(
-        "New conversation: ", .remote_room_link(accepted$room, bot$owner))))
+                "New conversation: ", .remote_room_link(accepted$room,
+                    bot$owner))))
     .remote_emit(ctx, paste0("New CLI conversation: ", ctx$disk_session$sessionId,
-        ". Send a task to continue. /clear starts another conversation; /rc off disconnects."))
+                             ". Send a task to continue. /clear starts another conversation; /rc off disconnects."))
     invisible(NULL)
 }
 

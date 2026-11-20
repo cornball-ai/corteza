@@ -4,7 +4,9 @@
 .remote_room_indexes <- new.env(parent = emptyenv())
 
 .remote_room_index_key <- function(owner) {
-    digest::digest(list(normalizePath(path.expand(.remote_root()), mustWork = FALSE), owner))
+    digest::digest(list(normalizePath(path.expand(.remote_root()),
+                                      mustWork = FALSE),
+                        owner))
 }
 
 .remote_room_index <- function(owner) {
@@ -18,7 +20,8 @@
     for (path in paths) {
         binding <- .remote_read_file(path)
         if (identical(binding$owner, owner) && is.character(binding$room) &&
-            length(binding$room) == 1L && !is.na(binding$room) && nzchar(binding$room)) {
+            length(binding$room) == 1L && !is.na(binding$room) &&
+            nzchar(binding$room)) {
             index[[binding$room]] <- path
         }
     }
@@ -29,7 +32,8 @@
 .remote_room_write <- function(path, binding) {
     .remote_write(path, binding)
     key <- .remote_room_index_key(binding$owner)
-    if (!is.null(binding$room) && exists(key, .remote_room_indexes, inherits = FALSE)) {
+    if (!is.null(binding$room) &&
+        exists(key, .remote_room_indexes, inherits = FALSE)) {
         index <- .remote_room_indexes[[key]]
         index[[binding$room]] <- path
     }

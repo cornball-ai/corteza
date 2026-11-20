@@ -264,7 +264,11 @@ journal_entries_since <- function(session, mark) {
     seqs <- seq_len(state$seq)
     seqs <- seqs[seqs > .journal_mark_seq(mark, state)]
     first <- TRUE
-    segments <- if (length(seqs)) journal_load(state$dir)$segments else list()
+    if (length(seqs)) {
+        segments <- journal_load(state$dir)$segments
+    } else {
+        segments <- list()
+    }
     for (s in seqs) {
         seg <- segments[[s]]
         skip <- if (first) {
@@ -319,7 +323,9 @@ journal_load <- function(dir) {
         if (!is.null(seg$reverse_delta)) {
             seg$after <- lapply(seg$after_refs, function(id) {
                 if (!exists(id, entries, inherits = FALSE)) {
-                    assign(id, .journal_read_json(file.path(dir, "entries", paste0(id, ".json"))), entries)
+                    assign(id,
+                           .journal_read_json(file.path(dir, "entries",
+                                paste0(id, ".json"))), entries)
                 }
                 get(id, entries, inherits = FALSE)
             })
@@ -417,7 +423,7 @@ journal_history <- function(dir) {
 # advances only once the live snapshot acknowledging the segment is on
 # disk; until then the segment is a stray the next rewrite overwrites.
 .journal_commit <- function(state, before, after, reason, summary = NULL,
-                             edits = NULL) {
+                            edits = NULL) {
     seq <- state$seq + 1L
     path <- .journal_write_segment(state, seq, before, after, reason,
                                    summary = summary, edits = edits)
@@ -456,7 +462,8 @@ journal_history <- function(dir) {
     if (!is.null(edits)) {
         hashes <- vapply(after, digest::digest, character(1))
         entry_dir <- file.path(state$dir, "entries")
-        dir.create(entry_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+        dir.create(entry_dir, recursive = TRUE, showWarnings = FALSE,
+                   mode = "0700")
         envelope$after_refs <- lapply(after, function(entry) {
             # Half a SHA-256 names an entry: 128 bits is ample within one
             # session, and a room's journal path with the full digest runs

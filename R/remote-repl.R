@@ -6,8 +6,12 @@
         parts <- parts[-c(1L, 2L)]
     }
     room <- trimws(paste(parts, collapse = " "))
-    if (!nzchar(room)) room <- ctx$config$remote_control$room
-    if (identical(room, "")) room <- NULL
+    if (!nzchar(room)) {
+        room <- ctx$config$remote_control$room
+    }
+    if (identical(room, "")) {
+        room <- NULL
+    }
     bots <- .remote_bots()
     if (!is.null(owner)) bots <- Filter(function(x) identical(x$owner, owner),
                                         bots)
@@ -36,7 +40,8 @@
 }
 
 .remote_approve <- function(ctx, call, decision, timeout = 600) {
-    local_reason <- .approval_remote_problem(call, decision, ctx$session$secret_values)
+    local_reason <- .approval_remote_problem(call, decision,
+        ctx$session$secret_values)
     if (!is.null(local_reason)) {
         .remote_emit(ctx, local_reason)
         return(FALSE)
@@ -85,7 +90,8 @@
             .remote_emit(ctx, paste("Connected to the live CLI in", ctx$cwd))
             next
         }
-        if (identical(prompt, "> ") && text %in% c("/clear", "/reset", "/new")) {
+        if (identical(prompt, "> ") &&
+            text %in% c("/clear", "/reset", "/new")) {
             .remote_clear(ctx)
             next
         }
@@ -130,16 +136,19 @@
     choice <- .remote_choose(ctx, text)
     session <- ctx$session
     remote_observer <- NULL
-    saved <- list(read_input = ctx$read_input, render_reply = ctx$render_reply,
+    saved <- list(read_input = ctx$read_input,
+                  render_reply = ctx$render_reply,
                   remote_flush = ctx$remote_flush,
-                  eof_message = ctx$eof_message, approval_cb = session$approval_cb,
-                  task_approval_cb = session$task_approval_cb, on_tool = session$on_tool)
+                  eof_message = ctx$eof_message,
+                  approval_cb = session$approval_cb,
+                  task_approval_cb = session$task_approval_cb,
+                  on_tool = session$on_tool)
     on.exit({
         if (!is.null(ctx$remote_dir)) {
             tryCatch(.remote_write(file.path(ctx$remote_dir, "closed.json"), list(closed = TRUE)),
-                error = function(e) message("Remote control close: ", conditionMessage(e)))
+                     error = function(e) message("Remote control close: ", conditionMessage(e)))
             tryCatch(.remote_emit(ctx, "Remote control disconnected. The CLI session remains open locally."),
-                error = function(e) message("Remote control notice: ", conditionMessage(e)))
+                     error = function(e) message("Remote control notice: ", conditionMessage(e)))
         }
         ctx$read_input <- saved$read_input
         ctx$render_reply <- saved$render_reply
@@ -176,14 +185,16 @@
             return(invisible(NULL))
         }
         .remote_append(ctx$remote_dir, "out", list(type = "text", text = frame$text,
-            audit = acc$audit))
+                audit = acc$audit))
         acc <<- rooms_activity_new()
         last_flush <<- as.numeric(Sys.time())
         invisible(NULL)
     }
     remote_observer <- function(event) {
         rooms_activity_add(acc, rooms_activity_record(event))
-        if (as.numeric(Sys.time()) - last_flush >= 15) ctx$remote_flush()
+        if (as.numeric(Sys.time()) - last_flush >= 15) {
+            ctx$remote_flush()
+        }
     }
     session$on_tool <- c(session$on_tool, list(remote_observer))
     tryCatch(run_repl_loop(ctx, keep_jobs = TRUE), interrupt = function(e) invisible(NULL))

@@ -4,7 +4,7 @@
 # `context_edit` and `context_vault` stand over the account's.
 .context_room_config <- function(cfg, talker = bot_talker_config(cfg)) {
     tryCatch(list(editing = utils::modifyList(cfg$context_edit %||% list(),
-                                             talker$context_edit %||% list()),
+                talker$context_edit %||% list()),
                   vault = talker$context_vault %||% cfg$context_vault),
              error = function(e) {
         warning("Conversation context editing disabled: ", conditionMessage(e),

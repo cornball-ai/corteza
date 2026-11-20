@@ -102,7 +102,8 @@ auto_log_read <- function(path) {
     if (!file.exists(path)) {
         return(list(start = NULL, records = list(), end = NULL,
                     n_malformed = 0L, malformed_lines = integer(),
-                    torn_tail = FALSE, malformed_tail = FALSE, interior_damage = FALSE))
+                    torn_tail = FALSE, malformed_tail = FALSE,
+                    interior_damage = FALSE))
     }
     lines <- readLines(path, warn = FALSE)
     recs <- lapply(lines, function(l) {

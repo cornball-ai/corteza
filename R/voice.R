@@ -134,14 +134,14 @@ voice_state <- function(cfg_fn, hooks = list()) {
                      post = function(room_id, text) {
         session <- voice_room_session(st, room_id)
         bot_event_id(.audit_delivery(room_id, text,
-            chat.api::chat_send(.voice_chat(st), room_id, text),
-            session = session, ref = session$last_turn_audit))
+                                     chat.api::chat_send(.voice_chat(st), room_id, text),
+                                     session = session, ref = session$last_turn_audit))
     },
                      edit = function(room_id, event_id, text) {
         session <- voice_room_session(st, room_id)
         .audit_delivery(room_id, text,
-            chat.api::chat_edit(.voice_chat(st), room_id, event_id, text),
-            session = session, operation = "edit", event_id = event_id)
+                        chat.api::chat_edit(.voice_chat(st), room_id, event_id, text),
+                        session = session, operation = "edit", event_id = event_id)
     },
                      members = function(room_id) {
         chat.api::chat_members(.voice_chat(st), room_id)

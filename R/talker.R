@@ -149,8 +149,7 @@ talker_enable <- function(session, talker = list()) {
             model <- default_provider_model(provider)
             if (is.null(model)) {
                 stop("talker$provider '", provider,
-                     "' has no default model; set talker$model",
-                     call. = FALSE)
+                     "' has no default model; set talker$model", call. = FALSE)
             }
         }
     }
