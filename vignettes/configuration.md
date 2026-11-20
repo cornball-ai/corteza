@@ -780,6 +780,13 @@ where earlier versions kept these answers, is not read, trusted or not:
 the terminal says so when it starts. `/permissions` lists what is saved
 for the directory.
 
+The answers cover a talker's delegated jobs as well. A tool you allowed
+always in the directory runs in a job without a question, except where
+the credential rule asks, and a job's question offers "always" beside
+yes and no, kept as the terminal's own prompt keeps it. In `chat()` an
+"always" lasts for the session, from either prompt. A room's jobs take
+none of these answers: a room's approvers answer there.
+
 The keys below apply to what is left. None of them turns a refusal into
 a run.
 
@@ -877,8 +884,8 @@ A talker's delegated jobs are covered too. The doer reads the mode
 before each call, so `/permissions review` typed while a job runs
 reaches its next call. The reviewer judges a job's call by the
 conversation that asked for the job and the task the talker wrote.
-Your "allow always" answers cover the session's own calls and not a
-job's, as in a room: a job's call goes to the reviewer, then to you.
+Your "allow always" answers cover a job's calls as they cover the
+session's own, before the reviewer is asked.
 
 These keys are read from the user's config file only. A project's
 `.corteza/config.json` cannot set them.

@@ -298,8 +298,14 @@ reaches its next call; a room's worker keeps its room's gate. What the
 rules leave open comes to the job pump with `route` "monitor", and
 `.repl_job_review()` asks the reviewer, judged by the conversation that
 asked for the job (`origin$conversation`) and the task the talker
-wrote. A job's calls never take the terminal's "allow always" answers,
-as a room's never do.
+wrote. Before the reviewer, `.repl_job_answered()` asks the session's
+callback's `answered` rule, given the rule the request records
+(`rule`, written by `job_approval_request()`): a tool allowed always
+answers a job's call as it answers the session's own, never the
+credential rule's ask, and a request that names no rule is asked. The
+job's prompt offers "always" through the callback's `always` attribute
+(`.repl_job_always()`), so the terminal saves it for the directory and
+`chat()` holds it for the session. A room's jobs take none of these.
 
 ## Talker mode (`R/talker.R`)
 
