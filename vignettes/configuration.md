@@ -1273,6 +1273,17 @@ A room has no transcript. How recently it was used is the modification time
 of `live.json` in its journal folder, a file that is not there before the
 session's first turn.
 
+## What a delegated job obeys
+
+A delegated job runs with the model, provider, reasoning settings and limits
+its conversation has when the job starts, in a worker that may have run
+earlier jobs. While it runs it follows the conversation's `/plan`,
+`/permissions` and `/dryrun`: the worker checks them before each call, and
+again just before the call runs, so a `/plan` typed while a call waits for
+your approval stops that call. A worker cannot end plan mode; you do. After
+`/clear`, a job started before it keeps the settings its conversation last
+had, and `/cancel` stops it.
+
 ## Incomplete worker jobs
 
 A worker that exhausts its tool-turn or output budget is recorded as

@@ -1,3 +1,14 @@
+# corteza 0.8.0.21
+
+- A job's worker obeys its conversation's plan mode, approval mode and
+  dry run. Each job applies its whole spec when it starts (provider,
+  model, reasoning settings, plan mode, tools, turn limit), and the
+  worker reads what its conversation allows before each tool call and
+  again just before the call runs, so a `/plan`, `/permissions` or
+  `/dryrun` typed while a job runs reaches its next call. A record the
+  worker cannot read refuses every call. A worker cannot end plan mode;
+  the person does.
+
 # corteza 0.8.0.20
 
 - Each session takes its tools once, when it starts: corteza's own and
