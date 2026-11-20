@@ -186,6 +186,17 @@ talker_enable <- function(session, talker = list()) {
     session$tools_filter <- TALKER_TOOLS
     session$system <- paste(c(session$system, TALKER_GUIDANCE),
                             collapse = "\n\n")
+    # And a source of the session's context, ordered after every other,
+    # so a rebuild of the context (the terminal's /clear, the archival
+    # runtime), which passes these sources back, renders it where it is
+    # now. A worker builds its prompt from sources of its own
+    # (job_worker_context()), so it never reaches a doer.
+    guidance <- context_text_source("talker_guidance", "runtime",
+                                    TALKER_GUIDANCE, 1000,
+                                    "corteza::talker_enable", "session")
+    session$context_prefix_sources <- c(Filter(function(x) {
+        !identical(x$id, "talker_guidance")
+    }, session$context_prefix_sources %||% list()), list(guidance))
     session$talker <- TRUE
     invisible(session)
 }

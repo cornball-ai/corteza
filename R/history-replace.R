@@ -130,6 +130,10 @@ history_replace <- function(session, after, reason, before = NULL,
     journal_rewrite(session, before, stripped$history, reason,
                     summary = summary, edits = edits)
     session$history <- stripped$history
+    # A rewrite that may have taken the notes of mode and task changes
+    # with it: the next prompt states the session again
+    # (R/request-prefix.R).
+    .prefix_history_rewritten(session, reason)
     if (stripped$removed > 0L) {
         log_event("thinking_removed", reason = reason,
                   blocks = stripped$removed)

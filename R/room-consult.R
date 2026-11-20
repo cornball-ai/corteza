@@ -3,7 +3,9 @@
 # leaving both live conversations and the destination's doer available.
 .room_consult_tools <- function(tools, session) {
     tools <- Filter(function(t) !identical(t$name, "ask_room"), tools)
-    if (!is.function(session$ask_room) || isTRUE(session$plan_mode)) {
+    # Listed in plan mode too, where policy() refuses the call
+    # (`continue`): the list stays the session's (WP14).
+    if (!is.function(session$ask_room)) {
         return(tools)
     }
     ensure_skills()
@@ -32,8 +34,10 @@
     force(sender)
     force(origin)
     force(new_session)
-    session$ask_room <- if (isTRUE(cfg$room_consultation) &&
-        isTRUE(sender %in% bot_operators(cfg))) {
+    # Bound whoever sent the message, so the tool list stays the
+    # session's (WP14): .room_consult_submit() refuses anyone but an
+    # operator at the call.
+    session$ask_room <- if (isTRUE(cfg$room_consultation)) {
         function(room, question, thread = NULL) {
             .room_consult_submit(session, cfg, chat, sender, origin, room,
                                  question, thread, new_session)

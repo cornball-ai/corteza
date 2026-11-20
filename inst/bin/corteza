@@ -48,7 +48,10 @@ parse_args <- function() {
     dry_run = config$dry_run,  # Dry-run mode
     context_edit = NULL,
     trace = isTRUE(config$trace) || isTRUE(getOption("corteza.trace", FALSE)),
-    web_search = config$web_search  # Provider-native search (NULL = default on)
+    web_search = config$web_search,  # Provider-native search (NULL = default on)
+    # The config keys a flag on this command line set; /clear keeps
+    # these over the config file (ctx$config_set).
+    config_set = character()
   )
 
   i <- 1
@@ -62,6 +65,7 @@ parse_args <- function() {
       i <- i + 2
     } else if (arg == "--base-url" && i < length(args)) {
       opts$base_url <- args[i + 1]
+      opts$config_set <- union(opts$config_set, "base_url")
       i <- i + 2
     } else if (arg == "--port" && i < length(args)) {
       opts$port <- as.integer(args[i + 1])
@@ -83,6 +87,7 @@ parse_args <- function() {
       i <- i + 2
     } else if (arg == "--dry-run") {
       opts$dry_run <- TRUE
+      opts$config_set <- union(opts$config_set, "dry_run")
       i <- i + 1
     } else if (arg == "--context-edit") {
       opts$context_edit <- TRUE
@@ -857,6 +862,10 @@ run_agent <- function(opts) {
   ctx$disk_session <- list(session = session, sessionId = session$sessionId,
                            resumed = !is.null(opts$session))
   ctx$config <- config
+  # What the flags given set over the config file, kept when /clear
+  # builds the next conversation's config (corteza:::.repl_session_rebuild()).
+  # A key no flag set comes from the file again.
+  ctx$config_set <- opts$config_set
   ctx$cwd <- cwd
   ctx$ws_enabled <- ws_enabled
   ctx$provider <- provider

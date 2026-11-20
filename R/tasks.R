@@ -97,36 +97,17 @@ task_update_apply <- function(session, index, status) {
 }
 
 #' Static "how to use task tools" addendum for the system prompt.
-#' Shown on every turn (even when the list is empty) so the LLM
-#' knows when to bring up the tools in the first place.
+#' Part of the session's fixed system text (R/request-prefix.R), even
+#' when the list is empty, so the LLM knows when to bring up the tools
+#' in the first place.
 #'
-#' `auto = TRUE` swaps the attended ask-first / wait-for-approval flow
-#' for the unattended one: an auto run has no human to answer clarifying
-#' questions or approve a plan, so those steps would hang it. The plan is
-#' accepted automatically (see `.task_read_approval()`), and the model is
-#' told to assume rather than ask.
+#' It describes the attended flow. An /auto run has no human to answer
+#' clarifying questions or approve a plan, so those steps would hang it:
+#' the run's note (.auto_note()) tells the model to assume rather than
+#' ask, and the plan is accepted automatically (see
+#' `.task_read_approval()`).
 #' @noRd
-.task_tool_addendum <- function(auto = FALSE) {
-    if (isTRUE(auto)) {
-        return(paste(
-                     "",
-                     "# Multi-step requests",
-                     "",
-                     paste("For a request that takes more than a couple of",
-                           "steps, track it with a plan: call task_create with",
-                           "a numbered list of concrete steps, then mark each",
-                           "task in_progress when you start it and completed",
-                           "when done via task_update. Keep at most one task",
-                           "in_progress at a time."),
-                     "",
-                     paste("This is an unattended run. Do not stop to ask",
-                           "clarifying questions or to wait for plan approval:",
-                           "make reasonable assumptions and proceed. The plan you",
-                           "propose is accepted automatically. Skip the task list",
-                           "for one-shot or single-step work."),
-                     sep = "\n"
-            ))
-    }
+.task_tool_addendum <- function() {
     paste(
           "",
           "# Multi-step requests",
@@ -153,8 +134,8 @@ task_update_apply <- function(session, index, status) {
     )
 }
 
-#' Format the active task list for the system-prompt addendum the
-#' LLM sees each turn. Plain text; the LLM doesn't see ANSI.
+#' Format the active task list for the model. Plain text; the LLM
+#' doesn't see ANSI.
 #' @noRd
 format_task_list_prompt <- function(tasks) {
     if (length(tasks) == 0L) {
@@ -197,20 +178,31 @@ format_task_list_prompt <- function(tasks) {
     tools[!is_task]
 }
 
-#' Compose the system prompt for this turn. Appends the static "how
-#' to use task tools" addendum and any active task list only on
-#' channels that actually expose the task tools, so Matrix sessions
-#' aren't told to call tools that aren't there.
+#' Compose a system prompt with the task text. Appends the static "how
+#' to use task tools" addendum and any task list given only on channels
+#' that actually expose the task tools, so Matrix sessions aren't told
+#' to call tools that aren't there. A session's prefix passes no tasks:
+#' the live list reaches the model as a note (.task_list_note()).
 #' @noRd
-task_compose_system <- function(base_system, tasks, channel = NULL,
-                                auto = FALSE) {
+task_compose_system <- function(base_system, tasks, channel = NULL) {
     if (!.task_channel_supports_tasks(channel)) {
         return(base_system)
     }
     parts <- c(if (!is.null(base_system) && nzchar(base_system)) base_system,
-               .task_tool_addendum(auto = auto),
+               .task_tool_addendum(),
         if (length(tasks) > 0L) format_task_list_prompt(tasks))
     paste(parts, collapse = "\n")
+}
+
+#' The note the next prompt opens with when the task list changed
+#' (R/request-prefix.R): the whole list, or that it is empty.
+#' @noRd
+.task_list_note <- function(tasks) {
+    if (!length(tasks)) {
+        return("[The task list is empty.]")
+    }
+    lines <- sub("^\n# Active tasks\n\n", "", format_task_list_prompt(tasks))
+    paste0("[Task list:\n", lines, "]")
 }
 
 #' Per-status ANSI color, used by both the full-list display and the

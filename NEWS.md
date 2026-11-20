@@ -1,3 +1,27 @@
+# corteza 0.8.0.32
+
+- A session's system text and tool list stay fixed for the session. A
+  change to either made the provider read the whole history again, and
+  a model that signs its thinking against the request refused the
+  replay. Plan mode, an `/auto` run and the task list now change
+  neither: each change reaches the model as a note at the head of the
+  next prompt, and permission is checked at the call. `exit_plan_mode`
+  is refused outside plan mode, and what an `/auto` run may not call is
+  refused when called.
+- `send_room_file` and `ask_room` stay listed in a room's session
+  whoever sent the message, and refuse anyone but an operator at the
+  call.
+- The git and search tools are looked for once per session, so a
+  `git init` mid-session adds no tool.
+- The terminal's `/clear` builds the next conversation's config, tool
+  table and system text again, so `/trust yes` takes effect at the next
+  conversation. What a flag or a command set in this process
+  (`--dry-run`, `--base-url`, `/permissions`, `/dryrun`,
+  `/context-edit`) carries over. A talker keeps its guidance when
+  `/clear` or the archival runtime builds the text again.
+- `/context`, `/status`, `/tools`, `/doctor` and the meter count the
+  system text and tools the request sends.
+
 # corteza 0.8.0.31
 
 - A bot's room works where an operator binds it with `/cd`, inside the

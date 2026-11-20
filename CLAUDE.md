@@ -126,6 +126,41 @@ start (`trust_at_start()`); a room is told once (`bot_trust_notice()`)
 and only an operator may answer. Trust is not a sandbox: tools still
 read files in an untrusted directory as tool results.
 
+## What a session sends (`R/request-prefix.R`)
+
+A session's system text and tool list are fixed (WP14, decision S1):
+`session_request_prefix()` composes them once and caches them on the
+session, keyed by a digest of what they are made from
+(`.prefix_inputs()`: the system text, the filter, the table, the
+channel, the talker, whether the session can be in plan mode, the room
+tools it holds). A change to any of those composes it again and logs
+`request_prefix_reset` with the parts that changed. The availability
+tests run once for a table and a filter (`.prefix_base_tools()`).
+`turn()` adds only the context-edit tools (the stated exception) and
+the web-search drop per request.
+
+Nothing edits the list by mode. A mode or a task change reaches the
+model as a note at the head of the next prompt (`.prefix_notes()`,
+compared with `session$.prefix_seen`, which `turn()` sets once the
+prompt is mirrored). `history_replace()` clears `.prefix_seen` for any
+rewrite not in `.prefix_keeps_notes`, so a compaction restates the
+session. Permission is checked at the call: `policy()` for plan mode;
+the handler refuses `exit_plan_mode` outside plan mode and what an
+`/auto` run may not call (`.auto_tool_allowed()`); a job's limit is
+`job_allowed_tools`. `exit_plan_mode` is listed where a session can be
+in plan mode (`.prefix_plan_capable()`: the terminal and `chat()` with
+no tool filter, or any session once it has been in plan mode), never
+for a worker or a monitor. A job that may not
+search is a deliberate reset (`.prefix_search_reset()`), before the run
+and after it, ahead of the checkpoint.
+
+Anything that shows or sends the session's request outside `turn()`
+(`/context`, `/status`, `/tools`, `/doctor`, the meter, a compaction, a
+subagent's token count) reads `session_request_parts()`, never
+`skills_as_api_tools()`. The terminal's `/clear` builds the next
+session again (`.repl_session_rebuild()`): config, table, system text
+and trust, keeping the keys a flag or command set (`ctx$config_set`).
+
 ## Policy engine (`R/policy.R`)
 
 Every tool call passes through `policy(call, config)` before dispatch.
