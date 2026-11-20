@@ -124,6 +124,11 @@ job_authority_read <- function(id, session_key) {
 # Read a session's authority into it, before a call and again before
 # the call runs (turn()'s handler). A session with no `authority`
 # function, everything but a worker, has nothing to read.
+#
+# Review is a gate: a worker that holds one (.job_worker_child_review_gate())
+# uses it while the record says "review", so a /permissions typed while
+# a job runs reaches its next call. A room's worker holds none; its
+# supervision comes with its job.
 .authority_apply <- function(session) {
     if (!is.function(session$authority)) {
         return(list(ok = TRUE))
@@ -137,6 +142,11 @@ job_authority_read <- function(id, session_key) {
         session$dry_run <- a$dry_run
         session$config$dry_run <- a$dry_run
         session$config$approval_mode <- a$approval_mode
+        if (is.function(session$.job_review_gate)) {
+            session$auto_gate <- if (identical(a$approval_mode, "review")) {
+                session$.job_review_gate
+            }
+        }
     }
     a
 }

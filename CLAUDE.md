@@ -292,6 +292,17 @@ installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set
 `"review"` (`load_config()`).
 
+A talker's doer is reviewed too. Its worker holds a review gate
+(`.job_worker_child_review_gate()`: the same rules, for what would
+prompt only), which `.authority_apply()` switches on while the job's
+record says `"review"`, so a `/permissions` typed while a job runs
+reaches its next call; a room's worker keeps its room's gate. What the
+rules leave open comes to the job pump with `route` "monitor", and
+`.repl_job_review()` asks the reviewer, judged by the conversation that
+asked for the job (`origin$conversation`) and the task the talker
+wrote. A job's calls never take the terminal's "allow always" answers,
+as a room's never do.
+
 ## Talker mode (`R/talker.R`)
 
 A talker session has read-only tools and `delegate`; work goes to a
@@ -300,7 +311,9 @@ doer, a worker process of the conversation's own (`R/job-worker.R`).
 decides without it. `bot_talker_config()` gives a bot's rooms TRUE
 unless the bot's tools are restricted (`tools_filter`: a doer gets
 `SUBAGENT_PRESETS$work` whatever the list says) or the room has no
-directory; the terminal passes FALSE until WP20c. `talker_enable()`
+directory. The terminal's default is TRUE as well (`.repl_talker_default()`:
+the CLI sets `ctx$talker_default`, and restricted tools leave it off) and
+`chat()`'s FALSE. `talker_enable()`
 moves the session's model, provider and reasoning settings to the doer
 (`doer_*`) and runs the talker on `talker.model`, else the session's
 own model; `talker_follows` says it has no model or provider of its
@@ -309,6 +322,19 @@ own. `/model` and `/effort` act on the doer (`.session_work_model()`,
 talker following `/model` where `talker_follows`. Column `talker` of
 `corteza_commands()` says what each room command acts on, and
 `test_talker_commands.R` holds the room's to it.
+
+At the terminal and in `chat()`, `run_repl_loop()` stays with a job the
+turn handed off (`.repl_attach_jobs()`): it pumps on a short sleep and
+prints the worker's steps, an approval question and the result as they
+come. Ctrl+C returns the prompt and leaves the job running; `/jobs`
+stays with it again. A terminal driven from a room does not stay.
+`/provider` and `/max-tokens` are the doer's (`.repl_provider_command()`,
+`doer_max_tokens`, carried in the job's spec); `/review`, `/doctor` and
+`/config` use the work's model and provider (`.repl_work_route()`); a
+settled job's usage joins `/spent` and its result the transcript; a
+talker session starts no `/auto` run. Every terminal row of
+`corteza_commands()` has a `talker` value, and `test_repl_talker.R`
+types each command into a talker session and holds the table to it.
 
 ## Where a room works (`R/room-binding.R`)
 

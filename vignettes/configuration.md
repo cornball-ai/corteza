@@ -871,8 +871,14 @@ call, allowed ones included.
 turns it off. Your config can turn it on for every session. A project's
 config cannot: who reviews the agent is yours to choose. In a Matrix
 room, `auto_approve_asks` is this mode. An `/auto` run keeps its own
-monitor, since nobody is at its prompt. A talker's delegated jobs still
-ask you for each call.
+monitor, since nobody is at its prompt.
+
+A talker's delegated jobs are covered too. The doer reads the mode
+before each call, so `/permissions review` typed while a job runs
+reaches its next call. The reviewer judges a job's call by the
+conversation that asked for the job and the task the talker wrote.
+Your "allow always" answers cover the session's own calls and not a
+job's, as in a room: a job's call goes to the reviewer, then to you.
 
 These keys are read from the user's config file only. A project's
 `.corteza/config.json` cannot set them.
@@ -1448,10 +1454,11 @@ leaves `ack` out.
 A bot's room answers through a talker: a session with read-only tools that
 hands work needing edits, commands or tests to a doer, a worker process of the
 conversation's own, and goes on answering while the doer works. The result
-arrives as its own message. From 0.8.1 this is the default in a bot's rooms.
-The terminal and `chat()` use it only where the config turns it on.
+arrives as its own message. From 0.8.1 this is the default in a bot's rooms
+and at the terminal, which says so when it starts. `chat()` uses it only where
+the config turns it on, since its R session is yours to share with the agent.
 
-To turn it off for a bot, put this in its config:
+To turn it off, put this in the config, the bot's or your own:
 
 ```json
 "talker": {"enabled": false}
@@ -1460,8 +1467,16 @@ To turn it off for a bot, put this in its config:
 A room is no talker by default in 2 cases. Where the bot's tools are
 restricted (`tools_filter`, from `bot_configure()` or the run), since a doer
 gets the work tools whatever that list says. And where the room has no
-directory, since such a room hands no work on. `"enabled": true` turns it on
-in either.
+directory, since such a room hands no work on. At the terminal the first
+holds as well: `--tools`, or `tools` in the config, leaves talker mode off.
+`"enabled": true` turns it on in any of these.
+
+At the terminal and in `chat()`, a turn that hands work to the doer stays
+with it: the doer's steps, an approval it asks for and its result print as
+they come, and the prompt returns when the job ends. Ctrl+C returns the prompt
+and leaves the job running; `/jobs` lists the jobs and stays with an open one
+again. A terminal driven from a room with `/remote-control` does not stay, so
+the room's next message is read as before.
 
 The talker runs on the bot's own model, as the doer does. Up to 0.8.0 it ran
 on a fast model of its provider's (Claude Haiku 4.5 for `anthropic` and
@@ -1492,8 +1507,22 @@ commands change the doer's from there. The talker follows `/model` unless
 the `talker` block names a model or a provider of its own, and its reasoning
 settings come from that block alone. `/status` names both models. Up to 0.8.0
 both commands changed the talker's alone. Column `talker` of the command
-table (`corteza:::corteza_commands()`) says what each command a room takes
-acts on: the talker's conversation, the doer and its jobs, or both.
+table (`corteza:::corteza_commands()`) says what each command acts on: the
+talker's conversation, the doer and its jobs, or both.
+
+At the terminal, `/provider` and `/max-tokens` are the doer's too: the
+provider follows `/model`'s rule, and the output budget is the next job's,
+while the talker's replies keep theirs. A conversation you resume
+(`--resume`) starts its doer as a new conversation does: where the `jobs`
+block names a model, the doer runs on it again, whatever `/model` chose
+before. `/review` reviews with the doer's model, and `/doctor` and
+`/config` name it. `/spent` counts each job with the talker's replies, in
+the conversation that asked for it, and a job's result goes into that
+conversation's transcript, so `--resume` brings it back. `/r` runs R in
+the terminal's own process and sends its output with your next message;
+the doer's R objects stay in the doer. An `/auto` run works with the
+session's own tools, which in a talker session only read and hand work on,
+so there `/auto` says to turn talker mode off and starts nothing.
 
 Without talker mode, `run_r` in a bot runs in the bot's own process, which all
 its rooms share, so one room's R objects are the others'. A talker's work runs

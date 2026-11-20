@@ -28,7 +28,6 @@ That's it. You're talking to an AI agent that can read files, run shell commands
 corteza | claude-sonnet-4-6 @ anthropic
 
 > What R packages are loaded?
-  [run_r] Running: loadedNamespaces()
 12 packages loaded: base, utils, stats, ...
 
 > corteza --provider ollama --model llama3.2
@@ -60,6 +59,12 @@ corteza --provider moonshot --model kimi-k2
 corteza --provider openai_codex  # ChatGPT subscription (log in once, see API Keys)
 corteza --provider anthropic_claude  # Claude subscription (log in once, see API Keys)
 ```
+
+The terminal answers as a talker: it reads and answers itself, and hands
+work that needs edits, commands or tests to a doer, an R process of the
+conversation's own, then prints the doer's steps and result as they come.
+`"talker": {"enabled": false}` in the config turns this off; see
+`vignette("configuration")`.
 
 Context indicators are configurable. By default, the CLI starts showing
 live-context warnings at 75% and auto-compacts at 90%. Override these per

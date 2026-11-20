@@ -26,6 +26,13 @@
 # project's config cannot set it (load_config()). Rooms keep
 # `auto_approve_asks`, and an /auto run its hall monitor (R/monitor.R),
 # since nobody is at that prompt.
+#
+# A talker's doer is covered too. Its worker reads the mode from its
+# job's authority record before each call (.authority_apply()) and,
+# under review, holds the same rules (.job_worker_child_review_gate());
+# what they leave open comes to the job pump with `route` "monitor",
+# and the reviewer rules on it with the conversation that asked for the
+# job and the task the talker wrote (.repl_job_review()).
 
 # Is the session's approval mode "review"?
 review_mode <- function(session) {
