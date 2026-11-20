@@ -204,8 +204,7 @@ retention_prune <- function(days, dry_run = FALSE, keep = character(),
                             now = Sys.time(),
                             incomplete_days = RETENTION_INCOMPLETE_DAYS) {
     found <- rbind(retention_scan(days, now = now),
-                   retention_state_scan(days, incomplete_days, now = now,
-                                        keep = keep))
+                   retention_state_scan(days, incomplete_days, now = now, keep = keep))
     found <- found[!found$session %in% keep,, drop = FALSE]
     found$removed <- rep(FALSE, nrow(found))
     if (dry_run) {
@@ -227,15 +226,13 @@ retention_prune <- function(days, dry_run = FALSE, keep = character(),
             # worker folder that a live worker, an open session or an
             # open job holds now is left.
             path <- found$path[[first]]
+            folder <- list(name = basename(path), dir = path,
+                           real = normalizePath(path, winslash = "/", mustWork = FALSE))
             moved <- if (kind == "checkpoint") {
                 retention_checkpoint_moved(path, found$last_use[[first]], keep)
             } else {
                 retention_state_moved(found$path[rows], found$last_use[[first]]) ||
-                (kind == "worker" &&
-                 retention_worker_held(list(name = basename(path), dir = path,
-                                            real = normalizePath(path, winslash = "/",
-                                                                 mustWork = FALSE)),
-                                       keep = keep))
+                (kind == "worker" && retention_worker_held(folder, keep = keep))
             }
             if (moved) {
                 next

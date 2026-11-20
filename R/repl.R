@@ -141,8 +141,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
     # Said here because files were removed. The session this loop has
     # open is left alone, and so is its worker's folder, named by the
     # on-disk session (.repl_jobs_setup()).
-    pruned <- retention_tick(keep = unique(as.character(c(
-        ctx$session$sessionId, ctx$disk_session$sessionId))))
+    keep <- unique(as.character(c(ctx$session$sessionId,
+                                  ctx$disk_session$sessionId)))
+    pruned <- retention_tick(keep = keep)
     if (!is.null(pruned)) {
         cat(ctx$palette$dim, pruned, ctx$palette$reset, "\n", sep = "")
     }
