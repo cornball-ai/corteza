@@ -1,3 +1,13 @@
+# corteza 0.8.0.27
+
+- A room's monitor (`auto_approve_asks: true`) reads the room's
+  conversation, as the terminal's reviewer does, where it was told the
+  task in one line. Each conversation keeps a record in the room's
+  journal folder that a flush, `/clear` or restart leaves whole. The
+  monitor sends the call to a person when it cannot read the record
+  whole: nobody may approve, the record has a break (a restart whose
+  backfill did not reach its last event, or failed), or it is too long.
+
 # corteza 0.8.0.26
 
 - A program that runs turns for someone else can let them stop one:

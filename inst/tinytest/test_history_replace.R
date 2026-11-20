@@ -1324,7 +1324,7 @@ local({
         ".output_keep_reply :: session$history" = 1L,
         "apply_exit_marker :: session$history" = 1L,
         "bot_poll :: session$history" = 3L,
-        "bot_backfill_sessions :: session$history" = 1L,
+        "bot_backfill_room :: session$history" = 1L,
         "bot_job_settled :: s$history" = 1L,
         "bot_job_settled :: recipient$history" = 1L,
         "bot_job_report_back :: asker$history" = 1L,

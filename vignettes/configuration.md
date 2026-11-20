@@ -780,6 +780,26 @@ No setting approves a call unseen. The rules read text and are not a
 sandbox: a command can be written so that they miss it, which is what
 the monitor and the tool policy above are also there for.
 
+A room's monitor reads the conversation to judge a call. Each
+conversation keeps a record beside the room's journal, a file per
+conversation: who sent each message, in the words they sent, and the
+bot's own posts. Only the lines of someone who may approve are taken as
+instructions: the room's operators, or the one person in a private room.
+Anyone else's, another bot's or a peer's request included, are shown as
+theirs. A job's calls are judged by the conversation that asked for the
+job, read when the call comes, so a "stop" sent since is in it. A job
+handed over from another room is judged by that room's. The monitor is
+not asked, and a person is, when nobody in the room may approve or the
+record cannot be read whole:
+
+- one past 100,000 characters, or with a line it cannot read;
+- one with a break: a restart whose backfill did not reach back to the
+  last message on record, a line that could not be written, or a thread
+  that went on from its archive;
+- one that does not reach back to the start of the conversation. A
+  conversation under way when a bot first runs 0.8.1 is one of these,
+  and `/clear` starts one the monitor can read.
+
 At the terminal and in `chat()`, `"approval_mode": "review"` gives a
 session the same three steps for each call that would prompt. The
 monitor there is called the reviewer. It rules on reads, writes and
@@ -847,7 +867,9 @@ what it removed.
 Transcripts, session stores, workspaces, config and audit records stay.
 A session whose journal is gone still resumes from its transcript, and
 says what is gone. A room that restores its context from its journal
-starts its next conversation fresh.
+starts its next conversation fresh. A room's records of its
+conversations go with its journal, and the room's calls then go to a
+person until `/clear`.
 
 A session's audit records are kept in its journal folder, under
 `audit/`. Retention leaves them and the folder in place:

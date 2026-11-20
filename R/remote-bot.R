@@ -164,7 +164,12 @@
         body <- bot_ingest_body(m$sender, m$body, attribute_sender = TRUE)
     }
 
-    bot_transcript_add(session, m$id, role, body)
+    # The room's record (R/room-record.R) takes the sender from the event.
+    event <- NULL
+    if (!isTRUE(m$is_self)) {
+        event <- m
+    }
+    bot_transcript_add(session, m$id, role, body, event = event)
     session$seen_event_ids <- bot_remember_event(session$seen_event_ids, m$id)
     .context_room_snapshot(session)
     invisible(NULL)

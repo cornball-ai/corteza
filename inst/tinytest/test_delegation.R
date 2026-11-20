@@ -116,9 +116,20 @@ local({
     expect_identical(req$kind, "notice")
     expect_identical(req$mentions, "worker")
     expect_null(req$thread)
+    # The room the request comes into keeps a record for its monitor
+    # (R/room-record.R): the request is a peer's, never the person's.
+    jobs_room <- make("worker", "jobs")
+    jobs_room$conversation_id <- f("job_new_id")()
+    f("bot_record_attach")(jobs_room, cfg_b, "jobs", "conversation")
+    assign("jobs", jobs_room, registry_b)
     expect_true(route(req, cfg_b, b, registry_b))
+    held <- f("bot_record_read")(jobs_room$review_record$path)$lines
+    expect_identical(held[[2L]]$kind, "request")
+    expect_identical(held[[2L]]$sender, "requester")
     ack <- last()
     worker <- decode(ack)$fields$job
+    expect_identical(f("job_read")(worker)$origin$conversation,
+                     jobs_room$conversation_id)
     expect_identical(f("job_read")(worker)$requester, "requester")
     expect_equal(f("job_read")(worker)$hop, 1)
     expect_true(f("job_read")(worker)$review)
