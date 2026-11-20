@@ -42,8 +42,7 @@ bot_room_state_read <- function(cfg, room_id) {
         return(state)
     }
     marker <- list(binding = list(state = "unknown"))
-    aside <- paste0(path, ".unreadable-",
-                    format(Sys.time(), "%Y%m%dT%H%M%S"))
+    aside <- paste0(path, ".unreadable-", format(Sys.time(), "%Y%m%dT%H%M%S"))
     if (!file.exists(aside) && !isTRUE(file.copy(path, aside))) {
         message("bot: could not copy aside a room state file it could not read: ",
                 path, "; the room reads and talks only")
