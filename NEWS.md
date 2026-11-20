@@ -1,3 +1,18 @@
+# corteza 0.8.0.42
+
+- The task list is off by default: no `task_create` or `task_update`
+  tool and no task text in the system prompt. `"task_list_enabled": true`
+  in the config turns it on, and `/tasks` says so.
+- The memory flush ahead of an automatic compaction in the terminal is
+  off by default (`"memory_flush_enabled": true` turns it on). `/flush`
+  runs it by hand, as before.
+- A session on `anthropic` or `anthropic_claude` caches its prompt for 5
+  minutes unless `cache` says otherwise (`"none"` turns it off). A
+  session that edits its own context gets no default cache.
+- On those providers a turn's token total counts the input read from
+  the cache and written to it, so `/spent`, `/auto`'s token cap and
+  `subagents.mcp_spend_cap_tokens` count all a session sends.
+
 # corteza 0.8.0.41
 
 - An ACP client is offered the session's commands: `/help`, `/trust`,
