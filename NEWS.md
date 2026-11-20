@@ -1,3 +1,33 @@
+# corteza 0.8.0.34
+
+- The terminal answers through a talker by default, as a bot's room
+  does: its own session only reads and hands work to a doer, a worker
+  process of the conversation's own. It says so when it starts.
+  `"talker": {"enabled": false}` in the corteza config turns it off, and
+  a session whose tools are restricted (`--tools`, the config's `tools`)
+  is no talker unless the config turns it on. `chat()` stays without
+  talker mode unless its config turns it on.
+- After a turn that hands work off, the terminal stays with the job: it
+  prints the worker's steps, its questions and its result as they come.
+  Ctrl+C returns the prompt and leaves the job running; `/jobs` lists
+  the jobs and stays with an open one again. A Ctrl+C at a job's
+  question is a no.
+- `approval_mode: "review"` covers the doer's calls at the terminal and
+  in `chat()`: the reviewer judges a job's call by the conversation that
+  asked for the job and the task the talker wrote, and `/permissions`
+  typed while a job runs reaches its next call.
+- In a talker session `/provider` and `/max-tokens` change the doer's,
+  as `/model` and `/effort` do; `/review`, `/doctor` and `/config` use
+  the doer's model and provider. `/spent` counts each job in the
+  conversation that asked for it, and a job's result goes into that
+  conversation's transcript, so `--resume` brings it back. `/auto`
+  starts no run in a talker session and says how to turn talker mode
+  off. `/r` runs R in the terminal's own process. A resumed
+  conversation's doer starts on the `jobs` block's model where the
+  config names one.
+- The command table's `talker` column covers every command of the
+  terminal.
+
 # corteza 0.8.0.33
 
 - A call `policy()` denied is refused before any gate (a room's
