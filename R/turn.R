@@ -574,9 +574,10 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             # the one whose definition was offered. A tool that waits
             # long asks this session whether to stop (R/tool-stop.R).
             .tool_stop_with(session, call_skill(name, as.list(args),
-                       ctx = list(session = session, cwd = session$cwd %||% getwd()),
-                       timeout = session$config$skill_timeout %||% 30L,
-                       dry_run = session_dry_run(), table = session$tool_table))
+                    ctx = list(session = session,
+                               cwd = session$cwd %||% getwd()),
+                    timeout = session$config$skill_timeout %||% 30L,
+                    dry_run = session_dry_run(), table = session$tool_table))
         }
     }
     # A custom executor may need the provider's read-only call metadata to

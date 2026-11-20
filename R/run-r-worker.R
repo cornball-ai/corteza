@@ -426,7 +426,7 @@
             break
         }
         state <- worker$poll_process(as.integer(min(.TOOL_STOP_POLL_MS,
-                                                    ceiling(left * 1000))))
+                    ceiling(left * 1000))))
         if (identical(state, "ready")) {
             break
         }

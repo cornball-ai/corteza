@@ -933,7 +933,7 @@ tool_run_r_script <- function(code, timeout = 30L) {
         # The wait (.tool_process_wait()) asks between its slices whether
         # the session's turn should stop (R/tool-stop.R).
         proc <- callr::rscript_process$new(callr::rscript_process_options(
-            script = tmp, stdout = out_file, stderr = "2>&1"))
+                script = tmp, stdout = out_file, stderr = "2>&1"))
         ended <- .tool_process_wait(proc, timeout)
         if (identical(ended, "timeout")) {
             paste0("Error: timed out after ", timeout, "s")
