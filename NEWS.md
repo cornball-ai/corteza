@@ -1,3 +1,16 @@
+# corteza 0.8.0.22
+
+- Retention also clears corteza's state stores, in the same daily run
+  and in `sessions_prune()`: a chain of jobs once every job in it has
+  ended and none of its folders has changed for `retention.session_days`
+  (an incomplete job nothing resumed waits `retention.incomplete_days`,
+  180 by default), a worker's folder with no checkpoint, and a
+  remote-control session that was closed or whose process is gone. An
+  open job keeps its chain, and audit records, checkout lock numbers,
+  room state, the archive's files and transcripts stay. A folder whose
+  name or record corteza did not make is listed and left, and nothing is
+  read or removed through a link.
+
 # corteza 0.8.0.21
 
 - A job's worker obeys its conversation's plan mode, approval mode and
