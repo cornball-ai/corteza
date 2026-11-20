@@ -67,7 +67,7 @@
     session <- .acp_session_build(st, cwd, route)
     disk <- session_new(route$provider, route$model, cwd, surface = "acp")
     .acp_session_open(st, session, disk)
-    list(sessionId = disk$sessionId, modes = .acp_modes(.acp_mode_of(session)))
+    list(sessionId = disk$sessionId, modes = .acp_session_modes(session))
 }
 
 # A conversation this directory started, taken up again: its history
@@ -82,7 +82,8 @@
     }
     open <- st$sessions[[sid]]
     if (!is.null(open)) {
-        return(list(modes = .acp_modes(.acp_mode_of(open))))
+        .acp_same_dir(sid, open$cwd, cwd)
+        return(list(modes = .acp_session_modes(open)))
     }
     key <- NULL
     for (entry in session_entries()) {
@@ -96,13 +97,7 @@
         .acp_refuse(sprintf("There is no session %s to resume.",
                             .sanitize_inline(sid, max_chars = 80L)), -32002L)
     }
-    if (!identical(session_cwd(disk$cwd), session_cwd(cwd))) {
-        .acp_refuse(sprintf("Session %s belongs to %s, not to %s.",
-                            .sanitize_inline(sid, max_chars = 80L),
-                            .sanitize_inline(disk$cwd %||% "another directory",
-                    max_chars = 300L),
-                            .sanitize_inline(cwd, max_chars = 300L)))
-    }
+    .acp_same_dir(sid, disk$cwd, cwd)
     route <- .session_model_pair(st$provider, st$model, load_config(cwd),
                                  saved = disk)
     history <- lapply(disk$messages %||% list(), function(m) {
@@ -116,7 +111,19 @@
     })
     session <- .acp_session_build(st, cwd, route, history)
     .acp_session_open(st, session, disk)
-    list(modes = .acp_modes(.acp_mode_of(session)))
+    list(modes = .acp_session_modes(session))
+}
+
+# A conversation belongs to the directory it started in (R/session.R).
+.acp_same_dir <- function(sid, dir, cwd) {
+    if (!identical(session_cwd(dir), session_cwd(cwd))) {
+        .acp_refuse(sprintf("Session %s belongs to %s, not to %s.",
+                            .sanitize_inline(sid, max_chars = 80L),
+                            .sanitize_inline(dir %||% "another directory",
+                                             max_chars = 300L),
+                            .sanitize_inline(cwd, max_chars = 300L)))
+    }
+    invisible(TRUE)
 }
 
 # The session's own corteza session, for its directory.
@@ -128,14 +135,9 @@
                              history = history)
     session$config$run_r_mode <- "worker"
     session$handle_store <- new.env(parent = emptyenv())
-    # The mode the session goes back to from "review": the config's own
-    # setting, unless that is "review" itself.
-    base <- session$config$approval_mode %||% "ask"
-    if (identical(base, "review")) {
-        session$acp_base_mode <- "ask"
-    } else {
-        session$acp_base_mode <- base
-    }
+    # The approval mode the config chose, which the client may come back
+    # to (.acp_mode_ids()).
+    session$acp_config_mode <- session$config$approval_mode %||% "ask"
     session
 }
 
@@ -145,6 +147,8 @@
     session$sessionId <- sid
     session$disk_session <- disk
     session$provider <- session$provider %||% disk$provider
+    # A resumed conversation's task list, as --resume takes it.
+    session$tasks <- disk$tasks %||% list()
     journal_install(session, agent_id = DEFAULT_AGENT_ID)
     session$approval_cb <- .acp_approval_cb(st, sid, session$cwd)
     session$on_delta <- function(text) .acp_on_delta(st, sid, text)
@@ -155,28 +159,38 @@
     invisible(session)
 }
 
+# The modes a session offers: "ask" and "review", and the config's own
+# approval_mode where it is "allow" or "deny", so the mode the client
+# shows is the one in force.
+.acp_mode_ids <- function(session) {
+    own <- session$acp_config_mode
+    c("ask", "review", if (identical(own, "allow") || identical(own, "deny")) own)
+}
+
 .acp_mode_of <- function(session) {
-    if (review_mode(session)) {
-        "review"
+    mode <- session$config$approval_mode %||% "ask"
+    if (mode %in% .acp_mode_ids(session)) {
+        mode
     } else {
         "ask"
     }
 }
 
-# session/set_mode: "ask" or "review". For a session whose prompt runs,
-# the next call meets the new mode: the gate is read per call.
+.acp_session_modes <- function(session) {
+    .acp_modes(.acp_mode_of(session), .acp_mode_ids(session))
+}
+
+# session/set_mode: one of .acp_mode_ids(). For a session whose prompt
+# runs, the next call meets the new mode: the gate is read per call.
 .acp_set_mode <- function(st, params) {
     session <- .acp_session_get(st, params$sessionId)
     mode <- params$modeId
-    if (!is.character(mode) || length(mode) != 1L ||
-        !mode %in% c("ask", "review")) {
-        .acp_refuse("modeId must be 'ask' or 'review'.")
+    ids <- .acp_mode_ids(session)
+    if (!is.character(mode) || length(mode) != 1L || !mode %in% ids) {
+        .acp_refuse(sprintf("modeId must be one of %s.",
+                            paste0("'", ids, "'", collapse = ", ")))
     }
-    session$config$approval_mode <- if (identical(mode, "review")) {
-        "review"
-    } else {
-        session$acp_base_mode %||% "ask"
-    }
+    session$config$approval_mode <- mode
     review_apply(session)
     .acp_update(st, session$sessionId,
                 list(sessionUpdate = "current_mode_update", currentModeId = mode))

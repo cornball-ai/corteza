@@ -82,8 +82,11 @@
 }
 
 # The next message to handle: a prompt that waited, else the next to
-# come. NULL at the end of the input.
+# come. NULL at the end of the input, or once nothing can be sent.
 .acp_take_next <- function(st) {
+    if (isTRUE(st$ch$broken)) {
+        return(NULL)
+    }
     if (length(st$waiting)) {
         msg <- st$waiting[[1L]]
         st$waiting <- st$waiting[-1L]

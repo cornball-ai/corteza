@@ -680,6 +680,71 @@ local({
     expect_identical(model$i, 2L)
 })
 
+# A client that stops reading: the first write that fails ends the loop,
+# quietly, and nothing after it runs.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    p <- processx::conn_create_pipepair()
+    writes <- 0L
+    send <- function(line) {
+        writes <<- writes + 1L
+        if (writes >= 2L) {
+            stop("the pipe is broken")
+        }
+    }
+    for (m in c(start(fx$proj), list(req(3L, "session/new", list(
+        cwd = fx$proj, mcpServers = list()))))) {
+        processx::conn_write(p[[2L]], paste0(ns$.acp_encode(m), "\n"))
+    }
+    close(p[[2L]])
+    said <- utils::capture.output(ns$.acp_main(input = p[[1L]], send = send),
+                                  type = "message")
+    expect_true(any(grepl("the client stopped reading", said, fixed = TRUE)))
+    expect_identical(writes, 2L)
+    # The first session was made, and its answer failed; the second
+    # request was never handled.
+    expect_identical(length(ns$session_entries()), 1L)
+})
+
+# ---- Modes ------------------------------------------------------------------
+# The config's own approval_mode, where it is "allow" or "deny", is a
+# mode of its own: shown as the one in force, and one the client can
+# come back to. A mode the session does not offer is refused.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    dir <- tools::R_user_dir("corteza", "config")
+    dir.create(dir, recursive = TRUE)
+    jsonlite::write_json(list(approval_mode = "deny"),
+                         file.path(dir, "config.json"), auto_unbox = TRUE)
+    msgs <- acp_run(start(fx$proj), function(msg, client) {
+        if (is_answer(2L)(msg)) {
+            sid <- msg$result$sessionId
+            client$write(req(3L, "session/set_mode",
+                             list(sessionId = sid, modeId = "allow")))
+            client$write(req(4L, "session/set_mode",
+                             list(sessionId = sid, modeId = "ask")))
+            client$write(req(5L, "session/set_mode",
+                             list(sessionId = sid, modeId = "deny")))
+        }
+        if (is_answer(5L)(msg)) {
+            client$finish()
+        }
+    })
+    modes <- answer(msgs, 2L)$result$modes
+    expect_identical(modes$currentModeId, "deny")
+    expect_identical(vapply(modes$availableModes, function(m) m$id, ""),
+                     c("ask", "review", "deny"))
+    expect_identical(answer(msgs, 3L)$error$code, -32602L)
+    expect_identical(length(answer(msgs, 4L)$result), 0L)
+    expect_identical(length(answer(msgs, 5L)$result), 0L)
+    changed <- Filter(is_update("current_mode_update"), msgs)
+    expect_identical(vapply(changed, function(m) {
+        m$params$update$currentModeId
+    }, ""), c("ask", "deny"))
+})
+
 # ---- Listing and resuming ---------------------------------------------------
 local({
     fx <- acp_fixture()

@@ -13,6 +13,10 @@
     sid <- params$sessionId
     session <- .acp_session_get(st, sid)
     text <- .acp_prompt_text(params$prompt)
+    # A client that has gone (the end of standard input) gets no turn.
+    if (st$ch$closed) {
+        return(list(stopReason = "cancelled"))
+    }
     live <- new.env(parent = emptyenv())
     live$sid <- sid
     live$session <- session
@@ -63,23 +67,27 @@
         .acp_transcript_end(session, paste("Error:", conditionMessage(result)))
         .acp_refuse(conditionMessage(result), -32603L)
     }
-    if (is.list(result)) {
-        reply <- result$reply %||% ""
-    } else {
-        reply <- ""
+    # What the turn returned, cancelled or not: a cancelled turn spent
+    # what it spent.
+    ran <- is.list(result) && !inherits(result, "condition")
+    if (!ran) {
+        result <- NULL
     }
+    reply <- result$reply %||% ""
     if (!live$streamed && nzchar(reply)) {
         .acp_update(st, sid, .acp_text_chunk(.redact_text(reply,
                     session$secret_values)))
     }
+    if (ran) {
+        session_accumulate_spend(session, result$usage)
+    }
     if (stopped) {
         .acp_transcript_end(session, paste(c(if (nzchar(reply)) reply,
                     "[The turn was cancelled.]"),
-                collapse = "\n"))
+                collapse = "\n"), result)
         return(list(stopReason = "cancelled"))
     }
     .acp_transcript_end(session, reply, result)
-    session_accumulate_spend(session, result$usage)
     .acp_compact(session)
     list(stopReason = .acp_stop_reason(result$termination))
 }

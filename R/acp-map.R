@@ -178,14 +178,25 @@
                          kind = "reject_once")))
 }
 
-# The 2 modes a session takes (R/review.R): "ask" sends every ask to the
-# client, "review" has the reviewer rule first.
-.acp_modes <- function(current) {
+# What each mode does: the session's approval_mode (R/policy.R,
+# R/review.R) by its name. "allow" and "deny" are offered only where the
+# config chose them (.acp_mode_ids()).
+.ACP_MODES <- list(
+    ask = list(name = "Ask",
+               description = "Every call that needs approval is asked of you."),
+    review = list(name = "Review",
+                  description = paste("The reviewer rules first on what would be",
+                                      "asked, and passes on what it cannot judge.")),
+    allow = list(name = "Allow",
+                 description = paste("Your config's approval_mode: every call",
+                                     "that would ask runs.")),
+    deny = list(name = "Deny",
+                description = paste("Your config's approval_mode: every call",
+                                    "that would ask is refused.")))
+
+.acp_modes <- function(current, ids = c("ask", "review")) {
     list(currentModeId = current,
-         availableModes = list(
-                               list(id = "ask", name = "Ask",
-                                    description = "Every call that needs approval is asked of you."),
-                               list(id = "review", name = "Review",
-                                    description = paste("The reviewer rules first on what would be",
-                    "asked, and passes on what it cannot judge."))))
+         availableModes = lapply(ids, function(id) {
+        c(list(id = id), .ACP_MODES[[id]])
+    }))
 }

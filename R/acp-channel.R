@@ -15,6 +15,7 @@
     ch$send <- send
     ch$queue <- list()
     ch$closed <- FALSE
+    ch$broken <- FALSE
     ch$next_id <- 0L
     ch
 }
@@ -32,8 +33,18 @@
     invisible(NULL)
 }
 
+# A write that fails means the client has gone: the channel counts as
+# closed, so a running turn stops (.acp_stop()) and the loop ends
+# (.acp_take_next()). Said once, on standard error.
 .acp_send <- function(ch, msg) {
-    ch$send(.acp_encode(msg))
+    if (isTRUE(ch$broken)) {
+        return(invisible(NULL))
+    }
+    tryCatch(ch$send(.acp_encode(msg)), error = function(e) {
+        ch$broken <- TRUE
+        ch$closed <- TRUE
+        .acp_log("the client stopped reading: ", conditionMessage(e))
+    })
     invisible(NULL)
 }
 
