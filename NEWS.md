@@ -1,3 +1,13 @@
+# corteza 0.8.0.26
+
+- A program that runs turns for someone else can let them stop one:
+  `session$stop_requested`, a function the turn asks before each
+  request to the model, before each tool call, again just before a call
+  runs and on each streamed piece of the reply. A stop ends the turn
+  with status `cancelled` and a history the next turn can use. A
+  cancelled job's reason says what it leaves: the files it wrote stay,
+  and the next job starts from its worker's last checkpoint.
+
 # corteza 0.8.0.25
 
 - A Matrix room and each of its threads keep a record of the
