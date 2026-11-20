@@ -1034,7 +1034,8 @@ corteza::bot_configure(
   room = "#general:example.com",
   model = "llama3.2",
   provider = "ollama",
-  operators = "@you:example.com"
+  operators = "@you:example.com",
+  project_roots = "~/projects"
 )
 ```
 
@@ -1046,7 +1047,7 @@ corteza::bot_configure(
 - In a room with one person in it, the bot answers only when that person is
   an operator.
 - Operators answer its approval prompts, and commands such as
-  `/approve-all` are theirs.
+  `/approve-all`, `/cd` and `/ls` are theirs.
 
 A bot with no operators accepts no invites. It works in the room it was
 configured with and in rooms it has already joined. Where such a room has
