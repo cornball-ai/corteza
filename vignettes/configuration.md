@@ -871,8 +871,14 @@ call, allowed ones included.
 turns it off. Your config can turn it on for every session. A project's
 config cannot: who reviews the agent is yours to choose. In a Matrix
 room, `auto_approve_asks` is this mode. An `/auto` run keeps its own
-monitor, since nobody is at its prompt. A talker's delegated jobs still
-ask you for each call.
+monitor, since nobody is at its prompt.
+
+A talker's delegated jobs are covered too. The doer reads the mode
+before each call, so `/permissions review` typed while a job runs
+reaches its next call. The reviewer judges a job's call by the
+conversation that asked for the job and the task the talker wrote.
+Your "allow always" answers cover the session's own calls and not a
+job's, as in a room: a job's call goes to the reviewer, then to you.
 
 These keys are read from the user's config file only. A project's
 `.corteza/config.json` cannot set them.
@@ -1450,6 +1456,13 @@ hands work needing edits, commands or tests to a doer, a worker process of the
 conversation's own, and goes on answering while the doer works. The result
 arrives as its own message. From 0.8.1 this is the default in a bot's rooms.
 The terminal and `chat()` use it only where the config turns it on.
+
+At the terminal and in `chat()`, a turn that hands work to the doer stays
+with it: the doer's steps, an approval it asks for and its result print as
+they come, and the prompt returns when the job ends. Ctrl+C returns the prompt
+and leaves the job running; `/jobs` lists the jobs and stays with an open one
+again. A terminal driven from a room with `/remote-control` does not stay, so
+the room's next message is read as before.
 
 To turn it off for a bot, put this in its config:
 

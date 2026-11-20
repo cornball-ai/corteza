@@ -83,9 +83,13 @@
 # to start?
 .repl_jobs_open <- function(ctx) {
     s <- ctx$session
-    !is.null(s$.job_current) ||
-    length(job_list(status = JOB_STATUSES_OPEN, origin_key = job_worker_key(s),
-                    owner = job_worker_owner(s))) > 0L
+    if (!is.null(s$.job_current)) {
+        return(TRUE)
+    }
+    open <- job_list(status = JOB_STATUSES_OPEN,
+                     origin_key = job_worker_key(s),
+                     owner = job_worker_owner(s))
+    length(open) > 0L
 }
 
 # Stay with the session's jobs while one is open (WP20c): pump on a short
@@ -133,9 +137,8 @@
         }
         t <- r$tool
         if (is.list(t)) {
-            what <- .sanitize_inline(trimws(paste(t$tool %||% "",
-                                                  t$command %||% "")),
-                                     max_chars = 160L)
+            what <- trimws(paste(t$tool %||% "", t$command %||% ""))
+            what <- .sanitize_inline(what, max_chars = 160L)
             how <- if (isTRUE(t$refused)) {
                 " (refused)"
             } else if (!isTRUE(t$success)) {
@@ -199,10 +202,22 @@
 }
 
 # Ask about one approval request at the prompt. Only an explicit y/yes
-# approves; anything else, including EOF, declines.
+# approves; anything else, including EOF, declines. Under review
+# (R/review.R), the reviewer rules first on a read, write or exec call
+# the doer's rules left open (`route` "monitor"), as a room's monitor
+# does (bot_job_approval()); what it passes on, or cannot judge, comes
+# to the person with its reason.
 .repl_job_approval <- function(ctx, ev) {
     req <- ev$request
     call <- job_request_call(req)
+    if (identical(req$route, "monitor") && review_mode(ctx$session) &&
+        call_class(call) %in% c("read", "write", "exec")) {
+        ruled <- .repl_job_review(ctx, ev$job, req)
+        if (isTRUE(ruled$answered)) {
+            return(invisible(ruled$recorded))
+        }
+        req$reason <- ruled$reason
+    }
     cat(sprintf("\n%sJob %s asks: %s%s\n", ctx$palette$yellow %||% "",
                 ev$job$id,
                 bot_approval_prompt(call, list(reason = req$reason),
@@ -225,6 +240,51 @@
                     ctx$palette$dim, ctx$palette$reset))
     }
     invisible(recorded)
+}
+
+# The reviewer's ruling on a doer's request: the conversation that asked
+# for the job, read from its transcript (review_conversation()), the
+# task the talker wrote, and the call. An approval or a refusal answers
+# the request (list(answered, recorded)); anything else returns the
+# reason the person is told (list(reason)). A Ctrl+C while the reviewer
+# rules hands the call to the person.
+.repl_job_review <- function(ctx, job, req) {
+    session <- ctx$session
+    p <- ctx$palette
+    conv <- review_conversation(job$origin$conversation %||% session$sessionId)
+    if (!is.null(conv$why)) {
+        return(list(reason = paste("The reviewer was not asked:", conv$why)))
+    }
+    q <- bot_monitor_question(job, req, conv$lines)
+    q$room <- FALSE
+    r <- tryCatch(review_ask(session, q),
+                  interrupt = function(e) {
+        list(verdict = "escalate", reason = "you stopped the reviewer")
+    },
+                  error = function(e) {
+        list(verdict = "escalate",
+             reason = paste("the reviewer failed:", conditionMessage(e)))
+    })
+    why <- .sanitize_inline(r$reason %||% "", max_chars = 300L)
+    if (!nzchar(why)) {
+        why <- "no reason given"
+    }
+    if (isTRUE(r$verdict %in% c("approve", "refuse"))) {
+        approved <- identical(r$verdict, "approve")
+        recorded <- tryCatch(job_answer(session, job$id, req$id, approved,
+                                        by = "reviewer", reason = why),
+                             error = function(e) FALSE)
+        if (approved) {
+            verb <- "approved"
+        } else {
+            verb <- "refused"
+        }
+        tool <- .sanitize_inline(req$tool %||% "call", max_chars = 60L)
+        cat(sprintf("%sThe reviewer %s job %s's %s: %s%s\n", p$dim %||% "",
+                    verb, job$id, tool, why, p$reset %||% ""))
+        return(list(answered = TRUE, recorded = recorded))
+    }
+    list(reason = paste("The reviewer passed this to you:", why))
 }
 
 # On /quit: stop this process's jobs and say so. Settling them here

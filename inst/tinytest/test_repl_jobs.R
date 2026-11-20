@@ -265,6 +265,24 @@ local({
     expect_identical(corteza:::job_read(ctx$job_id)$status, "done")
     corteza:::job_worker_close(ctx$session)
 })
+# A terminal driven from a room does not stay: the room's next message
+# is read as before.
+local({
+    ctx <- make_ctx(character(), function(task) list(reply = "x"))
+    setup(ctx)
+    id <- corteza:::job_submit(ctx$session, "quick")
+    ctx$remote_dir <- tempfile("remote")
+    expect_true(corteza:::.repl_jobs_open(ctx))
+    expect_false(corteza:::.repl_attach_jobs(ctx))
+    ctx$remote_dir <- NULL
+    deadline <- Sys.time() + 15
+    while (corteza:::.repl_jobs_open(ctx) && Sys.time() < deadline) {
+        capture.output(corteza:::.repl_pump_jobs(ctx))
+        Sys.sleep(0.1)
+    }
+    expect_identical(corteza:::job_read(id)$status, "done")
+    corteza:::job_worker_close(ctx$session)
+})
 
 # --- /cancel stops a running job; /jobs lists it ---
 local({
