@@ -913,7 +913,7 @@ JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
                        ".job_current", ".job_events", ".job_asked",
                        ".job_progress_cursor", ".job_activity",
                        ".job_blocked", ".job_prompts", ".job_monitor",
-                       ".job_monitor_pending", ".job_starts")
+                       ".job_monitor_pending", ".job_starts", ".job_held")
 
 # Move a session's job state to the session that replaces it under the
 # same key (a /clear, a /model switch). The ledger finds a room's jobs
@@ -1242,6 +1242,23 @@ job_dispatch <- function(session, j, checkout) {
                                      "was run. Ask again."),
                               wanted, job_worker_dir(session))))
     }
+    # A job from a conversation that has ended runs under what that
+    # conversation gave it as it ended (job_conversation_hold()), never
+    # under the conversation that starts it now. One nothing was held for
+    # does not run. A job from before jobs named their conversation
+    # belongs to the session's.
+    asked <- j$origin$conversation
+    held <- NULL
+    if (!is.null(asked) && !identical(asked, session_conversation(session))) {
+        held <- session$.job_held[[j$id]]
+        if (is.null(held)) {
+            return(refuse(paste0("the conversation that asked for this job ",
+                                 "ended before it started, and what it ",
+                                 "allowed was not kept; nothing was run. ",
+                                 "Ask again.")))
+        }
+    }
+    session$.job_held[[j$id]] <- NULL
     # Always through job_worker_activate(): it reuses a live worker only
     # when that worker is in the session's directory.
     old_resume <- session$.job_resume_of
@@ -1269,7 +1286,12 @@ job_dispatch <- function(session, j, checkout) {
             job = j, restore = restore)
     }
     job_worker_note(session, j$role)
-    spec <- job_worker_spec(session, j$role)
+    if (is.null(held)) {
+        spec <- job_worker_spec(session, j$role)
+    } else {
+        spec <- held$spec
+        spec$resume_of <- j$resume_of
+    }
     # Every way out of the hand-off ends the job and gives back the lock.
     # Without this, a failure here left the job marked running and
     # holding its checkout, with no current job for later pumps to find.
@@ -1283,8 +1305,14 @@ job_dispatch <- function(session, j, checkout) {
     # What the conversation allows the job, which the worker reads at
     # each call (R/job-authority.R). Written before the worker has the
     # job: without it every call would be refused.
-    authority <- tryCatch(job_authority_write(session, j$id),
-                          error = function(e) e)
+    write_authority <- function() {
+        if (is.null(held)) {
+            return(job_authority_write(session, j$id))
+        }
+        job_authority_write(session, j$id, values = held$authority,
+                            conversation = held$conversation)
+    }
+    authority <- tryCatch(write_authority(), error = function(e) e)
     if (inherits(authority, "error")) {
         why <- paste("could not write the job's authority record:",
                      conditionMessage(authority))
