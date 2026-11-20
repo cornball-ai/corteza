@@ -424,10 +424,11 @@ retention_worker_held <- function(d, identity = NULL, keep = character(),
 }
 
 # Is the folder's worker alive? The record a worker writes when it
-# starts, and with each checkpoint, names its process. A process on this host that is gone is not
-# alive, nor is a folder with no record; a record another host wrote,
-# one on Windows, or one there that cannot be read is taken as alive,
-# since nothing here says otherwise (job_lock_process_gone()).
+# starts, and with each checkpoint, names its process. A process on this
+# host that is gone is not alive, nor is a folder with no record; a
+# record another host wrote, one on Windows, or one there that cannot be
+# read is taken as alive, since nothing here says otherwise
+# (job_lock_process_gone()).
 retention_worker_live <- function(d) {
     path <- file.path(d$dir, "worker.json")
     # A link that leads nowhere is there too; Sys.readlink() gives NA for
