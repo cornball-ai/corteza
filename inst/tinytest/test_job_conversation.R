@@ -290,6 +290,63 @@ local({
     expect_identical(length(ctx$session$history), 2L)
 })
 
+# ---- What a job spent, when it settles after /clear -----------------------
+# Codex's case on #296: conv-a spent 100 tokens, a /clear, conv-b 300, and
+# conv-a's job settles with 700. /spent says conv-a 800 and conv-b 300.
+local({
+    root <- tempfile("conversation-spend-")
+    dir.create(root)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    settled <- function(conversation, tokens) {
+        id <- ns$job_create("fixture task", workspace = root,
+                            origin = list(session_key = "repl",
+                                          conversation = conversation))
+        ns$job_settle(id, "done", result = "Done",
+                      usage = list(input_tokens = tokens))
+        list(type = "settled", job = ns$job_read(id))
+    }
+    s <- new.env(parent = emptyenv())
+    s$cwd <- root
+    ctx <- new.env(parent = emptyenv())
+    ctx$palette <- list(dim = "", reset = "", cyan = "")
+    ctx$session <- s
+    tokens <- function() {
+        vapply(s$spend$segments, function(g) g$input_tokens, numeric(1))
+    }
+    ids <- function() vapply(s$spend$segments, function(g) g$id, "")
+    s$sessionId <- "conv-a"
+    ns$session_accumulate_spend(s, list(input_tokens = 100L))
+    ns$spend_open_segment(s)
+    s$sessionId <- "conv-b"
+    # Before conv-b spends: conv-a's segment takes it, and conv-b's opens
+    # with its own first turn.
+    invisible(capture.output(ns$.repl_present_job_event(ctx,
+        settled("conv-a", 50L))))
+    expect_identical(ids(), "conv-a")
+    expect_equal(tokens(), 150)
+    ns$session_accumulate_spend(s, list(input_tokens = 300L))
+    expect_identical(ids(), c("conv-a", "conv-b"))
+    invisible(capture.output(ns$.repl_present_job_event(ctx,
+        settled("conv-a", 650L))))
+    expect_equal(tokens(), c(800, 300))
+    expect_identical(s$spend$segments[[1L]]$turns, 3L)
+    expect_identical(s$spend$segments[[2L]]$turns, 1L)
+    # The open conversation's own job is its own.
+    invisible(capture.output(ns$.repl_present_job_event(ctx,
+        settled("conv-b", 20L))))
+    expect_equal(tokens(), c(800, 320))
+    # A conversation that never spent gets a segment before the open one,
+    # which stays last, and /spent still marks it current.
+    invisible(capture.output(ns$.repl_present_job_event(ctx,
+        settled("conv-z", 5L))))
+    expect_identical(ids(), c("conv-a", "conv-z", "conv-b"))
+    expect_equal(tokens(), c(800, 5, 320))
+    report <- strsplit(ns$format_spend(s), "\n", fixed = TRUE)[[1L]]
+    expect_true(grepl("conv-b", report[grepl("current", report)]))
+    ns$session_accumulate_spend(s, list(input_tokens = 1L))
+    expect_equal(tokens(), c(800, 5, 321))
+})
+
 # ---- A warm worker across /clear --------------------------------------------
 # Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
 if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {

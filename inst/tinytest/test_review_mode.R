@@ -635,6 +635,123 @@ if (nzchar(bin)) {
     unlink(ns$approvals_file())
 }
 
+# ---- A doer's call under review, at the terminal (WP20c) ---------------------
+# What the rules in the doer's process left open comes to the terminal's
+# job pump with route "monitor". The reviewer rules on it with the
+# conversation that asked for the job and the task the talker wrote; an
+# approval or a refusal answers the job, and anything else goes to the
+# person with the reviewer's reason.
+local({
+    state <- tempfile("review-jobs-state")
+    old <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
+    Sys.setenv(CORTEZA_STATE_DIR = state)
+    on.exit({
+        if (is.na(old)) {
+            Sys.unsetenv("CORTEZA_STATE_DIR")
+        } else {
+            Sys.setenv(CORTEZA_STATE_DIR = old)
+        }
+        unlink(state, recursive = TRUE)
+    }, add = TRUE)
+    asked <- list()
+    answer <- list(verdict = "approve", reason = "fits the task")
+    orig <- ns$review_ask
+    assignInNamespace("review_ask", function(session, q) {
+        asked[[length(asked) + 1L]] <<- q
+        if (is.function(answer)) answer() else answer
+    }, "corteza")
+    on.exit(assignInNamespace("review_ask", orig, "corteza"), add = TRUE,
+            after = FALSE)
+    s <- corteza::new_session("cli")
+    s$cwd <- proj
+    s$sessionId <- new_id()
+    s$config <- list(approval_mode = "review")
+    s$job_key <- "repl"
+    s$job_owner <- "local:review-test"
+    person(s, "Tidy the package.")
+    worker(s, "I'll have the doer do it.")
+    prompts <- character()
+    ctx <- new.env()
+    ctx$session <- s
+    ctx$palette <- list(dim = "", reset = "", yellow = "")
+    ctx$read_input <- function(p) {
+        prompts <<- c(prompts, p)
+        "y"
+    }
+    request <- function(route = "monitor", class = "write",
+                        conversation = s$sessionId) {
+        job <- ns$job_create("Remove the unused files.", workspace = proj,
+                             owner = "local:review-test",
+                             origin = list(session_key = "repl",
+                                           conversation = conversation))
+        req <- ns$job_approval_request(job,
+            list(tool = "write_file", args = list(path = inside("x.R"),
+                                                  content = "x"), class = class),
+            list(approval = "ask", reason = "a write in the project"),
+            extra = list(route = route, notes = list()))
+        list(job = ns$job_read(job), request = ns$job_approval_pending(job)[[1L]])
+    }
+    answered <- function(ev) {
+        ns$job_read_file(ns$job_approval_path(ev$job$id, ev$request$id, "answer"))
+    }
+    # Approved by the reviewer: no prompt.
+    ev <- request()
+    out <- capture.output(ns$.repl_job_approval(ctx, ev))
+    a <- answered(ev)
+    expect_true(isTRUE(a$approved))
+    expect_identical(a$by, "reviewer")
+    expect_identical(prompts, character())
+    expect_true(any(grepl("The reviewer approved job", out, fixed = TRUE)))
+    q <- asked[[1L]]
+    expect_identical(q$goal, "Remove the unused files.")
+    expect_false(isTRUE(q$room))
+    expect_true(any(grepl("Person: Tidy the package.", q$conversation, fixed = TRUE)))
+    text <- ns$job_monitor_question(q)
+    expect_true(grepl("THE TASK THE WORKER WAS GIVEN. THE AGENT THAT DELEGATED",
+                      text, fixed = TRUE))
+    expect_false(grepl("IN THE ROOM", text, fixed = TRUE))
+    # Refused: answered no, still no prompt.
+    answer <- list(verdict = "refuse", reason = "not what was asked")
+    ev <- request()
+    invisible(capture.output(ns$.repl_job_approval(ctx, ev)))
+    expect_false(isTRUE(answered(ev)$approved))
+    expect_identical(prompts, character())
+    # Passed on, or the reviewer failed: the person is asked, and told why.
+    for (a in list(list(verdict = "escalate", reason = "unclear"),
+                   function() stop("no model"))) {
+        answer <- a
+        prompts <- character()
+        ev <- request()
+        out <- capture.output(ns$.repl_job_approval(ctx, ev))
+        expect_identical(prompts, "Approve? [y/N] ")
+        expect_true(any(grepl("The reviewer passed this to you", out, fixed = TRUE)))
+        expect_identical(answered(ev)$by, "local")
+    }
+    # A request the rules sent to a person, a call of a class the
+    # reviewer does not rule on, or review off: never the reviewer's.
+    n <- length(asked)
+    prompts <- character()
+    invisible(capture.output(ns$.repl_job_approval(ctx, request("human"))))
+    invisible(capture.output(ns$.repl_job_approval(ctx,
+                                                   request(class = "control"))))
+    s$config$approval_mode <- "ask"
+    invisible(capture.output(ns$.repl_job_approval(ctx, request())))
+    expect_equal(length(asked), n)
+    expect_equal(length(prompts), 3L)
+    # A job from an earlier conversation (a /clear since) is judged by
+    # the conversation that asked for it.
+    s$config$approval_mode <- "review"
+    answer <- list(verdict = "approve", reason = "fits the task")
+    old <- s$sessionId
+    s$sessionId <- new_id()
+    person(s, "Something else entirely.")
+    invisible(capture.output(ns$.repl_job_approval(ctx,
+                                                   request(conversation = old))))
+    q <- asked[[length(asked)]]
+    expect_true(any(grepl("Tidy the package.", q$conversation, fixed = TRUE)))
+    expect_false(any(grepl("Something else", q$conversation, fixed = TRUE)))
+})
+
 # ---- The real reviewer --------------------------------------------------------
 # Its own process, as a room's monitor runs, with the model replaced by
 # a function that answers from the request. Slow: at home and in CI.

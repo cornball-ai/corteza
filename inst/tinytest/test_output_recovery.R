@@ -72,6 +72,13 @@ local({
     expect_true(out$raw$truncated)
     expect_true(grepl("/max-tokens", out$reply, fixed = TRUE))
     expect_equal(out$usage$total_tokens, 4 * 4106L)
+    # A talker is not told to use /max-tokens, which sets its doer's
+    # budget there.
+    s <- make_session()
+    s$talker <- TRUE
+    out <- suppressMessages(corteza::turn("fixture", s, tools = list()))
+    expect_true(out$raw$truncated)
+    expect_false(grepl("/max-tokens", out$reply, fixed = TRUE))
 
     # Deliberately configured limits and disabled retries remain effective.
     for (config in list(list(max_tokens = 4096L), list(output_retries = 0L))) {

@@ -188,6 +188,9 @@ job_worker_spec <- function(session, role = "doer") {
                  reasoning_effort = effort,
                  thinking_budget_tokens = budget,
                  thinking = thinking,
+                 # The doer's output budget, which /max-tokens sets in a
+                 # talker session (.output_budget_command()).
+                 max_tokens = if (identical(role, "doer")) session$doer_max_tokens,
                  # Conversation settings follow the doer only. A reviewer
                  # or monitor retains its own cwd configuration and role.
                  context_edit = if (!read_only) {
@@ -353,23 +356,61 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     # Replace the subagent default (deny everything) with the bridge.
     if (!is.null(.subagent_state$session)) {
         .subagent_state$session$approval_cb <- .job_worker_child_ask
-        if (!is.null(spec$supervise)) {
-            # Every call is read by the rules here, in the process that
-            # would run it; what they do not settle is sent to the
-            # session's process, which owns the monitor and the room.
-            .subagent_state$session$auto_gate <- supervisor_gate(
-                ask = .job_worker_child_supervised_ask, cwd = cwd,
-                mode = spec$supervise$mode %||% "human",
-                write_roots = spec$supervise$write_roots %||% character(),
-                on_decision = function(record) {
-                id <- .job_worker_state$job_id
-                if (!is.null(id)) {
-                    supervisor_log_append(id, record)
-                }
-            })
-        }
+        .job_worker_child_supervise(.subagent_state$session, spec, cwd)
     }
     .job_worker_state$conversation <- spec$conversation
+    invisible(NULL)
+}
+
+# How the worker's calls are supervised, set when its session is built.
+# A room's worker is supervised as the room is (R/supervisor.R): every
+# call is read by the rules here, in the process that would run it, and
+# what they do not settle is sent to the session's process, which owns
+# the monitor and the room. Any other worker but the monitor holds a
+# review gate (.job_worker_child_review_gate()), which its authority
+# record turns on while its conversation is in review
+# (.authority_apply()). The monitor is not supervised.
+.job_worker_child_supervise <- function(session, spec, cwd = getwd()) {
+    session$auto_gate <- NULL
+    session$.job_review_gate <- NULL
+    if (!is.null(spec$supervise)) {
+        session$auto_gate <- supervisor_gate(
+            ask = .job_worker_child_supervised_ask, cwd = cwd,
+            mode = spec$supervise$mode %||% "human",
+            write_roots = spec$supervise$write_roots %||% character(),
+            on_decision = .job_worker_child_decision)
+    } else if (!identical(spec$role, "monitor")) {
+        session$.job_review_gate <- .job_worker_child_review_gate(cwd)
+    }
+    invisible(session)
+}
+
+# A worker's gate while its conversation is in review (R/review.R), at
+# the terminal or in chat(): a call that would prompt is read by the
+# rules here, what they catch goes to the person, and what they leave
+# open goes to the session's reviewer (`route` "monitor",
+# .repl_job_review()). A call policy() allowed runs, and one it refused
+# is refused, as at the terminal: the mode says what an ask becomes,
+# and nothing more.
+.job_worker_child_review_gate <- function(cwd = getwd()) {
+    rules <- supervisor_gate(ask = .job_worker_child_supervised_ask,
+                             cwd = cwd, mode = "monitor",
+                             write_roots = supervisor_config()$write_roots,
+                             on_decision = .job_worker_child_decision)
+    function(call, decision) {
+        if (identical(decision$approval %||% "ask", "allow")) {
+            return(list(action = "proceed", reason = ""))
+        }
+        rules(call, decision)
+    }
+}
+
+# What came of a supervised call, kept with the job it belongs to.
+.job_worker_child_decision <- function(record) {
+    id <- .job_worker_state$job_id
+    if (!is.null(id)) {
+        supervisor_log_append(id, record)
+    }
     invisible(NULL)
 }
 
@@ -526,6 +567,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     session$thinking_budget_tokens <- .check_max_tokens(spec$thinking_budget_tokens,
         "job spec (thinking_budget_tokens)", what = "thinking_budget_tokens")
     session$thinking <- .check_thinking(spec[["thinking"]], "job spec (thinking)")
+    # Without one, the worker's config decides (.session_max_tokens()).
+    session$max_tokens <- .check_max_tokens(spec$max_tokens, "job spec (max_tokens)")
     session$plan_mode <- isTRUE(spec$plan_mode)
     session$tools_filter <- spec$tools
     if (!is.null(spec$max_turns)) {
