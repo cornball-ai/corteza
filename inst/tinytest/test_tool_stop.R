@@ -130,10 +130,22 @@ local({
         ns$.tool_run_r_session("Sys.sleep(30)", 60, ctx)))
     expect_true(took < 10)
     expect_true(isTRUE(res$isError))
-    expect_identical(res$execution$status, "cancelled")
-    expect_true(res$execution$state_retained)
-    expect_true(grepl("42", text_of(ns$.tool_run_r_session("kept", NULL, ctx)),
-                      fixed = TRUE))
+    if (.Platform$OS.type == "windows" &&
+        identical(res$execution$status, "killed")) {
+        # A worker on Windows with no console of its own takes no
+        # interrupt, so the grace period ends it, as for the deaf code
+        # below. No surface there sets a stop function in this release:
+        # corteza acp is refused on Windows.
+        expect_false(res$execution$state_retained)
+        expect_true(grepl("R objects are lost", text_of(res), fixed = TRUE))
+        made <- ns$.tool_run_r_session("kept <- 42", NULL, ctx)
+        expect_false(isTRUE(made$isError))
+    } else {
+        expect_identical(res$execution$status, "cancelled")
+        expect_true(res$execution$state_retained)
+        expect_true(grepl("42", text_of(ns$.tool_run_r_session("kept", NULL, ctx)),
+                          fixed = TRUE))
+    }
     took <- seconds(res <- ns$.tool_stop_with(stopper(0.5),
         ns$.tool_run_r_session(
             "repeat tryCatch(Sys.sleep(60), interrupt = function(e) NULL)",
