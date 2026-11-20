@@ -2,7 +2,7 @@
     if (!length(raw)) return(NULL)
     input <- raw[["input_tokens"]] %||% raw[["prompt_tokens"]]
     output <- raw[["output_tokens"]] %||% raw[["completion_tokens"]]
-    list(input_tokens = input, output_tokens = output,
+    usage <- list(input_tokens = input, output_tokens = output,
          total_tokens = if (!is.null(input) && !is.null(output)) {
             input + output
         } else {
@@ -14,6 +14,8 @@
          cache_creation = raw$cache_creation,
          cost = tryCatch(llm.api::usage_cost(model, provider, raw),
                          error = function(e) NA_real_))
+    # An Anthropic provider counts cached input beside `input_tokens`.
+    .usage_count_cached(usage, provider)
 }
 
 .audit_request_manifest <- function(audit, text) {

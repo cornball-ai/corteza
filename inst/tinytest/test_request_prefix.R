@@ -65,13 +65,23 @@ replace("corteza", "log_event", function(event, ...) {
 })
 
 # What a request carries ahead of its messages, with cache markers taken
-# out: a marker moves to the newest message by design.
+# out: a marker moves to the newest message by design. To carry it,
+# llm.api gives that message's text the form of a single text block,
+# which the next request sends as a string again; the API reads the 2
+# as the same content, as it ignores the marker.
 unmark <- function(x) {
     if (!is.list(x)) {
         return(x)
     }
     x$cache_control <- NULL
-    lapply(x, unmark)
+    x <- lapply(x, unmark)
+    content <- x$content
+    if (is.list(content) && length(content) == 1L && is.list(content[[1L]]) &&
+        identical(content[[1L]]$type, "text") &&
+        identical(sort(names(content[[1L]])), c("text", "type"))) {
+        x$content <- content[[1L]]$text
+    }
+    x
 }
 prefix_of <- function(body) unmark(list(system = body$system, tools = body$tools))
 text_of <- function(message) {
@@ -112,7 +122,10 @@ local({
                               model_map = list(cloud = "fixture"),
                               web_search = FALSE, system = "Fixture system text.")
     s$cwd <- dir
-    s$config <- list(context_edit = list(enabled = FALSE), context_compact_pct = Inf)
+    # The task list is off by default; its notes are part of what this
+    # session is tested for.
+    s$config <- list(context_edit = list(enabled = FALSE), context_compact_pct = Inf,
+                     task_list_enabled = TRUE)
     ask <- function(prompt) {
         before <- length(bodies)
         corteza::turn(prompt, s)

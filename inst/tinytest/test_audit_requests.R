@@ -26,13 +26,18 @@ local({
     })
     calls <- 0L
     mode <- "normal"
+    # What each Anthropic response reports beside its 7 input tokens, and
+    # what the OpenAI one reports. The cases at the end set them.
+    cached <- list()
+    openai_usage <- '{"prompt_tokens":5,"completion_tokens":2}'
     emit <- function(fun, object) fun(charToRaw(paste0("data: ",
         jsonlite::toJSON(object, auto_unbox = TRUE, null = "null"), "\n\n")))
     replace("curl", "curl_fetch_stream", function(url, fun, handle) {
         calls <<- calls + 1L
         if (mode == "fallback" && calls == 2L) stop("API error (429): fixture limit")
         emit(fun, list(type = "message_start", message = list(id = paste0("msg", calls),
-            model = "served-fixture", usage = list(input_tokens = 7L, output_tokens = 0L))))
+            model = "served-fixture",
+            usage = c(list(input_tokens = 7L, output_tokens = 0L), cached))))
         if (calls == 1L) {
             for (i in 0:1) {
                 emit(fun, list(type = "content_block_start", index = i,
@@ -51,11 +56,14 @@ local({
     replace("curl", "curl_fetch_memory", function(url, handle) {
         calls <<- calls + 1L
         list(status_code = 200L, headers = charToRaw("x-request-id: fallback\r\n"),
-            content = charToRaw('{"id":"fallback","model":"served-openai","choices":[{"message":{"role":"assistant","content":"fallback done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}'))
+            content = charToRaw(paste0('{"id":"fallback","model":"served-openai","choices":[{"message":{"role":"assistant","content":"fallback done"},"finish_reason":"stop"}],"usage":', openai_usage, '}')))
     })
     opt <- options(corteza.policy = function(call) list(model = "cloud", approval = "allow", reason = "fixture"))
     on.exit(options(opt), add = TRUE)
-    s <- corteza::new_session(provider = "anthropic", model_map = list(cloud = "fixture"), web_search = FALSE)
+    # A system text of its own: the fallback case below reads it back from
+    # the request another provider was sent.
+    s <- corteza::new_session(provider = "anthropic", model_map = list(cloud = "fixture"), web_search = FALSE,
+        system = "Fixture instructions.")
     s$audit_dir <- root
     s$journal_dir <- file.path(root, "journal")
     corteza:::journal_install(s, dir = s$journal_dir)
@@ -175,4 +183,75 @@ local({
     instructions <- Filter(function(x) x$role %in% c("system", "developer"), sent$messages)
     expect_true(length(instructions) > 0L)
     expect_identical(corteza::audit_payload_read(openai$manifest$system, FALSE), instructions)
+
+    # A session on an Anthropic provider caches its prompt unless a setting
+    # says otherwise, and Anthropic counts cached input beside
+    # `input_tokens`. A turn's total counts it, by the requests recorded
+    # and by llm.api's own sum, so a token cap sees every token sent.
+    fresh <- function() {
+        corteza:::.fallback_reset()
+        corteza:::journal_rewrite(s, s$history, list(), "fixture_reset")
+        s$history <- list()
+        calls <<- 0L
+        length(requests)
+    }
+    turn_rows <- function(result) Filter(
+        function(x) identical(x$turn_id, result$audit$turn_id),
+        corteza:::auto_log_read(result$audit$stream)$records)
+    sent_since <- function(n) unlist(requests[seq_along(requests) > n])
+    mode <- "normal"
+    s$fallback <- NULL
+    cached <- list(cache_read_input_tokens = 1000L, cache_creation_input_tokens = 200L)
+    before <- fresh()
+    counted <- corteza::turn("cached", s, tools = list(), tool_executor = function(...) corteza:::ok("result"))
+    expect_equal(calls, 2L)
+    expect_true(all(grepl("cache_control", sent_since(before), fixed = TRUE)))
+    expect_identical(counted$usage_coverage, "complete")
+    expect_equal(counted$usage$input_tokens, 14)
+    expect_equal(counted$usage$output_tokens, 6)
+    expect_equal(counted$usage$cache_read_input_tokens, 2000)
+    expect_equal(counted$usage$cache_creation_input_tokens, 400)
+    expect_equal(counted$usage$total_tokens, 2420)
+    rows <- turn_rows(counted)
+    expect_equal(vapply(select("request_end"), function(x) x$usage$total_tokens, 0), c(1210, 1210))
+    end <- select("turn_end")[[1L]]
+    expect_equal(end$request_usage$total_tokens, 2420)
+    expect_equal(end$reported_usage$total_tokens, 2420)
+    # The turn's record of what it sent names the cache, though the
+    # session set none.
+    expect_null(s$cache)
+    expect_identical(select("turn_config")[[1L]]$settings$cache, "5m")
+    # The session's tally, which /spent prints and /auto's token cap reads.
+    tally <- new.env()
+    corteza:::session_accumulate_spend(tally, counted$usage)
+    expect_equal(tally$spend$segments[[1L]]$total_tokens, 2420)
+    expect_equal(tally$spend$segments[[1L]]$input_tokens, 2414)
+    expect_equal(tally$spend$segments[[1L]]$output_tokens, 6)
+
+    # "none" sends no marker. A response that reports nothing cached leaves
+    # the total at input plus output.
+    cached <- list()
+    s$cache <- "none"
+    before <- fresh()
+    plain <- corteza::turn("no cache", s, tools = list(), tool_executor = function(...) corteza:::ok("result"))
+    expect_false(any(grepl("cache_control", sent_since(before), fixed = TRUE)))
+    expect_equal(plain$usage$total_tokens, 20)
+    rows <- turn_rows(plain)
+    expect_identical(select("turn_config")[[1L]]$settings$cache, "none")
+    s$cache <- NULL
+
+    # A request answered before the limit keeps its cached input in the
+    # total after another provider finishes the turn. That provider counts
+    # cached input inside its prompt tokens, so its 4 are not added again.
+    cached <- list(cache_read_input_tokens = 1000L, cache_creation_input_tokens = 200L)
+    openai_usage <- '{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":4}}'
+    mode <- "fallback"
+    s$fallback <- "fixture openai"
+    before <- fresh()
+    mixed <- corteza::turn("cached fallback", s, tools = list(), tool_executor = function(...) corteza:::ok("result"))
+    rows <- turn_rows(mixed)
+    expect_identical(vapply(select("request_end"), `[[`, "", "provider"), c("anthropic", "openai"))
+    expect_equal(vapply(select("request_end"), function(x) x$usage$total_tokens, 0), c(1210, 7))
+    expect_equal(mixed$usage$total_tokens, 1217)
+    corteza:::.fallback_reset()
 })

@@ -200,9 +200,18 @@ load_config <- function(cwd = getwd()) {
     if (is.null(config$legacy_memory_tools_enabled)) {
         config$legacy_memory_tools_enabled <- FALSE
     }
-    # Auto-flush memories before context compaction
+    # Flush memories ahead of an automatic compaction. Off unless a
+    # config turns it on: the flush is a model request of its own that
+    # writes memory/YYYY-MM-DD.md, and nothing reads those notes by
+    # default. /flush runs it by hand either way.
     if (is.null(config$memory_flush_enabled)) {
-        config$memory_flush_enabled <- TRUE
+        config$memory_flush_enabled <- FALSE
+    }
+    # The task list: the task_create and task_update tools and the
+    # text that tells the model how to use them (R/tasks.R). Off unless
+    # a config turns it on.
+    if (is.null(config$task_list_enabled)) {
+        config$task_list_enabled <- FALSE
     }
     # Prompt sent to the model during the pre-compaction memory flush.
     if (is.null(config$memory_flush_prompt)) {

@@ -477,6 +477,8 @@ chat_format_tools_list <- function(turn_session) {
     # The tools the next request carries (R/request-prefix.R).
     api_tools <- tryCatch(session_request_parts(turn_session)$tools,
                           error = function(e) list())
+    # The task tools are offered only where the task list is on.
+    api_tools <- .task_filter_tools(api_tools, .task_list_on(turn_session))
     if (length(api_tools) == 0L) {
         return("No tools active.\n")
     }

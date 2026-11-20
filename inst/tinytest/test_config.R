@@ -23,7 +23,9 @@ config <- corteza:::load_config(testdir)
 expect_equal(config$provider, "anthropic")
 expect_equal(config$context_files, character(0))
 expect_false(isTRUE(config$context_include_memory_logs))
-expect_true(isTRUE(config$memory_flush_enabled))
+expect_identical(config$memory_flush_enabled, FALSE)
+expect_identical(config$task_list_enabled, FALSE)
+expect_null(config$cache)
 expect_false(isTRUE(config$legacy_memory_tools_enabled))
 expect_true("write_file" %in% config$dangerous_tools)
 expect_equal(config$port, 7850L)
@@ -47,6 +49,17 @@ writeLines('{"provider": "ollama", "model": "llama3.2"}',
 config <- corteza:::load_config(testdir)
 expect_equal(config$provider, "ollama")
 expect_equal(config$model, "llama3.2")
+
+# The memory flush ahead of a compaction and the task list are off by
+# default (asserted above), and a config turns each on. A prompt cache
+# set here is kept as written; where none is set the default is not
+# load_config()'s but the resolver's, by provider (.session_cache()).
+writeLines('{"memory_flush_enabled": true, "task_list_enabled": true, "cache": "1h"}',
+    file.path(testdir, ".corteza", "config.json"))
+config <- corteza:::load_config(testdir)
+expect_identical(config$memory_flush_enabled, TRUE)
+expect_identical(config$task_list_enabled, TRUE)
+expect_identical(config$cache, "1h")
 
 # Test custom context_files
 writeLines('{"context_files": ["README.md", "CUSTOM.md"]}',

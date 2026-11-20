@@ -17,7 +17,7 @@ compose <- corteza:::task_compose_system
 display <- corteza:::format_task_list_display
 
 # Helper: build a minimal session env for intercept tests.
-new_test_session <- function(channel = "console") {
+new_test_session <- function(channel = "console", enabled = TRUE) {
     e <- new.env(parent = emptyenv())
     e$on_tool <- list()
     e$tasks <- list()
@@ -25,6 +25,9 @@ new_test_session <- function(channel = "console") {
     # matrix / unsupported-channel branches pass channel = "matrix"
     # (or another value) explicitly.
     e$channel <- channel
+    # The task list is off unless the config turns it on. The tests of
+    # the list itself run with it on; the ones of the switch say so.
+    e$config <- list(task_list_enabled = enabled)
     e
 }
 
@@ -145,8 +148,11 @@ expect_true(grepl("unattended /auto run", aut_note, fixed = TRUE))
 expect_true(grepl("accepted automatically", aut_note, fixed = TRUE))
 expect_true(grepl("ask before you assume", corteza:::.auto_note(FALSE), fixed = TRUE))
 expect_true(grepl("Ask clarifying questions first",
-                  compose("BASE", list(), channel = "console"),
+                  compose("BASE", list(), on = TRUE),
                   fixed = TRUE))
+# A session with the task list off gets no task text, in an /auto run
+# or out of one.
+expect_identical(compose("BASE", list(), on = FALSE), "BASE")
 # The task list's note: the whole list, or that it is empty.
 expect_identical(corteza:::.task_list_note(list()), "[The task list is empty.]")
 listed <- corteza:::.task_list_note(list(list(text = "a", status = "pending"),
@@ -209,7 +215,6 @@ local({
     s <- new_test_session()
     s$channel <- "cli"
     s$approval_cb <- function(call, decision) TRUE
-    s$config <- list()
     executor_called <- new.env(parent = emptyenv())
     executor_called$count <- 0L
     exec <- function(name, args) {
@@ -246,7 +251,6 @@ local({
         approval_calls$count <- approval_calls$count + 1L
         FALSE
     }
-    s$config <- list()
     handler <- corteza:::.make_tool_handler(s,
         tool_executor = function(n, a) "x")
     res <- handler("task_update", list(index = 1, status = "in_progress"))
@@ -280,10 +284,10 @@ expect_true(grepl("3. [x] third", out, fixed = TRUE))
 # format_task_list_prompt() now renders only the list.
 expect_false(grepl("Maintain this list", out, fixed = TRUE))
 
-# compose() on supported channels (cli, console) appends the
-# static "how to use task tools" addendum on every turn so the LLM
-# sees the clarify-then-plan flow.
-empty_compose <- compose("BASE", list(), channel = "console")
+# compose() for a session with the task list on appends the static
+# "how to use task tools" addendum on every turn so the LLM sees the
+# clarify-then-plan flow.
+empty_compose <- compose("BASE", list(), on = TRUE)
 expect_true(startsWith(empty_compose, "BASE\n"))
 expect_true(grepl("# Multi-step requests", empty_compose, fixed = TRUE))
 expect_true(grepl("Ask clarifying questions first", empty_compose,
@@ -292,40 +296,72 @@ expect_false(grepl("# Active tasks", empty_compose, fixed = TRUE))
 
 # compose() with tasks appends both the static addendum and the
 # active-list block.
-res <- compose("BASE", tasks, channel = "cli")
+res <- compose("BASE", tasks, on = TRUE)
 expect_true(startsWith(res, "BASE\n"))
 expect_true(grepl("# Multi-step requests", res, fixed = TRUE))
 expect_true(grepl("# Active tasks", res, fixed = TRUE))
 
-# Matrix channel: task addendum is *not* injected. The Matrix
-# channel has no synchronous readline / cli_read_line equivalent
-# for the approval prompt, so telling the LLM to call task_create
-# would just stall the conversation on default-deny.
-bot_compose <- compose("BASE", tasks, channel = "matrix")
-expect_equal(bot_compose, "BASE")
-expect_false(grepl("# Multi-step requests", bot_compose, fixed = TRUE))
-expect_false(grepl("# Active tasks", bot_compose, fixed = TRUE))
+# Off: neither the addendum nor a list the session still holds reaches
+# the model, so it is never told to call tools it was not given.
+off_compose <- compose("BASE", tasks, on = FALSE)
+expect_equal(off_compose, "BASE")
+expect_false(grepl("# Multi-step requests", off_compose, fixed = TRUE))
+expect_false(grepl("# Active tasks", off_compose, fixed = TRUE))
 
-# Unspecified channel (subagents, embedded uses): also off by
-# default so callers opt in by setting an explicit channel.
-nochan_compose <- compose("BASE", tasks)
-expect_equal(nochan_compose, "BASE")
+# Off is the default, and only TRUE turns it on: a caller that still
+# passes a channel name where `on` now sits gets no task text.
+expect_equal(compose("BASE", tasks), "BASE")
+expect_equal(compose("BASE", tasks, "cli"), "BASE")
+expect_equal(compose("BASE", tasks, on = NA), "BASE")
+expect_equal(compose("BASE", tasks, on = NULL), "BASE")
 
-# .task_filter_tools strips task_create / task_update on Matrix
-# but keeps them on supported channels.
+# .task_filter_tools strips task_create / task_update unless the task
+# list is on.
 tool_list <- list(
                   list(name = "read_file"),
                   list(name = "task_create"),
                   list(name = "task_update"),
                   list(name = "bash"))
-filtered_matrix <- corteza:::.task_filter_tools(tool_list, "matrix")
-expect_equal(length(filtered_matrix), 2L)
-expect_equal(vapply(filtered_matrix, function(t) t$name, character(1)),
+filtered_off <- corteza:::.task_filter_tools(tool_list, FALSE)
+expect_equal(length(filtered_off), 2L)
+expect_equal(vapply(filtered_off, function(t) t$name, character(1)),
              c("read_file", "bash"))
-filtered_cli <- corteza:::.task_filter_tools(tool_list, "cli")
-expect_equal(length(filtered_cli), 4L)
-filtered_console <- corteza:::.task_filter_tools(tool_list, "console")
-expect_equal(length(filtered_console), 4L)
+expect_equal(length(corteza:::.task_filter_tools(tool_list, TRUE)), 4L)
+expect_equal(length(corteza:::.task_filter_tools(tool_list, "cli")), 2L)
+expect_equal(length(corteza:::.task_filter_tools(tool_list, NULL)), 2L)
+
+# --- the switch -----------------------------------------------------
+
+# A session has the task list when its channel has the approval prompt
+# and its config turns the list on. Either alone is not enough.
+task_on <- corteza:::.task_list_on
+for (ch in c("cli", "console")) {
+    expect_true(task_on(new_test_session(ch, enabled = TRUE)))
+    expect_false(task_on(new_test_session(ch, enabled = FALSE)))
+}
+# Matrix has no synchronous approval prompt, so the config cannot turn
+# the list on there, and neither can it for a session with no channel.
+expect_false(task_on(new_test_session("matrix", enabled = TRUE)))
+local({
+    s <- new_test_session(enabled = TRUE)
+    s$channel <- NULL
+    expect_false(task_on(s))
+})
+# Off where nothing says on: no config, a config without the key, and
+# a value that is not TRUE (a quoted "true" in the JSON among them).
+local({
+    s <- new_test_session("cli")
+    s$config <- NULL
+    expect_false(task_on(s))
+    s$config <- list()
+    expect_false(task_on(s))
+    for (bad in list("true", 1L, NA, c(TRUE, TRUE), list(TRUE))) {
+        s$config <- list(task_list_enabled = bad)
+        expect_false(task_on(s))
+    }
+})
+
+# The default itself, off, is load_config()'s: test_config.R.
 
 # task_tool_intercept defense-in-depth: even if a Matrix session
 # somehow has the tools advertised (e.g. user disables the filter),
@@ -340,6 +376,155 @@ local({
     expect_true(grepl("not available on the 'matrix' channel", res,
                       fixed = TRUE))
     expect_equal(length(s$tasks), 0L)
+})
+
+# The same with the task list off in the terminal: a history from an
+# earlier session can hold task calls the model repeats. Neither tool
+# changes the session, an approving callback is not asked, and an auto
+# run gets no pass.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    asked <- 0L
+    for (ch in c("cli", "console")) {
+        s <- new_test_session(ch, enabled = FALSE)
+        s$task_approval_cb <- function() {
+            asked <<- asked + 1L
+            TRUE
+        }
+        res <- intercept(s, "task_create", list(tasks = c("a", "b")))
+        expect_identical(res, paste0("[task error: task_create is not ",
+                                     "available: the task list is off ",
+                                     "(task_list_enabled)]"))
+        expect_equal(length(s$tasks), 0L)
+        expect_false(isTRUE(s$tasks_dirty))
+
+        # A list the session still holds is not updated either.
+        s$tasks <- list(list(text = "kept", status = "pending"))
+        res <- intercept(s, "task_update",
+                         list(index = 1, status = "completed"))
+        expect_true(grepl("task_update is not available", res, fixed = TRUE))
+        expect_identical(s$tasks[[1]]$status, "pending")
+
+        s$auto_run_id <- "auto-xyz"
+        res <- intercept(s, "task_create", list(tasks = c("a")))
+        expect_true(grepl("the task list is off", res, fixed = TRUE))
+        expect_identical(s$tasks[[1]]$text, "kept")
+
+        # Another tool is none of the intercept's business, on or off.
+        expect_null(intercept(s, "read_file", list(path = "x")))
+    }
+    expect_identical(asked, 0L)
+})
+
+# Through the tool handler turn() builds: the refusal comes back as the
+# tool's result, and neither the executor nor the approval prompt runs.
+local({
+    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
+    s <- new_test_session("cli", enabled = FALSE)
+    reached <- 0L
+    s$approval_cb <- function(call, decision) {
+        reached <<- reached + 1L
+        TRUE
+    }
+    handler <- corteza:::.make_tool_handler(s, tool_executor = function(n, a) {
+        reached <<- reached + 1L
+        "executor was called"
+    })
+    res <- handler("task_create", list(tasks = c("a", "b")))
+    expect_true(grepl("the task list is off", res, fixed = TRUE))
+    expect_equal(length(s$tasks), 0L)
+    expect_identical(reached, 0L)
+})
+
+# turn() sends neither the tools nor the task text unless the config
+# turns the list on. The provider's call is replaced, so nothing leaves
+# the machine. The session's tools and system text are fixed (WP14): a
+# terminal's end with exit_plan_mode, and a list held from before
+# reaches the model as a note ahead of the prompt, never in the system
+# text.
+local({
+    ns <- asNamespace("llm.api")
+    orig <- get("agent", envir = ns, inherits = FALSE)
+    captured <- NULL
+    assignInNamespace("agent", function(...) {
+        captured <<- list(...)
+        list(content = "ok", history = list(),
+             usage = list(input_tokens = 1L, output_tokens = 1L))
+    }, ns = "llm.api")
+    on.exit(assignInNamespace("agent", orig, ns = "llm.api"), add = TRUE)
+
+    offered <- list(list(name = "read_file", description = "r",
+                         input_schema = list(type = "object")),
+                    list(name = "task_create", description = "c",
+                         input_schema = list(type = "object")),
+                    list(name = "task_update", description = "u",
+                         input_schema = list(type = "object")))
+    sent <- function(channel, config, tasks = list()) {
+        s <- corteza::new_session(channel = channel, provider = "openai",
+                                  model_map = list(cloud = "test-model",
+                                                   local = NULL),
+                                  system = "BASE", web_search = FALSE)
+        s$config <- config
+        s$tasks <- tasks
+        captured <<- NULL
+        out <- corteza::turn("hi", s, tools = offered)
+        expect_identical(out$reply, "ok")
+        list(tools = vapply(captured$tools, function(t) t$name, character(1)),
+             system = captured$system,
+             prompt = paste(unlist(captured$prompt), collapse = " "))
+    }
+    held <- list(list(text = "kept from before", status = "pending"))
+
+    for (ch in c("cli", "console")) {
+        # No key, an empty config, and the key set to false: off.
+        for (cfg in list(NULL, list(), list(task_list_enabled = FALSE))) {
+            got <- sent(ch, cfg, held)
+            expect_identical(got$tools, c("read_file", "exit_plan_mode"))
+            expect_false(grepl("Multi-step requests", got$system,
+                               fixed = TRUE))
+            expect_false(grepl("Active tasks", got$system, fixed = TRUE))
+            expect_false(grepl("kept from before",
+                               paste(got$system, got$prompt), fixed = TRUE))
+        }
+        got <- sent(ch, list(task_list_enabled = TRUE), held)
+        expect_identical(got$tools, c("read_file", "task_create",
+                                      "task_update", "exit_plan_mode"))
+        expect_true(grepl("Multi-step requests", got$system, fixed = TRUE))
+        expect_false(grepl("kept from before", got$system, fixed = TRUE))
+        expect_true(grepl("[Task list:", got$prompt, fixed = TRUE))
+        expect_true(grepl("kept from before", got$prompt, fixed = TRUE))
+    }
+    # A room has no task list whatever its config says.
+    got <- sent("matrix", list(task_list_enabled = TRUE), held)
+    expect_identical(got$tools, "read_file")
+    expect_false(grepl("Multi-step requests", got$system, fixed = TRUE))
+    expect_false(grepl("kept from before", got$prompt, fixed = TRUE))
+})
+
+# /tools lists what a turn would offer.
+local({
+    listed <- function(enabled) {
+        s <- new_test_session("cli", enabled = enabled)
+        s$tools_filter <- c("read_file", "task_create", "task_update")
+        corteza:::chat_format_tools_list(s)
+    }
+    on <- listed(TRUE)
+    off <- listed(FALSE)
+    expect_true(grepl("read_file", on, fixed = TRUE))
+    expect_true(grepl("task_create", on, fixed = TRUE))
+    expect_true(grepl("task_update", on, fixed = TRUE))
+    expect_true(grepl("read_file", off, fixed = TRUE))
+    expect_false(grepl("task_create", off, fixed = TRUE))
+    expect_false(grepl("task_update", off, fixed = TRUE))
+})
+
+# /tasks names the config file and the key where the list is off.
+local({
+    note <- corteza:::.task_list_off_note()
+    expect_true(grepl("The task list is off", note, fixed = TRUE))
+    expect_true(grepl("\"task_list_enabled\": true", note, fixed = TRUE))
+    expect_true(grepl(corteza:::corteza_config_path("config.json"), note,
+                      fixed = TRUE))
 })
 
 # --- display -------------------------------------------------------

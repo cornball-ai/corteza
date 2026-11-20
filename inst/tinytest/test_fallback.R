@@ -435,4 +435,75 @@ local({
     expect_identical(session$last_route, answer$route)
 })
 
+# Each candidate's usage counts its cached input by that candidate's
+# provider, before one candidate's usage is added to another's
+# (.usage_count_cached()). The numbers a request reports: 12 input, 340
+# output, 48,000 read from the cache and 3,000 written to it.
+local({
+    corteza:::.fallback_reset()
+    on.exit(corteza:::.fallback_reset(), add = TRUE)
+    reported <- function(...) {
+        list(input_tokens = 12L, output_tokens = 340L, ...,
+             cache_read_input_tokens = 48000L,
+             cache_creation_input_tokens = 3000L)
+    }
+    answer <- function(...) {
+        list(content = "ok", history = list(), usage = reported(...))
+    }
+    quiet <- function(expr) suppressMessages(expr)
+
+    # An Anthropic candidate: the total counts all of it.
+    log <- new.env(); log$calls <- list()
+    out <- corteza:::.agent_with_fallback(base_args, new_fb_session(),
+        .call = make_call(list(
+            anthropic_claude = answer(total_tokens = 352L)), log))
+    expect_equal(out$usage$total_tokens, 51352)
+    expect_identical(out$usage$input_tokens, 12L)
+
+    # Another provider with the same numbers: left as reported. Its cached
+    # input is inside its input count.
+    s <- new_fb_session(fallback = character())
+    s$provider <- "openai_codex"
+    args <- base_args
+    args$provider <- "openai_codex"
+    args$model <- "gpt-5.6-sol"
+    out <- corteza:::.agent_with_fallback(args, s,
+        .call = make_call(list(
+            openai_codex = answer(total_tokens = 352L)), log))
+    expect_identical(out$usage$total_tokens, 352L)
+
+    # A request the primary answered before its limit reaches the
+    # checkpoint under this one with its cached input counted, and stays
+    # in the total after another provider finishes the turn. That
+    # provider's own numbers are added as it reported them.
+    corteza:::.fallback_reset()
+    seen <- list()
+    args <- base_args
+    args$checkpoint_callback <- function(history, context) {
+        seen[[length(seen) + 1L]] <<- context
+        NULL
+    }
+    s <- new_fb_session()
+    out <- quiet(corteza:::.agent_with_fallback(args, s,
+        .call = make_call(list(
+            anthropic_claude = function(args) {
+                args$checkpoint_callback(list(), list(
+                    agent_turn = 1L, provider = "anthropic_claude",
+                    usage = reported()))
+                stop("API error (429): rate limit")
+            },
+            openai_codex = function(args) {
+                args$checkpoint_callback(list(), list(
+                    agent_turn = 1L, provider = "openai_codex",
+                    usage = reported()))
+                answer(total_tokens = 352L)
+            }), log)))
+    expect_identical(out$corteza_route$provider, "openai_codex")
+    expect_length(seen, 2L)
+    expect_equal(seen[[1L]]$usage$total_tokens, 51352)
+    expect_null(seen[[2L]]$usage$total_tokens)
+    expect_equal(out$usage$total_tokens, 51352 + 352)
+    expect_equal(out$usage$input_tokens, 24)
+})
+
 corteza:::.fallback_reset()

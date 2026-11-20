@@ -1028,7 +1028,9 @@ local({
                       fixed = TRUE))
     expect_true(grepl("starts a new session", reply(5L), fixed = TRUE))
     expect_true(grepl("write_file", reply(6L), fixed = TRUE))
-    expect_identical(reply(7L), "No tasks.")
+    # The task list is off unless the config turns it on, and /tasks
+    # says how (task_list_enabled).
+    expect_true(startsWith(reply(7L), "The task list is off."))
     # The commands asked no model; the last prompt did.
     expect_identical(model$i, 1L)
     expect_identical(reply(8L), "Read it.")

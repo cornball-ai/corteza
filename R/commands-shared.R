@@ -75,10 +75,15 @@
     }
     rendered <- format_task_list_display(ctx$session$tasks %||% list(),
         palette = ctx$palette)
-    if (is.null(rendered)) {
-        cat("No tasks.\n")
-    } else {
+    if (!is.null(rendered)) {
         cat(rendered, "\n", sep = "")
+    }
+    # A resumed session can hold tasks from before the list was off.
+    # They print, and the note says the model does not see them.
+    if (!.task_list_on(ctx$session)) {
+        cat(.task_list_off_note(), "\n", sep = "")
+    } else if (is.null(rendered)) {
+        cat("No tasks.\n")
     }
     invisible(NULL)
 }

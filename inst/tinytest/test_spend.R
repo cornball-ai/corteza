@@ -220,3 +220,122 @@ if (is.na(old_data)) {
 }
 unlink(tmp_data, recursive = TRUE)
 reset_sub_spend()
+
+# --- cached input -------------------------------------------------------
+
+# A request to an Anthropic provider with a prompt cache on. Its input
+# is 3 counts: 48,000 read from the cache, 3,000 written to it, and 12
+# in `input_tokens`. llm.api's total is 12 + 340.
+cached_usage <- list(input_tokens = 12L, output_tokens = 340L,
+                     total_tokens = 352L,
+                     cache_read_input_tokens = 48000L,
+                     cache_creation_input_tokens = 3000L, cost = 0.02)
+no_total <- function(x) x[names(x) != "total_tokens"]
+for (p in c("anthropic", "anthropic_claude")) {
+    expect_equal(corteza:::.usage_cached_input(cached_usage, p), 51000)
+    counted <- corteza:::.usage_count_cached(cached_usage, p)
+    expect_equal(counted$total_tokens, 51352)
+    # Only the total changes, and a second pass changes nothing.
+    expect_identical(no_total(counted), no_total(cached_usage))
+    expect_identical(corteza:::.usage_count_cached(counted, p), counted)
+}
+# Every other provider counts cached input inside its input count, so
+# the same numbers from one of them are left as they are. So is a
+# usage whose provider is not known.
+for (p in list("openai", "openai_codex", "openai_compatible", "moonshot",
+               "ollama", NULL, NA_character_, character(0),
+               c("anthropic", "openai"))) {
+    expect_equal(corteza:::.usage_cached_input(cached_usage, p), 0)
+    expect_identical(corteza:::.usage_count_cached(cached_usage, p),
+                     cached_usage)
+}
+# Nothing cached: the usage comes back as it was, with no total added.
+for (u in list(list(input_tokens = 5L, output_tokens = 2L),
+               list(input_tokens = 5L, output_tokens = 2L,
+                    cache_read_input_tokens = 0L,
+                    cache_creation_input_tokens = 0L),
+               list(input_tokens = 5L, output_tokens = 2L,
+                    cache_read_input_tokens = NA_integer_,
+                    cache_creation_input_tokens = -4L),
+               list(input_tokens = 5L, output_tokens = 2L,
+                    cache_read_input_tokens = "many"),
+               list())) {
+    expect_equal(corteza:::.usage_cached_input(u, "anthropic"), 0)
+    expect_identical(corteza:::.usage_count_cached(u, "anthropic"), u)
+}
+expect_null(corteza:::.usage_count_cached(NULL, "anthropic"))
+# Either count alone is enough, and one request's raw usage, which has
+# no total, gets one.
+expect_equal(corteza:::.usage_count_cached(
+    list(input_tokens = 1L, output_tokens = 1L,
+         cache_read_input_tokens = 10L), "anthropic")$total_tokens, 12)
+expect_equal(corteza:::.usage_count_cached(
+    list(input_tokens = 1L, output_tokens = 1L,
+         cache_creation_input_tokens = 10L), "anthropic")$total_tokens, 12)
+# With no input or no output count there is nothing to add it to.
+for (u in list(list(output_tokens = 2L, cache_read_input_tokens = 10L),
+               list(input_tokens = 2L, cache_read_input_tokens = 10L),
+               list(input_tokens = NA_integer_, output_tokens = 2L,
+                    cache_read_input_tokens = 10L))) {
+    expect_identical(corteza:::.usage_count_cached(u, "anthropic"), u)
+}
+# The names are matched whole. Neither `cache_creation`, the
+# per-lifetime split llm.api adds, nor a longer name that starts with
+# one of the 2 is read as the count.
+expect_equal(corteza:::.usage_cached_input(
+    list(cache_creation = list(ephemeral_5m_input_tokens = 9L)),
+    "anthropic"), 0)
+expect_equal(corteza:::.usage_cached_input(
+    list(cache_read_input_tokens_by_tier = 9L,
+         cache_creation_input_tokens_by_tier = 9L), "anthropic"), 0)
+
+# The input of a usage, cached or not: what the total holds beyond the
+# output, where that is more than `input_tokens`.
+counted <- corteza:::.usage_count_cached(cached_usage, "anthropic")
+expect_equal(corteza:::.spend_input_tokens(counted), 51012)
+expect_identical(corteza:::.spend_input_tokens(cached_usage), 12L)
+expect_identical(corteza:::.spend_input_tokens(
+    list(input_tokens = 100L, output_tokens = 50L)), 100L)
+# A total under input plus output, no output count, an unknown count:
+# the input as reported.
+expect_identical(corteza:::.spend_input_tokens(
+    list(input_tokens = 100L, output_tokens = 50L, total_tokens = 120L)),
+    100L)
+expect_identical(corteza:::.spend_input_tokens(
+    list(input_tokens = 5L, total_tokens = 100L)), 5L)
+expect_identical(corteza:::.spend_input_tokens(
+    list(input_tokens = NA_integer_, output_tokens = 1L,
+         total_tokens = 5L)), NA_integer_)
+expect_null(corteza:::.spend_input_tokens(
+    list(output_tokens = 50L, total_tokens = 150L)))
+
+# The session tally, which /spent prints and /auto's token cap reads,
+# counts all of it. Uncounted, the same turn would add 352.
+e_cached <- new.env()
+auto_base <- corteza:::auto_spend_baseline(e_cached)
+corteza:::session_accumulate_spend(e_cached, counted)
+seg <- e_cached$spend$segments[[1]]
+expect_equal(seg$total_tokens, 51352L)
+expect_equal(seg$input_tokens, 51012L)
+expect_equal(seg$output_tokens, 340L)
+expect_equal(corteza:::auto_spend_since(e_cached, auto_base)$tokens, 51352)
+out_cached <- corteza:::format_spend(e_cached)
+expect_true(grepl("51.4K tok (51.0K in / 340 out)", out_cached, fixed = TRUE))
+# A turn with nothing cached adds what it always did.
+corteza:::session_accumulate_spend(
+    e_cached, list(input_tokens = 100L, output_tokens = 50L,
+                   total_tokens = 150L, cost = 0.01))
+seg <- e_cached$spend$segments[[1]]
+expect_equal(seg$total_tokens, 51502L)
+expect_equal(seg$input_tokens, 51112L)
+
+# A subagent's tally, which subagents.mcp_spend_cap_tokens reads.
+info_cached <- list(cumulative_input_tokens = 0L,
+                    cumulative_output_tokens = 0L,
+                    cumulative_total_tokens = 0L, cumulative_cost = NA_real_,
+                    cost_missing = FALSE, query_count = 0L)
+info_cached <- corteza:::subagent_accumulate_usage(info_cached, counted)
+expect_equal(info_cached$cumulative_total_tokens, 51352L)
+expect_equal(info_cached$cumulative_input_tokens, 51012L)
+expect_equal(info_cached$cumulative_output_tokens, 340L)
+reset_sub_spend()

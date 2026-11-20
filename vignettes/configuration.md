@@ -340,6 +340,61 @@ If recovery ends with a partial reply, the rendered text is kept in conversation
 history and the journal. A later turn can refer to what the user actually saw;
 unfinished tool calls are still discarded.
 
+## The prompt cache
+
+On an Anthropic provider (`anthropic`, `anthropic_claude`) a session caches
+its prompt for 5 minutes unless a setting says otherwise. The provider keeps
+the tools, the system text and the conversation that a request sent. A
+request that starts within 5 minutes of the start of the one before it reads
+them back at a lower price and pays the write price only for what it added.
+Each read renews the 5 minutes.
+
+```json
+{ "cache": "none" }
+```
+
+`cache` is `"5m"`, `"1h"` or `"none"`. `new_session(cache = )` sets it for one
+session and wins over the config.
+
+The cache changes only the bill: the model receives the same input either
+way. Against an input token sent with no cache, a 5-minute write costs 1.25
+times as much, a 1-hour write 2 times, and a read a tenth, or less on the
+newest models (Anthropic's prompt caching page,
+<https://platform.claude.com/docs/en/build-with-claude/prompt-caching>, read
+2026-11-17). So:
+
+- A turn of several requests, which every turn with a tool call is, pays the
+  write once and reads after it.
+- A request with none before it in the last 5 minutes pays the write on its
+  whole input and reads nothing: a quarter more than with no cache. That is
+  the first request of a session, a reply after a pause, and the request
+  after a tool that ran longer than 5 minutes. A conversation of single
+  replies more than 5 minutes apart costs more with the cache than without.
+  Set `"none"` there, or `"1h"` where the replies come inside the hour.
+- A prompt shorter than the provider's minimum, from 512 tokens on the
+  newest models to 4,096 on some older ones, is not cached and costs what it
+  did.
+- A change to the system text is a change to everything after it. With the
+  task list on (`task_list_enabled`), the list is part of that text, so the
+  turn after one that changed the list writes the whole prompt again.
+
+`turn()$usage` says what a turn read and wrote (`cache_read_input_tokens`,
+`cache_creation_input_tokens`), and its `cost` counts both. Anthropic leaves
+cached input out of `input_tokens`. `total_tokens` counts it, and so do
+`/spent` and the 2 token caps, `auto.max_tokens` for `/auto` and
+`subagents.mcp_spend_cap_tokens` for subagents over MCP: a cached token
+counts as 1 there, whatever it cost.
+
+The setting reaches Anthropic providers only. corteza sends it to no other,
+whatever the config says.
+
+A session that edits its own context (`context_edit`, under "Conversation
+context editing") has no cache unless one is set. A cache entry holds the
+exact text sent up to its marker. Such a session writes ids into entries it
+has already sent, so a request there can find no entry to read and pay the
+write on its whole history. Set `cache` on such a session to try it, and read
+`usage` for the result.
+
 ## When a conversation is compacted
 
 A compaction replaces the older turns of a conversation with a summary. Three
@@ -352,11 +407,12 @@ conditions start one.
   there. `0` turns it off.
 - **A return after a pause.** The model last answered at least
   `context_idle_minutes` ago (60 by default), the pause is longer than the
-  prompt cache lasts (`cache`), and the context holds at least
-  `context_idle_tokens` (100,000 by default). The provider has dropped its
-  cached copy of the conversation by then, so the next request pays the full
-  price for the whole history. A summary costs one such request and makes
-  every later request smaller. `"context_idle_minutes": 0` turns it off.
+  prompt cache lasts (`cache`, under "The prompt cache"), and the context
+  holds at least `context_idle_tokens` (100,000 by default). The provider
+  has dropped its cached copy of the conversation by then, so the next
+  request pays the full price for the whole history. A summary costs one
+  such request and makes every later request smaller.
+  `"context_idle_minutes": 0` turns it off.
 
 The first two are checked before a turn and between the tool rounds of a
 turn, and the terminal checks again after the reply. The third is checked
@@ -375,8 +431,9 @@ wait as silence.
 ```
 
 `/context` shows the trigger in force and the window it is measured against.
-In the terminal an automatic compaction also runs the memory flush first
-(`memory_flush_enabled`), which is a request of its own.
+With `"memory_flush_enabled": true`, an automatic compaction in the terminal
+runs the memory flush first, which is a request of its own. It is off by
+default, and `/flush` runs it by hand.
 
 The R objects outlive the turns that made them: a compaction leaves every
 object in place, whatever its size. So the summary ends with the names of the
@@ -690,6 +747,8 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `provider` | string | `"anthropic"` | LLM provider: `anthropic`, `openai`, `moonshot`, `openai_codex`, `ollama`, `openai_compatible` |
 | `model` | string or null | null | Model name (null = provider default; required for `openai_compatible`) |
 | `base_url` | string or null | null | Endpoint for `openai_compatible` (see below) |
+| `cache` | string or null | null | Prompt cache on an Anthropic provider: `"5m"`, `"1h"` or `"none"`. null means `"5m"` there, and no cache for a session that edits its own context (see "The prompt cache") |
+| `task_list_enabled` | boolean | `false` | The task list in the terminal and in `chat()`: the `task_create` and `task_update` tools, and the instructions to ask first and propose a plan that go with them |
 | `port` | integer | `7850` | MCP server port |
 
 ### Context
@@ -1207,7 +1266,7 @@ of their own they use the saved `cwd`.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `legacy_memory_tools_enabled` | boolean | `false` | Show memory slash commands |
-| `memory_flush_enabled` | boolean | `true` | Auto-flush before compaction |
+| `memory_flush_enabled` | boolean | `false` | Run the memory flush ahead of an automatic compaction in the terminal. `/flush` runs it by hand either way |
 | `context_include_memory_logs` | boolean | `false` | Include daily logs in context |
 
 ## Slash commands
@@ -1229,6 +1288,7 @@ In-chat commands prefixed with `/`.
 | `/compact` | Summarize conversation to free context |
 | `/sessions [all]` | List this directory's sessions, or every directory's |
 | `/context` | Live context usage and loaded files |
+| `/tasks [clear]` | Show or clear the task list. With the list off (`task_list_enabled`), says how to turn it on |
 | `/model` | List current/configured models and the active provider's catalog |
 | `/model <name> [provider]` or `/model <number>` | Switch model, optionally provider; numbers select from the last displayed list |
 | `/effort [level \| default]` | Show or change reasoning effort for this conversation; `default` restores the configured/provider default |

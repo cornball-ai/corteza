@@ -31,6 +31,7 @@
          tools = tools,
          table = if (is.environment(table)) format(table),
          channel = session$channel %||% "",
+         task_list = .task_list_on(session),
          talker = isTRUE(session$talker),
          plan_capable = .prefix_plan_capable(session),
          plan_locked = isTRUE(session$plan_mode_locked),
@@ -88,13 +89,13 @@
     }
     tools <- .plan_mode_filter_tools(tools, .prefix_plan_capable(session),
                                      offer_exit = !isTRUE(session$plan_mode_locked))
-    tools <- .task_filter_tools(tools, session$channel)
+    tools <- .task_filter_tools(tools, .task_list_on(session))
     tools <- .talker_filter_tools(tools, isTRUE(session$talker))
     tools <- .delegation_tools(tools, session)
     tools <- .room_consult_tools(tools, session)
     tools <- .room_media_tools(tools, session)
     system <- task_compose_system(session$system, list(),
-                                  channel = session$channel)
+                                  on = .task_list_on(session))
     list(system = system, tools = tools)
 }
 
@@ -168,7 +169,7 @@ session_request_parts <- function(session) {
 }
 
 .prefix_state <- function(session) {
-    tasks <- if (.task_channel_supports_tasks(session$channel)) {
+    tasks <- if (.task_list_on(session)) {
         session$tasks %||% list()
     } else {
         list()

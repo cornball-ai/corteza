@@ -1100,10 +1100,21 @@ local({
                               reason = "preflight", now = minutes(5))$result)
     expect_true(compact_once(s, idle_config(context_idle_minutes = 3L),
                              reason = "preflight", now = minutes(6))$result)
-    # No cache: the configured minutes alone.
-    s <- idle_session()
+    # No cache: the configured minutes alone. That is a session that
+    # sets "none", and any session on a provider with no such cache.
+    s <- idle_session(cache = "none")
     expect_true(compact_once(s, idle_config(context_idle_minutes = 3L),
                              reason = "preflight", now = minutes(3))$result)
+    s <- idle_session(model = "gpt-6.1-sol", provider = "openai")
+    expect_true(compact_once(s, idle_config(context_idle_minutes = 3L),
+                             reason = "preflight", now = minutes(3))$result)
+    # A session on an Anthropic provider that sets none has the default
+    # cache, 5 minutes, and the rule waits for it as for one it set.
+    s <- idle_session()
+    expect_false(compact_once(s, idle_config(context_idle_minutes = 3L),
+                              reason = "preflight", now = minutes(5))$result)
+    expect_true(compact_once(s, idle_config(context_idle_minutes = 3L),
+                             reason = "preflight", now = minutes(6))$result)
     # The cache named in the config counts as the session's does.
     s <- idle_session()
     s$config <- list(cache = "1h")
@@ -1111,10 +1122,16 @@ local({
                               reason = "preflight",
                               now = minutes(45))$result)
 })
-expect_equal(corteza:::.cache_minutes(trigger_session()), 0)
+expect_equal(corteza:::.cache_minutes(trigger_session()), 5)
+expect_equal(corteza:::.cache_minutes(
+    trigger_session(model = "gpt-6.1-sol", provider = "openai")), 0)
 expect_equal(corteza:::.cache_minutes(trigger_session(cache = "none")), 0)
 expect_equal(corteza:::.cache_minutes(trigger_session(cache = "5m")), 5)
 expect_equal(corteza:::.cache_minutes(trigger_session(cache = "1h")), 60)
+# A session that edits its own context has no cache unless it sets one.
+expect_equal(corteza:::.cache_minutes(trigger_session(context_edit = TRUE)), 0)
+expect_equal(corteza:::.cache_minutes(
+    trigger_session(context_edit = TRUE, cache = "1h")), 60)
 
 # A session that edits its own context is skipped, as it is for size.
 local({

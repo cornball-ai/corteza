@@ -214,6 +214,83 @@ expect_identical(corteza:::.session_cache(c1), "1h")
 c1$cache <- NULL
 expect_identical(corteza:::.session_cache(c1), "5m")
 
+# The default. A session that sets no cache, in its own field or in
+# its config, gets 5 minutes on an Anthropic provider and none on any
+# other, or with no provider at all (c1 above).
+expect_identical(corteza:::.cache_default, "5m")
+cache_of <- function(provider, config = NULL, cache = NULL, ...) {
+    s <- corteza::new_session(channel = "console", provider = provider,
+                              cache = cache, ...)
+    s$config <- config
+    corteza:::.session_cache(s)
+}
+for (p in c("anthropic", "anthropic_claude")) {
+    expect_identical(cache_of(p), "5m")
+    expect_identical(cache_of(p, config = list()), "5m")
+    # "none" turns it off, from the config or from the session, and a
+    # set value is the value.
+    expect_identical(cache_of(p, config = list(cache = "none")), "none")
+    expect_identical(cache_of(p, cache = "none"), "none")
+    expect_identical(cache_of(p, config = list(cache = "1h")), "1h")
+    expect_identical(cache_of(p, cache = "1h"), "1h")
+    # The session's field wins over the config, in both directions.
+    expect_identical(cache_of(p, config = list(cache = "1h"), cache = "none"),
+                     "none")
+    expect_identical(cache_of(p, config = list(cache = "none"), cache = "5m"),
+                     "5m")
+}
+for (p in c("openai", "openai_codex", "ollama", "moonshot",
+            "openai_compatible")) {
+    expect_null(cache_of(p))
+    expect_null(cache_of(p, config = list()))
+}
+# The default follows the provider a session has now, as /provider and
+# /model change it.
+local({
+    s <- corteza::new_session(channel = "console", provider = "openai")
+    expect_null(corteza:::.session_cache(s))
+    s$provider <- "anthropic"
+    expect_identical(corteza:::.session_cache(s), "5m")
+    s$provider <- NULL
+    expect_null(corteza:::.session_cache(s))
+})
+
+# A session that edits its own context gets no default: it writes ids
+# into entries it has already sent, so an entry cached at one request
+# may not be there to read at the next, and the write is the dearer
+# price. One it sets is still used.
+local({
+    editing <- function(...) {
+        s <- corteza::new_session(channel = "console", provider = "anthropic",
+                                  context_edit = TRUE, ...)
+        expect_true(corteza:::.context_edit_enabled(s))
+        s
+    }
+    expect_null(corteza:::.session_cache(editing()))
+    expect_identical(corteza:::.session_cache(editing(cache = "5m")), "5m")
+    s <- editing()
+    s$config <- list(cache = "1h")
+    expect_identical(corteza:::.session_cache(s), "1h")
+    # Either strategy edits, and so does a switch the config holds.
+    for (strategy in c("hybrid", "clm")) {
+        s <- corteza::new_session(channel = "console", provider = "anthropic")
+        s$config <- list(context_edit = list(enabled = TRUE,
+                                             strategy = strategy))
+        expect_true(corteza:::.context_edit_enabled(s))
+        expect_null(corteza:::.session_cache(s))
+    }
+    # Editing turned off again: the default is back.
+    s <- editing()
+    s$context_edit <- FALSE
+    expect_false(corteza:::.context_edit_enabled(s))
+    expect_identical(corteza:::.session_cache(s), "5m")
+    # A session with editing configured and no journal does not edit.
+    s <- editing()
+    s$journal_enabled <- FALSE
+    expect_false(corteza:::.context_edit_enabled(s))
+    expect_identical(corteza:::.session_cache(s), "5m")
+})
+
 ns_cache <- corteza::new_session(channel = "console", provider = "anthropic",
                                  cache = "1h")
 expect_identical(ns_cache$cache, "1h")
@@ -246,9 +323,9 @@ for (p in c("openai", "openai_codex", "ollama", "moonshot")) {
     expect_identical(g$max_tokens, 32000L)   # unrelated args untouched
 }
 
-# turn() forwards it on Anthropic and omits the key entirely elsewhere,
-# so llm.api's own default ("none") stands rather than an explicit NULL
-# reaching match.arg.
+# turn() forwards it on Anthropic, the default included, and omits the
+# key entirely elsewhere, so llm.api's own default ("none") stands
+# rather than an explicit NULL reaching match.arg.
 local({
     ns <- asNamespace("llm.api")
     orig <- get("agent", envir = ns, inherits = FALSE)
@@ -277,10 +354,37 @@ local({
     expect_identical(out$reply, "ok")
     expect_false("cache" %in% names(captured))
 
+    # No cache set anywhere: 5 minutes on either Anthropic provider.
+    for (p in c("anthropic", "anthropic_claude")) {
+        captured <- NULL
+        out <- corteza::turn("hi", sess(p), tools = list())
+        expect_identical(out$reply, "ok")
+        expect_identical(captured$cache, "5m")
+    }
+    # And no key on another provider.
+    for (p in c("openai", "openai_codex", "moonshot")) {
+        captured <- NULL
+        out <- corteza::turn("hi", sess(p), tools = list())
+        expect_identical(out$reply, "ok")
+        expect_false("cache" %in% names(captured))
+    }
+
+    # "none" goes out as "none", which is llm.api's word for no marker,
+    # whether the session or its config says it.
     captured <- NULL
-    out <- corteza::turn("hi", sess("anthropic"), tools = list())
-    expect_identical(out$reply, "ok")
-    expect_false("cache" %in% names(captured))
+    out <- corteza::turn("hi", sess("anthropic", cache = "none"),
+                         tools = list())
+    expect_identical(captured$cache, "none")
+    captured <- NULL
+    quiet <- sess("anthropic")
+    quiet$config <- list(cache = "none")
+    out <- corteza::turn("hi", quiet, tools = list())
+    expect_identical(captured$cache, "none")
+    captured <- NULL
+    hour <- sess("anthropic_claude")
+    hour$config <- list(cache = "1h")
+    out <- corteza::turn("hi", hour, tools = list())
+    expect_identical(captured$cache, "1h")
 })
 
 # A fallback rewrites provider under args built for the primary, so the

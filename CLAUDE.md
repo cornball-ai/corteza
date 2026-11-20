@@ -519,6 +519,19 @@ Key fields: `provider`, `port` (default 7850), `context_warn_pct` /
 `context_high_pct` / `context_crit_pct` / `context_compact_pct`,
 `context_files`, `approval_mode`, `dangerous_tools`, `permissions`.
 
+**Off unless a config turns them on**: the task list
+(`task_list_enabled`; `.task_list_on()` in `R/tasks.R` is the one test,
+and it also needs a channel with an approval prompt) and the memory
+flush ahead of an automatic compaction (`memory_flush_enabled`).
+**The prompt cache** has no default in `load_config()`:
+`.session_cache()` (`R/turn.R`) answers `"5m"` for a session on an
+Anthropic provider that sets none, and nothing for one that edits its
+own context, since such a session rewrites entries it has already sent.
+Anthropic counts cached input beside `input_tokens`, so a usage's
+`total_tokens` gets it added where the provider is known
+(`.usage_count_cached()`, `R/spend.R`): `/spent` and both token caps
+read that total.
+
 **When a session compacts** (`R/compact-trigger.R`): at the smaller of
 `context_compact_pct` of the model's window and `context_compact_tokens`
 (200,000), or ahead of a turn after `context_idle_minutes` (60) with
