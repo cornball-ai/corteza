@@ -69,19 +69,28 @@ local({
     expect_identical(length(list.files(dirname(
         ns$bot_room_state_path(cfg, room)))), 1L)
 
-    # A /clear's record: the message that began it, and the bot's answer.
+    # A /clear's record: the message that began it, saved before anything
+    # acts on it, and then the ids of the bot's answer.
     start <- list(id = "$clear", ts = as.POSIXct(1763560000.5,
                                                  origin = "1970-01-01"))
-    record <- ns$bot_conversation_new(start, ack = c("$ack", NA, ""))
+    record <- ns$bot_conversation_begin(cfg, room, room, start)
     expect_identical(record$since, "$clear")
     expect_equal(record$at, 1763560000.5)
+    expect_null(record$ack)
+    got <- ns$bot_conversation_get(cfg, room, room)
+    expect_identical(got$id, record$id)
+    expect_null(got$ack)
+    record <- ns$bot_conversation_acked(cfg, room, room, record,
+                                        c("$ack", NA, ""))
     expect_identical(record$ack, "$ack")
-    expect_true(ns$bot_conversation_save(cfg, room, room, record))
     got <- ns$bot_conversation_get(cfg, room, room)
     expect_identical(got$id, record$id)
     expect_identical(got$since, "$clear")
     expect_identical(got$ack, "$ack")
     expect_equal(got$at, 1763560000.5)
+    # An answer that was not sent adds nothing.
+    expect_identical(ns$bot_conversation_acked(cfg, room, room, record, NULL),
+                     record)
     expect_identical(ns$bot_conversation_get(cfg, thread, room)$id, second$id)
     # Made with a session: no starting event, nothing left out.
     bare <- ns$bot_conversation_new()
@@ -105,6 +114,13 @@ local({
     Sys.setenv(CORTEZA_STATE_DIR = blocked)
     out <- messages_of(ns$bot_conversation_save(cfg, room, room, bare))
     expect_false(out$value)
+    expect_true(any(grepl("could not save", out$said, fixed = TRUE)))
+    # A /clear's record that could not be saved begins nothing.
+    out <- messages_of(ns$bot_conversation_begin(cfg, room, room, start))
+    expect_null(out$value)
+    # The answer's ids stay in hand when they cannot be saved.
+    out <- messages_of(ns$bot_conversation_acked(cfg, room, room, bare, "$a"))
+    expect_identical(out$value$ack, "$a")
     expect_true(any(grepl("could not save", out$said, fixed = TRUE)))
     unlink(blocked, recursive = TRUE)
 })
@@ -162,8 +178,8 @@ said <- function(lo, body, thread = NULL) {
                            ts = m$ts, thread = thread)
 }
 # One pass of the bot's loop with one incoming message, as test_hooks.R
-# drives it. Replies go to the loopback.
-poll <- function(lo, cfg, sessions, incoming) {
+# drives it. Replies go to the loopback, each through `on_reply` first.
+poll <- function(lo, cfg, sessions, incoming, on_reply = NULL) {
     saved <- list()
     patch <- function(name, fn, package = "corteza") {
         saved[[length(saved) + 1L]] <<- list(name = name, package = package,
@@ -185,6 +201,9 @@ poll <- function(lo, cfg, sessions, incoming) {
     patch("bot_run_turn_in_cwd", function(...) stop("the poll reached a model"))
     patch("bot_update_displayname", function(cfg, ...) cfg)
     patch("bot_reply_send", function(chat, room, text, ...) {
+        if (is.function(on_reply)) {
+            on_reply(text)
+        }
         chat.api::chat_send(lo, room, text, thread = list(...)$thread)
     })
     corteza::bot_poll(sessions = sessions, timeout = 0, model = "fixture",
@@ -225,19 +244,18 @@ local({
     th <- ns$bot_get_or_create_session(reg, ns$bot_session_key(room, "$t"),
                                        cfg, room_id = room)
     expect_false(identical(th$conversation_id, s$conversation_id))
-    # A clear whose record is not saved still starts a new conversation,
-    # though the old record still reads: the session takes the new one in
-    # hand.
-    save <- ns$bot_conversation_save
-    assignInNamespace("bot_conversation_save", function(...) FALSE, "corteza")
-    fresh <- tryCatch(ns$bot_reset_session(reg, room, cfg, NULL, "ack"),
-                      finally = assignInNamespace("bot_conversation_save", save,
-                                                  "corteza"))
-    expect_identical(ns$bot_conversation_get(cfg, room, room)$id,
-                     s$conversation_id)
-    expect_false(identical(fresh$conversation_id, s$conversation_id))
-    expect_identical(get(room, envir = reg)$conversation_id,
-                     fresh$conversation_id)
+    # The reset takes the record the /clear saved: without one, the
+    # session stays.
+    expect_error(ns$bot_reset_session(reg, room, cfg, NULL, "ack", NULL),
+                 "saved record")
+    expect_identical(get(room, envir = reg), s)
+    record <- ns$bot_conversation_begin(cfg, room, room,
+                                        list(id = "$c", ts = 1))
+    fresh <- ns$bot_reset_session(reg, room, cfg, NULL, "ack", record)
+    expect_false(identical(fresh, s))
+    expect_identical(fresh$conversation_id, record$id)
+    expect_identical(get(room, envir = reg), fresh)
+    expect_identical(ns$bot_conversation_get(cfg, room, room)$id, record$id)
 })
 
 # ---- /clear through the bot's loop, and a restart after it -------------------
@@ -309,6 +327,53 @@ local({
     expect_true(grepl("U-NEW", rendered(u), fixed = TRUE))
 })
 
+# ---- A /clear whose record cannot be saved -----------------------------------
+# Codex's finding on #282: the reset went on when the new record was not
+# saved, so a restart brought the old conversation back. The record is
+# saved before the room is answered and before the session goes. One
+# that cannot be saved clears nothing, and the room is told.
+local({
+    done <- with_state()
+    on.exit(done(), add = TRUE)
+    root <- tempfile("room-root-")
+    dir.create(root)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    lo <- chat.api::chat_loopback()
+    restore <- patch_room(lo, root)
+    on.exit(restore(), add = TRUE)
+    cfg <- room_cfg()
+    sessions <- ns$bot_new_session_registry()
+    s <- ns$bot_get_or_create_session(sessions, room, cfg)
+    first <- s$conversation_id
+    save <- ns$bot_conversation_save
+    assignInNamespace("bot_conversation_save", function(...) FALSE, "corteza")
+    n <- tryCatch(poll(lo, cfg, sessions, said(lo, "/clear")),
+                  error = function(e) conditionMessage(e),
+                  finally = assignInNamespace("bot_conversation_save", save,
+                                              "corteza"))
+    expect_equal(n, 1L)
+    expect_identical(get(room, envir = sessions), s)
+    expect_identical(s$conversation_id, first)
+    expect_identical(ns$bot_conversation_get(cfg, room, room)$id, first)
+    posted <- bodies(lo)
+    expect_true(startsWith(posted[length(posted)],
+                           "Not cleared: the new conversation could not be"))
+    expect_false(any(startsWith(posted, "Cleared")))
+    # Saved, the next /clear goes through, and the room's record names
+    # the new conversation by the time the room is told.
+    named <- NULL
+    n <- poll(lo, cfg, sessions, said(lo, "/clear"), on_reply = function(text) {
+        if (startsWith(text, "Cleared")) {
+            named <<- ns$bot_conversation_get(cfg, room, room)$id
+        }
+    })
+    expect_equal(n, 1L)
+    after <- get(room, envir = sessions)
+    expect_false(identical(after, s))
+    expect_false(identical(named, first))
+    expect_identical(named, after$conversation_id)
+})
+
 # ---- /clear in a room with a context vault -----------------------------------
 # The command used to drop the session before the reset could clear its
 # context, and the new session restored the cleared history from the
@@ -355,6 +420,16 @@ local({
     }, ns = "corteza")
     on.exit(assignInNamespace("job_conversation_clear", real, ns = "corteza"),
             add = TRUE)
+    # Each first holds the queued jobs of the conversation that ends,
+    # while the session is still that conversation's.
+    real_hold <- ns$job_conversation_hold
+    assignInNamespace("job_conversation_hold", function(session) {
+        calls[[length(calls) + 1L]] <<- list(
+            held = ns$session_conversation(session))
+        invisible(0L)
+    }, ns = "corteza")
+    on.exit(assignInNamespace("job_conversation_hold", real_hold,
+                              ns = "corteza"), add = TRUE)
     # The terminal's (R/repl-clear.R).
     ctx <- new.env(parent = emptyenv())
     ctx$ws_enabled <- FALSE
@@ -362,6 +437,7 @@ local({
     ctx$session <- new.env(parent = emptyenv())
     ctx$session$on_tool <- list()
     ctx$session$.repl_jobs_ready <- TRUE
+    ctx$session$sessionId <- "old-sess"
     ctx$disk_session <- list(session = list(sessionId = "old-sess"),
                              sessionId = "old-sess")
     ctx$new_session_fn <- function() {
@@ -369,12 +445,13 @@ local({
              resumed = FALSE)
     }
     invisible(capture.output(ns$.repl_clear(ctx)))
-    expect_identical(calls, list(list(conversation = "new-sess",
+    expect_identical(calls, list(list(held = "old-sess"),
+                                 list(conversation = "new-sess",
                                       key = "repl:new-sess")))
     # A terminal session without jobs is left alone.
     ctx$session$.repl_jobs_ready <- NULL
     invisible(capture.output(ns$.repl_clear(ctx)))
-    expect_identical(length(calls), 1L)
+    expect_identical(length(calls), 2L)
     # A room's, through the bot's loop: the new conversation's id, and
     # no key, since a room keeps one checkpoint for each session key.
     root <- tempfile("room-root-")
@@ -385,10 +462,10 @@ local({
     on.exit(restore(), add = TRUE)
     cfg <- room_cfg()
     sessions <- ns$bot_new_session_registry()
-    ns$bot_get_or_create_session(sessions, room, cfg)
+    first <- ns$bot_get_or_create_session(sessions, room, cfg)$conversation_id
     poll(lo, cfg, sessions, said(lo, "/clear"))
-    expect_identical(length(calls), 2L)
-    expect_identical(calls[2L], list(list(
+    expect_identical(length(calls), 4L)
+    expect_identical(calls[3:4], list(list(held = first), list(
         conversation = get(room, envir = sessions)$conversation_id, key = NULL)))
 })
 
@@ -459,15 +536,23 @@ local({
     }
     expect_identical(ns$job_read(id)$status, "running")
     pid <- pid_of(s)
+    # Codex's case on #281: a job queued behind it, and plan mode turned
+    # on before the /clear. The new conversation starts with it off.
+    queued <- ns$job_submit(s, "queued behind")
+    expect_identical(ns$job_read(queued)$status, "queued")
+    s$plan_mode <- TRUE
 
     expect_equal(poll(lo, cfg, sessions, said(lo, "/clear")), 1L)
     after <- get(room, envir = sessions)
-    # The worker and the job in flight went to the replacement.
+    # The worker, the job in flight and what was held for the queued one
+    # went to the replacement.
     expect_false(identical(after, s))
     expect_null(s$.job_worker)
     expect_null(s$.job_current)
     expect_identical(after$.job_current, id)
     expect_identical(pid_of(after), pid)
+    expect_true(isTRUE(after$.job_held[[queued]]$spec$plan_mode))
+    expect_false(isTRUE(after$plan_mode))
     # It finishes in the conversation that asked for it, and tells the
     # room, saying so.
     file.create(gate)
@@ -480,7 +565,15 @@ local({
     hit <- grepl("wait for the gate, held", posted, fixed = TRUE)
     expect_true(any(hit))
     expect_true(any(grepl("Asked before /clear", posted[hit], fixed = TRUE)))
-    expect_identical(length(after$history), 1L)
+    # The queued job runs next, in its own conversation, under what that
+    # conversation allowed as it ended.
+    q <- settle(after, queued)
+    expect_identical(q$status, "done")
+    expect_identical(q$outcome$result, sprintf("queued behind, held %s", first))
+    record <- ns$job_read_file(ns$job_authority_path(queued))
+    expect_true(isTRUE(record$plan_mode))
+    expect_identical(length(after$.job_held), 0L)
+    expect_identical(length(after$history), 2L)
     expect_true(grepl("Asked before /clear", rendered(after), fixed = TRUE))
     # The next job runs in the same process, in the new conversation, and
     # its result carries no note. The stand-in for a model is the old
