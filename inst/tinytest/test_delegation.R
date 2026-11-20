@@ -342,6 +342,27 @@ local({
     expect_equal(length(f("job_list")(owner = "requester")), before + 1L)
     source$dry_run <- FALSE
 
+    # A room with no directory takes no peer's job: the request is refused
+    # with its reason, and nothing is queued.
+    local({
+        key <- f("bot_session_key")("jobs", NULL)
+        had <- exists(key, envir = registry_b, inherits = FALSE)
+        held <- if (had) get(key, envir = registry_b)
+        on.exit(if (had) {
+            assign(key, held, envir = registry_b)
+        } else {
+            rm(list = key, envir = registry_b)
+        }, add = TRUE)
+        room <- make("worker", key)
+        room$unbound <- TRUE
+        assign(key, room, envir = registry_b)
+        before <- length(f("job_list")(owner = "worker"))
+        route(request(), cfg_b, b, registry_b)
+        expect_identical(decode()$kind, "refused")
+        expect_identical(decode()$fields$reason, "no-directory")
+        expect_equal(length(f("job_list")(owner = "worker")), before)
+    })
+
     # Fresh processes on both sides recover solely from the durable ledger.
     # Repeat the worker delivery in another process to exercise restart dedup.
     restart_id <- f(".delegation_submit")(source, cfg_a, "worker", "Fresh-process fixture")

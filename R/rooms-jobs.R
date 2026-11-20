@@ -418,7 +418,14 @@ BOT_ROOM_LIST_MAX <- 12L
 
 bot_room_listing <- function(rooms, max = BOT_ROOM_LIST_MAX) {
     lines <- vapply(utils::head(rooms, max), function(r) {
-        sprintf("- %s (%s), working in %s", bot_room_label(r), r$id, r$cwd)
+        # A room with no directory works in the scratch folder every such
+        # room shares, which names nothing of the room's.
+        where <- if (bot_room_bound(r)) {
+            paste("working in", r$cwd)
+        } else {
+            "no directory"
+        }
+        sprintf("- %s (%s), %s", bot_room_label(r), r$id, where)
     }, "")
     if (length(rooms) > max) {
         lines <- c(lines, sprintf("(and %d more)", length(rooms) - max))
@@ -439,7 +446,9 @@ bot_rooms_near <- function(rooms, want) {
         (nchar(x) > 2L && grepl(x, want, fixed = TRUE)) ||
         (nchar(want) > 3L && isTRUE(agrepl(want, x, max.distance = 0.2)))
     }
-    Filter(function(r) near(bot_room_label(r)) || near(basename(r$cwd)), rooms)
+    Filter(function(r) {
+        near(bot_room_label(r)) || (bot_room_bound(r) && near(basename(r$cwd)))
+    }, rooms)
 }
 
 # A directory `want` names that no room works in: `want` itself when it
@@ -447,7 +456,8 @@ bot_rooms_near <- function(rooms, want) {
 # NULL when there is none.
 bot_room_unclaimed_dir <- function(rooms, want) {
     want <- trimws(want)
-    cwds <- vapply(rooms, function(r) r$cwd, "")
+    # Not beside the scratch folder: that is the session's temp directory.
+    cwds <- vapply(Filter(bot_room_bound, rooms), function(r) r$cwd, "")
     found <- if (bot_path_like(want)) {
         path.expand(want)
     } else {
@@ -495,7 +505,8 @@ bot_room_no_match <- function(rooms, want) {
 # component. The first reading with any match decides; more than one
 # match there is ambiguous and the caller says so. Rooms often share a
 # directory (every room with no path in its topic uses the bot's own),
-# which is why a name outranks one.
+# which is why a name outranks one. A room with no directory is matched
+# by its id or name only: the scratch folder is not its.
 bot_resolve_room <- function(rooms, want) {
     want <- trimws(want)
     lower <- tolower(want)
@@ -503,8 +514,12 @@ bot_resolve_room <- function(rooms, want) {
     as_path <- bot_path_like(want)
     readings <- list(function(r) identical(r$id, want),
                      function(r) identical(tolower(bot_room_label(r)), lower),
-                     function(r) as_path && identical(norm(r$cwd), norm(want)),
-                     function(r) identical(tolower(basename(r$cwd)), lower))
+                     function(r) {
+        as_path && bot_room_bound(r) && identical(norm(r$cwd), norm(want))
+    },
+                     function(r) {
+        bot_room_bound(r) && identical(tolower(basename(r$cwd)), lower)
+    })
     for (reading in readings) {
         hits <- Filter(reading, rooms)
         if (length(hits)) {
@@ -528,6 +543,12 @@ bot_resolve_room <- function(rooms, want) {
 bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
                             room, task, review = NULL, new_session,
                             rooms = bot_room_directory(chat, cfg)) {
+    # A room with no directory hands no work on (WP10). policy() refuses
+    # `delegate` there first; this holds for any other way in.
+    if (isTRUE(session$unbound)) {
+        return(err(paste("This room has no directory, so it hands no work",
+                         "to another room.", bot_unbound_how())))
+    }
     if (!isTRUE(sender %in% bot_operators(cfg))) {
         return(err(paste("Only an operator of this bot can hand work to",
                          "another room.")))
@@ -545,6 +566,12 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
     target_room <- hits[[1L]]
     if (identical(target_room$id, origin$room)) {
         return(err("That is this room. Call delegate without `room`."))
+    }
+    # Nor does one take work: it would run in the scratch folder.
+    if (!bot_room_bound(target_room)) {
+        return(err(paste(sprintf("%s has no directory, so it takes no work.",
+                                 bot_room_label(target_room)),
+                         bot_unbound_how())))
     }
     target <- new_session(target_room$id)
     if (!is.environment(target)) {

@@ -1470,14 +1470,28 @@ bot_is_scratch <- function(cwd) {
               normalizePath(bot_scratch_path(), winslash = "/", mustWork = FALSE))
 }
 
-# What a room in the scratch folder is told. The path is there because
-# its tools run in it. The rest is what to say when someone asks for
-# work that needs a place to keep files.
+# How a room gets a directory, as a refusal in a room without one says
+# it (check_unbound_room(), tool_delegate(), bot_job_handoff()).
+bot_unbound_how <- function() {
+    paste("A room takes its directory from its topic (an existing directory",
+          "at its start, then /clear) or from the bot's cwd.")
+}
+
+# TRUE for a room, as bot_room_directory() lists it, that has a
+# directory of its own: not the scratch folder.
+bot_room_bound <- function(room) {
+    !bot_is_scratch(room$cwd)
+}
+
+# What a room in the scratch folder is told. Its tools refuse all but
+# reading (check_unbound_room()), and the path is there because they
+# run in it. The rest is what to say when someone asks for work that
+# needs a project.
 bot_scratch_notice <- function(cwd) {
-    c("This room has no project directory.",
-        sprintf(paste("Working directory: %s, a scratch folder that is",
-                      "deleted when the bot stops. Keep nothing there that",
-                      "should last."), cwd),
+    c(paste("This room has no project directory, so it reads, searches",
+            "and talks only: it writes no files, runs no commands and hands",
+            "no work to a doer."),
+        sprintf("Its tools work in %s, an empty scratch folder.", cwd),
         paste("When someone asks for work that needs a project, say that",
               "the room has no directory and how to give it one: put the",
               "path of an existing directory at the start of the room",
@@ -1971,6 +1985,9 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # A room with no directory reads and talks only (WP10): policy()
+    # refuses the rest (check_unbound_room()).
+    s$unbound <- bot_is_scratch(room_cwd)
     # Tool results cut for length are kept for this room alone. A bot's
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
