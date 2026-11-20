@@ -311,7 +311,10 @@ outside the tool (`.agent_call()`'s for warnings, a host's
 a limit that fired there ended the turn, not the tool. So
 `.held_conditions()` holds the tool's warnings and messages while the
 limit is armed and passes them on once it is off, and the limit goes off
-as soon as the tool returns or fails. A tool that can run long bounds
+as soon as the tool returns or fails. Where warnings are errors
+(`options(warn = 2)`), a warning stops the tool where it is raised, as
+R stops it, inside the `tryCatch`; a held warning passes on under the
+`warn` setting it was raised under. A tool that can run long bounds
 itself as well: `grep_files` skips binary files and files over 10 MB and
 stops at 500 matches or 20 s (`.grep_limits`).
 

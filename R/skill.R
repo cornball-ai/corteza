@@ -87,18 +87,31 @@ skill_spec <- function(name, description, params = list(), handler,
 # next R code, and grep() over binary lines warns once a line. The
 # tool's conditions are held under a handler inside the tryCatch and
 # passed on once the limit is off, the first `max` of them.
+#
+# Where warnings are errors (options(warn = 2)), a warning stops the tool
+# where it is raised, as R would stop it, with R's own words, inside the
+# tryCatch. Let go instead, it would reach the handlers outside the tool
+# first, with the limit armed. A held warning passes on under the warn
+# setting it was raised under, so a tool that makes warnings errors
+# after one does not turn it into an error outside the tool.
 .held_conditions <- function(max = 100L) {
     kept <- list()
     dropped <- 0L
     hold <- function(cond) {
         if (length(kept) < max) {
-            kept[[length(kept) + 1L]] <<- cond
+            kept[[length(kept) + 1L]] <<- list(cond = cond,
+                warn = getOption("warn"))
         } else {
             dropped <<- dropped + 1L
         }
     }
     run <- function(expr) {
         withCallingHandlers(expr, warning = function(w) {
+            if (isTRUE(getOption("warn", 0) >= 2)) {
+                stop(simpleError(paste("(converted from warning)",
+                                       conditionMessage(w)),
+                                 conditionCall(w)))
+            }
             hold(w)
             invokeRestart("muffleWarning")
         }, message = function(m) {
@@ -106,13 +119,18 @@ skill_spec <- function(name, description, params = list(), handler,
             invokeRestart("muffleMessage")
         })
     }
+    resignal <- function(item) {
+        if (!inherits(item$cond, "warning")) {
+            message(item$cond)
+            return(invisible(NULL))
+        }
+        op <- options(warn = item$warn)
+        on.exit(options(op), add = TRUE)
+        warning(item$cond)
+    }
     release <- function(tool) {
-        for (cond in kept) {
-            if (inherits(cond, "warning")) {
-                warning(cond)
-            } else {
-                message(cond)
-            }
+        for (item in kept) {
+            resignal(item)
         }
         if (dropped > 0L) {
             log_event("tool_conditions_dropped", tool = tool,

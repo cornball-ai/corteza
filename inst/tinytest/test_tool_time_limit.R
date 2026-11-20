@@ -134,6 +134,54 @@ local({
     expect_identical(order, c("handler", "after the warning"))
 })
 
+# ---- Warnings that are errors ----------------------------------------------
+# Codex's finding on #289: with options(warn = 2), the held warning let
+# the tool run on past it, and its release raised the error outside
+# skill_run(). The tool stops at the warning, as R stops it, and the
+# error is the tool's result.
+local({
+    op <- options(warn = 2L)
+    on.exit(options(op), add = TRUE)
+    ran <- FALSE
+    tool <- list(name = "warning_probe", inputSchema = list(),
+                 handler = function(args, ctx) {
+        warning("stop here")
+        ran <<- TRUE
+        corteza:::ok("executed after warning")
+    })
+    out <- tryCatch(ns$skill_run(tool, list(), timeout = 5L),
+                    error = function(e) paste("escaped:", conditionMessage(e)))
+    expect_false(ran)
+    expect_true(is.list(out) && isTRUE(out$isError),
+                info = paste(unlist(out), collapse = " "))
+    text <- ""
+    if (is.list(out) && length(out$content)) {
+        text <- out$content[[1L]]$text
+    }
+    expect_identical(text, "Skill error: (converted from warning) stop here")
+})
+# A tool that makes warnings errors after one: that warning passes on as
+# the warning it was raised as, and nothing escapes.
+local({
+    op <- options(warn = 1L)
+    on.exit(options(op), add = TRUE)
+    tool <- list(name = "late_strict", inputSchema = list(),
+                 handler = function(args, ctx) {
+        warning("raised under warn 1")
+        options(warn = 2L)
+        corteza:::ok("done")
+    })
+    out <- NULL
+    said <- utils::capture.output(type = "message",
+        out <- tryCatch(ns$skill_run(tool, list(), timeout = 5L),
+                        error = function(e) paste("escaped:",
+                                                  conditionMessage(e))))
+    options(op)
+    expect_true(is.list(out) && !isTRUE(out$isError),
+                info = paste(unlist(out), collapse = " "))
+    expect_true(any(grepl("raised under warn 1", said, fixed = TRUE)))
+})
+
 # ---- grep_files reads text within bounds -----------------------------------
 local({
     dir <- tempfile("grep_bounds_")
