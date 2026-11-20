@@ -273,6 +273,22 @@ talker following `/model` where `talker_follows`. Column `talker` of
 `corteza_commands()` says what each room command acts on, and
 `test_talker_commands.R` holds the room's to it.
 
+## Where a room works (`R/room-binding.R`)
+
+`bot_room_cwd(cfg, room_id)`: the directory an operator bound the room
+to with `/cd`, while it exists inside a root (`bot_project_roots()`:
+the run's `project_roots`, else the saved ones, links resolved); the
+scratch folder for `/cd none` or a binding that no longer holds; else
+the bot's `cwd`, else the scratch folder. A topic names no directory:
+`bot_parse_topic()` gives a description only, and `bot_topic_path()`
+reads a leading path only for the one-time notice. The binding is
+`binding` in the room's state file (`R/room-conversation.R`), beside the
+conversation records. `bot_cd_command()` archives each of the room's
+sessions, then writes the binding and a new record for every timeline
+in one write (`bot_room_move()`); `bot_poll()` answers and resets each
+session. `moved` in the state gives a thread first seen later the same
+start (`bot_conversation_open()`).
+
 ## A worker obeys its conversation (`R/job-authority.R`)
 
 A job's worker (a doer or a reviewer) is a process whose session was

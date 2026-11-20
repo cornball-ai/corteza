@@ -1063,11 +1063,10 @@ to the bot config.
 
 #### Where a room works
 
-A room works in the first of these that exists:
+A room works in the first of these that applies:
 
-1. The directory at the start of its topic, written `<path> | <description>`,
-   as in `~/project | release notes`. A room reads its topic when its
-   conversation starts, so send `/clear` after changing it.
+1. The directory an operator bound it to with `/cd <dir>`. It must exist and
+   lie inside one of the bot's project roots, links resolved.
 2. The bot's `cwd`. `bot_configure(cwd = )` saves one. `bot_run(cwd = )`,
    `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
    wins over the saved one.
@@ -1077,12 +1076,50 @@ A room works in the first of these that exists:
    starts no subagent and hands no work to a doer or another room, and
    no room hands work to it. A refusal says how to give the room a
    directory. Room lists show it as having none, and it is named by its
-   id or name, never by the scratch folder.
+   id or name, never by the scratch folder. A room an operator bound with
+   `/cd none` works here, as does one whose bound directory is gone or lies
+   outside every root now.
 
-corteza creates neither of the first 2. A `cwd` that does not exist is an
-error where it is given, and a run stops at its start when the saved one has
-been removed. Up to 0.8.0 the last step was `~/<bot name>`, created on first
-use. A bot that relied on that directory now needs `cwd`:
+The project roots are `project_roots`, existing directories inside which a
+room may be bound. `bot_configure(project_roots = )` saves them, and
+`bot_run()`, `bot_run_init()` and `bot_poll()` take them for a run. With
+none, `/cd <dir>` is refused.
+
+```r
+corteza::bot_configure(server, user, password, room,
+                       project_roots = c("~/projects", "~/src"))
+```
+
+In a room, for an operator of the bot:
+
+- `/cd` says where the room works, the 3 forms and the roots.
+- `/cd <dir>` binds the room to `<dir>`. A bare name is looked for under each
+  root.
+- `/cd none` binds it to no directory, and `/cd default` returns it to the
+  bot's `cwd`.
+- `/ls` lists the roots, and `/ls <dir>` the directories directly inside one,
+  names only, at most 50.
+
+A move ends every conversation the room holds, the main timeline's and each
+thread's, as `/clear` does: each goes to the host's archive, and the next
+starts in the new directory with a new prompt, tools and doer. A thread first
+seen later starts there too, and a restart seeds no conversation with
+messages from before the move. A move is refused while any of the room's
+conversations has a job open, and the refusal names it. The binding is kept
+in the room's state file and outlives a restart. A room the `on_clear` hook
+files a conversation into takes the binding of the room it came from.
+
+Up to 0.8.0 a room worked in the directory its topic started with, written
+`<path> | <description>`. Anyone with the power level can change a topic, and
+that directory became the checkout where the supervisor let writes through
+without asking a person. A topic names no directory now. A room whose topic
+still starts with a path is told once that the path is not read, and which
+`/cd` would bind it.
+
+corteza creates none of these directories. A `cwd` or root that does not
+exist is an error where it is given, and a run stops at its start when the
+saved `cwd` has been removed. Up to 0.8.0 the last step was `~/<bot name>`,
+created on first use. A bot that relied on that directory now needs `cwd`:
 
 ```r
 corteza::bot_run(cwd = "~/mybot")
