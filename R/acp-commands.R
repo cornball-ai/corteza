@@ -4,7 +4,9 @@
 # sent after a session/new or session/resume answer). A prompt that
 # begins with one runs it in place of a turn, and what the command
 # prints is the reply. Commands run as the terminal runs them, through
-# the same functions (R/commands-shared.R), with no colors.
+# the same functions (R/commands-shared.R), with no colors, and as the
+# prompt they are (.acp_prompt()), so a cancel reaches /compact, the one
+# that asks a model.
 #
 # Starting over and moving belong to the client, which starts a new
 # session for either: /clear and /cd, and their aliases, are not
@@ -95,10 +97,15 @@
         } else if (cmd %in% c("/spent", "/cost")) {
             cat(format_spend(session, palette = ctx$palette), "\n", sep = "")
         } else if (cmd == "/compact") {
+            # The summary is a model's: a cancel stops it before the
+            # request, or leaves its answer uninstalled
+            # (maybe_compact_turn_session()).
             if (length(session$history %||% list()) < 2L) {
                 cat("Nothing to compact.\n")
             } else if (isTRUE(.compact_now(session, session$config))) {
                 cat("Compacted.\n")
+            } else if (isTRUE(st$live$cancelled) || isTRUE(st$ch$closed)) {
+                cat("Cancelled: the conversation is as it was.\n")
             } else {
                 cat("Nothing safe to compact.\n")
             }

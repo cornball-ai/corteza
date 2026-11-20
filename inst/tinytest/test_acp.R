@@ -1012,6 +1012,66 @@ local({
     expect_identical(answer(msgs, 17L)$result$stopReason, "end_turn")
 })
 
+# /compact asks a model for its summary, and a cancel reaches it as it
+# reaches a turn. A cancel sent while the summary is written leaves the
+# summary uninstalled and the prompt `cancelled`; a /compact left alone
+# then compacts.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    dir <- tools::R_user_dir("corteza", "config")
+    dir.create(dir, recursive = TRUE)
+    jsonlite::write_json(list(subagents = list(context_compaction = list(
+        keep_recent_tokens = 0L, keep_recent_turns = 1L))),
+        file.path(dir, "config.json"), auto_unbox = TRUE)
+    llm <- asNamespace("llm.api")
+    old_chat <- get("chat", envir = llm)
+    on.exit(utils::assignInNamespace("chat", old_chat, "llm.api"), add = TRUE)
+    client_now <- NULL
+    sid <- NULL
+    cancel_next <- TRUE
+    summaries <- 0L
+    utils::assignInNamespace("chat", function(...) {
+        summaries <<- summaries + 1L
+        if (cancel_next) {
+            client_now$write(ns$.acp_notification("session/cancel",
+                                                  list(sessionId = sid)))
+            Sys.sleep(0.05)
+        }
+        list(content = "A summary.", usage = list(input_tokens = 1L,
+                                                  output_tokens = 1L))
+    }, "llm.api")
+    model <- fake_model(list(list(text = "First answer."),
+                             list(text = "Second answer.")))
+    msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+        client_now <<- client
+        if (is_answer(2L)(msg)) {
+            sid <<- msg$result$sessionId
+            client$write(prompt(3L, sid, "First task."))
+        }
+        if (is_answer(3L)(msg)) {
+            client$write(prompt(4L, sid, "Second task."))
+        }
+        if (is_answer(4L)(msg)) {
+            client$write(prompt(5L, sid, "/compact"))
+        }
+        if (is_answer(5L)(msg)) {
+            cancel_next <<- FALSE
+            client$write(prompt(6L, sid, "/compact"))
+        }
+        if (is_answer(6L)(msg)) {
+            client$finish()
+        }
+    }))
+    texts <- vapply(Filter(is_update("agent_message_chunk"), msgs),
+                    function(m) m$params$update$content$text, "")
+    expect_identical(summaries, 2L)
+    expect_identical(answer(msgs, 5L)$result$stopReason, "cancelled")
+    expect_true(any(texts == "Cancelled: the conversation is as it was."))
+    expect_identical(answer(msgs, 6L)$result$stopReason, "end_turn")
+    expect_identical(sum(texts == "Compacted."), 1L)
+})
+
 # ---- Listing and resuming ---------------------------------------------------
 local({
     fx <- acp_fixture()
