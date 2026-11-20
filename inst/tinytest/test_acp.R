@@ -690,8 +690,7 @@ local({
 
 # A prompt that cannot be written to the transcript runs nothing: the
 # reviewer would judge the turn's calls without the person's latest
-# words, which here take back what the prompt before allowed (Codex's
-# probe on #298).
+# words, which here take back what the prompt before allowed.
 local({
     fx <- acp_fixture()
     on.exit(fx$restore(), add = TRUE)
@@ -751,7 +750,7 @@ local({
 # A session is built in its own directory: a project skill's R file,
 # sourced as the tool table is made, reads a relative path from there,
 # not from the launcher's directory; and the caller's directory is the
-# working directory again afterwards (Codex's probe on #298).
+# working directory again afterwards.
 local({
     fx <- acp_fixture()
     on.exit(fx$restore(), add = TRUE)
