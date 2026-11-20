@@ -68,6 +68,13 @@ so the next turn can go on from it. A stop cannot cut short a request
 already waiting for its first word, nor the reply of a provider that
 does not stream.
 
+A turn that ends on an error leaves a history the next request can
+use. Before the error leaves \code{turn()}, each tool call the model
+made that has no result gets a placeholder result, and a note says
+the turn stopped on that error. A turn also closes, before its first
+request, any call that an earlier turn or an earlier process left
+without a result.
+
 }
 \examples{
 \dontrun{

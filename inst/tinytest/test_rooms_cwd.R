@@ -191,6 +191,7 @@ local({
     scratch <- corteza:::bot_default_cwd(cfg)
     sys <- corteza:::bot_default_system(cfg, cwd = scratch)
     expect_true(grepl("no project directory", sys, fixed = TRUE))
+    expect_true(grepl("it writes no files, runs no commands", sys, fixed = TRUE))
     expect_true(grepl(scratch, sys, fixed = TRUE))
     expect_true(grepl("room topic", sys, fixed = TRUE))
     expect_true(grepl("/clear", sys, fixed = TRUE))

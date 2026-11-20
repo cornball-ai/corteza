@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Project trust: a session loads a project's own files only from a
 # directory the user has trusted. Each block names what it pins.
 

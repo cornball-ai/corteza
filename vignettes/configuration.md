@@ -219,6 +219,30 @@ every dispatched call.
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
 
+The `auto` block of `config.json` sets a run's bounds and its monitor. The
+first of these limits to be reached stops the run.
+
+The iteration limit is the exception. `/auto --loops N` stops after N
+iterations. `/auto` without `--loops` runs with no iteration limit, whatever
+`max_loops` says, and the other limits stop it. `/auto resume` keeps the
+count of the run it resumes. One iteration can run many model turns.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `max_loops` | 10 | Iterations, for a run that sets no count of its own. `/auto` always sets one or runs without, so it does not read this |
+| `max_tool_calls` | 300 | Tool calls, the bound that holds whatever a turn does |
+| `max_minutes` | 30 | Minutes since the run started |
+| `max_cost` | 5 | Dollars spent. Skipped where the provider reports no price, as on a subscription, and `max_tokens` holds instead |
+| `max_tokens` | 2000000 | Tokens used |
+| `stall_loops` | 2 | Iterations in a row that changed nothing on disk |
+| `allow_exec` | `false` | Whether the monitor may rule on shell and R calls. Your config or `--exec` grants it; a project's config can only refuse it |
+| `never_broker` | none | Tools that always stop the run for you. Yours and the project's together |
+| `monitor_model` | the session's model | The model the monitor runs on. The monitor uses the session's provider, so name a model of that provider |
+| `monitor_timeout` | 120 | Seconds the monitor has to rule on a call |
+
+The monitor makes a request for each call it rules on, so a long run makes
+many. A smaller model in `monitor_model` costs less for each ruling.
+
 ## Matrix remote control
 
 `/remote-control [--bot @bot:server] [room]` hands the current CLI or `chat()`
@@ -350,6 +374,17 @@ wait as silence.
 `/context` shows the trigger in force and the window it is measured against.
 In the terminal an automatic compaction also runs the memory flush first
 (`memory_flush_enabled`), which is a request of its own.
+
+The R objects outlive the turns that made them: a compaction leaves every
+object in place, whatever its size. So the summary ends with the names of the
+objects `run_r` made that are still there, up to 30 of them, then the open
+handles. The agent can use an object instead of rebuilding it. Only names are
+listed, since reading an object can run code: a binding made with
+`makeActiveBinding()` or `delayedAssign()` is named and left alone. This is
+for the terminal, `chat()` and a subagent or doer, whose R process is the
+session's own. A bot's rooms share one, so a room's summary has no list, and
+neither does a session whose `run_r` runs in a worker process
+(`run_r_mode: "worker"`).
 
 None of the three applies to a session that manages its own context
 (`context_edit` with `"strategy": "clm"`, under "Conversation context
@@ -840,16 +875,38 @@ A session's audit records are kept in its journal folder, under
 `audit/`. Retention leaves them and the folder in place:
 `audit_payload_expire()` removes audit payloads, and only when called.
 
+The same run clears corteza's state folder (`state/` beside the sessions,
+or `CORTEZA_STATE_DIR`) and its remote-control folder:
+
+- A delegated job's records go with every job linked to it as a resume,
+  a review or a delegation, once all of them have ended and none has
+  changed for `session_days`. While one of them is queued or running,
+  all stay.
+- A job that ended incomplete and was never resumed holds the snapshot a
+  resume starts from. Its chain waits `incomplete_days` instead, and
+  never fewer than `session_days`. The terminal names each such job when
+  it goes.
+- A worker process's folder with no checkpoint loses its journal, less
+  its audit records. A folder with a checkpoint stays.
+- A remote-control session goes once it was closed, or once its process
+  on this machine has ended. One from another machine stays.
+
+A folder there whose name and record are not of the form corteza writes
+stays whole. Once it is old enough the terminal counts it, and
+`sessions_prune(dry_run = TRUE)` lists it with kind `"unknown"`.
+
 `sessions_prune(dry_run = TRUE)` reports what a run would remove.
 `sessions_prune()` runs one now.
 
-This key is read from the user's config file only. A project's
-`.corteza/config.json` cannot set it. A config file that does not parse,
-or a value that is not one non-negative number, turns retention off.
+These keys are read from the user's config file only. A project's
+`.corteza/config.json` cannot set them. A config file that does not
+parse turns retention off, and a value that is not one non-negative
+number keeps everything that key governs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed. `0` keeps everything |
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` keeps everything |
+| `retention.incomplete_days` | number | `180` | Days a job chain that ended incomplete, and was never resumed, is kept for its resume snapshot. Never fewer than `session_days`. `0` keeps it |
 
 ### Skills
 
@@ -1014,7 +1071,12 @@ A room works in the first of these that exists:
    `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
    wins over the saved one.
 3. A scratch folder under the session's temporary directory, deleted when the
-   process ends. The room is told it has no project directory.
+   process ends. The room is told it has no project directory, and it
+   reads, searches and talks only. It writes no files, runs no commands,
+   starts no subagent and hands no work to a doer or another room, and
+   no room hands work to it. A refusal says how to give the room a
+   directory. Room lists show it as having none, and it is named by its
+   id or name, never by the scratch folder.
 
 corteza creates neither of the first 2. A `cwd` that does not exist is an
 error where it is given, and a run stops at its start when the saved one has
