@@ -146,7 +146,13 @@ session's table, or the registry without one; a room host's tools
 
 **Order (`policy()`); nothing later lifts an earlier deny:**
 1. The mode. Plan mode refuses `write`, `exec`, `continue` and
-   `unknown` (`.mode_verdicts`, `check_plan_mode()`).
+   `unknown` (`.mode_verdicts`, `check_plan_mode()`). A Matrix room
+   with no directory (`session$unbound`, set where `bot_new_session()`
+   gives it the scratch folder) refuses all but `read` and the control
+   tools `.unbound_control` names (`check_unbound_room()`); a new
+   control tool is refused there until it is named.
+   `tool_delegate()` and `bot_job_handoff()` refuse such a room as well,
+   asking or asked.
 2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
    and the rest asks, marked `rule = "credential"`. No saved "always"
    answers it: both approval callbacks ask each time and offer none.
@@ -460,6 +466,22 @@ no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
 has no journal, so bare sessions in tests see no change.
 `journal_enabled: false` turns it off.
 
+## Tool calls left open (`R/turn-repair.R`)
+
+llm.api mirrors a tool call into `session$history` before the tool
+runs, so an error that leaves a turn mid-call leaves the call without
+a result, and the provider refuses every later request made from that
+history (Anthropic: 400, "tool_use ids were found without tool_result
+blocks"). `turn()` closes such calls twice: in its error handler,
+before the error goes on, and at the start of each turn, before
+anything reads the history, for a process stopped mid-call or a
+history from before the fix. `.history_close_open_calls()` puts a
+placeholder result right after the message that made each call, where
+the provider looks for it (rooms and jobs add messages between turns,
+so that is not always the end), and `.turn_close_open_calls()`
+installs the result through `history_replace()`. A turn that fails
+before anything is mirrored leaves the history alone.
+
 ## Retention (`R/retention.R`)
 
 Once a day, from `run_repl_loop()` and `bot_run_step()`,
@@ -468,6 +490,24 @@ session unused for `retention$session_days` (default 90, 0 for off).
 The setting is read from the user's config only (`retention_config()`),
 and a value it cannot read turns retention off. Transcripts always stay.
 `sessions_prune()` is the exported form.
+
+The same run clears the state stores (`R/retention-state.R`): job
+chains (jobs linked by `resume_of`, `review_of` or `parent`) once all
+ended, worker folders with no checkpoint, and remote-control sessions
+that closed or whose process here ended. A chain with an incomplete job
+nothing resumed waits `retention$incomplete_days` (180). A folder is
+judged only when its name and record are corteza's; anything else stays
+and is listed as `"unknown"`. A record is read only where it is a file
+of the folder itself (`retention_record()`), never through a link. A
+removal takes the record that makes a folder live first (`intent.json`,
+`request.json`), and where that record is there but may not go (a
+link, a folder), it removes nothing. Checkout lock generations are
+never removed (`R/job-lock.R`).
+
+A test that hands retention a clock in the future points
+`CORTEZA_STATE_DIR` and `CORTEZA_REMOTE_DIR` into its own temporary
+folder, as `test_retention.R` does: run where either names a bot's live
+state, it would otherwise remove that.
 
 Two things to keep in mind when changing it or the journal:
 
@@ -543,6 +583,15 @@ off to `run_repl_loop()` (`R/repl.R`), which dispatches every slash
 command, so the command set is identical across both. The
 `/status /doctor /config /diff /review /last /outputs` commands (once
 CLI-only) now work in `chat()` too.
+
+`corteza_commands()` (`R/commands.R`) is the table of every surface's
+commands: a row a name, with what it is the same as, its argument, a
+line saying what it does, and whether the terminal and `chat()`, a bot's
+room, or a room controlling a terminal takes it. Nothing dispatches
+from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
+and `.remote_bot_route()` for the names they compare with, asks each
+room parser, and checks both `/help` texts, so a new command needs a
+row, a line in both help texts, and its surface's match.
 
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`
