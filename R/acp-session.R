@@ -242,6 +242,8 @@
     }
     st$sessions[[sid]] <- NULL
     tryCatch(.run_r_worker_close(session), error = function(e) NULL)
+    # The reviewer's process, where review mode started one.
+    tryCatch(job_monitor_close(session), error = function(e) NULL)
     tryCatch(session_save(session$disk_session), error = function(e) NULL)
     invisible(NULL)
 }

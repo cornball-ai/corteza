@@ -49,10 +49,19 @@ local({
     expect_identical(ns$.acp_tool_kind(list(tool = "fetch_url", class = "read")),
                      "fetch")
     expect_identical(ns$.acp_tool_kind(list(tool = "no_such_tool")), "other")
-    # The title names what the call acts on, by the argument's full name.
+    # The title names what the call acts on, by the argument's full name,
+    # and a path in the session's directory from there, however long
+    # the directory.
     expect_identical(ns$.acp_tool_title(list(tool = "write_file",
         args = list(path = "/p/notes.md", content = "hi"))),
         "write_file: /p/notes.md")
+    deep <- paste0("/", paste(rep("long-directory-name", 10L), collapse = "/"))
+    expect_identical(ns$.acp_tool_title(list(tool = "write_file",
+        args = list(path = file.path(deep, "R", "notes.md"))), cwd = deep),
+        "write_file: R/notes.md")
+    expect_identical(ns$.acp_tool_title(list(tool = "write_file",
+        args = list(path = "/elsewhere/notes.md")), cwd = deep),
+        "write_file: /elsewhere/notes.md")
 
     expect_identical(ns$.acp_stop_reason(list(status = "cancelled")), "cancelled")
     expect_identical(ns$.acp_stop_reason(list(status = "incomplete",
@@ -142,6 +151,15 @@ fake_model <- function(steps) {
     st$fn <- function(messages, tools, system, model, config = NULL,
                       cache = NULL, thinking_budget_tokens = NULL,
                       on_delta = NULL, thinking = NULL, ...) {
+        # What a real request does before it is sent (llm.api's
+        # .request_fetch()): its event at phase "start", where a stop
+        # asked for ends the turn.
+        llm <- asNamespace("llm.api")
+        request <- list(id = sprintf("fake-%d", st$i + 1L), attempt = 1L,
+                        observer = get(".request_runtime", envir = llm)$current,
+                        wire = "messages", model = model)
+        get(".request_notify", envir = llm)(request, "start",
+                                            serialized_request = "{}")
         st$i <- st$i + 1L
         st$seen[[st$i]] <- messages
         step <- steps[[min(st$i, length(steps))]]
@@ -159,7 +177,8 @@ fake_model <- function(steps) {
                                  input = step$args)))))
         }
         if (is.function(on_delta)) {
-            for (d in step$deltas %||% step$text) {
+            deltas <- if (is.null(step$deltas)) step$text else step$deltas
+            for (d in deltas) {
                 on_delta(d)
             }
         }
@@ -264,7 +283,7 @@ local({
         req(6L, "no/such"),
         req(7L, "session/close", list(sessionId = "no-such")),
         req(8L, "session/list", list(cwd = fx$proj))),
-        function(msg, client) if (identical(msg$id, 8L)) client$finish())
+        function(msg, client) if (is_answer(8L)(msg)) client$finish())
     expect_identical(answer(msgs, 9L)$error$code, -32600L)
     expect_true(any(vapply(msgs, function(m) {
         is.null(m$id) && identical(m$error$code, -32700L)
@@ -307,14 +326,14 @@ local({
     model <- fake_model(list(write, list(text = "Done.", deltas = c("Do", "ne."))))
     sid <- NULL
     msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
-        if (identical(msg$id, 2L)) {
+        if (is_answer(2L)(msg)) {
             sid <<- msg$result$sessionId
             client$write(prompt(3L, sid, "Write the notes."))
         }
         if (is_permission(msg)) {
             grant(client, msg, "allow_once")
         }
-        if (identical(msg$id, 3L) && is.null(msg$method)) {
+        if (is_answer(3L)(msg)) {
             client$finish()
         }
     }))
@@ -325,7 +344,7 @@ local({
     expect_identical(vapply(ask$params$options, function(o) o$kind, ""),
                      c("allow_once", "allow_always", "reject_once"))
     expect_identical(ask$params$toolCall$kind, "edit")
-    expect_true(grepl(target, ask$params$toolCall$title, fixed = TRUE))
+    expect_identical(ask$params$toolCall$title, "write_file: notes.md")
     # In order: the call announced pending, the question, the run, the
     # result, the reply, and then the answer.
     announced <- at(msgs, is_update("tool_call"))
@@ -335,9 +354,13 @@ local({
     updates <- at(msgs, is_update("tool_call_update"))
     statuses <- vapply(msgs[updates], function(m) m$params$update$status, "")
     expect_identical(statuses, c("in_progress", "completed"))
+    # The reply streams, in more than one chunk. Where the chunks break
+    # is the redaction's: it holds back what could begin a secret.
     chunks <- at(msgs, is_update("agent_message_chunk"))
-    expect_identical(vapply(msgs[chunks], function(m) m$params$update$content$text, ""),
-                     c("Do", "ne."))
+    expect_true(length(chunks) >= 2L)
+    expect_identical(paste(vapply(msgs[chunks], function(m) {
+        m$params$update$content$text
+    }, ""), collapse = ""), "Done.")
     done <- at(msgs, is_answer(3L))
     expect_true(announced < at(msgs, is_permission)[1L])
     expect_true(max(c(updates, chunks)) < done)
@@ -349,6 +372,41 @@ local({
     expect_identical(users[[1L]]$staged, FALSE)
     expect_identical(ns$review_conversation(sid)$lines[[1L]],
                      "Person: Write the notes.")
+})
+
+# A secret the session knows (the provider's key here) reaches the
+# client hidden, in a tool call and in the reply, however the deltas
+# split it.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    key <- Sys.getenv("ANTHROPIC_API_KEY")
+    target <- file.path(fx$proj, "k.md")
+    model <- fake_model(list(
+        list(tool = "write_file", args = list(path = target, content = key)),
+        list(text = paste0("The key is ", key, "."),
+             deltas = c("The key is off", "line-fix", "ture."))))
+    msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+        if (is_answer(2L)(msg)) {
+            client$write(prompt(3L, msg$result$sessionId, "Show the key."))
+        }
+        if (is_permission(msg)) {
+            grant(client, msg, "allow_once")
+        }
+        if (is_answer(3L)(msg)) {
+            client$finish()
+        }
+    }))
+    everything <- paste(vapply(msgs, function(m) {
+        as.character(jsonlite::toJSON(m, auto_unbox = TRUE, null = "null"))
+    }, ""), collapse = "\n")
+    expect_false(grepl(key, everything, fixed = TRUE))
+    announced <- Filter(is_update("tool_call"), msgs)[[1L]]
+    expect_identical(announced$params$update$rawInput$content, "[REDACTED]")
+    chunks <- Filter(is_update("agent_message_chunk"), msgs)
+    expect_identical(paste(vapply(chunks, function(m) {
+        m$params$update$content$text
+    }, ""), collapse = ""), "The key is [REDACTED].")
 })
 
 local({
@@ -363,7 +421,7 @@ local({
     asked <- 0L
     sid <- NULL
     msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
-        if (identical(msg$id, 2L)) {
+        if (is_answer(2L)(msg)) {
             sid <<- msg$result$sessionId
             client$write(prompt(3L, sid, "One."))
         }
@@ -371,13 +429,13 @@ local({
             asked <<- asked + 1L
             grant(client, msg, c("reject_once", "allow_always")[asked])
         }
-        if (identical(msg$id, 3L) && is.null(msg$method)) {
+        if (is_answer(3L)(msg)) {
             client$write(prompt(4L, sid, "Two."))
         }
-        if (identical(msg$id, 4L) && is.null(msg$method)) {
+        if (is_answer(4L)(msg)) {
             client$write(prompt(5L, sid, "Three."))
         }
-        if (identical(msg$id, 5L) && is.null(msg$method)) {
+        if (is_answer(5L)(msg)) {
             client$finish()
         }
     }))
@@ -454,20 +512,21 @@ local({
                                   deltas = c("one ", "two ", "three")),
                              list(text = "Next.")))
     sid <- NULL
+    sent_cancel <- FALSE
     msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
-        if (identical(msg$id, 2L)) {
+        if (is_answer(2L)(msg)) {
             sid <<- msg$result$sessionId
             client$write(prompt(3L, sid, "Count."))
         }
-        if (is_update("agent_message_chunk")(msg) && is.null(sent_cancel)) {
+        if (is_update("agent_message_chunk")(msg) && !sent_cancel) {
             sent_cancel <<- TRUE
             client$write(ns$.acp_notification("session/cancel",
                                               list(sessionId = sid)))
         }
-        if (identical(msg$id, 3L) && is.null(msg$method)) {
+        if (is_answer(3L)(msg)) {
             client$write(prompt(4L, sid, "Again."))
         }
-        if (identical(msg$id, 4L) && is.null(msg$method)) {
+        if (is_answer(4L)(msg)) {
             client$finish()
         }
     }))
@@ -481,7 +540,6 @@ local({
     last <- model$seen[[length(model$seen)]]
     expect_identical(last[[length(last)]]$role, "user")
 })
-sent_cancel <- NULL
 
 # While a permission request is open: the call is declined, the turn
 # stops, and the call's last update comes before the answer. The
@@ -496,7 +554,7 @@ local({
                              list(text = "Should not come.")))
     sid <- NULL
     msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
-        if (identical(msg$id, 2L)) {
+        if (is_answer(2L)(msg)) {
             sid <<- msg$result$sessionId
             client$write(prompt(3L, sid, "Write it."))
         }
@@ -506,7 +564,7 @@ local({
             client$write(list(jsonrpc = "2.0", id = msg$id, result = list(
                 outcome = list(outcome = "cancelled"))))
         }
-        if (identical(msg$id, 3L) && is.null(msg$method)) {
+        if (is_answer(3L)(msg)) {
             client$finish()
         }
     }))
@@ -532,18 +590,22 @@ local({
     other <- file.path(fx$root, "other")
     dir.create(other)
     target <- file.path(fx$proj, "a.md")
+    # The cancelled turn asks the model nothing more, so the other
+    # session's prompt takes the second step.
     model <- fake_model(list(list(tool = "write_file",
                                   args = list(path = target, content = "a")),
-                             list(text = "Done."), list(text = "Other.")))
+                             list(text = "Other.")))
     sid <- NULL
     sid2 <- NULL
     wd <- NULL
+    asked <- NULL
     msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
-        if (identical(msg$id, 2L)) {
+        if (is_answer(2L)(msg)) {
             sid <<- msg$result$sessionId
             client$write(prompt(3L, sid, "Write a."))
         }
         if (is_permission(msg)) {
+            asked <<- msg
             client$write(req(10L, "session/list", list(cwd = fx$proj)))
             client$write(req(11L, "session/set_mode",
                              list(sessionId = sid, modeId = "review")))
@@ -551,15 +613,14 @@ local({
                              list(cwd = other, mcpServers = list())))
             client$write(prompt(13L, sid, "Again."))
         }
-        if (identical(msg$id, 12L) && is.null(msg$method)) {
+        if (is_answer(12L)(msg)) {
             sid2 <<- msg$result$sessionId
             wd <<- getwd()
             client$write(prompt(14L, sid2, "Over there."))
             client$write(req(15L, "session/close", list(sessionId = sid)))
-            client$write(list(jsonrpc = "2.0", id = 1L, result = list(
-                outcome = list(outcome = "selected", optionId = "reject_once"))))
+            grant(client, asked, "allow_once")
         }
-        if (identical(msg$id, 14L) && is.null(msg$method)) {
+        if (is_answer(14L)(msg)) {
             client$finish()
         }
     }))
@@ -572,12 +633,51 @@ local({
     expect_identical(normalizePath(wd, winslash = "/"),
                      normalizePath(fx$proj, winslash = "/"))
     expect_identical(answer(msgs, 13L)$error$code, -32600L)
-    # The close stopped the running prompt and was answered after it.
+    # The close stopped the running prompt and was answered after it. It
+    # came before the client's yes, so the call never ran.
     expect_identical(answer(msgs, 3L)$result$stopReason, "cancelled")
+    expect_false(file.exists(target))
     expect_true(at(msgs, is_answer(15L)) > done)
     # The other session's prompt ran once this one ended.
     expect_true(at(msgs, is_answer(14L)) > done)
     expect_identical(answer(msgs, 14L)$result$stopReason, "end_turn")
+})
+
+# A cancel of a session whose prompt only waits answers that prompt
+# `cancelled` at once, and it never runs.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    other <- file.path(fx$root, "other")
+    dir.create(other)
+    model <- fake_model(list(list(tool = "write_file", args = list(
+        path = file.path(fx$proj, "a.md"), content = "a")),
+        list(text = "Done.")))
+    asked <- NULL
+    msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+        if (is_answer(2L)(msg)) {
+            client$write(prompt(3L, msg$result$sessionId, "Write a."))
+        }
+        if (is_permission(msg)) {
+            asked <<- msg
+            client$write(req(10L, "session/new",
+                             list(cwd = other, mcpServers = list())))
+        }
+        if (is_answer(10L)(msg)) {
+            other_sid <- msg$result$sessionId
+            client$write(prompt(11L, other_sid, "Never."))
+            client$write(ns$.acp_notification("session/cancel",
+                                              list(sessionId = other_sid)))
+            grant(client, asked, "allow_once")
+        }
+        if (is_answer(3L)(msg)) {
+            client$finish()
+        }
+    }))
+    expect_identical(answer(msgs, 11L)$result$stopReason, "cancelled")
+    expect_true(at(msgs, is_answer(11L)) < at(msgs, is_answer(3L)))
+    expect_identical(answer(msgs, 3L)$result$stopReason, "end_turn")
+    expect_identical(model$i, 2L)
 })
 
 # ---- Listing and resuming ---------------------------------------------------
@@ -596,17 +696,17 @@ local({
         req(3L, "session/new", list(cwd = fx$proj, mcpServers = list())),
         req(4L, "session/new", list(cwd = fx$proj, mcpServers = list()))),
         function(msg, client) {
-            if (identical(msg$id, 2L)) {
+            if (is_answer(2L)(msg)) {
                 client$write(prompt(5L, msg$result$sessionId, "Remember 42."))
             }
-            if (identical(msg$id, 5L) && is.null(msg$method)) {
+            if (is_answer(5L)(msg)) {
                 client$write(req(6L, "session/list", list(cwd = fx$proj)))
             }
-            if (identical(msg$id, 6L)) {
+            if (is_answer(6L)(msg)) {
                 client$write(req(7L, "session/list", list(
                     cwd = fx$proj, cursor = msg$result$nextCursor)))
             }
-            if (identical(msg$id, 7L)) {
+            if (is_answer(7L)(msg)) {
                 client$finish()
             }
         }))
@@ -625,8 +725,10 @@ local({
         identical(s$cwd, normalizePath(fx$proj, winslash = "/"))
     }, logical(1))))
     expect_true(grepl("^\\d{4}-\\d\\d-\\d\\dT", page1$sessions[[1L]]$updatedAt))
-    expect_identical(answer(msgs, 7L)$result$sessions[[1L]]$cwd %||% "",
-                     page2$sessions[[1L]]$cwd)
+    # The first session's title is its first prompt.
+    titled <- Filter(function(s) identical(s$sessionId, first),
+                     c(page1$sessions, page2$sessions))[[1L]]
+    expect_true(grepl("Remember 42", titled$title, fixed = TRUE))
 
     # A new process takes the conversation up again: its history goes
     # to the model, and none of it to the client. A resume names the
@@ -644,10 +746,10 @@ local({
         req(4L, "session/resume", list(sessionId = first, cwd = fx$proj,
                                        mcpServers = list()))),
         function(msg, client) {
-            if (identical(msg$id, 4L)) {
+            if (is_answer(4L)(msg)) {
                 client$write(prompt(5L, first, "What was it?"))
             }
-            if (identical(msg$id, 5L) && is.null(msg$method)) {
+            if (is_answer(5L)(msg)) {
                 client$finish()
             }
         }))
@@ -655,9 +757,8 @@ local({
     expect_identical(answer(msgs, 3L)$error$code, -32002L)
     expect_identical(answer(msgs, 4L)$result$modes$currentModeId, "ask")
     resumed <- at(msgs, is_answer(4L))
-    expect_identical(length(at(msgs, function(m) {
-        identical(m$method, "session/update")
-    })[at(msgs, function(m) identical(m$method, "session/update")) < resumed]), 0L)
+    updates <- at(msgs, function(m) identical(m$method, "session/update"))
+    expect_identical(sum(updates < resumed), 0L)
     sent <- model2$seen[[1L]]
     texts <- vapply(sent, function(m) {
         paste(unlist(m$content), collapse = " ")
@@ -689,18 +790,18 @@ local({
                              list(text = "Done.")))
     sid <- NULL
     msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
-        if (identical(msg$id, 2L)) {
+        if (is_answer(2L)(msg)) {
             sid <<- msg$result$sessionId
             client$write(req(3L, "session/set_mode",
                              list(sessionId = sid, modeId = "review")))
         }
-        if (identical(msg$id, 3L)) {
+        if (is_answer(3L)(msg)) {
             client$write(prompt(4L, sid, "Write a, b and c."))
         }
         if (is_permission(msg)) {
             grant(client, msg, "allow_once")
         }
-        if (identical(msg$id, 4L) && is.null(msg$method)) {
+        if (is_answer(4L)(msg)) {
             client$finish()
         }
     }))
@@ -714,3 +815,111 @@ local({
     expect_false(file.exists(file.path(fx$proj, "c.md")))
     expect_identical(answer(msgs, 4L)$result$stopReason, "end_turn")
 })
+
+# A cancel ends the wait on the reviewer, and withdraws the request
+# (review_cancel()), so the next call finds the reviewer free.
+local({
+    names <- c("job_monitor_ask", "job_monitor_poll", "job_monitor_close")
+    old <- mget(names, envir = ns)
+    on.exit(for (n in names) utils::assignInNamespace(n, old[[n]], "corteza"),
+            add = TRUE)
+    polls <- 0L
+    closed <- 0L
+    utils::assignInNamespace("job_monitor_ask", function(session, q) {
+        invisible(TRUE)
+    }, "corteza")
+    # A ruling comes at the tenth poll, so a wait that missed the stop
+    # ends, and fails below, rather than hanging.
+    utils::assignInNamespace("job_monitor_poll", function(session, timeout) {
+        polls <<- polls + 1L
+        if (polls >= 10L) list(verdict = "approve", reason = "late")
+    }, "corteza")
+    utils::assignInNamespace("job_monitor_close", function(session) {
+        closed <<- closed + 1L
+        invisible(TRUE)
+    }, "corteza")
+    session <- new.env()
+    session$stop_requested <- function() polls >= 3L
+    stopped <- tryCatch(ns$review_ask(session, list(request_id = "r1")),
+                        corteza_stop = function(e) "stopped")
+    expect_identical(stopped, "stopped")
+    expect_identical(polls, 3L)
+    expect_identical(closed, 1L)
+})
+
+# ---- The command, over pipes ------------------------------------------------
+# The agent in a process of its own, as a client starts it: protocol on
+# standard output and nothing else there, though the model's code prints
+# to it; the end of standard input ends the process, cleanly.
+if (.Platform$OS.type != "windows" &&
+    (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true"))) {
+    local({
+        fx <- acp_fixture()
+        on.exit(fx$restore(), add = TRUE)
+        script <- file.path(fx$root, "agent.R")
+        writeLines(c(
+            'utils::assignInNamespace(".agent_anthropic", function(messages,',
+            '    tools, system, model, config = NULL, cache = NULL,',
+            '    thinking_budget_tokens = NULL, on_delta = NULL,',
+            '    thinking = NULL, ...) {',
+            '    cat("cat on standard output\\n")',
+            '    print("print on standard output")',
+            '    on_delta("Hello ")',
+            '    on_delta("from the child.")',
+            '    text <- "Hello from the child."',
+            '    list(text = text, tool_calls = list(),',
+            '         usage = list(input_tokens = 1L, output_tokens = 1L),',
+            '         assistant_message = list(role = "assistant",',
+            '             content = list(list(type = "text", text = text))))',
+            '}, "llm.api")',
+            'corteza:::.acp_main()'), script)
+        p <- processx::process$new(file.path(R.home("bin"), "Rscript"),
+                                   c("--vanilla", script),
+                                   stdin = "|", stdout = "|", stderr = "|",
+                                   env = c("current", R_LIBS = paste(.libPaths(),
+                                       collapse = .Platform$path.sep)))
+        on.exit(if (p$is_alive()) p$kill(), add = TRUE)
+        lines <- character()
+        # Read standard output until a message `pred` holds for comes.
+        await <- function(pred, seconds = 60) {
+            deadline <- Sys.time() + seconds
+            while (Sys.time() < deadline) {
+                for (m in lapply(lines, jsonlite::fromJSON, simplifyVector = FALSE)) {
+                    if (isTRUE(pred(m))) {
+                        return(m)
+                    }
+                }
+                p$poll_io(200L)
+                lines <<- c(lines, p$read_output_lines())
+            }
+            NULL
+        }
+        say <- function(msg) p$write_input(paste0(ns$.acp_encode(msg), "\n"))
+        say(req(1L, "initialize", list(protocolVersion = 1L)))
+        say(req(2L, "session/new", list(cwd = fx$proj, mcpServers = list())))
+        made <- await(is_answer(2L))
+        expect_true(is.character(made$result$sessionId))
+        say(prompt(3L, made$result$sessionId, "Hello?"))
+        done <- await(is_answer(3L))
+        expect_identical(done$result$stopReason, "end_turn")
+        close(p$get_input_connection())
+        p$wait(30000L)
+        expect_identical(p$get_exit_status(), 0L)
+        lines <- c(lines, p$read_all_output_lines())
+        # Every line is a JSON-RPC message; what R printed is on
+        # standard error.
+        parsed <- lapply(lines, function(l) {
+            tryCatch(jsonlite::fromJSON(l, simplifyVector = FALSE),
+                     error = function(e) NULL)
+        })
+        expect_true(all(vapply(parsed, function(m) identical(m$jsonrpc, "2.0"),
+                               logical(1))))
+        chunks <- Filter(is_update("agent_message_chunk"), parsed)
+        expect_identical(paste(vapply(chunks, function(m) {
+            m$params$update$content$text
+        }, ""), collapse = ""), "Hello from the child.")
+        err <- p$read_all_error()
+        expect_true(grepl("cat on standard output", err, fixed = TRUE))
+        expect_true(grepl("print on standard output", err, fixed = TRUE))
+    })
+}

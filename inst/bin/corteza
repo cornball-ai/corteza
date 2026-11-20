@@ -3,6 +3,8 @@
 # corteza - An open-source interactive CLI agent in R
 #
 # Usage: corteza [options]
+#        corteza acp [--provider P] [--model M] [--tools T]
+#   acp          Serve an Agent Client Protocol client on stdin and stdout
 #   --provider   anthropic|openai|moonshot|openai_codex|ollama (default: anthropic)
 #   --model      model name (default: provider-specific)
 #   --port       MCP server port (default: 7850)
@@ -106,6 +108,10 @@ parse_args <- function() {
 corteza - An open-source interactive CLI agent
 
 Usage: corteza [options]
+       corteza acp [--provider P] [--model M] [--tools T]
+
+  acp             Serve an editor or another Agent Client Protocol client
+                  on standard input and output (vignette(\"configuration\"))
 
 Options:
   --provider      LLM provider: anthropic, openai, moonshot, openai_codex, ollama, openai_compatible (default: anthropic)

@@ -230,11 +230,15 @@
     }, add = TRUE)
     .acp_send(st$ch, .acp_request(id, method, params))
     repeat {
+        # A cancel wins over an answer read with it: the turn stops.
+        if (isTRUE(st$live$cancelled)) {
+            return(NULL)
+        }
         answer <- st$answers[[key]]
         if (!is.null(answer)) {
             return(answer)
         }
-        if (isTRUE(st$live$cancelled) || st$ch$closed) {
+        if (st$ch$closed) {
             return(NULL)
         }
         .acp_service(st, 200L)

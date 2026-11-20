@@ -34,12 +34,22 @@
     }, error = function(e) .acp_log("could not write the transcript: ",
                                     conditionMessage(e)))
 
+    before <- length(session$history %||% list())
     result <- tryCatch(turn(text, session),
                        interrupt = function(e) {
+        # An interrupt from outside (a signal to the process) ends the
+        # turn as Ctrl+C does at the terminal: the history is repaired
+        # and marked. A client's cancel ends it inside turn().
         live$cancelled <- TRUE
+        apply_exit_marker(session, text, before, user_interrupt_marker())
         NULL
     },
                        error = function(e) e)
+    # A plan approved during the turn stays, whatever its end.
+    if (isTRUE(session$tasks_dirty)) {
+        session$disk_session$tasks <- session$tasks
+        session$tasks_dirty <- FALSE
+    }
     # A cancel, or an error a cancel caused, is a cancelled turn.
     stopped <- isTRUE(live$cancelled) ||
     identical(result$termination$status, "cancelled")
@@ -131,7 +141,8 @@
     if (is.null(live$call)) {
         id <- .acp_call_id(live$session)
         live$call <- id
-        .acp_update(st, live$sid, .acp_tool_call(call, id, status))
+        .acp_update(st, live$sid, .acp_tool_call(call, id, status,
+                                                 live$session$cwd))
         return(id)
     }
     .acp_update(st, live$sid, list(sessionUpdate = "tool_call_update",

@@ -36,7 +36,7 @@
         shown <- .redact_object(call, live$session$secret_values)
         once <- identical(decision$rule, "credential")
         id <- .acp_announce(st, live, shown, "pending")
-        title <- .acp_tool_title(shown)
+        title <- .acp_tool_title(shown, live$session$cwd)
         why <- .acp_ask_reason(decision)
         if (nzchar(why)) {
             title <- sprintf("%s (%s)", title, why)

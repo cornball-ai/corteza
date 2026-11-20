@@ -54,17 +54,26 @@
 }
 
 # The tool and what it acts on: its command, code or path
-# (supervisor_brief(), which reads the arguments by their full names).
-.acp_tool_title <- function(call) {
+# (supervisor_brief(), which reads the arguments by their full names). A
+# path inside the session's directory is named from there, so a long
+# directory does not push the file's name out of the title.
+.acp_tool_title <- function(call, cwd = NULL) {
     name <- call$tool %||% "tool"
-    brief <- tryCatch(supervisor_brief(call, max_chars = 120L),
+    brief <- tryCatch(supervisor_brief(call, max_chars = 10000L),
                       error = function(e) "")
-    if (is.character(brief) && length(brief) == 1L && !is.na(brief) &&
-        nzchar(trimws(brief))) {
-        return(sprintf("%s: %s", name, .sanitize_inline(trimws(brief),
-                    max_chars = 120L)))
+    if (!is.character(brief) || length(brief) != 1L || is.na(brief) ||
+        !nzchar(trimws(brief))) {
+        return(name)
     }
-    name
+    brief <- trimws(brief)
+    if (is.character(cwd) && length(cwd) == 1L && nzchar(cwd)) {
+        inside <- paste0(sub("/+$", "", normalizePath(cwd, winslash = "/",
+                                                      mustWork = FALSE)), "/")
+        if (startsWith(brief, inside)) {
+            brief <- substring(brief, nchar(inside) + 1L)
+        }
+    }
+    sprintf("%s: %s", name, .sanitize_inline(brief, max_chars = 120L))
 }
 
 # Why a call asks, for a person: what the reviewer or the rules said, or
@@ -92,10 +101,10 @@
 
 # The update that announces a call: `tool_call`, with the status a
 # permission request gives it ("pending") or a run ("in_progress").
-.acp_tool_call <- function(call, id, status) {
+.acp_tool_call <- function(call, id, status, cwd = NULL) {
     update <- list(sessionUpdate = "tool_call", toolCallId = id,
-                   title = .acp_tool_title(call), kind = .acp_tool_kind(call),
-                   status = status)
+                   title = .acp_tool_title(call, cwd),
+                   kind = .acp_tool_kind(call), status = status)
     locations <- .acp_tool_locations(call)
     if (length(locations)) {
         update$locations <- locations
@@ -141,18 +150,18 @@
     if (identical(termination$status, "cancelled")) {
         return("cancelled")
     }
+    if (!identical(termination$status, "incomplete")) {
+        return("end_turn")
+    }
     reason <- termination$reason %||% ""
     if (identical(reason, "max_turns")) {
         return("max_turn_requests")
     }
-    if (reason %in% c("max_tokens", "length", "max_output_tokens",
-                      "model_context_window_exceeded")) {
-        return("max_tokens")
-    }
     if (identical(reason, "refusal")) {
         return("refusal")
     }
-    "end_turn"
+    # Any other incomplete reply was cut short by a limit on its length.
+    "max_tokens"
 }
 
 # The options of a permission request: the terminal's 3 answers. The

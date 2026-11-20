@@ -1333,6 +1333,29 @@ Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
 }
 ```
 
+## Editors and other ACP clients
+
+`corteza acp` runs corteza as an agent of the Agent Client Protocol (ACP, version 1): an editor, or any other client that speaks it, starts the command and talks to it over standard input and output. Each session the client opens is a corteza session in the directory the client names, set up as `chat()` sets one up, with that directory's config, trust, tools and instructions. The directory must be an absolute path that exists; corteza creates none.
+
+```sh
+corteza acp
+corteza acp --provider openai --tools core,git
+```
+
+What a client gets:
+
+- `session/new`, `session/resume`, `session/list` and `session/close`. ACP sessions are kept with the terminal's (Session records below), so `corteza --resume` takes up a conversation a client started in that directory, and a client can resume a terminal's. A resume sends the model the conversation's history and the client none of it.
+- Prompts of text, and links to files, which reach the model as the file's path. A prompt with an image, audio or an embedded resource is refused.
+- The reply as it streams, with the secrets corteza knows hidden, and each tool call: announced, run, and finished with its result (cut to 4,000 characters for the client; the model reads all of it) and, for an edit, its diff.
+- Two modes. In `ask`, each call that would prompt at the terminal becomes a permission request with the terminal's 3 answers: allow, allow always for this project (kept where the terminal keeps it), deny. In `review`, the reviewer rules first, as under `approval_mode: "review"`, and the client is asked what it passes on. The credential rule's request offers no "always", and no saved answer covers it.
+- `session/cancel`. The turn stops at the next piece of the streamed reply, before the next model request or tool call, or during a wait for permission or for the reviewer. A tool that is already running finishes first, so a cancel loses none of the session's R objects.
+
+corteza connects to no MCP server a client names. A `session/new` or `session/resume` that lists one is refused, naming each server by its `name` alone; send an empty `mcpServers` list.
+
+One process can hold several sessions, and they share no R objects: each session's `run_r` runs in a worker process of its own, whatever `run_r_mode` says. One prompt runs at a time. A prompt for another session waits until the running one ends, and a second prompt for the running session is refused. The requests that need no turn (opening, listing, closing, setting a mode) are answered while a prompt runs, each time the turn checks for a cancel. A close of the running session cancels its prompt and is answered after it.
+
+Nothing corteza or a tool prints reaches the protocol: while the command runs, R's standard output goes to standard error.
+
 ## Session tuning
 
 `new_session()` is the programmatic entry point for embedding corteza in your own R code: a Shiny app, a batch script, a custom approval flow, or tests. The CLI and Matrix channels build on this same primitive.
