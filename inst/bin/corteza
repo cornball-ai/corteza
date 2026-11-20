@@ -866,6 +866,9 @@ run_agent <- function(opts) {
   # builds the next conversation's config (corteza:::.repl_session_rebuild()).
   # A key no flag set comes from the file again.
   ctx$config_set <- opts$config_set
+  # The terminal is a talker unless its config says otherwise (WP20c);
+  # chat() is not (corteza:::.repl_talker_default()).
+  ctx$talker_default <- TRUE
   ctx$cwd <- cwd
   ctx$ws_enabled <- ws_enabled
   ctx$provider <- provider

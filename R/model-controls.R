@@ -112,6 +112,54 @@
           collapse = "\n")
 }
 
+# /provider at the terminal sets the work's provider, as /model sets
+# its model: in a talker session the doer's, and the talker's where it
+# follows /model (talker_follows). The model stays as it is.
+.repl_provider_command <- function(ctx, parts) {
+    s <- ctx$session
+    work <- .session_work_model(s)
+    if (length(parts) < 2L) {
+        return(sprintf("Current provider: %s\nUsage: /provider <name>\n",
+                       work$provider %||% "(default)"))
+    }
+    provider <- parts[2]
+    if (isTRUE(s$talker)) {
+        s$doer_provider <- provider
+        if (isTRUE(s$talker_follows)) {
+            s$provider <- provider
+        }
+    } else {
+        s$provider <- provider
+    }
+    # The session's own provider, which --resume starts from.
+    ctx$provider <- provider
+    if (!is.null(ctx$disk_session)) {
+        ctx$disk_session$session$provider <- provider
+    }
+    if (!isTRUE(s$talker)) {
+        return(sprintf("Provider set to %s\n", provider))
+    }
+    if (isTRUE(s$talker_follows)) {
+        return(sprintf("Provider set to %s, for the next reply and the next job.\n",
+                       provider))
+    }
+    sprintf("Provider set to %s, for the next job; replies stay on %s.\n",
+            provider, s$provider %||% "(default)")
+}
+
+# The model and provider /review, /doctor and /config use and show: the
+# work's. In a talker session that is the doer's (.session_work_model()),
+# which the talker's own provider may not serve.
+.repl_work_route <- function(ctx) {
+    s <- ctx$session
+    if (isTRUE(s$talker)) {
+        work <- .session_work_model(s)
+        return(list(model = work$model %||% ctx$model,
+                    provider = work$provider %||% s$provider %||% ctx$provider))
+    }
+    list(model = ctx$model, provider = s$provider %||% ctx$provider)
+}
+
 .repl_model_command <- function(ctx, text) {
     cmd <- bot_parse_model_command(text)
     if (is.null(cmd)) {

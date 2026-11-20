@@ -188,6 +188,9 @@ job_worker_spec <- function(session, role = "doer") {
                  reasoning_effort = effort,
                  thinking_budget_tokens = budget,
                  thinking = thinking,
+                 # The doer's output budget, which /max-tokens sets in a
+                 # talker session (.output_budget_command()).
+                 max_tokens = if (identical(role, "doer")) session$doer_max_tokens,
                  # Conversation settings follow the doer only. A reviewer
                  # or monitor retains its own cwd configuration and role.
                  context_edit = if (!read_only) {
@@ -564,6 +567,8 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     session$thinking_budget_tokens <- .check_max_tokens(spec$thinking_budget_tokens,
         "job spec (thinking_budget_tokens)", what = "thinking_budget_tokens")
     session$thinking <- .check_thinking(spec[["thinking"]], "job spec (thinking)")
+    # Without one, the worker's config decides (.session_max_tokens()).
+    session$max_tokens <- .check_max_tokens(spec$max_tokens, "job spec (max_tokens)")
     session$plan_mode <- isTRUE(spec$plan_mode)
     session$tools_filter <- spec$tools
     if (!is.null(spec$max_turns)) {

@@ -380,11 +380,12 @@ local({
                                    collapse = " ")
                     # Plan mode reaches a worker as a note in its job's
                     # prompt; the system text stays as it is (WP14).
-                    text <- sprintf("model=%s exit_offered=%s plan_note=%s plan_system=%s results=%s",
+                    budget <- list(...)$max_tokens
+                    text <- sprintf("model=%s exit_offered=%s plan_note=%s plan_system=%s results=%s max_tokens=%s",
                                     model, "exit_plan_mode" %in% offered,
                                     grepl("[Plan mode is on", asked, fixed = TRUE),
                                     grepl("Plan mode", prompt, fixed = TRUE),
-                                    seen)
+                                    seen, if (is.null(budget)) "none" else budget)
                     return(list(text = text, tool_calls = list(), usage = usage,
                                 assistant_message = list(role = "assistant",
                                     content = list(list(type = "text", text = text)))))
@@ -551,6 +552,16 @@ local({
     j <- run("script: read")
     expect_true(grepl("model=model-b", j$outcome$result, fixed = TRUE))
     expect_identical(s$.job_worker$get_pid(), pid)
+    # /max-tokens in a talker session sets the doer's budget, which the
+    # next job's requests carry (WP20c); without one, the worker's config
+    # decides.
+    expect_true(grepl("max_tokens=none", j$outcome$result, fixed = TRUE))
+    s$doer_max_tokens <- 4000L
+    j <- run("script: read")
+    expect_true(grepl("max_tokens=4000", j$outcome$result, fixed = TRUE))
+    s$doer_max_tokens <- NULL
+    j <- run("script: read")
+    expect_true(grepl("max_tokens=none", j$outcome$result, fixed = TRUE))
     # No job but the approval test asked anyone anything.
     expect_identical(unasked, 0L)
 })

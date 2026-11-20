@@ -8,22 +8,32 @@
 # and an approval request is asked right there. The cost is that a job
 # waiting on approval waits until the next Enter; /jobs pumps on demand.
 
-# Wire jobs into a REPL session: the job key and owner, talker mode when
-# the config asks for it, and recovery of jobs left by local corteza
-# processes that have exited.
+# Whether a session here is a talker when its config does not say
+# (WP20c). The CLI's is, as a bot's room is (bot_talker_config()), and
+# chat()'s is not (open item 1). A session whose tools are restricted
+# (--tools, the config's `tools`) is no talker by default, as in a room,
+# since a doer gets the work tools whatever that list says.
+.repl_talker_default <- function(ctx) {
+    isTRUE(ctx$talker_default) && !length(ctx$session$tools_filter)
+}
+
+# Wire jobs into a REPL session: the job key and owner, talker mode
+# where the config or the surface's default asks for it, and recovery of
+# jobs left by local corteza processes that have exited.
 #
 # Only talker sessions can delegate, so a session not in talker mode
-# gets none of this: no job key, no ledger reads, no recovery. Existing
-# REPL behavior is untouched unless the config turns talker mode on.
+# gets none of this: no job key, no ledger reads, no recovery.
 .repl_jobs_setup <- function(ctx) {
     session <- ctx$session
     if (!is.environment(session) || isTRUE(session$.repl_jobs_ready)) {
         return(invisible(FALSE))
     }
-    talker <- talker_config(ctx$config %||% session$config)
+    cfg <- ctx$config %||% session$config
+    talker <- talker_config(cfg, default = .repl_talker_default(ctx))
     if (is.null(talker) && !isTRUE(session$talker)) {
         return(invisible(FALSE))
     }
+    by_default <- is.null(cfg$talker[["enabled"]])
     # One key for the whole process: a /clear starts a new conversation,
     # not a new set of jobs, and results still come back to it.
     session$job_key <- "repl"
@@ -39,6 +49,12 @@
         job_local_owner())
     if (!isTRUE(session$talker)) {
         talker_enable(session, talker)
+        if (by_default) {
+            cat(sprintf(paste0("%sTalker mode: this session answers, and work goes to a ",
+                               "doer of its own (/jobs).\n\"talker\": {\"enabled\": ",
+                               "false} in the corteza config turns it off.%s\n"),
+                        ctx$palette$dim %||% "", ctx$palette$reset %||% ""))
+        }
     }
     orphans <- tryCatch(job_recover_local_orphans(), error = function(e) NULL)
     if (!is.null(orphans)) {
@@ -165,6 +181,8 @@
     switch(ev$type,
            settled = {
         text <- .repl_job_result_text(ev$job)
+        # What the job spent is this run's (/spent).
+        session_accumulate_spend(ctx$session, ev$job$outcome$usage)
         asked <- ev$job$origin$conversation
         current <- session_conversation(ctx$session)
         if (!is.null(asked) && !identical(asked, current)) {
@@ -179,9 +197,16 @@
             return(invisible(NULL))
         }
         cat(sprintf("\n%s%s%s\n\n", p$cyan %||% "", text, p$reset %||% ""))
-        # Into the talker's history, so it knows the job ended.
+        # Into the talker's history, so it knows the job ended, and into
+        # the transcript, which --resume seeds the history from and the
+        # reviewer reads (review_conversation()).
         ctx$session$history <- c(ctx$session$history %||% list(),
                                  list(list(role = "assistant", content = text)))
+        if (!is.null(ctx$disk_session)) {
+            tryCatch(transcript_append(ctx$disk_session$session, "assistant",
+                                       text),
+                     error = function(e) NULL)
+        }
     },
            restored = cat(sprintf("%s%s%s\n", p$dim,
                                   bot_job_restored_text(ev$restore), p$reset)),
@@ -228,7 +253,11 @@
     if (!is.null(ctx$remote_dir)) {
         approved <- .remote_approve(ctx, call, list(reason = req$reason))
     } else {
-        answer <- ctx$read_input("Approve? [y/N] ")
+        # A Ctrl+C at the question is a no, as EOF is. Each request is
+        # asked once (job_pump_approvals()), and one left open would hold
+        # the worker until its wait ran out.
+        answer <- tryCatch(ctx$read_input("Approve? [y/N] "),
+                           interrupt = function(e) character())
         approved <- length(answer) == 1L &&
         tolower(trimws(answer)) %in% c("y", "yes")
     }

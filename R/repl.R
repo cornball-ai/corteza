@@ -278,17 +278,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 next
             }
             if (cmd == "/provider") {
-                if (length(parts) < 2L) {
-                    cat(sprintf("Current provider: %s\nUsage: /provider <name>\n",
-                                ctx$session$provider %||% "(default)"))
-                    next
-                }
-                ctx$session$provider <- parts[2]
-                ctx$provider <- parts[2]
-                if (!is.null(ctx$disk_session)) {
-                    ctx$disk_session$session$provider <- parts[2]
-                }
-                cat(sprintf("Provider set to %s\n", parts[2]))
+                cat(.repl_provider_command(ctx, parts))
                 next
             }
             if (cmd == "/spawn") {
@@ -711,14 +701,15 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             }
             if (cmd == "/doctor") {
                 tools <- session_request_parts(ctx$session)$tools
-                disp_model <- ctx$model %||% ctx$session$model_map$cloud %||%
+                route <- .repl_work_route(ctx)
+                disp_model <- route$model %||% ctx$session$model_map$cloud %||%
                 "(default)"
                 docs <- tryCatch(list_skill_docs(),
                                  error = function(e) character())
                 cat(format_doctor_report(
                         cwd = ctx$cwd,
                         session = ctx$disk_session$session,
-                        provider = ctx$session$provider %||% ctx$provider,
+                        provider = route$provider,
                         display_model = disp_model,
                         tools = tools,
                         config = ctx$config,
@@ -728,11 +719,12 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 next
             }
             if (cmd == "/config") {
-                disp_model <- ctx$model %||% ctx$session$model_map$cloud %||%
+                route <- .repl_work_route(ctx)
+                disp_model <- route$model %||% ctx$session$model_map$cloud %||%
                 "(default)"
                 cat(format_config_summary(
                         config = ctx$config,
-                        provider = ctx$session$provider %||% ctx$provider,
+                        provider = route$provider,
                         display_model = disp_model,
                         opts = list(port = ctx$config$port,
                                     tools = ctx$session$tools_filter,
@@ -826,10 +818,8 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                                 ctx$palette$reset))
                     next
                 }
-                provider_check <- provider_status(
-                    ctx$session$provider %||% ctx$provider,
-                    ctx$model
-                )
+                route <- .repl_work_route(ctx)
+                provider_check <- provider_status(route$provider, route$model)
                 if (!isTRUE(provider_check$ok)) {
                     cat(sprintf("%sReview unavailable: %s%s\n",
                                 ctx$palette$yellow, provider_check$message,
@@ -839,8 +829,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 cat(sprintf("%sReviewing diff against %s...%s\n",
                             ctx$palette$dim, material$target, ctx$palette$reset))
                 review_result <- run_review(
-                    ctx$session$provider %||% ctx$provider,
-                    ctx$model, material$target,
+                    route$provider, route$model, material$target,
                     material$status, material$diff, session = ctx$session
                 )
                 if (inherits(review_result, "error")) {
