@@ -6,6 +6,12 @@
 # function for the output.
 
 .acp_channel <- function(input = NULL, send = NULL) {
+    # processx documents its connection to a file descriptor for Unix
+    # descriptors, and nobody has run this on Windows yet.
+    if ((is.null(input) || is.null(send)) && .Platform$OS.type == "windows") {
+        stop(paste("corteza acp runs on Linux and macOS in this release;",
+                   "on Windows, use the terminal or chat()."), call. = FALSE)
+    }
     ch <- new.env(parent = emptyenv())
     ch$input <- input %||% processx::conn_create_fd(0L, close = FALSE)
     if (is.null(send)) {

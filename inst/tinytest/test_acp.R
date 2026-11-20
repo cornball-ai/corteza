@@ -113,6 +113,17 @@ local({
     expect_error(ns$.acp_args("--resume"), "takes --provider")
 })
 
+# corteza acp is not offered on Windows yet (R/acp-channel.R), and the
+# loop's tests drive it through processx's pipe pair.
+local({
+    if (.Platform$OS.type == "windows") {
+        expect_error(ns$.acp_channel(), "Linux and macOS")
+    }
+})
+if (.Platform$OS.type == "windows") {
+    exit_file("corteza acp is not offered on Windows yet")
+}
+
 # ---- The harness ----------------------------------------------------------
 # Folders of its own for a block: user data and config, state, and a
 # project. The provider's key is a stand-in; no request leaves.
