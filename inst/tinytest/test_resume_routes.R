@@ -191,6 +191,17 @@ local({
     expect_equal(seen$disk_session$session$sessionKey, made_key)
     expect_false(said(out, "This session was started in "))
     expect_false(said(out, "No session was started"))
+
+    # What /clear keeps over the config file is what a flag on the
+    # command line set (ctx$config_set, .repl_session_rebuild()): with no
+    # flag, nothing, so the file's dry_run and base_url are read again.
+    run_cli("--session", "corteza:no-flags")
+    expect_identical(seen$config_set, character())
+    run_cli("--session", "corteza:flags", "--dry-run",
+            "--base-url", "https://gateway.invalid/v1")
+    expect_identical(sort(seen$config_set), c("base_url", "dry_run"))
+    expect_true(isTRUE(seen$config$dry_run))
+    expect_identical(seen$config$base_url, "https://gateway.invalid/v1")
     setwd(root)
 
     # Shared setup must not reintroduce the unrelated config model, including
