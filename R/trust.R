@@ -187,14 +187,20 @@ project_skills_dir <- function(cwd) {
 # Source the project's skills (`code`) and read their documents
 # (`docs`), from a trusted directory only. Sourcing a file runs it, so
 # for an untrusted project this is the step that must not happen: the
-# decision comes before any file in the folder is opened. Returns
-# whether the folder was loaded.
-load_project_skills <- function(cwd = getwd(), code = TRUE, docs = TRUE) {
+# decision comes before any file in the folder is opened. The tools go
+# to a session's `table` (R/tool-table.R), or to the registry without
+# one. Returns whether the folder was loaded.
+load_project_skills <- function(cwd = getwd(), code = TRUE, docs = TRUE,
+                                table = NULL) {
     if (!project_trusted(cwd)) {
         return(invisible(FALSE))
     }
     if (isTRUE(code)) {
-        load_skills(project_skills_dir(cwd))
+        origin <- if (!is.null(table)) {
+            tool_origin("project",
+                        normalizePath(cwd, winslash = "/", mustWork = FALSE))
+        }
+        load_skills(project_skills_dir(cwd), table = table, origin = origin)
     }
     if (isTRUE(docs)) {
         load_skill_docs(project_skills_dir(cwd))

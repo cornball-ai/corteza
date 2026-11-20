@@ -105,7 +105,7 @@ review_gate <- function(session, reviewer = review_ask) {
                  flags = paste0("could not be checked (", conditionMessage(e), ")"))
         })
         reviewable <- identical(v$route, "monitor") &&
-        classify_op(call$tool %||% "") %in% c("read", "write", "exec")
+        call_class(call) %in% c("read", "write", "exec")
         if (reviewable) {
             answered <- attr(session$approval_cb, "answered")
             if (is.function(answered) &&

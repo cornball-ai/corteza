@@ -56,9 +56,22 @@ transport. `serve()` (`R/serve.R`) is a separate, spec-compliant MCP
 server for external clients only. Subagents are the one place a child R
 process is still used (`callr::r_session`, initialized via `worker_init()`).
 
-**Tool registry** (`R/registry.R`): `.skill_registry` is the single
-source of truth. `ensure_skills()` / `register_builtin_skills()`
-populate it on first use. `skills_as_api_tools()` converts to the
+**Tool registry** (`R/registry.R`): `.skill_registry` holds corteza's
+own tools and any a host registers by hand. `ensure_skills()` /
+`register_builtin_skills()` populate it on first use.
+
+**A session's tools** (`R/tool-table.R`): a session takes its tools
+once, when it starts, into `session$tool_table`
+(`session_tool_table()`): the registry's, the user's skills, the
+config's package tools and a trusted project's skills. A later source
+never takes a name an earlier one holds; it is skipped with a message.
+`turn()` offers the table, runs the table's handler, and puts the
+entry's `class` and `origin` on each call, which `call_class()` and
+`call_named_by_corteza()` read. Every surface builds one:
+`session_setup()` (`chat()`, rooms), the terminal, a child's
+`subagent_turn_init()` and `serve()`. A session made by `new_session()`
+alone reads the registry. So a bot's rooms, which share a process, each
+see their own project's tools. `skills_as_api_tools()` converts to the
 `llm.api::agent()` format; `sanitize_tool_name()` maps `::` to `__`
 for API compatibility.
 
@@ -125,14 +138,21 @@ Every tool has a class, declared where it is registered: `class =` in
 session's own work: subagents it starts, tasks, `exit_plan_mode`) or
 `continue` (runs work in a child, a worker or a room whose mode was set
 elsewhere: `query_subagent`, `delegate`, `job_resume`). A tool that
-names none is `unknown`. `classify_op()` reads the class from the
-registry; a room host's tools (`send_room_file` and 3 more) are in
-`.session_tool_classes`. A new built-in tool needs a class and a row in
+names none is `unknown`. A call carries the class of the entry it runs
+(`call_class()`); `classify_op()` reads a name's class from the
+session's table, or the registry without one; a room host's tools
+(`send_room_file` and 3 more) are in `.session_tool_classes`. A new built-in tool needs a class and a row in
 `test_tool_classes.R`'s table, or that file fails.
 
 **Order (`policy()`); nothing later lifts an earlier deny:**
 1. The mode. Plan mode refuses `write`, `exec`, `continue` and
-   `unknown` (`.mode_verdicts`, `check_plan_mode()`).
+   `unknown` (`.mode_verdicts`, `check_plan_mode()`). A Matrix room
+   with no directory (`session$unbound`, set where `bot_new_session()`
+   gives it the scratch folder) refuses all but `read` and the control
+   tools `.unbound_control` names (`check_unbound_room()`); a new
+   control tool is refused there until it is named.
+   `tool_delegate()` and `bot_job_handoff()` refuse such a room as well,
+   asking or asked.
 2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
    and the rest asks, marked `rule = "credential"`. No saved "always"
    answers it: both approval callbacks ask each time and offer none.
@@ -207,6 +227,31 @@ nothing between calls. A wait cut short (an interrupt, an error) cancels the req
 installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set
 `"review"` (`load_config()`).
+
+## A worker obeys its conversation (`R/job-authority.R`)
+
+A job's worker (a doer or a reviewer) is a process whose session was
+built when it started. Each job brings a spec, and the child applies
+all of it at the job's start (`.job_worker_child_apply_spec()`):
+provider, model, reasoning settings, plan mode, tools, turn limit.
+Plan mode, approval mode and dry run can change while the job runs, so
+the session that dispatched it writes them to `authority.json` beside
+the job: in `job_dispatch()`, and from `job_pump()` when one changes
+(`job_authority_sync()`). turn()'s handler reads the record
+(`session$authority`, `.authority_apply()`) before each call and again
+just before the call runs; a different `seq` the second time refuses
+the call. A record that is missing, unreadable, or names another job or
+conversation refuses every call. A failed write removes the record, so
+the failure refuses rather than leaving a looser record standing.
+
+Only the conversation that dispatched a job writes its record: the
+cache on the session (`.job_authority`) names the job and the
+`sessionId`, and is not in `JOB_SESSION_STATE`, so neither the
+terminal's `/clear` nor a room's replacement session updates an old
+job's record. A worker cannot end plan mode (`plan_mode_locked`): it is
+not offered `exit_plan_mode`, the handler refuses it by name, and its
+plan-mode text and refusals say the person ends it. The monitor runs no
+job and has neither.
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 
@@ -451,6 +496,15 @@ off to `run_repl_loop()` (`R/repl.R`), which dispatches every slash
 command, so the command set is identical across both. The
 `/status /doctor /config /diff /review /last /outputs` commands (once
 CLI-only) now work in `chat()` too.
+
+`corteza_commands()` (`R/commands.R`) is the table of every surface's
+commands: a row a name, with what it is the same as, its argument, a
+line saying what it does, and whether the terminal and `chat()`, a bot's
+room, or a room controlling a terminal takes it. Nothing dispatches
+from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
+and `.remote_bot_route()` for the names they compare with, asks each
+room parser, and checks both `/help` texts, so a new command needs a
+row, a line in both help texts, and its surface's match.
 
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`

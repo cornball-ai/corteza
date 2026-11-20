@@ -1,6 +1,11 @@
 # MCP JSON-RPC Handler
 # Handles MCP protocol requests and dispatches to tools
 
+# The tools serve() took when it started (R/tool-table.R), which the
+# handler lists and runs. NULL outside serve(), where the registry
+# serves.
+.mcp_state <- new.env(parent = emptyenv())
+
 #' Tools the MCP server advertises.
 #'
 #' `get_tools()` filtered by the configured `corteza.tools`, minus the
@@ -11,7 +16,7 @@
 #' subagents are unaffected.
 #' @noRd
 mcp_visible_tools <- function() {
-    tools <- get_tools(getOption("corteza.tools"))
+    tools <- get_tools(getOption("corteza.tools"), .mcp_state$table)
     if (!isTRUE(getOption("corteza.mcp_expose_subagents", FALSE))) {
         sub <- .builtin_categories$subagent
         tools <- Filter(function(t) !t$name %in% sub, tools)
@@ -112,7 +117,8 @@ handle_request <- function(req) {
                 # than dispatch a tool the listing never offered.
                 err(sprintf("Tool not available: %s", params$name))
             } else {
-                call_tool(params$name, params$arguments)
+                call_tool(params$name, params$arguments,
+                          table = .mcp_state$table)
             }
         },
 
