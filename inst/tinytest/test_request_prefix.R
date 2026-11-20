@@ -151,6 +151,7 @@ local({
     s$plan_mode <- FALSE
     unplanned <- ask("go")
     expect_identical(prefix_of(unplanned), prefix_of(first))
+    expect_true(appended_only(again, unplanned))
     expect_true(grepl("^\\[Plan mode is off\\.", last_prompt(unplanned)))
     expect_equal(count_notes(last_prompt(unplanned)), 1L)
     # Outside plan mode exit_plan_mode is offered and refused at the call.
@@ -176,6 +177,7 @@ local({
     s$auto_run_id <- "fixture-run"
     auto <- ask("work unattended")
     expect_identical(prefix_of(auto), prefix_of(first))
+    expect_true(appended_only(emptied, auto))
     expect_true(grepl("^\\[An unattended /auto run has started", last_prompt(auto)))
     expect_equal(count_notes(last_prompt(auto)), 1L)
     handler <- ns$.make_tool_handler(s, function(...) stop("ran in an auto run"))
@@ -185,6 +187,7 @@ local({
     s$auto_run_id <- NULL
     ended <- ask("back")
     expect_identical(prefix_of(ended), prefix_of(first))
+    expect_true(appended_only(auto, ended))
     expect_true(grepl("^\\[The /auto run has ended\\.", last_prompt(ended)))
 
     # A git init during the session adds no tools: availability was
