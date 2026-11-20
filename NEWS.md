@@ -1,3 +1,11 @@
+# corteza 0.8.0.43
+
+- A history's token estimate counts tool calls and their results in
+  full. It read a block list for its text alone, so an Anthropic tool
+  result counted as one line: a session whose tools returned long text
+  compacted far past `context_compact_tokens`, and `/context`
+  understated it. A chat-completions call's `tool_calls` count too.
+
 # corteza 0.8.0.42
 
 - The task list is off by default: no `task_create` or `task_update`
