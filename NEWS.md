@@ -1,3 +1,19 @@
+# corteza 0.8.0.28
+
+- A tool's time limit (`skill_timeout`) stays inside the tool. R checks
+  the limit only between R calls, so a limit passed inside `readLines()`
+  or `grep()` fired at the next R code; when that was a warning handler
+  outside the tool, it ended the turn and left the call open. Now the
+  tool's warnings and messages wait until the tool returns or fails and
+  then pass on, in order. Where warnings are errors (`options(warn =
+  2)`), a warning stops the tool where it is raised, and the error is
+  the tool's result.
+- `grep_files` reads within bounds. It skips a binary file (a NUL byte
+  in the first 8000 bytes) and a file over 10 MB, matches a line that is
+  not UTF-8 by its bytes, cuts lines at 500 characters, and stops at 500
+  matches or after 20 seconds. The result says what it skipped and
+  where it stopped.
+
 # corteza 0.8.0.27
 
 - A room's monitor (`auto_approve_asks: true`) reads the room's
