@@ -864,7 +864,8 @@ unused for `retention.session_days`. A session was last used when its
 journal, its trace or its transcript last changed. The terminal says
 what it removed.
 
-Transcripts, session stores, workspaces, config and audit records stay.
+Transcripts, session stores, the terminal's saved workspaces, config and
+audit records stay.
 A session whose journal is gone still resumes from its transcript, and
 says what is gone. A room that restores its context from its journal
 starts its next conversation fresh. A room's records of its
@@ -887,9 +888,24 @@ or `CORTEZA_STATE_DIR`) and its remote-control folder:
   never fewer than `session_days`. The terminal names each such job when
   it goes.
 - A worker process's folder with no checkpoint loses its journal, less
-  its audit records. A folder with a checkpoint stays.
+  its audit records.
+- A worker's folder with a checkpoint (the R objects and history a
+  delegated job's worker left for the next job) goes once it and the
+  session it belongs to have both gone unused for `session_days`: at the
+  terminal the conversation's session, in a room or a thread the room's
+  session, judged by its journal, which holds the record of its
+  conversations. A room keeps one such folder across `/clear`, so the
+  room's use counts, not one conversation's. Where the session has left
+  nothing, the folder goes by its own age. The checkpoint goes first,
+  then the rest, less the journal's audit records.
 - A remote-control session goes once it was closed, or once its process
   on this machine has ended. One from another machine stays.
+
+A worker's folder stays, whatever its age, while its worker process is
+alive (a worker on another machine counts as alive), while its session
+is open in the terminal or the bot doing the removal, and while a job is
+open in its directory. Each of these, and the last use of the folder and
+of its session, is read again just before the folder goes.
 
 A folder there whose name and record are not of the form corteza writes
 stays whole. Once it is old enough the terminal counts it, and

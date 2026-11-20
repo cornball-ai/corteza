@@ -110,8 +110,8 @@ retention_config <- function() {
 #' is alive, while its session is open in the process doing the removing,
 #' and while a job is open in its directory.
 #'
-#' Transcripts, session stores, workspaces, config, audit records and
-#' crypto state are never removed. A session whose journal is gone still
+#' Transcripts, session stores, the terminal's saved workspaces, config,
+#' audit records and crypto state are never removed. A session whose journal is gone still
 #' resumes from its transcript. A chat room that restores its context
 #' from its journal starts its next conversation fresh.
 #'
