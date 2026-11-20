@@ -126,10 +126,16 @@
     invisible(TRUE)
 }
 
-# The session's own corteza session, for its directory.
+# The session's own corteza session, for its directory. It is built in
+# that directory, as the terminal builds one where it starts: a skill's
+# R file, sourced as the tool table is made, reads relative paths from
+# there and not from the launcher's directory, or from a running
+# session's when a client opens this one during a turn. The caller's
+# directory is the working directory again afterwards.
 .acp_session_build <- function(st, cwd, route, history = NULL) {
     here <- getwd()
     on.exit(setwd(here), add = TRUE)
+    setwd(cwd)
     session <- session_setup("cli", cwd = cwd, provider = route$provider,
                              model = route$model, tools = st$tools,
                              history = history)
