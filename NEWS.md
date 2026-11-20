@@ -1,3 +1,10 @@
+# corteza 0.8.0.41
+
+- An ACP client is offered the session's commands: `/help`, `/trust`,
+  `/status`, `/tools`, `/tasks`, `/spent` and `/compact`. A prompt that
+  starts with one runs it in place of a turn, and a cancel reaches
+  `/compact`.
+
 # corteza 0.8.0.40
 
 - Over ACP, a cancel reaches a tool while it runs. `bash` and `cmd` end
