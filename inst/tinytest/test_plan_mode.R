@@ -88,20 +88,19 @@ expect_true(isTRUE(s$plan_mode))
 s2 <- corteza::new_session(channel = "cli", provider = "anthropic")
 expect_false(isTRUE(s2$plan_mode))
 
-# ---- .plan_mode_compose_system ----
+# ---- .plan_mode_note ----
+# Plan mode reaches the model as a note at the head of the next prompt;
+# the system text stays as it is (WP14, test_request_prefix.R).
 
-# Off: returns the base system prompt verbatim.
-expect_identical(
-    corteza:::.plan_mode_compose_system("base", FALSE),
-    "base"
-)
-# On with base: appends the addendum.
-out <- corteza:::.plan_mode_compose_system("base", TRUE)
-expect_true(grepl("# Plan mode", out, fixed = TRUE))
-expect_true(grepl("^base", out))
-# On with null base: addendum only, still mentions plan mode.
-out_null <- corteza:::.plan_mode_compose_system(NULL, TRUE)
-expect_true(grepl("# Plan mode", out_null, fixed = TRUE))
+# On: what to produce, and how to leave.
+on <- corteza:::.plan_mode_note(TRUE)
+expect_true(grepl("^\\[Plan mode is on\\.", on))
+expect_true(grepl("exit_plan_mode", on, fixed = TRUE))
+expect_true(grepl("\\]$", on))
+# Off: says so, and nothing about exit_plan_mode.
+off <- corteza:::.plan_mode_note(FALSE)
+expect_true(grepl("^\\[Plan mode is off\\.", off))
+expect_false(grepl("exit_plan_mode", off, fixed = TRUE))
 
 # ---- .plan_mode_filter_tools ----
 

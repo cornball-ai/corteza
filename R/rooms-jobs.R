@@ -407,7 +407,7 @@ bot_room_directory <- function(chat, cfg) {
                     error = function(e) character())
     lapply(as.character(ids), function(id) {
         info <- bot_channel_info(chat, id)
-        list(id = id, name = info$name, cwd = bot_room_cwd(cfg, info$topic))
+        list(id = id, name = info$name, cwd = bot_room_cwd(cfg, id))
     })
 }
 
@@ -500,8 +500,8 @@ bot_room_no_match <- function(rooms, want) {
     if (!is.null(dir)) {
         out <- c(out, sprintf(
                               paste0("The directory %s exists, but no room works in it. A ",
-                                     "room works in the directory its topic names, so ",
-                                     "handing work there needs a room with that topic. ",
+                                     "room works where an operator bound it with /cd, so ",
+                                     "handing work there needs a room bound there. ",
                                      "This room's own doer (delegate without `room`) can ",
                                      "work on it from here; its writes outside this ",
                                      "room's project each need approval."), dir))
@@ -513,7 +513,7 @@ bot_room_no_match <- function(rooms, want) {
 # then a room name, then a project directory, then a directory's last
 # component. The first reading with any match decides; more than one
 # match there is ambiguous and the caller says so. Rooms often share a
-# directory (every room with no path in its topic uses the bot's own),
+# directory (every room no operator bound uses the bot's own),
 # which is why a name outranks one. A room with no directory is matched
 # by its id or name only: the scratch folder is not its.
 bot_resolve_room <- function(rooms, want) {
@@ -587,11 +587,13 @@ bot_job_handoff <- function(sessions, session, cfg, chat, sender, origin,
         return(err(sprintf("Could not open a session for %s.",
                            bot_room_label(target_room))))
     }
-    # The room was matched, and will be described, by the directory its
-    # topic names now. The job runs where the room's session works, and a
-    # session takes its directory when it starts: a topic edited since
-    # leaves the two apart until that session is replaced. Accepting the
-    # job anyway would run it in the old project while saying the new.
+    # The room was matched, and will be described, by the directory it
+    # works in now. The job runs where the room's session works, and a
+    # session takes its directory when it starts: /cd replaces each
+    # session it moves, but a session that started before the bot's
+    # `cwd` or a root changed keeps the old one until it is replaced.
+    # Accepting the job anyway would run it in the old project while
+    # saying the new.
     listed <- normalizePath(path.expand(target_room$cwd), mustWork = FALSE)
     if (!identical(listed, job_worker_dir(target))) {
         return(err(sprintf(paste0(

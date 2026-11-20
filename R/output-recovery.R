@@ -86,20 +86,32 @@
         }
     }
     if (.output_cutoff(response)) {
+        # Where /max-tokens sets this reply's budget: the CLI's own
+        # session, and not a talker's, where it sets the doer's
+        # (.output_budget_command()).
+        hint <- ""
+        if (is.null(.job_worker_state$job_id) &&
+            !identical(session$channel, "matrix") && !isTRUE(session$talker)) {
+            hint <- " In this CLI session, /max-tokens 32768 sets the next response budget."
+        }
         response$content <- paste0(response$content %||% "", "\n\n",
                                    "Stopped at the response output limit. Completed tools are saved; ",
                                    "tool calls in the unfinished response were not executed. Increase max_tokens ",
                                    "or output_retry_max_tokens in .corteza/config.json before continuing.",
-                                   if (is.null(.job_worker_state$job_id) &&
-                                       !identical(session$channel, "matrix")) {
-                                       " In this CLI session, /max-tokens 32768 sets the next response budget."
-                                   })
+                                   hint)
     }
     response
 }
 
+# /max-tokens. In a talker session it sets the doer's budget, as /model
+# and /effort set the doer's model and effort (R/model-controls.R): the
+# next job runs with it (job_worker_spec()). The talker's replies keep
+# theirs, which a smaller talker model could not exceed.
 .output_budget_command <- function(session, text) {
     text <- trimws(text)
+    if (isTRUE(session$talker)) {
+        return(.doer_budget_command(session, text))
+    }
     if (!nzchar(text) || identical(text, "status")) {
         args <- list(provider = session$provider,
                      model = .resolve_model(session),
@@ -115,6 +127,18 @@
         session$max_tokens <- .check_max_tokens(value, "/max-tokens")
     }
     .output_budget_command(session, "status")
+}
+
+.doer_budget_command <- function(session, text) {
+    if (identical(text, "default")) {
+        session$doer_max_tokens <- NULL
+    } else if (nzchar(text) && !identical(text, "status")) {
+        value <- suppressWarnings(as.numeric(text))
+        session$doer_max_tokens <- .check_max_tokens(value, "/max-tokens")
+    }
+    value <- session$doer_max_tokens %||%
+    .check_max_tokens(session$config$max_tokens, "config max_tokens")
+    paste("Output budget of the doer's jobs:", value %||% "provider default")
 }
 
 # llm.api intentionally omits an incomplete assistant message from history.

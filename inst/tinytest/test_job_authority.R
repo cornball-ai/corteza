@@ -191,6 +191,99 @@ local({
     expect_identical(ran, before)
 })
 
+# ---- Review from the record (WP20c) ---------------------------------------
+# A doer at the terminal or in chat() holds a review gate, which the
+# record turns on before each call while its conversation is in review.
+# A room's worker keeps its room's gate whatever the record says, and
+# the monitor holds neither.
+local({
+    s <- corteza::new_session("cli", provider = "anthropic")
+    s$config <- list()
+    state <- list(ok = TRUE, seq = 1, plan_mode = FALSE,
+                  approval_mode = "ask", dry_run = FALSE)
+    s$authority <- function() state
+    s$plan_mode_locked <- TRUE
+    ns$.job_worker_child_supervise(s, list(role = "doer"))
+    expect_null(s$auto_gate)
+    expect_true(is.function(s$.job_review_gate))
+    reviewed <- 0L
+    s$.job_review_gate <- function(call, decision) {
+        reviewed <<- reviewed + 1L
+        list(action = "proceed", reason = "")
+    }
+    prompted <- 0L
+    s$approval_cb <- function(call, decision, ...) {
+        prompted <<- prompted + 1L
+        TRUE
+    }
+    h <- ns$.make_tool_handler(s, tool_executor = function(name, args) {
+        list(content = list(list(type = "text", text = "ran")))
+    })
+    write <- function() h("write_file", list(path = "notes.md", content = "x"))
+    expect_identical(write(), "ran")
+    expect_identical(c(prompted, reviewed), c(1L, 0L))
+    state$approval_mode <- "review"
+    expect_identical(write(), "ran")
+    expect_identical(c(prompted, reviewed), c(1L, 1L))
+    state$approval_mode <- "ask"
+    expect_identical(write(), "ran")
+    expect_identical(c(prompted, reviewed), c(2L, 1L))
+    expect_null(s$auto_gate)
+
+    room <- list(role = "doer", supervise = list(mode = "human"))
+    ns$.job_worker_child_supervise(s, room)
+    expect_null(s$.job_review_gate)
+    gate <- s$auto_gate
+    expect_true(is.function(gate))
+    for (mode in c("review", "ask")) {
+        state$approval_mode <- mode
+        ns$.authority_apply(s)
+        expect_identical(s$auto_gate, gate)
+    }
+    ns$.job_worker_child_supervise(s, list(role = "monitor"))
+    expect_null(s$auto_gate)
+    expect_null(s$.job_review_gate)
+})
+
+# The review gate itself: a call policy() allowed runs and one it
+# refused is refused, unread by the rules; of a call that would prompt,
+# what the rules leave open goes to the reviewer and what they catch to
+# the person.
+local({
+    orig <- ns$.job_worker_child_supervised_ask
+    asked <- character()
+    assignInNamespace(".job_worker_child_supervised_ask",
+                      function(route, call, decision, notes) {
+        asked <<- c(asked, route)
+        list(approved = TRUE, by = "monitor", reason = "fits the task")
+    }, "corteza")
+    on.exit(assignInNamespace(".job_worker_child_supervised_ask", orig,
+                              "corteza"), add = TRUE)
+    cwd <- tempfile("review-gate-")
+    dir.create(cwd)
+    cwd <- normalizePath(cwd)
+    on.exit(unlink(cwd, recursive = TRUE), add = TRUE)
+    gate <- ns$.job_worker_child_review_gate(cwd)
+    w <- function(path) {
+        list(tool = "write_file", class = "write",
+             args = list(path = path, content = "x"))
+    }
+    # Outside the project and every scratch folder the rules allow
+    # (scan_new()). Nothing here writes it.
+    outside <- file.path(normalizePath("/", winslash = "/", mustWork = FALSE),
+                         "corteza-review-gate-elsewhere.R")
+    expect_identical(gate(w(outside), list(approval = "allow"))$action,
+                     "proceed")
+    expect_identical(gate(w(outside), list(approval = "deny",
+                                           reason = "no"))$action, "deny")
+    expect_identical(asked, character())
+    expect_identical(gate(w(file.path(cwd, "x.R")),
+                          list(approval = "ask", reason = "a write"))$action,
+                     "proceed")
+    gate(w(outside), list(approval = "ask", reason = "a write"))
+    expect_identical(asked, c("monitor", "human"))
+})
+
 # ---- Plan mode in a worker's request --------------------------------------
 local({
     tool <- function(n) list(name = n, description = n, input_schema = list())
@@ -202,10 +295,10 @@ local({
                                                          offer_exit = FALSE)),
                      "read_file")
     expect_true(grepl("Only the person can end plan mode",
-                      ns$.plan_mode_compose_system("base", TRUE, locked = TRUE),
-                      fixed = TRUE))
-    expect_false(grepl("Only the person",
-                       ns$.plan_mode_compose_system("base", TRUE), fixed = TRUE))
+                      ns$.plan_mode_note(TRUE, locked = TRUE), fixed = TRUE))
+    expect_false(grepl("exit_plan_mode", ns$.plan_mode_note(TRUE, locked = TRUE),
+                       fixed = TRUE))
+    expect_false(grepl("Only the person", ns$.plan_mode_note(TRUE), fixed = TRUE))
 })
 
 # ---- A warm worker, through real turns ------------------------------------
@@ -282,10 +375,17 @@ local({
                         if (is.null(t$name)) "" else t$name
                     }, "")
                     prompt <- paste(unlist(system), collapse = " ")
-                    text <- sprintf("model=%s exit_offered=%s plan_prompt=%s results=%s",
+                    asked <- paste(vapply(Filter(function(m) identical(m$role, "user"),
+                                                 messages), text_of, ""),
+                                   collapse = " ")
+                    # Plan mode reaches a worker as a note in its job's
+                    # prompt; the system text stays as it is (WP14).
+                    budget <- list(...)$max_tokens
+                    text <- sprintf("model=%s exit_offered=%s plan_note=%s plan_system=%s results=%s max_tokens=%s",
                                     model, "exit_plan_mode" %in% offered,
-                                    grepl("# Plan mode", prompt, fixed = TRUE),
-                                    seen)
+                                    grepl("[Plan mode is on", asked, fixed = TRUE),
+                                    grepl("Plan mode", prompt, fixed = TRUE),
+                                    seen, if (is.null(budget)) "none" else budget)
                     return(list(text = text, tool_calls = list(), usage = usage,
                                 assistant_message = list(role = "assistant",
                                     content = list(list(type = "text", text = text)))))
@@ -362,8 +462,8 @@ local({
     expect_identical(s$.job_worker$get_pid(), pid)
     expect_false(file.exists(at("b1")))
     expect_true(grepl("plan mode", j$outcome$result, fixed = TRUE))
-    expect_true(grepl("exit_offered=FALSE plan_prompt=TRUE", j$outcome$result,
-                      fixed = TRUE))
+    expect_true(grepl("exit_offered=FALSE plan_note=TRUE plan_system=FALSE",
+                      j$outcome$result, fixed = TRUE))
 
     # exit_plan_mode, called anyway, is refused, and plan mode holds.
     j <- run("script: exit ; write e1")
@@ -423,12 +523,45 @@ local({
     s$plan_mode <- FALSE
     s$config$approval_mode <- "allow"
 
+    # /permissions review typed while a job runs (WP20c): its next call
+    # that would prompt asks the reviewer (route "monitor"), and the
+    # answer holds. Typed off again while a job runs, a call asks the
+    # person, with no route.
+    routes <- character()
+    answer <- function(ev) {
+        if (identical(ev$type, "approval")) {
+            routes <<- c(routes, ev$request$route %||% "none")
+            ns$job_answer(s, ev$job$id, ev$request$id, TRUE)
+        }
+    }
+    s$config$approval_mode <- "ask"
+    j <- run("script: write r1 go-r1", gate = "go-r1",
+             while_waiting = function(id) s$config$approval_mode <- "review",
+             on_event = answer)
+    expect_true(file.exists(at("r1")))
+    j <- run("script: write r2 go-r2", gate = "go-r2",
+             while_waiting = function(id) s$config$approval_mode <- "ask",
+             on_event = answer)
+    expect_true(file.exists(at("r2")))
+    expect_identical(routes, c("monitor", "none"))
+    s$config$approval_mode <- "allow"
+
     # /model between 2 jobs: the second runs on the new model, in the
     # same process.
     s$model_map$cloud <- "model-b"
     j <- run("script: read")
     expect_true(grepl("model=model-b", j$outcome$result, fixed = TRUE))
     expect_identical(s$.job_worker$get_pid(), pid)
+    # /max-tokens in a talker session sets the doer's budget, which the
+    # next job's requests carry (WP20c); without one, the worker's config
+    # decides.
+    expect_true(grepl("max_tokens=none", j$outcome$result, fixed = TRUE))
+    s$doer_max_tokens <- 4000L
+    j <- run("script: read")
+    expect_true(grepl("max_tokens=4000", j$outcome$result, fixed = TRUE))
+    s$doer_max_tokens <- NULL
+    j <- run("script: read")
+    expect_true(grepl("max_tokens=none", j$outcome$result, fixed = TRUE))
     # No job but the approval test asked anyone anything.
     expect_identical(unasked, 0L)
 })

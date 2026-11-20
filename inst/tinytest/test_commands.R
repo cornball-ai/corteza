@@ -10,7 +10,15 @@ tbl <- ns$corteza_commands()
 
 # ---- The table ---------------------------------------------------------------
 expect_identical(names(tbl), c("name", "same_as", "argument", "description",
-                               "terminal", "room", "remote"))
+                               "terminal", "room", "remote", "talker"))
+# What a command acts on in a talker session. A room and the terminal
+# are talkers by default (WP20b, WP20c), so each name either takes says;
+# test_talker_commands.R holds the room's commands to it, and
+# test_repl_talker.R the terminal's.
+expect_true(all(tbl$talker %in% c("", "talker", "doer", "both")))
+said <- tbl$room | tbl$terminal
+expect_true(all(nzchar(tbl$talker[said])),
+            info = paste(tbl$name[said & !nzchar(tbl$talker)], collapse = " "))
 expect_false(anyDuplicated(tbl$name) > 0L)
 expect_true(all(grepl("^[a-z][a-z-]*$", tbl$name)))
 expect_true(all(nzchar(tbl$description)))
@@ -89,7 +97,9 @@ takes <- list(
         !is.null(p) && is.null(p$error)
     },
     effort = function(b) !is.null(ns$.effort_parse_command(b)),
-    `context-edit` = function(b) !is.null(ns$.context_edit_parse_command(b)))
+    `context-edit` = function(b) !is.null(ns$.context_edit_parse_command(b)),
+    cd = function(b) !is.null(ns$bot_parse_cd_command(b)),
+    ls = function(b) !is.null(ns$bot_parse_ls_command(b)))
 expect_identical(sort(names(takes)), sort(tbl$name[tbl$room]))
 # The list above is by hand, so it is held to the loop: each command
 # parser bot_poll() calls is one a row of it calls, and none goes

@@ -474,8 +474,8 @@ chat_handle_copy <- function(text) {
 #' Format the active tool list for /tools.
 #' @noRd
 chat_format_tools_list <- function(turn_session) {
-    api_tools <- tryCatch(skills_as_api_tools(turn_session$tools_filter,
-            turn_session$tool_table),
+    # The tools the next request carries (R/request-prefix.R).
+    api_tools <- tryCatch(session_request_parts(turn_session)$tools,
                           error = function(e) list())
     if (length(api_tools) == 0L) {
         return("No tools active.\n")

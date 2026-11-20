@@ -93,10 +93,11 @@ default_local_model <- function() {
 #' @param max_turns Maximum LLM turns per call.
 #' @param verbose Print tool call progress.
 #' @param plan_mode Logical. When TRUE, the session is in plan mode:
-#'   the LLM is told to research and propose without acting, the policy
-#'   engine denies write/exec tool calls (except \code{exit_plan_mode}),
-#'   and \code{exit_plan_mode} is added to the tool list. A successful
-#'   \code{exit_plan_mode} call flips this back to FALSE.
+#'   the next prompt opens with a note telling the LLM to research and
+#'   propose without acting, and the policy engine denies write/exec
+#'   tool calls. \code{exit_plan_mode} is in the tool list of a session
+#'   that can be in plan mode, whatever its mode, so the list stays the
+#'   same; a successful call flips this back to FALSE.
 #' @param web_search Logical or NULL. When TRUE and the provider
 #'   supports it, \code{\link{turn}} enables \code{llm.api::agent}'s
 #'   provider-native (server-side) web search for the session: the
@@ -534,6 +535,16 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     invisible(NULL)
 }
 
+# The ids a call carries to a session's gate: the run-local alias
+# (`auto_call_id`), and the canonical id where the turn minted none
+# (a bare handler caller without a turn keeps the alias as its id).
+.gate_call_ids <- function(session, call) {
+    session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
+    call$auto_call_id <- sprintf("c%d", session$auto_call_seq)
+    call$call_id <- call$call_id %||% call$auto_call_id
+    call
+}
+
 .make_tool_handler <- function(session, tool_executor = NULL) {
     .secret_environment(session)
     .validate_tool_output_caps(session$config)
@@ -633,6 +644,26 @@ new_session <- function(channel = c("cli", "console", "matrix"),
                         success = FALSE)))
             return(paste("[job policy denied: plan mode belongs to the",
                          "conversation, and only the person can end it]"))
+        }
+        # The tool list stays the session's whatever its mode (WP14,
+        # R/request-prefix.R), so a call the mode rules out is refused
+        # here rather than hidden: exit_plan_mode outside plan mode, and
+        # what an /auto run may not call.
+        if (identical(internal_name, "exit_plan_mode") &&
+            !isTRUE(session$plan_mode)) {
+            .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
+                        outcome = "deny", decision = list(approval = "deny", reason = "not_in_plan_mode"),
+                        success = FALSE)))
+            return("[exit_plan_mode refused: plan mode is not on, so there is nothing to exit]")
+        }
+        if (!is.null(session$auto_config) &&
+            !.auto_tool_allowed(internal_name, session$auto_config,
+                                session$tool_table, .prefix_tool(session, name))) {
+            .audit_safe(.audit_tool_event(session, list(call = c(list(tool = internal_name), ids),
+                        outcome = "deny", decision = list(approval = "deny", reason = "auto_scope"),
+                        success = FALSE)))
+            return(sprintf(paste("[refused during this /auto run: %s is outside what the",
+                                 "run may call; nothing ran]"), internal_name))
         }
         if (!is.null(session$job_allowed_tools) &&
             !internal_name %in% session$job_allowed_tools) {
@@ -780,14 +811,21 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             text
         }
 
-        # Policy denial, attended path. In auto mode the same denial
-        # routes through the gate below instead -- not so the monitor
-        # can weigh in (it cannot; the gate's deny branch is mechanical
-        # and first) but so the denial leaves the same structured,
-        # call_id-carrying record as every other decision. The
-        # model-visible message is identical on both paths.
-        if (identical(decision$approval, "deny") &&
-            !is.function(session$auto_gate)) {
+        # Policy denial is final: nothing after policy() lifts it, a gate
+        # included, so the handler refuses here whatever a gate would
+        # answer. A session with a gate still shows it the call, so the
+        # denial leaves the same structured, call_id-carrying record as
+        # every other decision (an /auto run's decision log). Its answer
+        # is not read, and its failure changes nothing.
+        if (identical(decision$approval, "deny")) {
+            if (is.function(session$auto_gate)) {
+                call <- .gate_call_ids(session, call)
+                tryCatch(session$auto_gate(call, decision),
+                         error = function(e) NULL)
+                .audit_safe(.audit_tool_event(session, list(call = call,
+                            outcome = "gate", decision = list(action = "deny",
+                                reason = decision$reason))))
+            }
             return(outcome_text(
                                 "deny",
                                 nudge(sprintf("[corteza policy denied: %s]",
@@ -810,18 +848,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # here. A supervisor wired to approval_cb would be decorative
         # in exactly the repos people run this in.
         #
-        # So the gate sees every call that survived policy, whatever
-        # the verdict, and it is the thing that decides. It returns
+        # So the gate sees every call that survived policy, "allow"
+        # verdicts included, and it is the thing that decides. It returns
         # "proceed", "refuse" (tell the model no, keep the turn alive),
         # or "escalate" (abort the whole turn for a human).
         gate_approved <- FALSE
         if (is.function(session$auto_gate)) {
-            # Retain the run-local alias. The canonical call_id was minted
-            # before policy; bare handler callers without a turn keep the
-            # older alias as their ID.
-            session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
-            call$auto_call_id <- sprintf("c%d", session$auto_call_seq)
-            call$call_id <- call$call_id %||% call$auto_call_id
+            call <- .gate_call_ids(session, call)
             gate <- tryCatch(
                              session$auto_gate(call, decision),
                              # A gate that errored did not approve anything.
@@ -835,8 +868,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             .audit_safe(.audit_tool_event(session, list(call = call,
                         outcome = "gate", decision = gate)))
             if (identical(action, "deny")) {
-                # Policy's verdict, surfaced through the gate purely so
-                # it was recorded; same message as the attended branch.
+                # A gate answers deny for a call policy() denied, which
+                # never gets here; one that answers it for another call
+                # is refused all the same.
                 return(outcome_text(
                                     "deny",
                                     nudge(sprintf("[corteza policy denied: %s]",
@@ -932,6 +966,8 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         success <- !isTRUE(raw$isError)
         if (identical(internal_name, "exit_plan_mode") && isTRUE(success)) {
             session$plan_mode <- FALSE
+            # The result told the model, so the next prompt does not.
+            .prefix_seen_set(session, "plan_mode", FALSE)
         }
         result_text <- nudge(.admit_tool_result_for(
                 session, .flatten_mcp_result(raw), internal_name))
@@ -1311,19 +1347,12 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     session$silent_streak <- 0L
     .progress_reset(session)
 
-    if (is.null(tools)) {
-        ensure_skills()
-        tools <- skills_as_api_tools(session$tools_filter, session$tool_table)
-    }
-    tools <- .plan_mode_filter_tools(tools, isTRUE(session$plan_mode),
-                                     offer_exit = !isTRUE(session$plan_mode_locked))
-    tools <- .task_filter_tools(tools, session$channel)
-    tools <- .talker_filter_tools(tools, isTRUE(session$talker))
-    tools <- .context_edit_tools(tools, session)
-    tools <- .delegation_tools(tools, session)
-    tools <- .room_consult_tools(tools, session)
-    tools <- .room_media_tools(tools, session)
-    tools <- .auto_filter_tools(tools, session$auto_config, session$tool_table)
+    # The system text and tools are the session's, composed once
+    # (R/request-prefix.R, WP14): plan mode, an /auto run and the task
+    # list change neither. A context-editing session edits what it sends
+    # on every turn, the stated exception.
+    prefix <- session_request_prefix(session, tools)
+    tools <- .context_edit_tools(prefix$tools, session)
 
     # Provider-native (server-side) web search: enable it when the session
     # asks for it (default on), the provider supports it, and the llm.api
@@ -1333,16 +1362,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # supersedes Tavily for supported providers; local models (ollama) keep
     # the Tavily tool as their only web search.
     ws <- .session_web_search(session)
-    ws_active <- !identical(ws, FALSE) &&
-    .web_search_supported(session$provider) &&
-    "web_search" %in% names(formals(llm.api::agent))
+    ws_active <- .session_ws_active(session, ws)
     tools <- .drop_redundant_web_search(tools, ws_active)
-    system <- .plan_mode_compose_system(session$system,
-                                        isTRUE(session$plan_mode),
-                                        locked = isTRUE(session$plan_mode_locked))
-    system <- task_compose_system(system, session$tasks %||% list(),
-                                  channel = session$channel,
-                                  auto = !is.null(session$auto_run_id))
+    system <- prefix$system
     session$context_edit_base_system <- system
     system <- .context_edit_system(system, session)
     session$context_edit_system <- system
@@ -1387,6 +1409,22 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     stopped <- FALSE
     note_stop <- function() stopped <<- TRUE
 
+    # A change of mode or of the task list reaches the model as a note at
+    # the head of this prompt (R/request-prefix.R); after the preflight
+    # compaction, which may have taken earlier notes with it. What the
+    # model was told is recorded once the prompt is in the history, so a
+    # turn that fails before that says it again next time. A NULL prompt
+    # continues the history and carries no note: the next prompt does.
+    noted <- .prefix_notes(session)
+    pending_seen <- if (!is.null(prompt)) noted$seen
+    prompt <- .prefix_prompt(prompt, noted$notes)
+    seen_now <- function() {
+        if (!is.null(pending_seen)) {
+            session$.prefix_seen <- pending_seen
+            pending_seen <<- NULL
+        }
+    }
+
     # Pass a history_callback to llm.api so session$history mirrors
     # intermediate state continuously: after each assistant message
     # and after each tool_result lands, the callback overwrites
@@ -1419,6 +1457,7 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     if ("history_callback" %in% names(formals(llm.api::agent))) {
         agent_args$history_callback <- function(history) {
             turn_mirrored <<- TRUE
+            seen_now()
             # What the idle trigger measures from (R/compact-trigger.R).
             session$last_response_at <- Sys.time()
             session$history <- history
@@ -1681,6 +1720,8 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
 
     if (!is.null(response$history)) {
         session$history <- response$history
+        # An llm.api without history_callback mirrors nothing mid-turn.
+        seen_now()
     }
     # Stopped: the history as last mirrored, each call that got no result
     # given a placeholder, and the interrupt marker after it, as the

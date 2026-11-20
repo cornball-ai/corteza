@@ -1,5 +1,11 @@
-# Where a room works: the directory its topic names, else the bot's
-# `cwd`, else a scratch folder under the session's temp directory.
+# Temporary user folders for this file, however it is run (isolate.R):
+# a room's directory is read from its state file now.
+source("isolate.R", local = TRUE)
+
+# Where a room works: the directory an operator bound it to with /cd
+# (test_room_binding.R), else the bot's `cwd`, else a scratch folder
+# under the session's temp directory. A topic names no directory since
+# 0.8.1 (WP12).
 #
 # Up to 0.8.0 the last step was ~/<localpart>, created on first use. A
 # test config for "@bot:ex" then left ~/bot in the home directory of the
@@ -13,7 +19,7 @@ same_dir <- function(a, b) {
 # A run's directory is process state. No block here may leave it set.
 corteza:::bot_run_cwd_set(NULL)
 
-# --- The order: topic, then the bot's cwd, then the scratch folder ---
+# --- The order: the bot's cwd, then the scratch folder ---
 local({
     topic_dir <- tempfile("topic")
     bot_dir <- tempfile("botdir")
@@ -22,19 +28,17 @@ local({
     on.exit(unlink(c(topic_dir, bot_dir), recursive = TRUE))
     cfg <- list(user_id = "@bot:ex", cwd = bot_dir)
 
-    # 1. The directory the topic names, when it exists.
-    expect_identical(corteza:::bot_room_cwd(cfg, paste0(topic_dir, " | d")),
-                     topic_dir)
+    # 1. A topic names no directory, even one that exists: up to 0.8.0
+    # the room worked there. Its description is what follows the path,
+    # and the path is kept only to tell the room (bot_topic_notice()).
+    topic <- paste0(topic_dir, " | d")
+    expect_null(corteza:::bot_parse_topic(topic)$cwd)
+    expect_identical(corteza:::bot_parse_topic(topic)$description, "d")
+    expect_identical(corteza:::bot_topic_path(topic), topic_dir)
 
-    # 2. The bot's cwd: no topic, a topic that names no path, and a
-    # topic whose path is not there.
+    # 2. The bot's cwd, for a room no operator bound and for none.
     expect_identical(corteza:::bot_room_cwd(cfg, NULL), bot_dir)
-    expect_identical(corteza:::bot_room_cwd(cfg, "just a description"),
-                     bot_dir)
-    expect_message(
-        got <- corteza:::bot_room_cwd(cfg, "/nonexistent/xyzzy | d"),
-        "does not exist")
-    expect_identical(got, bot_dir)
+    expect_identical(corteza:::bot_room_cwd(cfg, "!unbound-room:ex"), bot_dir)
 
     # 3. The scratch folder, for a bot that was given no directory.
     bare <- list(user_id = "@bot:ex")
@@ -45,10 +49,7 @@ local({
     expect_true(corteza:::bot_is_scratch(scratch))
     expect_false(corteza:::bot_is_scratch(bot_dir))
     expect_false(corteza:::bot_is_scratch(NULL))
-    expect_identical(corteza:::bot_room_cwd(bare, "just a description"),
-                     scratch)
-    expect_identical(suppressMessages(
-        corteza:::bot_room_cwd(bare, "/nonexistent/xyzzy | d")), scratch)
+    expect_identical(corteza:::bot_room_cwd(bare, "!unbound-room:ex"), scratch)
 
     # One folder, whatever the bot is called. These were ~/bot, ~/agent
     # and one more per account name in a test config.
@@ -139,12 +140,14 @@ local({
     # After everything 0.8.0 had, so a call written by position against
     # 0.8.0 still matches. The deprecated names mirror the functions
     # they forward to (test_deprecated.R), so they take it there as
-    # well. Only `operators` comes after it (test_rooms_operators.R).
+    # well. Only `operators` (test_rooms_operators.R) and
+    # `project_roots` (test_room_binding.R) come after it.
     for (name in c("bot_configure", "bot_poll", "bot_run_init", "bot_run",
                    "matrix_configure", "matrix_poll", "matrix_run_init",
                    "matrix_run")) {
         f <- formals(getExportedValue("corteza", name))
-        expect_identical(utils::tail(setdiff(names(f), "operators"), 1L),
+        expect_identical(utils::tail(setdiff(names(f),
+                                             c("operators", "project_roots")), 1L),
                          "cwd", info = name)
         expect_null(f$cwd, info = name)
     }
@@ -178,9 +181,9 @@ local({
     expect_identical(corteza:::bot_default_cwd(cfg), given)
     expect_identical(corteza:::bot_default_cwd(list(user_id = "@bot:ex")),
                      given)
-    # The topic still comes first.
-    expect_identical(corteza:::bot_room_cwd(cfg, paste0(saved, " | d")),
-                     saved)
+    # A room no operator bound takes it too; a bound room's own comes
+    # first (test_room_binding.R).
+    expect_identical(corteza:::bot_room_cwd(cfg, "!unbound-room:ex"), given)
     corteza:::bot_run_cwd_set(NULL)
     expect_identical(corteza:::bot_default_cwd(cfg), saved)
 })
@@ -193,8 +196,9 @@ local({
     expect_true(grepl("no project directory", sys, fixed = TRUE))
     expect_true(grepl("it writes no files, runs no commands", sys, fixed = TRUE))
     expect_true(grepl(scratch, sys, fixed = TRUE))
-    expect_true(grepl("room topic", sys, fixed = TRUE))
-    expect_true(grepl("/clear", sys, fixed = TRUE))
+    expect_true(grepl("/cd", sys, fixed = TRUE))
+    expect_true(grepl("project roots", sys, fixed = TRUE))
+    expect_false(grepl("room topic", sys, fixed = TRUE))
     expect_false(grepl("Use this as your scope", sys, fixed = TRUE))
 
     d <- tempfile("proj")

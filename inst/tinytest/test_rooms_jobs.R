@@ -539,7 +539,9 @@ local({
     expect_true(corteza:::bot_room_bound(rooms_dir[[2L]]))
 })
 
-# The directory comes from the transport: joined rooms, names, topics.
+# The rooms come from the transport: joined rooms and names. A topic
+# that starts with a directory sets no directory since 0.8.1 (WP12);
+# a room bound with /cd works there (test_room_binding.R).
 local({
     proj <- tempfile("handoff-proj")
     dir.create(proj)
@@ -556,7 +558,7 @@ local({
     d <- corteza:::bot_room_directory(chat, cfg)
     expect_identical(vapply(d, function(r) r$id, ""), c("!a:ex", "!b:ex"))
     expect_identical(d[[1L]]$name, "llm.api")
-    expect_identical(d[[2L]]$cwd, proj)
+    expect_identical(d[[2L]]$cwd, corteza:::bot_default_cwd(cfg))
     expect_identical(d[[1L]]$cwd, corteza:::bot_default_cwd(cfg))
 })
 
@@ -611,7 +613,7 @@ local({
     expect_true(isTRUE(asked$isError))
     expect_true(grepl("This room has no directory, so it hands no work",
                       text_of(asked), fixed = TRUE))
-    expect_true(grepl("takes its directory from its topic", text_of(asked),
+    expect_true(grepl("gives a room its directory with /cd", text_of(asked),
                       fixed = TRUE))
     unbound_rooms <- c(rooms_dir, list(list(id = "!u:ex", name = "chat",
                                             cwd = corteza:::bot_scratch_path())))
@@ -728,10 +730,10 @@ local({
     expect_true(all(c("!a:ex", "!b:ex") %in% ended))
 })
 
-# A room's directory is read from its topic at the hand-off; its session
-# took its own when it started. If the topic was edited since, the room
-# would be matched and described by the new directory while the job ran
-# in the old one. Nothing is accepted until they agree.
+# A room's directory is read at the hand-off; its session took its own
+# when it started. If they differ (a bot's `cwd` changed since), the
+# room would be matched and described by the new directory while the
+# job ran in the old one. Nothing is accepted until they agree.
 local({
     rec <- new.env()
     chat <- make_chat(rec)

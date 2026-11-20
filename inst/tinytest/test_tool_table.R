@@ -198,8 +198,9 @@ local({
 
     # ---- What turn() offers the model -----------------------------------------
     # The model call is stubbed, so this stays offline. A session offers
-    # its own project's tool, and /auto's filter reads the table's class:
-    # a's read is offered to a run the monitor brokers.
+    # its own project's tool, and /auto's rule reads the table's class:
+    # a's read may run in a run the monitor brokers, and b's write that
+    # names no target is listed (WP14) and refused at the call.
     local({
         lns <- asNamespace("llm.api")
         orig <- get("agent", envir = lns, inherits = FALSE)
@@ -224,10 +225,19 @@ local({
         s$auto_config <- list()
         corteza::turn("hi", s)
         expect_true("proj_tool" %in% sent)
-        # b's tool is a write that names no target: not offered there.
+        # b's tool is a write that names no target: listed, as the table
+        # gives it, and refused at the call.
         s$tool_table <- tb
         corteza::turn("hi", s)
-        expect_false("proj_tool" %in% sent)
+        expect_true("proj_tool" %in% sent)
+        handler <- ns$.make_tool_handler(s, function(...) stop("ran in an auto run"))
+        expect_true(grepl("refused during this /auto run: proj_tool",
+                          handler("proj_tool", list()), fixed = TRUE))
+        s$tool_table <- ta
+        handler <- ns$.make_tool_handler(s, function(...) ns$ok("read ran"))
+        expect_false(grepl("refused during this /auto run",
+                           handler("proj_tool", list()), fixed = TRUE))
+        s$tool_table <- tb
         # The memory flush's session offers its parent's tools.
         s$auto_config <- NULL
         sent <- NULL

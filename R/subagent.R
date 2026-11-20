@@ -1390,13 +1390,13 @@ subagent_live_token_count <- function(info) {
         # model name to look up a limit for.
         model <- sess$model_map$cloud %||%
         corteza::default_provider_model(sess$provider)
-        tools <- tryCatch(skills_as_api_tools(sess$tools_filter,
-                sess$tool_table),
-                          error = function(e) NULL)
+        # What the child's next request carries (R/request-prefix.R).
+        parts <- tryCatch(session_request_parts(sess),
+                          error = function(e) list(system = sess$system, tools = NULL))
         list(
              tokens = corteza::estimate_live_context_tokens(
                 list(history = sess$history %||% list()),
-                system_prompt = sess$system, tools = tools),
+                system_prompt = parts$system, tools = parts$tools),
              limit = if (is.null(model)) NA_integer_ else
              corteza::context_limit_for_model(
                 model,

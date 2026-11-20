@@ -25,8 +25,9 @@ load_context <- function(cwd = getwd()) {
 #' that only need a system prompt. Session constructors retain the manifest
 #' from this bundle for /context diagnostics.
 #' @param cwd Working directory.
-#' @param prefix_sources Optional consumer-owned source descriptors rendered
-#'   before corteza's normal preamble (used by the Matrix adapter).
+#' @param prefix_sources Optional consumer-owned source descriptors, rendered
+#'   at their `order` among corteza's: the Matrix adapter's guidance before
+#'   the preamble, a talker's guidance after everything else.
 #' @param instruction_catalog Optional prebuilt session catalog.
 #' @param include_instruction_catalog Whether to render its compact header.
 #' @param instructions_only Render only `prefix_sources` and what the

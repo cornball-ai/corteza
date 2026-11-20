@@ -136,8 +136,11 @@ How you are asked:
   not trusted and holds something a session would load. Enter means no.
 - `/trust` shows where the directory stands and what it holds. `/trust yes`
   trusts it.
-- A new answer applies from the next start of corteza. A session's prompt
-  and tools are fixed when it starts.
+- A new answer applies from the next conversation: `/clear` starts one, with
+  the config, the tools and the prompt taken again from the directory. A
+  session's prompt and tools are fixed while a conversation lasts. What a
+  flag or a command set in this process (`--dry-run`, `/permissions`,
+  `/dryrun`, `/context-edit`) carries over.
 - `/status` shows `trusted:` and lists what an untrusted session left alone.
 
 In a Matrix room, `/trust` acts on the room's directory and only an operator
@@ -440,6 +443,34 @@ model (`OLLAMA_CONTEXT_LENGTH`, or 4k, 32k or 256k tokens by the memory of
 the GPU), so the table's row for an Ollama model is a guess, and your server
 may give the model less.
 
+## What a session sends
+
+A session's system text and its tool list are fixed for the session. Each
+request carries the earlier requests' messages unchanged, with the new ones
+after them, so the provider's cache holds and so do the model's thinking
+blocks. A change to either would make the provider read the whole history
+again, and a model that signs its thinking (next section) refuses a replay
+after one.
+
+- Plan mode, an `/auto` run and the task list change neither. When one of
+  them changes, the next prompt opens with a note in brackets, such as
+  `[Plan mode is on. ...]`, and the note stays in the history. After a
+  compaction, a context edit or a restore, which may have removed earlier
+  notes, the next prompt states the session again.
+- A tool the mode rules out stays in the list and is refused at the call:
+  `exit_plan_mode` outside plan mode, a write or a command in plan mode, a
+  call outside an `/auto` run's scope, and a call outside a job's tools. The
+  refusal says why.
+- The availability tests (the git tools in a repository, a search key) run
+  once, so a `git init` during a session adds no tool.
+
+These change the system text or the tools on purpose, and the log records
+each (`request_prefix_reset`): a move to another provider, the terminal's
+`/clear`, `/cd` in a room, a job that may not search (which sends the
+provider's tools without its search tool, with the thinking removed before
+and after it), and a worker given other tools. A context-editing session
+edits what it sends on every turn and gives up the cache.
+
 ## Thinking blocks after a rewrite
 
 A Claude model that thinks by default signs each thinking block against the
@@ -543,7 +574,8 @@ Matrix account's `talker` block:
 }
 ```
 
-For an unsplit Matrix bot, put `context_edit` and `context_vault` at the
+For an unsplit Matrix bot, one whose rooms are no talkers (see
+[Talker mode](#talker-mode)), put `context_edit` and `context_vault` at the
 account config's top level instead. Its existing model and tools stay in
 place; the combined conversation/work session owns filing. In split mode,
 the `talker` block overrides those account settings. Workers inherit only
@@ -839,8 +871,14 @@ call, allowed ones included.
 turns it off. Your config can turn it on for every session. A project's
 config cannot: who reviews the agent is yours to choose. In a Matrix
 room, `auto_approve_asks` is this mode. An `/auto` run keeps its own
-monitor, since nobody is at its prompt. A talker's delegated jobs still
-ask you for each call.
+monitor, since nobody is at its prompt.
+
+A talker's delegated jobs are covered too. The doer reads the mode
+before each call, so `/permissions review` typed while a job runs
+reaches its next call. The reviewer judges a job's call by the
+conversation that asked for the job and the task the talker wrote.
+Your "allow always" answers cover the session's own calls and not a
+job's, as in a room: a job's call goes to the reviewer, then to you.
 
 These keys are read from the user's config file only. A project's
 `.corteza/config.json` cannot set them.
@@ -1049,7 +1087,8 @@ corteza::bot_configure(
   room = "#general:example.com",
   model = "llama3.2",
   provider = "ollama",
-  operators = "@you:example.com"
+  operators = "@you:example.com",
+  project_roots = "~/projects"
 )
 ```
 
@@ -1061,7 +1100,7 @@ corteza::bot_configure(
 - In a room with one person in it, the bot answers only when that person is
   an operator.
 - Operators answer its approval prompts, and commands such as
-  `/approve-all` are theirs.
+  `/approve-all`, `/cd` and `/ls` are theirs.
 
 A bot with no operators accepts no invites. It works in the room it was
 configured with and in rooms it has already joined. Where such a room has
@@ -1078,11 +1117,10 @@ to the bot config.
 
 #### Where a room works
 
-A room works in the first of these that exists:
+A room works in the first of these that applies:
 
-1. The directory at the start of its topic, written `<path> | <description>`,
-   as in `~/project | release notes`. A room reads its topic when its
-   conversation starts, so send `/clear` after changing it.
+1. The directory an operator bound it to with `/cd <dir>`. It must exist and
+   lie inside one of the bot's project roots, links resolved.
 2. The bot's `cwd`. `bot_configure(cwd = )` saves one. `bot_run(cwd = )`,
    `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
    wins over the saved one.
@@ -1092,12 +1130,53 @@ A room works in the first of these that exists:
    starts no subagent and hands no work to a doer or another room, and
    no room hands work to it. A refusal says how to give the room a
    directory. Room lists show it as having none, and it is named by its
-   id or name, never by the scratch folder.
+   id or name, never by the scratch folder. A room an operator bound with
+   `/cd none` works here, as does one whose bound directory is gone or lies
+   outside every root now. So does a room whose state file the bot could
+   not read: the file is copied aside, and the room stays here, across
+   restarts, until an operator runs `/cd`, since what was lost may have
+   been `/cd none`.
 
-corteza creates neither of the first 2. A `cwd` that does not exist is an
-error where it is given, and a run stops at its start when the saved one has
-been removed. Up to 0.8.0 the last step was `~/<bot name>`, created on first
-use. A bot that relied on that directory now needs `cwd`:
+The project roots are `project_roots`, existing directories inside which a
+room may be bound. `bot_configure(project_roots = )` saves them, and
+`bot_run()`, `bot_run_init()` and `bot_poll()` take them for a run. With
+none, `/cd <dir>` is refused.
+
+```r
+corteza::bot_configure(server, user, password, room,
+                       project_roots = c("~/projects", "~/src"))
+```
+
+In a room, for an operator of the bot:
+
+- `/cd` says where the room works, the 3 forms and the roots.
+- `/cd <dir>` binds the room to `<dir>`. A bare name is looked for under each
+  root.
+- `/cd none` binds it to no directory, and `/cd default` returns it to the
+  bot's `cwd`.
+- `/ls` lists the roots, and `/ls <dir>` the directories directly inside one,
+  names only, at most 50.
+
+A move ends every conversation the room holds, the main timeline's and each
+thread's, as `/clear` does: each goes to the host's archive, and the next
+starts in the new directory with a new prompt, tools and doer. A thread first
+seen later starts there too, and a restart seeds no conversation with
+messages from before the move. A move is refused while any of the room's
+conversations has a job open, and the refusal names it. The binding is kept
+in the room's state file and outlives a restart. A room the `on_clear` hook
+files a conversation into takes the binding of the room it came from.
+
+Up to 0.8.0 a room worked in the directory its topic started with, written
+`<path> | <description>`. Anyone with the power level can change a topic, and
+that directory became the checkout where the supervisor let writes through
+without asking a person. A topic names no directory now. A room whose topic
+still starts with a path is told once that the path is not read, and which
+`/cd` would bind it.
+
+corteza creates none of these directories. A `cwd` or root that does not
+exist is an error where it is given, and a run stops at its start when the
+saved `cwd` has been removed. Up to 0.8.0 the last step was `~/<bot name>`,
+created on first use. A bot that relied on that directory now needs `cwd`:
 
 ```r
 corteza::bot_run(cwd = "~/mybot")
@@ -1168,10 +1247,11 @@ uses the last displayed list.
 `/effort` reports the current reasoning setting and `/effort high` changes it
 for the current conversation. `/effort default` removes the session override
 and uses configuration, or the provider default when none is configured.
-The provider validates which levels its model accepts. In a split bot this
-changes the talker, leaving the doer's effort unchanged. These overrides are
-not global configuration changes; use `reasoning_effort` (or
-`talker.reasoning_effort` for a split bot) for a startup default.
+The provider validates which levels its model accepts. In a talker session
+`/model` and `/effort` change the doer's model and effort, which the next job
+runs with ([Talker mode](#talker-mode)). These overrides are not global
+configuration changes; use `reasoning_effort` (or `talker.reasoning_effort`
+for the talker) for a startup default.
 
 GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
 The corresponding llm.api routing update selects Responses with web search
@@ -1384,6 +1464,86 @@ Each conversation:
 
 A restart seeds each conversation with the room's messages after `since`, and
 leaves `ack` out.
+
+## Talker mode
+
+A bot's room answers through a talker: a session with read-only tools that
+hands work needing edits, commands or tests to a doer, a worker process of the
+conversation's own, and goes on answering while the doer works. The result
+arrives as its own message. From 0.8.1 this is the default in a bot's rooms
+and at the terminal, which says so when it starts. `chat()` uses it only where
+the config turns it on, since its R session is yours to share with the agent.
+
+To turn it off, put this in the config, the bot's or your own:
+
+```json
+"talker": {"enabled": false}
+```
+
+A room is no talker by default in 2 cases. Where the bot's tools are
+restricted (`tools_filter`, from `bot_configure()` or the run), since a doer
+gets the work tools whatever that list says. And where the room has no
+directory, since such a room hands no work on. At the terminal the first
+holds as well: `--tools`, or `tools` in the config, leaves talker mode off.
+`"enabled": true` turns it on in any of these.
+
+At the terminal and in `chat()`, a turn that hands work to the doer stays
+with it: the doer's steps, an approval it asks for and its result print as
+they come, and the prompt returns when the job ends. Ctrl+C returns the prompt
+and leaves the job running; `/jobs` lists the jobs and stays with an open one
+again. A terminal driven from a room with `/remote-control` does not stay, so
+the room's next message is read as before.
+
+The talker runs on the bot's own model, as the doer does. Up to 0.8.0 it ran
+on a fast model of its provider's (Claude Haiku 4.5 for `anthropic` and
+`anthropic_claude`, GPT-6 Luna for `openai` and `openai_codex`) and stopped
+with an error on any other provider. To give the talker a faster model, name
+it:
+
+```json
+"talker": {"model": "claude-haiku-4-5-20251001"}
+```
+
+`talker.provider` puts the talker on another provider, on that provider's
+default model unless `talker.model` names one. On a local model the talker
+and the doer share it, and 2 requests can be in flight at once; name another
+model for the talker, or turn talker mode off, where the machine cannot serve
+both.
+
+The bot's reasoning settings (`reasoning_effort`, `thinking_budget_tokens`,
+`thinking`) go to the doer with its model. The talker uses the provider's
+defaults unless the `talker` block names its own (`talker.reasoning_effort`
+and the others), since a model it names may refuse settings made for another.
+
+In a talker session `/model` and `/effort` change the work: the doer's model
+and effort, which the next job runs with. The doer starts on the model and
+provider the config's `jobs` block names, if it names them, with that block's
+reasoning settings; the talker stays on the session's model, and the 2
+commands change the doer's from there. The talker follows `/model` unless
+the `talker` block names a model or a provider of its own, and its reasoning
+settings come from that block alone. `/status` names both models. Up to 0.8.0
+both commands changed the talker's alone. Column `talker` of the command
+table (`corteza:::corteza_commands()`) says what each command acts on: the
+talker's conversation, the doer and its jobs, or both.
+
+At the terminal, `/provider` and `/max-tokens` are the doer's too: the
+provider follows `/model`'s rule, and the output budget is the next job's,
+while the talker's replies keep theirs. A conversation you resume
+(`--resume`) starts its doer as a new conversation does: where the `jobs`
+block names a model, the doer runs on it again, whatever `/model` chose
+before. `/review` reviews with the doer's model, and `/doctor` and
+`/config` name it. `/spent` counts each job with the talker's replies, in
+the conversation that asked for it, and a job's result goes into that
+conversation's transcript, so `--resume` brings it back. `/r` runs R in
+the terminal's own process and sends its output with your next message;
+the doer's R objects stay in the doer. An `/auto` run works with the
+session's own tools, which in a talker session only read and hand work on,
+so there `/auto` says to turn talker mode off and starts nothing.
+
+Without talker mode, `run_r` in a bot runs in the bot's own process, which all
+its rooms share, so one room's R objects are the others'. A talker's work runs
+in its conversation's doer, a process of its own, and a room's objects stay
+its own.
 
 ## What a delegated job obeys
 

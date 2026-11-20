@@ -119,7 +119,7 @@ for (p in c("~/proj", "/srv/proj", "./proj", "C:/proj", "c:\\proj")) {
 for (p in c("corteza", "C:", "proj/sub", "!room:ex")) {
     expect_false(corteza:::bot_path_like(p), info = p)
 }
-expect_identical(corteza:::bot_parse_topic("C:\\proj | the project")$cwd, "C:\\proj")
+expect_identical(corteza:::bot_topic_path("C:\\proj | the project"), "C:\\proj")
 expect_true(corteza:::r_path_like("C:/Users/x/.ssh/id_rsa"))
 
 # ---- get_auto_config ----
@@ -677,6 +677,48 @@ out <- h("read_file", list(path = "DESCRIPTION"))
 expect_equal(asked, 1L)
 expect_equal(executed, character())
 expect_true(grepl("user declined", out))
+
+# A call policy() denied is refused by the handler, whatever the gate
+# answers: nothing after policy lifts a deny. The gate is still shown
+# the call, with its ids, so its record holds the denial (an /auto
+# run's decision log), and its failure changes nothing.
+for (answer in c("proceed", "refuse", "escalate", "explode")) {
+    executed <- character()
+    shown <- list()
+    s <- corteza::new_session("console")
+    s$config <- list(permissions = list(write_file = "deny"))
+    s$auto_gate <- function(call, decision) {
+        shown[[length(shown) + 1L]] <<- list(call = call, decision = decision)
+        if (identical(answer, "explode")) {
+            stop("gate exploded")
+        }
+        list(action = answer, reason = "fixture gate")
+    }
+    h <- corteza:::.make_tool_handler(s, fake_exec)
+    out <- h("write_file", list(path = "R/x.R", content = "x"))
+    expect_equal(executed, character(), info = answer)
+    expect_true(grepl("corteza policy denied", out, fixed = TRUE), info = answer)
+    expect_equal(length(shown), 1L, info = answer)
+    expect_identical(shown[[1L]]$decision$approval, "deny", info = answer)
+    expect_identical(shown[[1L]]$call$auto_call_id, "c1", info = answer)
+}
+# The /auto gate's record of it: the decision log has the deny, with
+# policy as its authority.
+logged <- list()
+g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(), cwd = root,
+    on_decision = function(d) logged[[length(logged) + 1L]] <<- d)
+s <- corteza::new_session("console")
+s$config <- list(permissions = list(write_file = "deny"))
+s$auto_gate <- g
+executed <- character()
+h <- corteza:::.make_tool_handler(s, fake_exec)
+out <- h("write_file", list(path = "R/x.R", content = "x"))
+expect_equal(executed, character())
+expect_true(grepl("corteza policy denied", out, fixed = TRUE))
+expect_equal(length(logged), 1L)
+expect_identical(logged[[1L]]$action, "deny")
+expect_identical(logged[[1L]]$authority, "policy")
+expect_identical(logged[[1L]]$call_id, "c1")
 
 # ---- escalation condition aborts rather than declining ----
 

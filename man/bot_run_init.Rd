@@ -9,7 +9,8 @@ bot_run_init(
   provider = NULL,
   tools_filter = NULL,
   hooks = NULL,
-  cwd = NULL
+  cwd = NULL,
+  project_roots = NULL
 )
 }
 \arguments{
@@ -27,13 +28,19 @@ the host about; see Hooks. NULL, the default, means a bare bot:
 from the thread's own history, and every message is the bot's to
 answer.}
 
-\item{cwd}{Character or NULL. The directory a room works in when its
-topic names none, for this run. It must exist: corteza does not
-create it, and the run stops at its start when this directory, or
-the one saved by \code{\link{bot_configure}}, is missing. NULL
-(default) uses the saved one. With neither, such a room works in a
-scratch folder under the session's temporary directory, which is
-deleted when the process ends.}
+\item{cwd}{Character or NULL. The directory a room works in when no
+operator has bound it to one with \code{/cd}, for this run. It must
+exist: corteza does not create it, and the run stops at its start
+when this directory, or the one saved by \code{\link{bot_configure}},
+is missing. NULL (default) uses the saved one. With neither, such a
+room works in a scratch folder under the session's temporary
+directory, which is deleted when the process ends.}
+
+\item{project_roots}{Character vector or NULL. The directories inside
+which an operator may bind a room with \code{/cd} and list with
+\code{/ls}, for this run. Each must exist: corteza does not create
+them. NULL (default) uses the ones saved by
+\code{\link{bot_configure}}; with none, \code{/cd <dir>} is refused.}
 }
 \value{
 A list holding the session registry, startup session handle,
