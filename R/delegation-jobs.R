@@ -145,6 +145,11 @@
     }
     key <- bot_session_key(m$channel, m$thread)
     s <- bot_get_or_create_session(sessions, key, cfg, room_id = m$channel)
+    # A room with no directory runs no job, a peer's included
+    # (check_unbound_room(), R/policy.R).
+    if (isTRUE(s$unbound)) {
+        return(refuse("no-directory"))
+    }
     spec <- job_worker_spec(s)
     restricted <- allow$tools
     if (!is.null(restricted)) {

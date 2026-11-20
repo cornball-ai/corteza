@@ -146,7 +146,13 @@ session's table, or the registry without one; a room host's tools
 
 **Order (`policy()`); nothing later lifts an earlier deny:**
 1. The mode. Plan mode refuses `write`, `exec`, `continue` and
-   `unknown` (`.mode_verdicts`, `check_plan_mode()`).
+   `unknown` (`.mode_verdicts`, `check_plan_mode()`). A Matrix room
+   with no directory (`session$unbound`, set where `bot_new_session()`
+   gives it the scratch folder) refuses all but `read` and the control
+   tools `.unbound_control` names (`check_unbound_room()`); a new
+   control tool is refused there until it is named.
+   `tool_delegate()` and `bot_job_handoff()` refuse such a room as well,
+   asking or asked.
 2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
    and the rest asks, marked `rule = "credential"`. No saved "always"
    answers it: both approval callbacks ask each time and offer none.
@@ -499,6 +505,15 @@ off to `run_repl_loop()` (`R/repl.R`), which dispatches every slash
 command, so the command set is identical across both. The
 `/status /doctor /config /diff /review /last /outputs` commands (once
 CLI-only) now work in `chat()` too.
+
+`corteza_commands()` (`R/commands.R`) is the table of every surface's
+commands: a row a name, with what it is the same as, its argument, a
+line saying what it does, and whether the terminal and `chat()`, a bot's
+room, or a room controlling a terminal takes it. Nothing dispatches
+from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
+and `.remote_bot_route()` for the names they compare with, asks each
+room parser, and checks both `/help` texts, so a new command needs a
+row, a line in both help texts, and its surface's match.
 
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`

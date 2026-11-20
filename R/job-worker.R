@@ -1173,6 +1173,18 @@ job_dispatch_next <- function(session) {
     events <- list()
     checkouts <- list()
     for (j in queued) {
+        # A room with no directory runs no job, whatever queued it: the
+        # backstop behind the refusals where work is asked for. Ahead of
+        # the lock, which such a job neither waits for nor holds.
+        if (isTRUE(session$unbound)) {
+            job_settle(j$id, "failed",
+                       error = paste("this room has no directory, so it runs",
+                                     "no jobs; nothing was run.",
+                                     bot_unbound_how()))
+            settled <- list(type = "settled", job = job_read(j$id))
+            events <- c(events, list(settled))
+            next
+        }
         checkout <- NULL
         if (job_role_locks(j$role)) {
             # One git lookup per workspace per pass, not per job.
