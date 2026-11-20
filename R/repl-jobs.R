@@ -181,13 +181,14 @@
     switch(ev$type,
            settled = {
         text <- .repl_job_result_text(ev$job)
-        # What the job spent is this run's (/spent).
-        session_accumulate_spend(ctx$session, ev$job$outcome$usage)
+        usage <- ev$job$outcome$usage
         asked <- ev$job$origin$conversation
         current <- session_conversation(ctx$session)
         if (!is.null(asked) && !identical(asked, current)) {
-            # Asked before a /clear: the result goes to the conversation
-            # that asked for it, and the new one's talker does not take it.
+            # Asked before a /clear: the result and what the job spent go
+            # to the conversation that asked for it (/spent), and the new
+            # one's talker does not take it.
+            spend_accumulate_for(ctx$session, usage, asked)
             cat(sprintf("\n%s%s%s\n%s(asked in session %s, before /clear)%s\n\n",
                         p$cyan %||% "", text, p$reset %||% "", p$dim %||% "",
                         asked, p$reset %||% ""))
@@ -196,6 +197,8 @@
                      error = function(e) NULL)
             return(invisible(NULL))
         }
+        # What the job spent is this conversation's (/spent).
+        session_accumulate_spend(ctx$session, usage)
         cat(sprintf("\n%s%s%s\n\n", p$cyan %||% "", text, p$reset %||% ""))
         # Into the talker's history, so it knows the job ended, and into
         # the transcript, which --resume seeds the history from and the

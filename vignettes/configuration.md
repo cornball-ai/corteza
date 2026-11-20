@@ -1512,14 +1512,17 @@ talker's conversation, the doer and its jobs, or both.
 
 At the terminal, `/provider` and `/max-tokens` are the doer's too: the
 provider follows `/model`'s rule, and the output budget is the next job's,
-while the talker's replies keep theirs. `/review` reviews with the doer's
-model, and `/doctor` and `/config` name it. `/spent` counts the doer's jobs
-with the talker's replies, and a job's result goes into the transcript, so
-`--resume` brings it back. `/r` runs R in the terminal's own process and
-sends its output with your next message; the doer's R objects stay in the
-doer. An `/auto` run works with the session's own tools, which in a talker
-session only read and hand work on, so there `/auto` says to turn talker mode
-off and starts nothing.
+while the talker's replies keep theirs. A conversation you resume
+(`--resume`) starts its doer as a new conversation does: where the `jobs`
+block names a model, the doer runs on it again, whatever `/model` chose
+before. `/review` reviews with the doer's model, and `/doctor` and
+`/config` name it. `/spent` counts each job with the talker's replies, in
+the conversation that asked for it, and a job's result goes into that
+conversation's transcript, so `--resume` brings it back. `/r` runs R in
+the terminal's own process and sends its output with your next message;
+the doer's R objects stay in the doer. An `/auto` run works with the
+session's own tools, which in a talker session only read and hand work on,
+so there `/auto` says to turn talker mode off and starts nothing.
 
 Without talker mode, `run_r` in a bot runs in the bot's own process, which all
 its rooms share, so one room's R objects are the others'. A talker's work runs
