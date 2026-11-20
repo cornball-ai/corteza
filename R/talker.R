@@ -1,26 +1,22 @@
 # Talker mode: the session that talks stays responsive and hands work
 # to a doer.
 #
-# With talker mode on, a conversation session runs on a fast model with
-# read-only tools plus three job tools. Work that needs edits, commands,
-# tests, or a long investigation goes to the session's job worker
-# (R/job-worker.R) through `delegate`, and the talker keeps answering.
-# The doer runs on the model the session was configured with, so turning
-# talker mode on moves that model to the worker rather than dropping it.
+# With talker mode on, a conversation session runs with read-only tools
+# plus the job tools. Work that needs edits, commands, tests, or a long
+# investigation goes to the session's job worker (R/job-worker.R)
+# through `delegate`, and the talker keeps answering. The doer runs on
+# the model the session was configured with, and so does the talker
+# unless its config names a faster one (`talker.model`).
+#
+# A bot's rooms are talkers unless the config says `"talker":
+# {"enabled": false}` (WP20b), the bot's tools are restricted, or the
+# room has no directory (bot_talker_config()). The terminal is one only
+# where the config turns it on.
 #
 # The pattern is LiveKit's talker/reasoner split
 # (https://livekit.com/blog/talker-reasoner-pattern-voice-agents). The
 # rule it depends on is that the talker never guesses at a delegated
 # answer; the result arrives later as its own message.
-
-# Fast model per provider. Config can name any other. The subscription
-# providers take the same model ids as their API counterparts, and they
-# are the ones the Matrix bots run on: without an entry here, turning
-# talker mode on for such a bot fails every session it opens.
-TALKER_DEFAULT_MODELS <- list(anthropic = "claude-haiku-4-5-20251001",
-                              anthropic_claude = "claude-haiku-4-5-20251001",
-                              openai = "gpt-6-luna",
-                              openai_codex = "gpt-6-luna")
 
 # What the talker can do itself: look, not touch. Web search is not in
 # this list and the talker has it anyway: on providers that support it,
@@ -93,38 +89,89 @@ TALKER_GUIDANCE <- paste(
                          sep = "\n")
 
 # Resolve talker settings from a config's `talker` entry, or NULL when
-# talker mode is off.
-talker_config <- function(cfg) {
+# talker mode is off. `talker.enabled` decides; without it, `default`
+# does: on for a bot's rooms (bot_talker_config()), off at the terminal.
+talker_config <- function(cfg, default = FALSE) {
     t <- cfg$talker
-    if (is.null(t) || !isTRUE(t$enabled)) {
+    if (!is.null(t) && !is.list(t)) {
+        stop("the config's `talker` entry must be an object, such as ",
+             "{\"enabled\": false}", call. = FALSE)
+    }
+    on <- t[["enabled"]] %||% default
+    if (!isTRUE(on)) {
         return(NULL)
     }
-    t
+    t %||% list()
+}
+
+# A room's talker settings, or NULL when its session is no talker. A
+# room's session is a talker unless its config says otherwise, with 2
+# exceptions to the default:
+#
+# - The bot's tools are restricted (`tools_filter`, from the run or the
+#   config). A doer gets the work tools whatever that list says, so a bot
+#   started with fewer tools gets one only when its config asks for it.
+# - The room has no directory (`unbound`, WP10). It hands no work to a
+#   doer, so a talker there would be told to hand off what it cannot.
+bot_talker_config <- function(cfg, tools_filter = NULL, unbound = FALSE) {
+    restricted <- length(tools_filter %||% cfg$tools_filter) > 0L
+    talker_config(cfg, default = !restricted && !isTRUE(unbound))
 }
 
 # Switch a session into talker mode. The session's current model and
-# provider become the doer's; the talker model is the config's, else the
-# provider's default fast model.
+# provider become the doer's, unless the config's `jobs` block names a
+# worker model or provider. The talker runs on the config's
+# `talker.model`, else on the session's own model, or on its provider's
+# default model where `talker.provider` names another provider. Without
+# a model or provider of its own, the talker follows the session's
+# model through /model (bot_apply_model_command()).
+#
+# The doer's settings are read from the config here, once: /model and
+# /effort change them, /status shows them and job_worker_spec() runs a
+# job with them, so all 3 say the same.
 talker_enable <- function(session, talker = list()) {
     .context_conversation_enable(session, talker$context_edit,
                                  talker$context_vault %||% session$context_archive_vault)
-    provider <- talker$provider %||% session$provider %||% "anthropic"
-    model <- talker$model %||% TALKER_DEFAULT_MODELS[[provider]]
+    own <- session$provider %||% "anthropic"
+    provider <- talker$provider %||% own
+    configured <- .resolve_model(session)
+    jobs <- session$config$jobs %||% list()
+    session$doer_model <- jobs$model %||% configured
+    session$doer_provider <- jobs$provider %||% session$provider
+    model <- talker$model
     if (is.null(model)) {
-        stop("talker mode needs a model for provider '", provider,
-             "'; set talker$model", call. = FALSE)
+        if (identical(provider, own)) {
+            model <- configured
+        } else {
+            model <- default_provider_model(provider)
+            if (is.null(model)) {
+                stop("talker$provider '", provider,
+                     "' has no default model; set talker$model",
+                     call. = FALSE)
+            }
+        }
     }
-    session$doer_model <- .resolve_model(session)
-    session$doer_provider <- session$provider
+    session$talker_follows <- is.null(talker$model) && is.null(talker$provider)
     # The reasoning settings were chosen for the configured model, so
     # they go to the doer with it. Left on the session they are sent
     # with the talker's model, and a fast model refuses them outright
     # ("This model does not support the effort parameter"), which fails
     # every reply. The talker runs on the provider's defaults unless the
-    # talker config names its own.
-    session$doer_reasoning_effort <- .session_reasoning_effort(session)
-    session$doer_thinking_budget <- .session_thinking_budget(session)
-    session$doer_thinking <- .session_thinking(session)
+    # talker config names its own. For the same reason a doer on the
+    # `jobs` block's own model starts from the provider's defaults, and
+    # takes a setting only where that block names one.
+    effort <- .session_reasoning_effort(session)
+    budget <- .session_thinking_budget(session)
+    thinking <- .session_thinking(session)
+    if (!identical(session$doer_model, configured)) {
+        effort <- budget <- thinking <- NULL
+    }
+    session$doer_reasoning_effort <- jobs$reasoning_effort %||% effort
+    # What /effort default goes back to (.effort_command()).
+    session$doer_reasoning_default <- session$doer_reasoning_effort
+    session$doer_thinking_budget <- jobs$thinking_budget_tokens %||% budget
+    # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
+    session$doer_thinking <- jobs[["thinking"]] %||% thinking
     session$reasoning_effort <- .check_reasoning_effort(
         talker$reasoning_effort, "talker$reasoning_effort")
     session$thinking_budget_tokens <- .check_max_tokens(

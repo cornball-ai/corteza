@@ -1,7 +1,8 @@
 # A conversation's edited window and the event IDs it has already consumed must
 # restart together. Both travel in the journal's atomic live envelope.
-.context_room_config <- function(cfg) {
-    talker <- talker_config(cfg)
+# `talker`: the room's talker settings (bot_talker_config()), whose
+# `context_edit` and `context_vault` stand over the account's.
+.context_room_config <- function(cfg, talker = bot_talker_config(cfg)) {
     tryCatch(list(editing = utils::modifyList(cfg$context_edit %||% list(),
                                              talker$context_edit %||% list()),
                   vault = talker$context_vault %||% cfg$context_vault),
@@ -33,8 +34,9 @@
     journal_snapshot(session)
 }
 
-.context_room_restore <- function(session, dir, cfg) {
-    if (is.null(.context_room_config(cfg)$vault)) {
+.context_room_restore <- function(session, dir, cfg,
+                                  talker = bot_talker_config(cfg)) {
+    if (is.null(.context_room_config(cfg, talker)$vault)) {
         return(invisible(FALSE))
     }
     saved <- .journal_read_live(dir)

@@ -543,7 +543,8 @@ Matrix account's `talker` block:
 }
 ```
 
-For an unsplit Matrix bot, put `context_edit` and `context_vault` at the
+For an unsplit Matrix bot, one whose rooms are no talkers (see
+[Talker mode](#talker-mode)), put `context_edit` and `context_vault` at the
 account config's top level instead. Its existing model and tools stay in
 place; the combined conversation/work session owns filing. In split mode,
 the `talker` block overrides those account settings. Workers inherit only
@@ -1152,10 +1153,11 @@ uses the last displayed list.
 `/effort` reports the current reasoning setting and `/effort high` changes it
 for the current conversation. `/effort default` removes the session override
 and uses configuration, or the provider default when none is configured.
-The provider validates which levels its model accepts. In a split bot this
-changes the talker, leaving the doer's effort unchanged. These overrides are
-not global configuration changes; use `reasoning_effort` (or
-`talker.reasoning_effort` for a split bot) for a startup default.
+The provider validates which levels its model accepts. In a talker session
+`/model` and `/effort` change the doer's model and effort, which the next job
+runs with ([Talker mode](#talker-mode)). These overrides are not global
+configuration changes; use `reasoning_effort` (or `talker.reasoning_effort`
+for the talker) for a startup default.
 
 GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
 The corresponding llm.api routing update selects Responses with web search
@@ -1368,6 +1370,63 @@ Each conversation:
 
 A restart seeds each conversation with the room's messages after `since`, and
 leaves `ack` out.
+
+## Talker mode
+
+A bot's room answers through a talker: a session with read-only tools that
+hands work needing edits, commands or tests to a doer, a worker process of the
+conversation's own, and goes on answering while the doer works. The result
+arrives as its own message. From 0.8.1 this is the default in a bot's rooms.
+The terminal and `chat()` use it only where the config turns it on.
+
+To turn it off for a bot, put this in its config:
+
+```json
+"talker": {"enabled": false}
+```
+
+A room is no talker by default in 2 cases. Where the bot's tools are
+restricted (`tools_filter`, from `bot_configure()` or the run), since a doer
+gets the work tools whatever that list says. And where the room has no
+directory, since such a room hands no work on. `"enabled": true` turns it on
+in either.
+
+The talker runs on the bot's own model, as the doer does. Up to 0.8.0 it ran
+on a fast model of its provider's (Claude Haiku 4.5 for `anthropic` and
+`anthropic_claude`, GPT-6 Luna for `openai` and `openai_codex`) and stopped
+with an error on any other provider. To give the talker a faster model, name
+it:
+
+```json
+"talker": {"model": "claude-haiku-4-5-20251001"}
+```
+
+`talker.provider` puts the talker on another provider, on that provider's
+default model unless `talker.model` names one. On a local model the talker
+and the doer share it, and 2 requests can be in flight at once; name another
+model for the talker, or turn talker mode off, where the machine cannot serve
+both.
+
+The bot's reasoning settings (`reasoning_effort`, `thinking_budget_tokens`,
+`thinking`) go to the doer with its model. The talker uses the provider's
+defaults unless the `talker` block names its own (`talker.reasoning_effort`
+and the others), since a model it names may refuse settings made for another.
+
+In a talker session `/model` and `/effort` change the work: the doer's model
+and effort, which the next job runs with. The doer starts on the model and
+provider the config's `jobs` block names, if it names them, with that block's
+reasoning settings; the talker stays on the session's model, and the 2
+commands change the doer's from there. The talker follows `/model` unless
+the `talker` block names a model or a provider of its own, and its reasoning
+settings come from that block alone. `/status` names both models. Up to 0.8.0
+both commands changed the talker's alone. Column `talker` of the command
+table (`corteza:::corteza_commands()`) says what each command a room takes
+acts on: the talker's conversation, the doer and its jobs, or both.
+
+Without talker mode, `run_r` in a bot runs in the bot's own process, which all
+its rooms share, so one room's R objects are the others'. A talker's work runs
+in its conversation's doer, a process of its own, and a room's objects stay
+its own.
 
 ## What a delegated job obeys
 

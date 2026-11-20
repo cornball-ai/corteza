@@ -9,6 +9,13 @@
 # - `remote`: a room that controls a terminal session (.remote_input()
 #   and .remote_bot_route()).
 #
+# `talker` says what the command acts on in a talker session (R/talker.R):
+# the talker's conversation, the doer and its jobs, or both. /model and
+# /effort are the doer's (R/model-controls.R): the talker follows /model
+# only where its config names no model or provider of its own. Each name
+# a room takes has one, since a room is a talker by default (WP20b); the
+# terminal's others get theirs with its default (WP20c).
+#
 # An ACP client is offered from this table too, once WP26 says which
 # rows. Nothing dispatches from it: each surface matches its names as
 # before. test_commands.R holds each surface's names, and both help
@@ -20,22 +27,22 @@ corteza_commands <- function() {
                  .command("exit", same_as = "quit"),
                  .command("q", same_as = "quit"),
                  .command("clear", "Start a new conversation; the transcript stays",
-                          room = TRUE, remote = TRUE),
+                          room = TRUE, remote = TRUE, talker = "both"),
                  .command("reset", same_as = "clear", room = TRUE, remote = TRUE),
                  .command("new", same_as = "clear", room = TRUE, remote = TRUE),
                  .command("help", "List the commands"),
                  .command("jobs", "List the conversation's delegated jobs, or show one",
                           "[id]"),
                  .command("job", "Continue an incomplete job as a new attempt",
-                          "resume <id>", room = TRUE, remote = TRUE),
+                          "resume <id>", room = TRUE, remote = TRUE, talker = "doer"),
                  .command("cancel", "Cancel a delegated job", "<id>"),
                  .command("copy", "Copy the last reply to the clipboard"),
                  .command("tasks", "Show the task list, or clear it", "[clear]"),
                  .command("tools", "List the session's tools"),
                  .command("model", "List the models, or switch to one",
-                          "[name [provider] | N]", room = TRUE),
+                          "[name [provider] | N]", room = TRUE, talker = "doer"),
                  .command("effort", "Show or set the reasoning effort",
-                          "[level | default]", room = TRUE),
+                          "[level | default]", room = TRUE, talker = "doer"),
                  .command("provider", "Switch provider", "<name>"),
                  .command("spawn", "Start a subagent",
                           "<task> [--model m] [--preset p] [--tools a,b]"),
@@ -51,7 +58,7 @@ corteza_commands <- function() {
                  .command("permissions", "Show or switch how tool calls are approved",
                           "[allow | ask | deny | review]"),
                  .command("trust", "Show whether this directory is trusted, or trust it",
-                          "[yes]", room = TRUE),
+                          "[yes]", room = TRUE, talker = "both"),
                  .command("auto", "Work on the task unattended, or on a new goal",
                           "[--exec] [goal] | status | resume", remote = TRUE),
                  .command("max-tokens", "Show or change the reply's output budget",
@@ -67,9 +74,9 @@ corteza_commands <- function() {
                  .command("spent", "Show what this run has spent"),
                  .command("cost", same_as = "spent"),
                  .command("context-edit", "Control conversation context editing",
-                          "on | off | status", room = TRUE),
+                          "on | off | status", room = TRUE, talker = "both"),
                  .command("status", "Show the model, the directory and the context in use",
-                          room = TRUE),
+                          room = TRUE, talker = "both"),
                  .command("context", same_as = "status"),
                  .command("compact", "Summarize the conversation to free context"),
                  .command("refine", "Turn the conversation into one-line lessons",
@@ -87,10 +94,11 @@ corteza_commands <- function() {
                  .command("r", "Run R here, and stage its output for the next message",
                           "<expr>"),
                  .command("sidebar", "Move the recent turns to a private room (operators)",
-                          "[N]", terminal = FALSE, room = TRUE),
+                          "[N]", terminal = FALSE, room = TRUE, talker = "talker"),
                  .command("approve-all",
                           "Approve a job's remaining requests (operators)",
-                          "[on | off | status] [job]", terminal = FALSE, room = TRUE),
+                          "[on | off | status] [job]", terminal = FALSE, room = TRUE,
+                          talker = "doer"),
                  .command("stop", "Stop at the next tool call", terminal = FALSE,
                           remote = TRUE),
                  .command("approve", "Approve a pending request (operators)",
@@ -105,13 +113,15 @@ corteza_commands <- function() {
     main <- match(table$same_as[alias], table$name)
     table$description[alias] <- table$description[main]
     table$argument[alias] <- table$argument[main]
+    table$talker[alias] <- table$talker[main]
     rownames(table) <- NULL
     table
 }
 
 .command <- function(name, does = "", argument = "", same_as = "",
-                     terminal = TRUE, room = FALSE, remote = FALSE) {
+                     terminal = TRUE, room = FALSE, remote = FALSE,
+                     talker = "") {
     data.frame(name = name, same_as = same_as, argument = argument,
                description = does, terminal = terminal, room = room,
-               remote = remote, stringsAsFactors = FALSE)
+               remote = remote, talker = talker, stringsAsFactors = FALSE)
 }

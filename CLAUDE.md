@@ -255,6 +255,24 @@ installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set
 `"review"` (`load_config()`).
 
+## Talker mode (`R/talker.R`)
+
+A talker session has read-only tools and `delegate`; work goes to a
+doer, a worker process of the conversation's own (`R/job-worker.R`).
+`talker_config(cfg, default)` reads `talker.enabled`, and `default`
+decides without it. `bot_talker_config()` gives a bot's rooms TRUE
+unless the bot's tools are restricted (`tools_filter`: a doer gets
+`SUBAGENT_PRESETS$work` whatever the list says) or the room has no
+directory; the terminal passes FALSE until WP20c. `talker_enable()`
+moves the session's model, provider and reasoning settings to the doer
+(`doer_*`) and runs the talker on `talker.model`, else the session's
+own model; `talker_follows` says it has no model or provider of its
+own. `/model` and `/effort` act on the doer (`.session_work_model()`,
+`.set_work_model()`, `.effort_command()` in `R/model-controls.R`), the
+talker following `/model` where `talker_follows`. Column `talker` of
+`corteza_commands()` says what each room command acts on, and
+`test_talker_commands.R` holds the room's to it.
+
 ## A worker obeys its conversation (`R/job-authority.R`)
 
 A job's worker (a doer or a reviewer) is a process whose session was
