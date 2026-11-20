@@ -1,3 +1,13 @@
+# corteza 0.8.0.23
+
+- A turn that ends on an error no longer leaves a tool call without a
+  result. Every later request from that history failed (Anthropic
+  answers 400), so a room stayed broken until `/reset`. Before the
+  error leaves `turn()`, each call with no result gets a placeholder
+  and a note says the turn stopped on that error; a turn also closes,
+  before its first request, any call an earlier turn or process left
+  open. Anthropic, OpenAI and Responses histories alike.
+
 # corteza 0.8.0.22
 
 - Retention also clears corteza's state stores, in the same daily run
