@@ -15,7 +15,7 @@
     answered <- function(call, decision) {
         name <- call$tool %||% ""
         !identical(decision$rule, "credential") &&
-            (name %in% for_session || name %in% approvals_saved(cwd))
+        (name %in% for_session || name %in% approvals_saved(cwd))
     }
     # Saved for the directory; held for the session where it cannot be.
     keep_always <- function(name) {
@@ -44,8 +44,8 @@
         answer <- .acp_ask(st, "session/request_permission",
                            list(sessionId = sid,
                                 toolCall = list(toolCallId = id, title = title,
-                                                kind = .acp_tool_kind(shown),
-                                                status = "pending"),
+                    kind = .acp_tool_kind(shown),
+                    status = "pending"),
                                 options = .acp_permission_options(always = !once)))
         outcome <- if (is.list(answer)) answer$result$outcome
         if (!identical(outcome$outcome, "selected")) {

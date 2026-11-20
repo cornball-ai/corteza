@@ -15,8 +15,7 @@
 # A directory the client names: absolute, and there. corteza creates
 # none.
 .acp_cwd <- function(cwd) {
-    if (!is.character(cwd) || length(cwd) != 1L || is.na(cwd) ||
-        !nzchar(cwd)) {
+    if (!is.character(cwd) || length(cwd) != 1L || is.na(cwd) || !nzchar(cwd)) {
         .acp_refuse("cwd must name a directory.")
     }
     if (!grepl("^(/|[A-Za-z]:[/\\\\]|\\\\\\\\)", cwd)) {
@@ -54,8 +53,7 @@
     session <- if (is.character(sid) && length(sid) == 1L) st$sessions[[sid]]
     if (is.null(session)) {
         .acp_refuse(sprintf("No session %s is open.",
-                            .sanitize_inline(paste(sid, collapse = " "),
-                                             max_chars = 80L)), -32002L)
+                            .sanitize_inline(paste(sid, collapse = " "), max_chars = 80L)), -32002L)
     }
     session
 }
@@ -102,14 +100,14 @@
         .acp_refuse(sprintf("Session %s belongs to %s, not to %s.",
                             .sanitize_inline(sid, max_chars = 80L),
                             .sanitize_inline(disk$cwd %||% "another directory",
-                                             max_chars = 300L),
+                    max_chars = 300L),
                             .sanitize_inline(cwd, max_chars = 300L)))
     }
     route <- .session_model_pair(st$provider, st$model, load_config(cwd),
                                  saved = disk)
     history <- lapply(disk$messages %||% list(), function(m) {
         text <- if (is.list(m$content) && length(m$content) &&
-                    !is.null(m$content[[1L]]$text)) {
+                      !is.null(m$content[[1L]]$text)) {
             m$content[[1L]]$text
         } else {
             m$content
@@ -133,7 +131,11 @@
     # The mode the session goes back to from "review": the config's own
     # setting, unless that is "review" itself.
     base <- session$config$approval_mode %||% "ask"
-    session$acp_base_mode <- if (identical(base, "review")) "ask" else base
+    if (identical(base, "review")) {
+        session$acp_base_mode <- "ask"
+    } else {
+        session$acp_base_mode <- base
+    }
     session
 }
 
@@ -154,7 +156,11 @@
 }
 
 .acp_mode_of <- function(session) {
-    if (review_mode(session)) "review" else "ask"
+    if (review_mode(session)) {
+        "review"
+    } else {
+        "ask"
+    }
 }
 
 # session/set_mode: "ask" or "review". For a session whose prompt runs,

@@ -53,20 +53,29 @@
     # A cancel, or an error a cancel caused, is a cancelled turn.
     stopped <- isTRUE(live$cancelled) ||
     identical(result$termination$status, "cancelled")
-    .acp_finish_call(st, live, if (stopped) "cancelled" else "it did not finish")
+    .acp_finish_call(st, live,
+        if (stopped) {
+            "cancelled"
+        } else {
+            "it did not finish"
+        })
     if (inherits(result, "error") && !stopped) {
         .acp_transcript_end(session, paste("Error:", conditionMessage(result)))
         .acp_refuse(conditionMessage(result), -32603L)
     }
-    reply <- if (is.list(result)) result$reply %||% "" else ""
+    if (is.list(result)) {
+        reply <- result$reply %||% ""
+    } else {
+        reply <- ""
+    }
     if (!live$streamed && nzchar(reply)) {
         .acp_update(st, sid, .acp_text_chunk(.redact_text(reply,
-                                                          session$secret_values)))
+                    session$secret_values)))
     }
     if (stopped) {
         .acp_transcript_end(session, paste(c(if (nzchar(reply)) reply,
-                                             "[The turn was cancelled.]"),
-                                           collapse = "\n"))
+                    "[The turn was cancelled.]"),
+                collapse = "\n"))
         return(list(stopReason = "cancelled"))
     }
     .acp_transcript_end(session, reply, result)
@@ -91,8 +100,7 @@
 # After the turn, as the terminal does it: compact once the context is
 # past the session's trigger (R/compact-trigger.R).
 .acp_compact <- function(session) {
-    parts <- tryCatch(session_request_parts(session),
-                      error = function(e) NULL)
+    parts <- tryCatch(session_request_parts(session), error = function(e) NULL)
     if (is.null(parts)) {
         return(invisible(FALSE))
     }
@@ -141,8 +149,8 @@
     if (is.null(live$call)) {
         id <- .acp_call_id(live$session)
         live$call <- id
-        .acp_update(st, live$sid, .acp_tool_call(call, id, status,
-                                                 live$session$cwd))
+        .acp_update(st, live$sid,
+                    .acp_tool_call(call, id, status, live$session$cwd))
         return(id)
     }
     .acp_update(st, live$sid, list(sessionUpdate = "tool_call_update",

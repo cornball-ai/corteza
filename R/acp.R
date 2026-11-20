@@ -44,7 +44,8 @@
     i <- 1L
     while (i <= length(args)) {
         arg <- args[[i]]
-        if (arg %in% c("--provider", "--model", "--tools") && i < length(args)) {
+        if (arg %in% c("--provider", "--model", "--tools") &&
+            i < length(args)) {
             value <- args[[i + 1L]]
             switch(arg,
                    "--provider" = opts$provider <- value,
@@ -140,8 +141,7 @@
     if (!st$initialized && !identical(method, "initialize")) {
         .acp_refuse("Send initialize first.", -32600L)
     }
-    result <- switch(method,
-                     initialize = .acp_initialize(st, params),
+    result <- switch(method, initialize = .acp_initialize(st, params),
                      "session/new" = .acp_session_new(st, params),
                      "session/resume" = .acp_session_resume(st, params),
                      "session/list" = .acp_session_list(st, params),
@@ -164,13 +164,13 @@
     # the version it takes, and a client that cannot take it leaves.
     list(protocolVersion = 1L,
          agentCapabilities = list(
-             loadSession = FALSE,
-             promptCapabilities = list(image = FALSE, audio = FALSE,
-                                       embeddedContext = FALSE),
-             mcpCapabilities = list(http = FALSE, sse = FALSE),
-             sessionCapabilities = list(list = .acp_object(),
-                                        resume = .acp_object(),
-                                        close = .acp_object())),
+                                  loadSession = FALSE,
+                                  promptCapabilities = list(image = FALSE, audio = FALSE,
+                embeddedContext = FALSE),
+                                  mcpCapabilities = list(http = FALSE, sse = FALSE),
+                                  sessionCapabilities = list(list = .acp_object(),
+                resume = .acp_object(),
+                close = .acp_object())),
          agentInfo = list(name = "corteza", title = "corteza",
                           version = as.character(utils::packageVersion("corteza"))),
          authMethods = list())
@@ -192,7 +192,7 @@
     }
     unrun <- function(msg) {
         identical(msg$method, "session/prompt") &&
-            identical(msg$params$sessionId, sid)
+        identical(msg$params$sessionId, sid)
     }
     for (msg in Filter(unrun, st$waiting)) {
         .acp_send(st$ch, .acp_result(msg$id, list(stopReason = "cancelled")))
@@ -260,7 +260,7 @@
             identical(msg$method, "session/prompt")) {
             if (identical(msg$params$sessionId, st$live$sid)) {
                 .acp_send(st$ch, .acp_error(msg$id, -32600L,
-                                            "A prompt is running in this session."))
+                        "A prompt is running in this session."))
             } else {
                 st$waiting <- c(st$waiting, list(msg))
             }

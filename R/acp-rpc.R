@@ -66,6 +66,5 @@
 # raises is answered -32603, with its message.
 .acp_refuse <- function(message, code = -32602L) {
     stop(structure(class = c("acp_refusal", "error", "condition"),
-                   list(message = message, call = NULL,
-                        code = as.integer(code))))
+                   list(message = message, call = NULL, code = as.integer(code))))
 }

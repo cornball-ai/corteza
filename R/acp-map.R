@@ -68,7 +68,7 @@
     brief <- trimws(brief)
     if (is.character(cwd) && length(cwd) == 1L && nzchar(cwd)) {
         inside <- paste0(sub("/+$", "", normalizePath(cwd, winslash = "/",
-                                                      mustWork = FALSE)), "/")
+                    mustWork = FALSE)), "/")
         if (startsWith(brief, inside)) {
             brief <- substring(brief, nchar(inside) + 1L)
         }
@@ -83,7 +83,7 @@
     why <- decision$gate_reason %||% ""
     reason <- decision$reason %||% ""
     if (!nzchar(why) && (identical(decision$rule, "credential") ||
-                         startsWith(reason, "safety:"))) {
+            startsWith(reason, "safety:"))) {
         why <- reason
     }
     .sanitize_inline(why, max_chars = 200L)
@@ -141,8 +141,8 @@
     } else {
         "failed"
     }
-    list(sessionUpdate = "tool_call_update", toolCallId = id, status = status,
-         content = .acp_tool_content(text, diff))
+    list(sessionUpdate = "tool_call_update", toolCallId = id,
+         status = status, content = .acp_tool_content(text, diff))
 }
 
 # ACP's stop reason for a turn's end (`termination`, R/termination.R).
@@ -183,9 +183,9 @@
 .acp_modes <- function(current) {
     list(currentModeId = current,
          availableModes = list(
-             list(id = "ask", name = "Ask",
-                  description = "Every call that needs approval is asked of you."),
-             list(id = "review", name = "Review",
-                  description = paste("The reviewer rules first on what would be",
-                                      "asked, and passes on what it cannot judge."))))
+                               list(id = "ask", name = "Ask",
+                                    description = "Every call that needs approval is asked of you."),
+                               list(id = "review", name = "Review",
+                                    description = paste("The reviewer rules first on what would be",
+                    "asked, and passes on what it cannot judge."))))
 }
