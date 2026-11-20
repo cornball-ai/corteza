@@ -116,15 +116,18 @@ local({
 
 local({
     # harness_note is a write the envelope can never approve (it names no
-    # path), and spawn_subagent and delegate drive other work: none is
-    # offered to a run the monitor brokers.
+    # path), and spawn_subagent and delegate drive other work: a run the
+    # monitor brokers refuses each at the call. The tool list stays the
+    # session's (WP14; test_request_prefix.R runs the refusal).
     names <- c("read_file", "read_handle", "write_file", "bash", "run_r",
                "base__file.remove", "edit_context", "task_create",
                "harness_note", "spawn_subagent", "delegate", "job_status")
-    tools <- lapply(names, function(name) list(name = name))
-    shown <- function(config) vapply(corteza:::.auto_filter_tools(tools, config),
-                                     function(x) x$name, "")
-    expect_identical(shown(NULL), names)
+    shown <- function(config) {
+        names[vapply(names, function(name) {
+            corteza:::.auto_tool_allowed(corteza:::unsanitize_tool_name(name),
+                                         config, tool = list(name = name))
+        }, logical(1))]
+    }
     expect_identical(shown(list()),
                      c("read_file", "read_handle", "write_file", "edit_context",
                        "task_create", "job_status"))

@@ -222,12 +222,12 @@ bot_save_config <- function(cfg) {
 #'   or \code{openai} is labeled as billable usage prominently in the reply.
 #'   \code{reasoning_effort}, when configured, applies to every candidate.
 #'   NULL (default) means a limit error is reported like any other error.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none. It must exist: corteza does not create it. NULL
-#'   (default) saves none, and such a room then works in a scratch folder
-#'   under the session's temporary directory, which is deleted when the
-#'   process ends. Up to 0.8.0 the default was \code{~/<bot name>},
-#'   created on first use.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one with \code{/cd}. It must exist: corteza
+#'   does not create it. NULL (default) saves none, and such a room then
+#'   works in a scratch folder under the session's temporary directory,
+#'   which is deleted when the process ends. Up to 0.8.0 the default was
+#'   \code{~/<bot name>}, created on first use.
 #' @param operators Character vector or NULL. The people the bot answers
 #'   to, each a full Matrix id such as \code{"@you:example.org"}. The bot
 #'   accepts an invite only from one of them, answers a room with one
@@ -236,6 +236,12 @@ bot_save_config <- function(cfg) {
 #'   operators accepts no invites: it works in the room it was configured
 #'   with and in rooms it has already joined. Up to 0.8.0 it accepted
 #'   every invite.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd} and list with
+#'   \code{/ls}. Each must exist: corteza does not create them. NULL
+#'   (default) saves none, and \code{/cd <dir>} is then refused. Up to
+#'   0.8.0 a room worked in a directory its topic named; a topic names
+#'   none now.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -256,13 +262,14 @@ bot_configure <- function(server, user, password, room, model = NULL,
                           models = NULL,
                           model_badge = c("never", "non_default", "always"),
                           display_name = NULL, fallback = NULL, cwd = NULL,
-                          operators = NULL) {
+                          operators = NULL, project_roots = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     # Before the transport is asked for anything: a directory that is
     # not there should not cost a login, and neither should an operator
     # written without a server.
     cwd <- bot_check_cwd(cwd)
+    project_roots <- bot_check_roots(project_roots)
     operators <- bot_check_operators(operators)
     bot_require_mx()
     provider <- match.arg(provider, providers)
@@ -299,7 +306,7 @@ bot_configure <- function(server, user, password, room, model = NULL,
                      bots = bots, models = models, fallback = fallback,
                      model_badge = model_badge,
                      display_name = display_name, cwd = cwd,
-                     operators = operators))
+                     operators = operators, project_roots = project_roots))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
     if (is.null(operators)) {
         message(bot_no_operators_note())
@@ -738,6 +745,22 @@ bot_is_status_command <- function(body) {
                          ignore.case = TRUE)
 }
 
+# What /status answers in a room. `model` is the one /model sets; a
+# talker session also names the model its replies come from.
+bot_status_text <- function(session) {
+    work <- .session_work_model(session)
+    lines <- c(sprintf("model: %s", work$model %||% "(unset)"),
+               sprintf("provider: %s", work$provider %||% "(unset)"))
+    if (isTRUE(session$talker)) {
+        lines <- c(lines, sprintf("replies: %s (%s)",
+                                  bot_session_model(session) %||% "(unset)",
+                                  session$provider %||% "(unset)"))
+    }
+    paste(c(lines, sprintf("cwd: %s", session$cwd %||% getwd()),
+            .context_edit_status(session), bot_trust_status(session)),
+          collapse = "\n")
+}
+
 # Match `/trust` and `/trust yes`, with or without the slash. NULL when
 # the message is neither, else what followed the word: "" or one word.
 # With the slash any one word is the command's (and gets its usage line
@@ -933,8 +956,9 @@ bot_set_session_model <- function(session, model) {
 }
 
 bot_render_model_menu <- function(entries, session) {
-    cur_model <- bot_session_model(session) %||% ""
-    cur_provider <- session$provider %||% ""
+    work <- .session_work_model(session)
+    cur_model <- work$model %||% ""
+    cur_provider <- work$provider %||% ""
     current <- sprintf("Current: %s (%s)",
                        .sanitize_inline(if (nzchar(cur_model)) cur_model else "(unset)",
                                         max_chars = 80L),
@@ -962,10 +986,10 @@ bot_render_model_menu <- function(entries, session) {
 
 # Apply a parsed model command to a session. Returns the ack text to
 # post back to the room. For a query (`/model` with no args), renders
-# the numbered menu of available models. For a setter, mutates the
-# session's model (bot_set_session_model()) and optionally its provider
-# in place so the next
-# turn picks them up; a bare number picks that menu entry, so nobody
+# the numbered menu of available models. For a setter, sets the
+# session's own model and optionally its provider in place
+# (.set_work_model(): a talker session's doer, and its talker where that
+# follows), so the next turn and job pick them up; a bare number picks that menu entry, so nobody
 # has to thumb-type a model name from a phone client. `available` is
 # injectable for tests; NULL assembles the menu from cfg + live Ollama.
 bot_apply_model_command <- function(session, cmd, cfg = NULL,
@@ -990,19 +1014,15 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
                           .model_menu_text(available, session)))
         }
         entry <- available[[idx]]
-        bot_set_session_model(session, entry$model)
-        session$provider <- entry$provider
-        return(sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-                       .sanitize_inline(entry$model, max_chars = 80L),
-                       .sanitize_inline(entry$provider, max_chars = 40L)))
+        .set_work_model(session, entry$model, entry$provider)
+        return(.work_model_ack(session))
     }
-    bot_set_session_model(session, cmd$model)
+    provider <- NULL
     if (!is.na(cmd$provider)) {
-        session$provider <- cmd$provider
+        provider <- cmd$provider
     }
-    sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-            .sanitize_inline(bot_session_model(session) %||% "", max_chars = 80L),
-            .sanitize_inline(session$provider %||% "(unchanged)", max_chars = 40L))
+    .set_work_model(session, cmd$model, provider)
+    .work_model_ack(session)
 }
 
 # Badge mode from config: "never" (default), "non_default", "always".
@@ -1492,8 +1512,9 @@ bot_is_scratch <- function(cwd) {
 # How a room gets a directory, as a refusal in a room without one says
 # it (check_unbound_room(), tool_delegate(), bot_job_handoff()).
 bot_unbound_how <- function() {
-    paste("A room takes its directory from its topic (an existing directory",
-          "at its start, then /clear) or from the bot's cwd.")
+    paste("An operator of the bot gives a room its directory with",
+          "/cd <dir>, inside one of the bot's project roots, or sets a",
+          "default for every room (`cwd`).")
 }
 
 # TRUE for a room, as bot_room_directory() lists it, that has a
@@ -1512,14 +1533,14 @@ bot_scratch_notice <- function(cwd) {
             "no work to a doer."),
         sprintf("Its tools work in %s, an empty scratch folder.", cwd),
         paste("When someone asks for work that needs a project, say that",
-              "the room has no directory and how to give it one: put the",
-              "path of an existing directory at the start of the room",
-              "topic, as in \"~/project | what the room is for\", then",
-              "send /clear. The bot's operator can also set a default",
-              "directory for every room (`cwd`). corteza creates neither."))
+              "the room has no directory and how it gets one: an operator",
+              "of the bot sends /cd with an existing directory inside one",
+              "of the bot's project roots, as in \"/cd ~/project\", or sets",
+              "a default directory for every room (`cwd`). corteza creates",
+              "neither."))
 }
 
-# Where a room works when its topic names no directory: the bot's `cwd`,
+# Where a room works when no operator bound it to one: the bot's `cwd`,
 # else the scratch folder.
 bot_default_cwd <- function(cfg) {
     bot_configured_cwd(cfg) %||% bot_scratch_cwd()
@@ -1531,55 +1552,22 @@ bot_path_like <- function(x) {
     grepl("^(~/|/|\\./)", x) || grepl("^[A-Za-z]:[/\\\\]", x)
 }
 
-# Parse a topic string into its cwd + description parts. The
-# convention is "<path> | <description>" where <path> looks like a
-# directory (bot_path_like()). A leading segment that does not look like
-# a path is treated as pure description (cwd = NULL).
+# A topic's description: the topic, less the directory it started with
+# up to 0.8.0 ("<path> | <description>"). A topic names no directory
+# (R/room-binding.R); bot_topic_path() reads that part only to say so.
 bot_parse_topic <- function(topic) {
     if (is.null(topic)) {
-        return(list(cwd = NULL, description = NULL))
+        return(list(description = NULL))
     }
     topic <- trimws(topic)
     if (!nzchar(topic)) {
-        return(list(cwd = NULL, description = NULL))
+        return(list(description = NULL))
     }
-
+    if (is.null(bot_topic_path(topic))) {
+        return(list(description = topic))
+    }
     parts <- strsplit(topic, "\\s*\\|\\s*", perl = TRUE)[[1]]
-    if (length(parts) >= 2L && bot_path_like(parts[1L])) {
-        list(cwd = parts[1L], description = paste(parts[-1L], collapse = " | "))
-    } else {
-        list(cwd = NULL, description = topic)
-    }
-}
-
-# Effective cwd for a room: the directory its topic names when that
-# exists, else the bot's `cwd`, else the scratch folder. Never returns a
-# directory that does not exist, and creates none outside the session's
-# temp directory.
-# Takes the topic rather than fetching one. bot_new_session() already
-# has it -- name and topic arrive together from a single
-# chat_channel_info() call -- and re-reading it here was the third state
-# lookup for one session, which is the round trip this verb exists to
-# save.
-bot_room_cwd <- function(cfg, topic = NULL) {
-    if (is.null(topic)) {
-        return(bot_default_cwd(cfg))
-    }
-    parsed <- bot_parse_topic(topic)
-    if (is.null(parsed$cwd)) {
-        return(bot_default_cwd(cfg))
-    }
-
-    candidate <- path.expand(parsed$cwd)
-    if (!dir.exists(candidate)) {
-        default_dir <- bot_default_cwd(cfg)
-        message(sprintf(
-                        "matrix: topic cwd %s does not exist; falling back to %s",
-                        candidate, default_dir
-            ))
-        return(default_dir)
-    }
-    candidate
+    list(description = paste(parts[-1L], collapse = " | "))
 }
 
 # Build the approval callback for the Matrix channel: post an approval
@@ -1990,12 +1978,11 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
         tools_filter <- NULL
     }
 
-    # One lookup for both fields. This was three state reads, and the
-    # topic was one of them twice: bot_room_cwd() fetched it for the
-    # cwd, and the block below fetched it again for the description.
+    # The room's name and topic, in one lookup. The topic describes the
+    # room; where it works is its binding's (R/room-binding.R).
     chat <- tryCatch(bot_chat_client(cfg), error = function(e) NULL)
     info <- bot_channel_info(chat, room_id)
-    room_cwd <- bot_room_cwd(cfg, info$topic)
+    room_cwd <- bot_room_cwd(cfg, room_id)
 
     context_manifest <- NULL
     if (is.null(system)) {
@@ -2024,6 +2011,9 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # A room with no directory reads and talks only (WP10): policy()
     # refuses the rest (check_unbound_room()).
     s$unbound <- bot_is_scratch(room_cwd)
+    # A directory the topic starts with is no longer read; the room is
+    # told so once (bot_topic_notice()).
+    s$topic_path <- bot_topic_path(info$topic)
     # Tool results cut for length are kept for this room alone. A bot's
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
@@ -2033,7 +2023,8 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # process, and a room has no on-disk session id of its own.
     if (!is.null(journal_key)) {
         dir <- bot_journal_dir(cfg, journal_key)
-        .context_room_restore(s, dir, cfg)
+        .context_room_restore(s, dir, cfg,
+                              bot_talker_config(cfg, tools_filter, s$unbound))
         journal_install(s, dir = dir)
         bot_session_record(cfg, s, journal_key, dir, room_name = info$name)
     }
@@ -2177,9 +2168,9 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
-    context <- .context_room_config(cfg)
+    talker <- bot_talker_config(cfg, tools_filter, s$unbound)
+    context <- .context_room_config(cfg, talker)
     .context_conversation_enable(s, context$editing, context$vault)
-    talker <- talker_config(cfg)
     if (!is.null(talker)) {
         talker_enable(s, talker)
         # The talker model is this session's default; only a /model
@@ -2245,11 +2236,16 @@ bot_accept_invites <- function(chat, invites) {
 #' @param hooks Named list of functions or NULL, as validated by
 #'   \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
 #'   host nothing.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none, for this call. It must exist: corteza does not
-#'   create it. NULL (default) uses the \code{cwd} saved by
-#'   \code{\link{bot_configure}}. With neither, such a room works in a
-#'   scratch folder under the session's temporary directory.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one with \code{/cd}, for this call. It must
+#'   exist: corteza does not create it. NULL (default) uses the
+#'   \code{cwd} saved by \code{\link{bot_configure}}. With neither, such
+#'   a room works in a scratch folder under the session's temporary
+#'   directory.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd}, for this call.
+#'   Each must exist. NULL (default) uses the ones saved by
+#'   \code{\link{bot_configure}}.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples
@@ -2260,10 +2256,12 @@ bot_accept_invites <- function(chat, invites) {
 #' @export
 bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                      tools_filter = NULL, timeout = 0L, sessions = NULL,
-                     hooks = NULL, cwd = NULL) {
+                     hooks = NULL, cwd = NULL, project_roots = NULL) {
     cwd <- bot_check_cwd(cwd)
+    project_roots <- bot_check_roots(project_roots)
     bot_require_mx()
     bot_run_cwd_set(cwd)
+    bot_run_roots_set(project_roots)
     cfg <- bot_load_config()
 
     # Receive over the transport contract. The adapter self-heals an
@@ -2565,11 +2563,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_status_command(m$body)) {
-            ack <- sprintf("model: %s\nprovider: %s\ncwd: %s\n%s",
-                           bot_session_model(session) %||% "(unset)",
-                           session$provider %||% "(unset)",
-                           session$cwd %||% getwd(), .context_edit_status(session))
-            ack <- paste(c(ack, bot_trust_status(session)), collapse = "\n")
+            ack <- bot_status_text(session)
             sent_id <- tryCatch(
                                 bot_reply_send(chat, m$channel, ack, markdown = TRUE,
                     thread = m$thread),
@@ -2642,6 +2636,61 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(
                     session$seen_event_ids, sent_id
                 )
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        # /cd: where the room works (R/room-binding.R). A move ends each
+        # conversation the room holds, as /clear does, and each session
+        # is replaced only once the move is saved and the room answered.
+        if (!is.null(bot_parse_cd_command(m$body))) {
+            move <- tryCatch(bot_cd_command(m, sender, sessions, cfg, chat_now(),
+                    hooks),
+                             error = function(e) {
+                list(ack = paste("Not moved:", conditionMessage(e)), moved = FALSE)
+            })
+            if (isTRUE(move$moved)) {
+                cfg <- bot_update_displayname(cfg, model = model, chat = chat,
+                    provider = provider)
+            }
+            sent_id <- tryCatch(
+                                bot_reply_send(chat, m$channel, move$ack, markdown = TRUE,
+                    thread = m$thread),
+                                error = function(e) NULL)
+            if (isTRUE(move$moved)) {
+                for (key in move$keys) {
+                    record <- bot_room_moved_record(move$state, key)
+                    if (identical(key, skey)) {
+                        record <- bot_conversation_acked(cfg, key, m$channel,
+                            record, sent_id)
+                    }
+                    bot_reset_session(sessions, key, cfg, sent_id, move$ack,
+                                      record, system = system, model = model,
+                                      provider = provider,
+                                      tools_filter = tools_filter,
+                                      room_id = m$channel)
+                }
+            } else if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids,
+                    sent_id)
+                bot_transcript_add(session, sent_id, "assistant", move$ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        ls_cmd <- bot_parse_ls_command(m$body)
+        if (!is.null(ls_cmd)) {
+            ack <- bot_ls_command(cfg, sender, ls_cmd$arg)
+            sent_id <- tryCatch(
+                                bot_reply_send(chat, m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids,
+                    sent_id)
                 bot_transcript_add(session, sent_id, "assistant", ack)
             }
             replied <- replied + 1L
@@ -2731,6 +2780,11 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 }
                 )
             }
+            # The room the conversation was filed into works where this
+            # one does (WP22a).
+            if (!is.null(seg$id)) {
+                bot_room_binding_copy(cfg, m$channel, seg$id)
+            }
             # The session stays in the registry until bot_reset_session()
             # takes it: the helper clears its context, moves its jobs and
             # worker to the replacement, and finds nothing to do with a
@@ -2773,6 +2827,20 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", trust_note)
                 bot_trust_told(session)
+            }
+        }
+        # A topic that starts with a directory no longer sets where the
+        # room works. The room is told once, in the same way.
+        topic_note <- bot_topic_notice(cfg, session)
+        if (!is.null(topic_note)) {
+            sent_id <- tryCatch(
+                                bot_reply_send(chat_now(), m$channel, topic_note,
+                    markdown = TRUE, thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", topic_note)
+                bot_topic_told(cfg, session)
             }
         }
 
@@ -3174,13 +3242,18 @@ bot_cwd_unavailable <- function(dir) {
 #'   \code{/clear} resets and nothing is filed, a thread reply starts
 #'   from the thread's own history, and every message is the bot's to
 #'   answer.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none, for this run. It must exist: corteza does not
-#'   create it, and the run stops at its start when this directory, or
-#'   the one saved by \code{\link{bot_configure}}, is missing. NULL
-#'   (default) uses the saved one. With neither, such a room works in a
-#'   scratch folder under the session's temporary directory, which is
-#'   deleted when the process ends.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one with \code{/cd}, for this run. It must
+#'   exist: corteza does not create it, and the run stops at its start
+#'   when this directory, or the one saved by \code{\link{bot_configure}},
+#'   is missing. NULL (default) uses the saved one. With neither, such a
+#'   room works in a scratch folder under the session's temporary
+#'   directory, which is deleted when the process ends.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd} and list with
+#'   \code{/ls}, for this run. Each must exist: corteza does not create
+#'   them. NULL (default) uses the ones saved by
+#'   \code{\link{bot_configure}}; with none, \code{/cd <dir>} is refused.
 #'
 #' @section Hooks:
 #' corteza runs a conversation. What becomes of one once it ends, where
@@ -3262,13 +3335,17 @@ bot_cwd_unavailable <- function(dir) {
 #' }
 #' @export
 bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                         tools_filter = NULL, hooks = NULL, cwd = NULL) {
+                         tools_filter = NULL, hooks = NULL, cwd = NULL,
+                         project_roots = NULL) {
     cwd <- bot_check_cwd(cwd)
+    project_roots <- bot_check_roots(project_roots)
     bot_require_mx()
     hooks <- bot_hooks(hooks)
     # Before the backfill below builds a session: each takes the bot's
-    # directory when its room's topic names none.
+    # directory when no operator bound its room to one, and a bound
+    # room's directory has to lie inside a root.
     bot_run_cwd_set(cwd)
+    bot_run_roots_set(project_roots)
     sessions <- bot_new_session_registry()
     # A restart: the records its sessions take are checked against the
     # backfill below, and a room it cannot read leaves its records with
@@ -3347,7 +3424,7 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
                      provider = provider, tools_filter = tools_filter,
-                     hooks = hooks, cwd = cwd))
+                     hooks = hooks, cwd = cwd, project_roots = project_roots))
 }
 
 #' One Matrix long-poll iteration
@@ -3387,7 +3464,8 @@ bot_run_step <- function(state, timeout = 30000L) {
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions,
-                        hooks = o$hooks, cwd = o$cwd)
+                        hooks = o$hooks, cwd = o$cwd,
+                        project_roots = o$project_roots)
     # Advance every room's jobs: start queued ones, post results, raise
     # approval prompts. Never blocks on a worker. Client derived now, as
     # for the flush below.
@@ -3444,8 +3522,11 @@ bot_run_step <- function(state, timeout = 30000L) {
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
 #' @param tools_filter Character vector or NULL. Tool filter override.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none; see \code{\link{bot_run_init}}.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one; see \code{\link{bot_run_init}}.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd}; see
+#'   \code{\link{bot_run_init}}.
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
@@ -3464,10 +3545,12 @@ bot_run_step <- function(state, timeout = 30000L) {
 #' }
 #' @export
 bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
-                    provider = NULL, tools_filter = NULL, cwd = NULL) {
+                    provider = NULL, tools_filter = NULL, cwd = NULL,
+                    project_roots = NULL) {
     state <- bot_run_init(system = system, model = model,
                           provider = provider, tools_filter = tools_filter,
-                          hooks = NULL, cwd = cwd)
+                          hooks = NULL, cwd = cwd,
+                          project_roots = project_roots)
     message("bot_run: starting long-poll loop")
     message("bot_run: flush signal at ", state$flush_signal)
     repeat {

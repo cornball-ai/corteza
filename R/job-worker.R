@@ -109,8 +109,10 @@ job_identity_text <- function(identity) {
 }
 
 # What a worker for this session and role is started with. Tools come
-# from the role; provider and model from the session unless the config
-# names a worker model. `session$job_worker_spec` overrides fields, and
+# from the role. Provider, model and reasoning settings come, in a
+# talker session, from the doer's fields (talker_enable(), which reads
+# the config's `jobs` block); otherwise from the session unless the
+# config names a worker model. `session$job_worker_spec` overrides fields, and
 # is also how tests replace the child's init and run functions with ones
 # that need no provider.
 job_worker_spec <- function(session, role = "doer") {
@@ -119,40 +121,35 @@ job_worker_spec <- function(session, role = "doer") {
                     reviewer = JOB_REVIEWER_TOOLS,
                     monitor = SUBAGENT_PRESETS$monitor,
                     stop("unknown job role: ", role, call. = FALSE))
-    # A talker session keeps its configured model for the doer
-    # (talker_enable() records it as doer_model).
-    provider <- cfg$provider %||% session$doer_provider %||%
-    session$provider %||% "anthropic"
-    configured <- session$doer_model %||% session$model_map$cloud
-    model <- cfg$model %||% configured
-    # Reasoning settings follow the model they were chosen for. For a
-    # talker session those are the ones talker_enable() set aside for
-    # the doer. A worker on some other model (`jobs$model`, or a
-    # reviewer's own below) gets the provider's defaults unless its
-    # config names a setting: effort tuned for one model can be an
-    # error on another.
-    effort <- if (isTRUE(session$talker)) {
-        session$doer_reasoning_effort
+    if (isTRUE(session$talker)) {
+        # The doer's settings as talker_enable() read them from the
+        # config and /model and /effort changed them: what /status
+        # shows is what the job runs with.
+        provider <- session$doer_provider %||% session$provider %||%
+        "anthropic"
+        model <- session$doer_model %||% session$model_map$cloud
+        effort <- session$doer_reasoning_effort
+        budget <- session$doer_thinking_budget
+        thinking <- session$doer_thinking
     } else {
-        .session_reasoning_effort(session)
+        provider <- cfg$provider %||% session$provider %||% "anthropic"
+        configured <- session$model_map$cloud
+        model <- cfg$model %||% configured
+        # Reasoning settings follow the model they were chosen for. A
+        # worker on some other model (`jobs$model`, or a reviewer's own
+        # below) gets the provider's defaults unless its config names a
+        # setting: effort tuned for one model can be an error on another.
+        effort <- .session_reasoning_effort(session)
+        budget <- .session_thinking_budget(session)
+        thinking <- .session_thinking(session)
+        if (!identical(model, configured)) {
+            effort <- budget <- thinking <- NULL
+        }
+        effort <- cfg$reasoning_effort %||% effort
+        budget <- cfg$thinking_budget_tokens %||% budget
+        # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
+        thinking <- cfg[["thinking"]] %||% thinking
     }
-    budget <- if (isTRUE(session$talker)) {
-        session$doer_thinking_budget
-    } else {
-        .session_thinking_budget(session)
-    }
-    thinking <- if (isTRUE(session$talker)) {
-        session$doer_thinking
-    } else {
-        .session_thinking(session)
-    }
-    if (!identical(model, configured)) {
-        effort <- budget <- thinking <- NULL
-    }
-    effort <- cfg$reasoning_effort %||% effort
-    budget <- cfg$thinking_budget_tokens %||% budget
-    # `[[`: `$thinking` on a list also matches `thinking_budget_tokens`.
-    thinking <- cfg[["thinking"]] %||% thinking
     reviewer <- identical(role, "reviewer")
     monitor <- identical(role, "monitor")
     # Both read and neither writes: no network, nothing outside the
@@ -556,9 +553,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     # to name (job_authority_read()).
     .job_worker_state$session_key <- job$origin$session_key
     on.exit(.job_worker_state$session_key <- NULL, add = TRUE)
+    search_reset <- FALSE
     if (is.environment(session)) {
         .job_worker_child_apply_spec(session, spec)
-        old_tools <- session$tools_filter
         old_allowed <- session$job_allowed_tools
         old_search <- session$web_search
         old_max_turns <- session$max_turns
@@ -580,16 +577,30 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             if (!is.null(spec$tools)) {
                 allowed <- intersect(allowed, spec$tools)
             }
-            session$tools_filter <- allowed
+            # The tool list stays the worker's (WP14): a call outside
+            # the job's tools is refused at the call. The provider runs
+            # its own search tool, so a job that may not search sends a
+            # request without it, a new prefix on purpose.
             session$job_allowed_tools <- allowed
-            if (!"web_search" %in% allowed) {
+            if (!"web_search" %in% allowed &&
+                !identical(session$web_search, FALSE)) {
                 session$web_search <- FALSE
+                .prefix_search_reset(session, "job_search_off")
+                search_reset <- TRUE
+            }
+        }
+        # Search comes back right after the run, before the checkpoint
+        # keeps the history; here only when the run did not return.
+        restore_search <- function() {
+            if (search_reset) {
+                session$web_search <- old_search
+                .prefix_search_reset(session, "job_search_restored")
+                search_reset <<- FALSE
             }
         }
         on.exit({
-            session$tools_filter <- old_tools
             session$job_allowed_tools <- old_allowed
-            session$web_search <- old_search
+            restore_search()
             session$max_turns <- old_max_turns
         }, add = TRUE)
         before <- session$on_tool
@@ -615,6 +626,9 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
              audit = if (is.environment(session) &&
                 !identical(session$last_turn_audit, previous_audit)) session$last_turn_audit)
     })
+    if (search_reset) {
+        restore_search()
+    }
     resume <- if (identical(res$termination$status, "incomplete")) {
         tryCatch(.job_resume_save(job_id, spec$identity, session),
                  error = function(e) list(ready = FALSE, error = conditionMessage(e)))
@@ -920,10 +934,11 @@ JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
 # by key, and the pump runs them through whichever session holds that
 # key, so the worker handles and the job in flight have to be there.
 #
-# The replacement may work in another directory (the room's topic was
-# edited). The job in flight finishes where it started; after that
-# job_worker_activate() sees the worker is not in the session's
-# directory and starts one that is.
+# The replacement may work in another directory: /cd moved the room, or
+# the bot's `cwd` changed. /cd refuses while a job is open, so only an
+# idle worker moves with it; a job in flight otherwise finishes where it
+# started. Either way job_worker_activate() sees the worker is not in
+# the session's directory and starts one that is.
 job_state_move <- function(from, to) {
     for (field in JOB_SESSION_STATE) {
         if (exists(field, envir = from, inherits = FALSE)) {

@@ -64,18 +64,35 @@ local({
     status <- ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort default"))
     expect_null(ctx$session$reasoning_effort)
     expect_true(grepl("medium (configuration)", status, fixed = TRUE))
-    # Split talkers never change the worker's saved effort, including reset.
+    # In a talker session /effort is the doer's, as /model's model is:
+    # the setting was chosen for the configured model, which does the
+    # work. The talker's own comes from the `talker` block alone, and
+    # /effort leaves it. Until 0.8.1 it was the other way round.
     ctx$session$talker <- TRUE
+    ctx$session$reasoning_effort <- "low"
+    ctx$session$doer_provider <- ctx$session$provider
     ctx$session$doer_reasoning_effort <- "xhigh"
-    ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort low"))
-    expect_equal(ctx$session$doer_reasoning_effort, "xhigh")
+    ctx$session$doer_reasoning_default <- "xhigh"
+    ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort high"))
+    expect_equal(ctx$session$doer_reasoning_effort, "high")
+    expect_equal(ctx$session$reasoning_effort, "low")
+    status <- ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort"))
+    expect_true(grepl("high (session override)", status, fixed = TRUE))
     status <- ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort default"))
-    expect_true(grepl("default (provider default)", status, fixed = TRUE))
+    expect_true(grepl("xhigh (configuration)", status, fixed = TRUE))
     expect_equal(ctx$session$doer_reasoning_effort, "xhigh")
+    expect_equal(ctx$session$reasoning_effort, "low")
+    # A config's talker setting reaches the talker at start, not here.
     ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort default"),
         cfg = list(reasoning_effort = "max", talker = list(reasoning_effort = "medium")))
-    expect_equal(ctx$session$reasoning_effort, "medium")
+    expect_equal(ctx$session$reasoning_effort, "low")
     expect_equal(ctx$session$doer_reasoning_effort, "xhigh")
+    # The doer's provider decides whether a level is sent at all.
+    ctx$session$doer_provider <- "ollama"
+    status <- ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort high"))
+    expect_true(grepl("not supported", status, fixed = TRUE))
+    expect_equal(ctx$session$doer_reasoning_effort, "xhigh")
+    ctx$session$talker <- FALSE
     ctx$session$reasoning_effort <- NULL
     ctx$session$provider <- "ollama"
     status <- ns$.effort_command(ctx$session, ns$.effort_parse_command("/effort high"))

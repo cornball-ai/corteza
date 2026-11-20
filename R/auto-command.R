@@ -1,18 +1,36 @@
-.auto_filter_tools <- function(tools, config = NULL, table = NULL) {
-    if (is.null(config)) {
-        return(tools)
-    }
+# May an /auto run call `name`? Asked at the call (turn()'s handler):
+# the tool list stays the session's while the run goes (WP14). `tool`
+# is the definition the session sends, which says whether a write names
+# its target.
+.auto_tool_allowed <- function(name, config, table = NULL, tool = NULL) {
     auto <- get_auto_config(config)
-    Filter(function(tool) {
-        name <- unsanitize_tool_name(tool$name %||% "")
-        if (name %in% auto$never_broker) return(FALSE)
-        if (name %in% c("edit_context", "task_create", "task_update",
-                        "exit_plan_mode")) return(TRUE)
-        op <- classify_op(name, table)
-        identical(op, "read") ||
-        (identical(op, "write") && .auto_names_target(name, tool, table)) ||
-        (identical(op, "exec") && isTRUE(auto$allow_exec))
-    }, tools)
+    if (name %in% auto$never_broker) {
+        return(FALSE)
+    }
+    if (name %in% c("edit_context", "task_create", "task_update",
+                    "exit_plan_mode")) {
+        return(TRUE)
+    }
+    op <- classify_op(name, table)
+    identical(op, "read") ||
+    (identical(op, "write") && .auto_names_target(name, tool, table)) ||
+    (identical(op, "exec") && isTRUE(auto$allow_exec))
+}
+
+# The note the next prompt opens with when an /auto run starts or ends
+# (R/request-prefix.R). Nobody answers during the run, so asking first
+# or waiting for a plan's approval would hang it.
+.auto_note <- function(on) {
+    if (isTRUE(on)) {
+        return(paste("[An unattended /auto run has started: nobody answers",
+                     "until it ends. Do not stop to ask clarifying questions",
+                     "or to wait for plan approval: make reasonable",
+                     "assumptions and proceed. The plan you propose is",
+                     "accepted automatically. A call outside the run's",
+                     "scope is refused, and the refusal says why.]"))
+    }
+    paste("[The /auto run has ended. A person answers again: ask before you",
+          "assume, and wait for a plan's approval.]")
 }
 
 # Whether a write tool has an argument the envelope reads as its target.

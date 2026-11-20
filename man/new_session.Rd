@@ -49,10 +49,11 @@ denies (safe fallback).}
 \item{verbose}{Print tool call progress.}
 
 \item{plan_mode}{Logical. When TRUE, the session is in plan mode:
-the LLM is told to research and propose without acting, the policy
-engine denies write/exec tool calls (except \code{exit_plan_mode}),
-and \code{exit_plan_mode} is added to the tool list. A successful
-\code{exit_plan_mode} call flips this back to FALSE.}
+the next prompt opens with a note telling the LLM to research and
+propose without acting, and the policy engine denies write/exec
+tool calls. \code{exit_plan_mode} is in the tool list of a session
+that can be in plan mode, whatever its mode, so the list stays the
+same; a successful call flips this back to FALSE.}
 
 \item{web_search}{Logical or NULL. When TRUE and the provider
 supports it, \code{\link{turn}} enables \code{llm.api::agent}'s

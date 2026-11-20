@@ -96,8 +96,14 @@ local({
     schema <- tail(f(".delegation_tools")(list(), source), 1)[[1]]
     expect_identical(schema$name, "delegate_to")
     expect_true(grepl('"required":\\["bot","task"\\]', jsonlite::toJSON(schema, auto_unbox = TRUE)))
+    # Listed in plan mode too, so the list stays the session's (WP14);
+    # policy() refuses the call, a continuation.
     source$plan_mode <- TRUE
-    expect_length(f(".delegation_tools")(list(), source), 0L)
+    expect_identical(tail(f(".delegation_tools")(list(), source), 1)[[1]]$name,
+                     "delegate_to")
+    expect_identical(corteza:::policy(list(tool = "delegate_to", args = list(),
+                                           context = list(plan_mode = TRUE)),
+                                      list())$approval, "deny")
     source$plan_mode <- FALSE
     source$job_requester <- "stranger"
     expect_error(f(".delegation_submit")(source, cfg_a, "worker", "task"), "operator")
@@ -238,8 +244,9 @@ local({
     expect_length(f("job_approval_pending")(approval_job$id), 0L)
 
     # Actual child initializer and reused worker loop: apply the delegator's
-    # tool intersection for the job, then restore the worker's ordinary tools.
-    # The child gets no Matrix credentials and makes no model requests.
+    # tool intersection for the job at the call, keep the worker's tool
+    # list as it is (WP14), and restore search after. The child gets no
+    # Matrix credentials and makes no model requests.
     child <- callr::r(function(root, job_id) {
         library(corteza)
         parent <- new_session(provider = "anthropic", system = "fixture")
@@ -252,6 +259,7 @@ local({
         corteza:::.job_worker_child_init(root, spec, state_dir)
         s <- corteza:::.subagent_state$session
         before <- s$tools_filter
+        search_before <- corteza:::.session_web_search(s)
         observed <- NULL
         spec$run_fn <- function(task) {
             handler <- corteza:::.make_tool_handler(s, function(...) stop("disallowed call executed"))
@@ -262,13 +270,15 @@ local({
         }
         result <- corteza:::.job_worker_child_run(job_id, "fixture", spec, state_dir)
         list(observed = observed, restored = identical(s$tools_filter, before),
+             search_restored = identical(corteza:::.session_web_search(s), search_before),
              allowed_after = s$job_allowed_tools, reply = result$reply)
     }, list(root = root, job_id = approval_job$id))
-    expect_identical(child$observed$tools, "read_file")
+    expect_identical(child$observed$tools, c("read_file", "write_file"))
     expect_identical(child$observed$allowed, "read_file")
     expect_false(child$observed$search)
     expect_true(grepl("job policy denied", child$observed$denial))
     expect_true(child$restored)
+    expect_true(child$search_restored)
     expect_null(child$allowed_after)
     expect_identical(child$reply, "checked")
 

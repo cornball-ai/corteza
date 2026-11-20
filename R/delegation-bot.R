@@ -1,6 +1,8 @@
 .delegation_tools <- function(tools, session) {
     tools <- Filter(function(t) !identical(t$name, "delegate_to"), tools)
-    if (!is.function(session$delegate_to) || isTRUE(session$plan_mode)) {
+    # Listed in plan mode too, where policy() refuses the call
+    # (`continue`): the list stays the session's (WP14).
+    if (!is.function(session$delegate_to)) {
         return(tools)
     }
     ensure_skills()

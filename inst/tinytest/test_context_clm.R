@@ -419,7 +419,8 @@ local({
 
             # An unsplit bot owns its conversation without becoming a
             # talker or changing its model/tools. Its workers never file.
-            cfg$talker <- NULL
+            # A room is a talker unless its config says otherwise (WP20b).
+            cfg$talker <- list(enabled = FALSE)
             cfg$user_id <- "@unsplit:example.invalid"
             cfg$context_edit <- pure
             cfg$context_vault <- vault

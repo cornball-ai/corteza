@@ -413,6 +413,7 @@ trust_at_start <- function(cwd = getwd(), ask = NULL) {
             return(invisible(TRUE))
         }
     }
-    cat("Left as it is. /trust yes trusts it, from the next start of corteza.\n\n")
+    cat(sprintf("Left as it is. /trust yes trusts it, from %s.\n\n",
+                .repl_trust_when()))
     invisible(FALSE)
 }

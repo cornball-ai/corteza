@@ -126,6 +126,41 @@ start (`trust_at_start()`); a room is told once (`bot_trust_notice()`)
 and only an operator may answer. Trust is not a sandbox: tools still
 read files in an untrusted directory as tool results.
 
+## What a session sends (`R/request-prefix.R`)
+
+A session's system text and tool list are fixed (WP14, decision S1):
+`session_request_prefix()` composes them once and caches them on the
+session, keyed by a digest of what they are made from
+(`.prefix_inputs()`: the system text, the filter, the table, the
+channel, the talker, whether the session can be in plan mode, the room
+tools it holds). A change to any of those composes it again and logs
+`request_prefix_reset` with the parts that changed. The availability
+tests run once for a table and a filter (`.prefix_base_tools()`).
+`turn()` adds only the context-edit tools (the stated exception) and
+the web-search drop per request.
+
+Nothing edits the list by mode. A mode or a task change reaches the
+model as a note at the head of the next prompt (`.prefix_notes()`,
+compared with `session$.prefix_seen`, which `turn()` sets once the
+prompt is mirrored). `history_replace()` clears `.prefix_seen` for any
+rewrite not in `.prefix_keeps_notes`, so a compaction restates the
+session. Permission is checked at the call: `policy()` for plan mode;
+the handler refuses `exit_plan_mode` outside plan mode and what an
+`/auto` run may not call (`.auto_tool_allowed()`); a job's limit is
+`job_allowed_tools`. `exit_plan_mode` is listed where a session can be
+in plan mode (`.prefix_plan_capable()`: the terminal and `chat()` with
+no tool filter, or any session once it has been in plan mode), never
+for a worker or a monitor. A job that may not
+search is a deliberate reset (`.prefix_search_reset()`), before the run
+and after it, ahead of the checkpoint.
+
+Anything that shows or sends the session's request outside `turn()`
+(`/context`, `/status`, `/tools`, `/doctor`, the meter, a compaction, a
+subagent's token count) reads `session_request_parts()`, never
+`skills_as_api_tools()`. The terminal's `/clear` builds the next
+session again (`.repl_session_rebuild()`): config, table, system text
+and trust, keeping the keys a flag or command set (`ctx$config_set`).
+
 ## Policy engine (`R/policy.R`)
 
 Every tool call passes through `policy(call, config)` before dispatch.
@@ -256,6 +291,45 @@ nothing between calls. A wait cut short (an interrupt, an error) cancels the req
 installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set
 `"review"` (`load_config()`).
+
+## Talker mode (`R/talker.R`)
+
+A talker session has read-only tools and `delegate`; work goes to a
+doer, a worker process of the conversation's own (`R/job-worker.R`).
+`talker_config(cfg, default)` reads `talker.enabled`, and `default`
+decides without it. `bot_talker_config()` gives a bot's rooms TRUE
+unless the bot's tools are restricted (`tools_filter`: a doer gets
+`SUBAGENT_PRESETS$work` whatever the list says) or the room has no
+directory; the terminal passes FALSE until WP20c. `talker_enable()`
+moves the session's model, provider and reasoning settings to the doer
+(`doer_*`) and runs the talker on `talker.model`, else the session's
+own model; `talker_follows` says it has no model or provider of its
+own. `/model` and `/effort` act on the doer (`.session_work_model()`,
+`.set_work_model()`, `.effort_command()` in `R/model-controls.R`), the
+talker following `/model` where `talker_follows`. Column `talker` of
+`corteza_commands()` says what each room command acts on, and
+`test_talker_commands.R` holds the room's to it.
+
+## Where a room works (`R/room-binding.R`)
+
+`bot_room_cwd(cfg, room_id)`: the directory an operator bound the room
+to with `/cd`, while it exists inside a root (`bot_project_roots()`:
+the run's `project_roots`, else the saved ones, links resolved); the
+scratch folder for `/cd none`, a binding that no longer holds, or one
+that is unknown; else the bot's `cwd`, else the scratch folder. Only a
+room with no binding on record takes the default: a state file that
+cannot be read is copied aside and replaced, in one rename, by a
+binding of state `unknown` (`bot_room_state_read()`), and a binding
+there but malformed reads the same way, until an operator's `/cd`
+writes a new one. A topic names no directory:
+`bot_parse_topic()` gives a description only, and `bot_topic_path()`
+reads a leading path only for the one-time notice. The binding is
+`binding` in the room's state file (`R/room-conversation.R`), beside the
+conversation records. `bot_cd_command()` archives each of the room's
+sessions, then writes the binding and a new record for every timeline
+in one write (`bot_room_move()`); `bot_poll()` answers and resets each
+session. `moved` in the state gives a thread first seen later the same
+start (`bot_conversation_open()`).
 
 ## A worker obeys its conversation (`R/job-authority.R`)
 
@@ -635,8 +709,10 @@ line saying what it does, and whether the terminal and `chat()`, a bot's
 room, or a room controlling a terminal takes it. Nothing dispatches
 from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
 and `.remote_bot_route()` for the names they compare with, asks each
-room parser, and checks both `/help` texts, so a new command needs a
-row, a line in both help texts, and its surface's match.
+room parser, holds its list of parsers to the ones `bot_poll()` calls
+(a name matching `bot_is_*_command`, `bot_parse_*` or `*_parse_command`),
+and checks both `/help` texts, so a new command needs a row, a line in
+both help texts, and its surface's match.
 
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`

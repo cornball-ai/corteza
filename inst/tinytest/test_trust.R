@@ -572,7 +572,10 @@ local({
     out <- repl(c("/trust maybe", "/trust yes", "/status"), s)
     expect_true(any(grepl("usage: /trust", out, fixed = TRUE)))
     expect_true(any(grepl("Trusted: ", out, fixed = TRUE)))
-    expect_true(any(grepl("the next start of corteza", out, fixed = TRUE)))
+    # The terminal's /clear starts a session built again from the
+    # directory (WP14, test_request_prefix.R).
+    expect_true(any(grepl("the next conversation (/clear starts one)", out,
+                          fixed = TRUE)))
     expect_true(ns$project_trusted(proj))
     # This session is as it started: its prompt was built without the
     # project, and it says so.

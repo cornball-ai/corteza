@@ -654,7 +654,9 @@ if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
         dir.create(root)
         root <- normalizePath(root, winslash = "/")
         old_data <- Sys.getenv("R_USER_DATA_DIR", unset = NA_character_)
-        Sys.setenv(R_USER_DATA_DIR = file.path(root, "data"))
+        old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA_character_)
+        Sys.setenv(R_USER_DATA_DIR = file.path(root, "data"),
+                   CORTEZA_STATE_DIR = file.path(root, "state"))
         orig <- corteza:::bot_channel_info
         on.exit({
             assignInNamespace("bot_channel_info", orig, ns = "corteza")
@@ -663,6 +665,11 @@ if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
             } else {
                 Sys.setenv(R_USER_DATA_DIR = old_data)
             }
+            if (is.na(old_state)) {
+                Sys.unsetenv("CORTEZA_STATE_DIR")
+            } else {
+                Sys.setenv(CORTEZA_STATE_DIR = old_state)
+            }
             unlink(root, recursive = TRUE)
         }, add = TRUE)
         project <- file.path(root, "project")
@@ -670,11 +677,16 @@ if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
         # The room's name and topic, as the homeserver would give them.
         assignInNamespace("bot_channel_info", function(chat, room_id) {
             list(id = room_id, name = "Project room",
-                 topic = paste0(project, " | what the room is for"))
+                 topic = "what the room is for")
         }, ns = "corteza")
 
+        # A topic names no directory since 0.8.1 (WP12): an operator's
+        # /cd bound this room, inside the bot's project roots.
         cfg <- list(user_id = "@a:ex", room_id = "!r:ex",
-                    model = "qwen3:8b", provider = "ollama")
+                    model = "qwen3:8b", provider = "ollama",
+                    project_roots = root)
+        corteza:::bot_room_state_write(cfg, "!r:ex",
+            list(binding = list(state = "bound", dir = project)))
         reg <- corteza:::bot_new_session_registry()
         s <- corteza:::bot_get_or_create_session(reg, "!r:ex", cfg)
         store <- corteza:::store_load("matrix")
