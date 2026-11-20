@@ -546,6 +546,32 @@ local({
     expect_equal(length(got$said), 0L)
 })
 
+# A history over the cap in tools' results compacts: an Anthropic result
+# keeps its text in a block, which the estimate counted as a line before
+# 0.8.1, so a session that read files went on far past its cap.
+local({
+    s <- trigger_session()
+    h <- list()
+    for (i in seq_len(4L)) {
+        id <- sprintf("toolu_%d", i)
+        h[[length(h) + 1L]] <- list(role = "user",
+                                    content = sprintf("Read f%d.txt.", i))
+        h[[length(h) + 1L]] <- list(role = "assistant", content = list(
+            list(type = "tool_use", id = id, name = "read_file",
+                 input = list(path = sprintf("f%d.txt", i)))))
+        h[[length(h) + 1L]] <- list(role = "user", content = list(
+            list(type = "tool_result", tool_use_id = id,
+                 content = strrep("r", 8000L))))
+        h[[length(h) + 1L]] <- list(role = "assistant",
+                                    content = sprintf("f%d.txt read.", i))
+    }
+    s$history <- h
+    got <- compact_once(s, trigger_config(context_compact_tokens = 6000L))
+    expect_true(got$result)
+    expect_equal(got$calls, 1L)
+    expect_equal(s$last_compaction$trigger, "tokens")
+})
+
 # Exactly at the cap compacts; 1 token under does not.
 local({
     s <- trigger_session()
