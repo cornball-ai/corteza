@@ -1,3 +1,74 @@
+# corteza 0.8.0.32
+
+- A session's system text and tool list stay fixed for the session. A
+  change to either made the provider read the whole history again, and
+  a model that signs its thinking against the request refused the
+  replay. Plan mode, an `/auto` run and the task list now change
+  neither: each change reaches the model as a note at the head of the
+  next prompt, and permission is checked at the call. `exit_plan_mode`
+  is refused outside plan mode, and what an `/auto` run may not call is
+  refused when called.
+- `send_room_file` and `ask_room` stay listed in a room's session
+  whoever sent the message, and refuse anyone but an operator at the
+  call.
+- The git and search tools are looked for once per session, so a
+  `git init` mid-session adds no tool.
+- The terminal's `/clear` builds the next conversation's config, tool
+  table and system text again, so `/trust yes` takes effect at the next
+  conversation. What a flag or a command set in this process
+  (`--dry-run`, `--base-url`, `/permissions`, `/dryrun`,
+  `/context-edit`) carries over. A talker keeps its guidance when
+  `/clear` or the archival runtime builds the text again.
+- `/context`, `/status`, `/tools`, `/doctor` and the meter count the
+  system text and tools the request sends.
+
+# corteza 0.8.0.31
+
+- A bot's room works where an operator binds it with `/cd`, inside the
+  bot's project roots, and no longer in a directory its topic names.
+  Anyone allowed to change a topic could change that directory, and with
+  it the checkout where the supervisor lets writes through.
+  `project_roots`, a new last argument of `bot_configure()`, `bot_run()`,
+  `bot_run_init()` and `bot_poll()` and a key of the bot config, names
+  the roots. Each must exist; corteza creates none.
+- An operator's `/cd` in a room says where the room works, and binds it:
+  `/cd <dir>` to an existing directory inside a root, `/cd none` to no
+  directory, `/cd default` back to the bot's `cwd`. `/ls` lists the
+  roots, and `/ls <dir>` the directories in one. A move refuses while a
+  job of the room is open, files each conversation as `/clear` does, and
+  starts each conversation again in the new directory, with a new doer.
+- A room's directory is its binding, else the bot's `cwd`, else the
+  scratch folder. A binding to a directory that is gone, or outside every
+  root, gives the scratch folder. A room whose topic starts with a path
+  works in the bot's `cwd` until an operator binds it, and is told so
+  once.
+- A room state file that is there and cannot be read is set aside, and
+  the room works in the scratch folder until an operator's `/cd` binds it
+  again; it does not fall back to the bot's `cwd`.
+
+# corteza 0.8.0.30
+
+- A bot's room answers through a talker by default: a session with
+  read-only tools that hands work needing edits, commands or tests to a
+  doer, a worker process of the conversation's own. `"talker":
+  {"enabled": false}` in the bot's config turns it off. A bot whose
+  tools are restricted (`tools_filter`) and a room with no directory
+  are no talker unless the config turns talker mode on.
+- The talker runs on `talker.model`, else on the bot's own model;
+  `talker.provider` without a model takes that provider's default.
+  Up to 0.8.0 it ran on a fast model of its provider's and stopped with
+  an error on any other provider. A `talker` entry that is no object
+  stops with a message saying what it should be.
+- In a talker session `/model` and `/effort` change the doer's model
+  and effort, which the next job runs with. The doer starts on the
+  model, provider and reasoning settings the config's `jobs` block
+  names, where it names them. The talker follows `/model` unless its
+  config names a model or a provider of its own, and takes its
+  reasoning settings from the `talker` block alone. `/status` names
+  both models. Up to 0.8.0 both commands changed the talker's alone.
+- The command table (`corteza:::corteza_commands()`) has a `talker`
+  column: what a command acts on in a talker session.
+
 # corteza 0.8.0.29
 
 - The command table (`corteza:::corteza_commands()`) says that a bot's
