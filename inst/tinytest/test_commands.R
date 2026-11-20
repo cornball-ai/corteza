@@ -10,7 +10,7 @@ tbl <- ns$corteza_commands()
 
 # ---- The table ---------------------------------------------------------------
 expect_identical(names(tbl), c("name", "same_as", "argument", "description",
-                               "terminal", "room", "remote", "talker"))
+                               "terminal", "room", "remote", "talker", "acp"))
 # What a command acts on in a talker session. A room and the terminal
 # are talkers by default (WP20b, WP20c), so each name either takes says;
 # test_talker_commands.R holds the room's commands to it, and
@@ -27,11 +27,11 @@ expect_true(all(nzchar(tbl$description)))
 alias <- tbl[nzchar(tbl$same_as), ]
 main <- tbl[match(alias$same_as, tbl$name), ]
 expect_true(all(main$same_as == ""))
-for (s in c("terminal", "room", "remote")) {
+for (s in c("terminal", "room", "remote", "acp")) {
     expect_true(all(!alias[[s]] | main[[s]]), info = s)
 }
 # Each row is taken somewhere.
-expect_true(all(tbl$terminal | tbl$room | tbl$remote))
+expect_true(all(tbl$terminal | tbl$room | tbl$remote | tbl$acp))
 
 # ---- What a surface matches --------------------------------------------------
 # The string literals a function compares with (==, %in%, identical(),
@@ -79,6 +79,23 @@ expect_identical(compared(ns$run_repl_loop), sort(tbl$name[tbl$terminal]))
 expect_identical(sort(unique(c(compared(ns$.remote_input),
                                compared(ns$.remote_bot_route)))),
                  sort(tbl$name[tbl$remote]))
+
+# An ACP session: the names the table gives it, and the ones it answers
+# with "start a new session". Its help and the commands it offers its
+# client come from the table, so they name the same commands.
+expect_identical(compared(ns$.acp_command),
+                 sort(c(tbl$name[tbl$acp], ns$.ACP_NOT_HERE)))
+expect_true(all(ns$.ACP_NOT_HERE %in% tbl$name))
+expect_false(any(tbl$acp[tbl$name %in% ns$.ACP_NOT_HERE]))
+offered <- vapply(ns$.acp_commands_update()$availableCommands,
+                  function(cmd) cmd$name, "")
+expect_identical(offered, tbl$name[tbl$acp & !nzchar(tbl$same_as)])
+for (name in c(tbl$name[tbl$acp], ns$.ACP_NOT_HERE)) {
+    expect_identical(ns$.acp_command_name(paste0("/", name, " x")), name,
+                     info = name)
+}
+expect_null(ns$.acp_command_name("/home/you/notes.md"))
+expect_null(ns$.acp_command_name("/model x"))
 
 # A bot's room matches with a parser for each command. Each name the
 # table gives a room is one its parser takes, and no other is.

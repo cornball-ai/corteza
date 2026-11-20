@@ -17,6 +17,15 @@
     if (st$ch$closed) {
         return(list(stopReason = "cancelled"))
     }
+    # One of the session's commands runs in place of a turn, and what it
+    # prints is the reply (R/acp-commands.R).
+    if (!is.null(.acp_command_name(text))) {
+        said <- .acp_command(st, session, text)
+        if (nzchar(trimws(said))) {
+            .acp_update(st, sid, .acp_text_chunk(said))
+        }
+        return(list(stopReason = "end_turn"))
+    }
     live <- new.env(parent = emptyenv())
     live$sid <- sid
     live$session <- session

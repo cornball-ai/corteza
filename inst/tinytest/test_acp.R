@@ -801,6 +801,68 @@ local({
     }, ""), c("ask", "deny"))
 })
 
+# ---- Commands ---------------------------------------------------------------
+# A session offers its commands after its answer. A prompt that names
+# one runs it in place of a turn: no model is asked, and what it prints
+# is the reply. /trust yes trusts the directory for the sessions after;
+# /clear says to start a new session; any other word after a slash is
+# text for the model.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    model <- fake_model(list(list(text = "Read it.")))
+    sid <- NULL
+    said <- list()
+    script <- c("/help", "/trust", "/trust yes", "/status", "/clear", "/tools",
+                "/tasks", "/notes.md says what?")
+    msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+        if (is_answer(2L)(msg)) {
+            sid <<- msg$result$sessionId
+            client$write(prompt(10L, sid, script[[1L]]))
+        }
+        if (is.null(msg$method) && is.integer(msg$id) && msg$id >= 10L) {
+            n <- msg$id - 9L
+            if (n < length(script)) {
+                client$write(prompt(msg$id + 1L, sid, script[[n + 1L]]))
+            } else {
+                client$finish()
+            }
+        }
+    }))
+    reply <- function(n) {
+        done <- at(msgs, is_answer(9L + n))
+        chunks <- Filter(is_update("agent_message_chunk"), msgs[seq_len(done)])
+        last <- chunks[[length(chunks)]]
+        last$params$update$content$text
+    }
+    offered <- Filter(is_update("available_commands_update"), msgs)
+    expect_identical(length(offered), 1L)
+    expect_true(at(msgs, is_update("available_commands_update")) >
+                    at(msgs, is_answer(2L)))
+    names_offered <- vapply(offered[[1L]]$params$update$availableCommands,
+                            function(cmd) cmd$name, "")
+    expect_true(all(c("help", "trust", "status", "compact") %in% names_offered))
+    expect_false("clear" %in% names_offered)
+    expect_true(grepl("/trust [yes]", reply(1L), fixed = TRUE))
+    expect_true(grepl("start a new session", reply(1L), fixed = TRUE))
+    expect_true(startsWith(reply(2L), "Not trusted:"))
+    expect_true(startsWith(reply(3L), "Trusted:"))
+    expect_true(grepl("a new session in this directory", reply(3L), fixed = TRUE))
+    expect_true(ns$project_trusted(fx$proj))
+    # The session's own trust was fixed when it started.
+    expect_true(grepl("no for this session, yes from the next", reply(4L),
+                      fixed = TRUE))
+    expect_true(grepl(as.character(utils::packageVersion("corteza")), reply(4L),
+                      fixed = TRUE))
+    expect_true(grepl("starts a new session", reply(5L), fixed = TRUE))
+    expect_true(grepl("write_file", reply(6L), fixed = TRUE))
+    expect_identical(reply(7L), "No tasks.")
+    # The commands asked no model; the last prompt did.
+    expect_identical(model$i, 1L)
+    expect_identical(reply(8L), "Read it.")
+    expect_identical(answer(msgs, 17L)$result$stopReason, "end_turn")
+})
+
 # ---- Listing and resuming ---------------------------------------------------
 local({
     fx <- acp_fixture()

@@ -168,19 +168,23 @@
     add_observer(session, function(event) .acp_on_tool(st, sid, event))
     review_apply(session)
     st$sessions[[sid]] <- session
-    for (text in session$acp_notes) {
-        st$notes <- c(st$notes, list(list(sid = sid, text = text)))
+    # The commands it takes (R/acp-commands.R), and what its opening has
+    # to say.
+    updates <- c(list(.acp_commands_update()),
+                 lapply(session$acp_notes, .acp_text_chunk))
+    for (update in updates) {
+        st$notes <- c(st$notes, list(list(sid = sid, update = update)))
     }
     invisible(session)
 }
 
-# What a session's opening has to say, sent once its answer has gone,
-# since the client learns the session's id from the answer.
+# A session's opening updates, sent once its answer has gone, since the
+# client learns the session's id from the answer.
 .acp_notes_send <- function(st) {
     notes <- st$notes
     st$notes <- list()
     for (note in notes) {
-        .acp_update(st, note$sid, .acp_text_chunk(note$text))
+        .acp_update(st, note$sid, note$update)
     }
     invisible(NULL)
 }

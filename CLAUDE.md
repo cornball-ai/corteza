@@ -66,7 +66,9 @@ came: a cancel, an answer, and the requests that need no turn. A prompt
 waits for the running one; one for the running session is refused. The
 approval callback follows the terminal's (`answered`, no "always" under
 the credential rule). An MCP server a client names is refused, by name
-alone. Protocol lines go through a connection of their own to fd 1, and
+alone. Commands are the table's `acp` rows (`R/acp-commands.R`), run
+through the functions the terminal shares (`R/commands-shared.R`) and
+captured as the reply; `/clear` and `/cd` answer with a sentence. Protocol lines go through a connection of their own to fd 1, and
 R's standard output is sunk to standard error.
 
 **CLI and chat() share one in-process loop**: both build a `ctx` and call
@@ -759,9 +761,11 @@ CLI-only) now work in `chat()` too.
 `corteza_commands()` (`R/commands.R`) is the table of every surface's
 commands: a row a name, with what it is the same as, its argument, a
 line saying what it does, and whether the terminal and `chat()`, a bot's
-room, or a room controlling a terminal takes it. Nothing dispatches
-from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
-and `.remote_bot_route()` for the names they compare with, asks each
+room, a room controlling a terminal, or an ACP session takes it. Nothing
+dispatches from it, though ACP's help and the commands it offers its
+client are made from it. `test_commands.R` reads `run_repl_loop()`,
+`.remote_input()`, `.remote_bot_route()` and `.acp_command()` for the
+names they compare with, asks each
 room parser, holds its list of parsers to the ones `bot_poll()` calls
 (a name matching `bot_is_*_command`, `bot_parse_*` or `*_parse_command`),
 and checks both `/help` texts, so a new command needs a row, a line in
