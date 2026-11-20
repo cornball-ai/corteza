@@ -215,6 +215,81 @@ local({
                                           "!other:example.invalid"))
 })
 
+# ---- A state file that cannot be read ---------------------------------------
+# What it held may have been `/cd none`, so the room takes no directory,
+# not the bot's default, until an operator runs /cd, and that holds
+# across reads and restarts (Codex, #292 review).
+local({
+    done <- with_state()
+    on.exit(done(), add = TRUE)
+    top <- mkdir(tempfile("unreadable-"))
+    on.exit(unlink(top, recursive = TRUE), add = TRUE)
+    root <- mkdir(top, "root")
+    proj <- mkdir(root, "proj")
+    bot_dir <- mkdir(top, "bot")
+    cfg <- base_cfg(project_roots = root, cwd = bot_dir)
+    path <- ns$bot_room_state_path(cfg, room)
+    bind <- function(binding) {
+        state <- ns$bot_room_state_read(cfg, room)
+        state$binding <- binding
+        ns$bot_room_state_write(cfg, room, state)
+    }
+    asides <- function() {
+        list.files(dirname(path), pattern = "unreadable", full.names = TRUE)
+    }
+    for (b in list(list(state = "none"), list(state = "bound", dir = proj))) {
+        unlink(asides())
+        bind(b)
+        writeLines("{ not json", path)
+        expect_message(got <- ns$bot_room_cwd(cfg, room), "until an operator runs /cd")
+        expect_true(ns$bot_is_scratch(got), info = b$state)
+        # Copied aside whole, and a marker in its place, so the next
+        # read, or a restart, finds the same.
+        expect_identical(readLines(asides()), "{ not json")
+        expect_identical(ns$bot_room_state_read(cfg, room)$binding$state,
+                         "unknown")
+        expect_silent(got <- ns$bot_room_cwd(cfg, room))
+        expect_true(ns$bot_is_scratch(got), info = b$state)
+        expect_length(asides(), 1L)
+        expect_true(grepl("binding is unknown", ns$bot_cd_state_text(cfg, room),
+                          fixed = TRUE))
+    }
+    # A binding there but malformed is unknown as well; only a room with
+    # none on record takes the default.
+    bind(list(state = "bound", dir = 5))
+    expect_identical(ns$bot_room_binding(cfg, room), list(state = "unknown"))
+    expect_true(ns$bot_is_scratch(ns$bot_room_cwd(cfg, room)))
+    bind(list(state = "elsewhere"))
+    expect_identical(ns$bot_room_binding(cfg, room), list(state = "unknown"))
+    # An operator's /cd repairs it: the move writes a binding over it.
+    move <- function(binding) {
+        ns$bot_room_move(cfg, room, binding, room, list(id = "$cd", ts = 1000))
+    }
+    expect_false(is.null(move(list(state = "default"))))
+    expect_identical(ns$bot_room_cwd(cfg, room), bot_dir)
+    # Where the marker cannot be written the unreadable file stays, and
+    # reads the same way: the room never falls back to the default.
+    # (A folder's write bit means nothing to root or on Windows.)
+    if (.Platform$OS.type == "unix") {
+        writeLines("{ not json", path)
+        unlink(asides())
+        # Before the state folder is removed, whatever stops this block.
+        on.exit(Sys.chmod(dirname(path), "0755"), add = TRUE, after = FALSE)
+        Sys.chmod(dirname(path), "0555")
+        if (file.access(dirname(path), 2) == -1) {
+            expect_message(got <- ns$bot_room_cwd(cfg, room), "could not copy aside")
+            expect_true(ns$bot_is_scratch(got))
+            expect_identical(readLines(path), "{ not json")
+            expect_message(got <- ns$bot_room_cwd(cfg, room), "could not copy aside")
+            expect_true(ns$bot_is_scratch(got))
+        }
+        Sys.chmod(dirname(path), "0755")
+        expect_true(ns$bot_is_scratch(ns$bot_room_cwd(cfg, room)))
+        expect_identical(ns$bot_room_state_read(cfg, room)$binding$state,
+                         "unknown")
+    }
+})
+
 # ---- /cd in a room ---------------------------------------------------------------
 # A room's sessions, built for real, and a registry the way bot_poll()
 # keeps it. replace() does what bot_poll() does after a move.

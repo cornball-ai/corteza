@@ -1079,7 +1079,10 @@ A room works in the first of these that applies:
    directory. Room lists show it as having none, and it is named by its
    id or name, never by the scratch folder. A room an operator bound with
    `/cd none` works here, as does one whose bound directory is gone or lies
-   outside every root now.
+   outside every root now. So does a room whose state file the bot could
+   not read: the file is copied aside, and the room stays here, across
+   restarts, until an operator runs `/cd`, since what was lost may have
+   been `/cd none`.
 
 The project roots are `project_roots`, existing directories inside which a
 room may be bound. `bot_configure(project_roots = )` saves them, and

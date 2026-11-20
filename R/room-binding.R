@@ -114,10 +114,19 @@ bot_root_path <- function(arg, roots) {
 
 # ---- A room's binding --------------------------------------------------------
 
-# list(state = "bound", dir = ...), list(state = "none"), or
-# list(state = "default").
+# list(state = "bound", dir = ...), list(state = "none"),
+# list(state = "default"), or list(state = "unknown").
+#
+# Only a room with no binding on record takes the default. A binding
+# that is there and is none of the others (the marker
+# bot_room_state_read() leaves for a file it could not read, or one
+# malformed) is unknown, and holds the room to no directory until an
+# operator runs /cd: what was lost may have been `/cd none`.
 bot_room_binding <- function(cfg, room_id) {
     b <- bot_room_state_read(cfg, room_id)$binding
+    if (is.null(b)) {
+        return(list(state = "default"))
+    }
     if (is.list(b) && identical(b$state, "none")) {
         return(list(state = "none"))
     }
@@ -126,20 +135,21 @@ bot_room_binding <- function(cfg, room_id) {
         length(dir) == 1L && !is.na(dir) && nzchar(dir)) {
         return(list(state = "bound", dir = dir))
     }
-    list(state = "default")
+    list(state = "unknown")
 }
 
 # Where a room works: its binding's directory while that exists and lies
-# inside a root; the scratch folder for a room bound to none, or bound
-# to a directory that is gone or outside every root now; else the bot's
-# `cwd`, else the scratch folder. Never a directory that does not exist,
-# and none created outside the session's temp directory.
+# inside a root; the scratch folder for a room bound to none, bound to a
+# directory that is gone or outside every root now, or whose binding is
+# unknown; else the bot's `cwd`, else the scratch folder. Never a
+# directory that does not exist, and none created outside the session's
+# temp directory.
 bot_room_cwd <- function(cfg, room_id = NULL) {
     if (is.null(room_id)) {
         return(bot_default_cwd(cfg))
     }
     b <- bot_room_binding(cfg, room_id)
-    if (identical(b$state, "none")) {
+    if (b$state %in% c("none", "unknown")) {
         return(bot_scratch_cwd())
     }
     if (identical(b$state, "bound")) {
@@ -257,6 +267,9 @@ bot_cd_state_text <- function(cfg, room_id) {
     now <- switch(b$state,
                   bound = sprintf("This room is bound to %s.", b$dir),
                   none = "This room is bound to no directory: it reads and talks only.",
+                  unknown = paste("This room's binding is unknown: its state file",
+                                  "could not be read and was set aside. It reads",
+                                  "and talks only until an operator runs /cd."),
         if (is.null(default)) {
             "This room takes the bot's default, which is no directory: it reads and talks only."
         } else {
