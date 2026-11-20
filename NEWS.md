@@ -1,3 +1,24 @@
+# corteza 0.8.0.24
+
+- At the terminal, `/clear` starts a new conversation for a job's
+  worker too: its R objects stay and its history does not, and the
+  next job gets the instructions and tools a session started now would
+  have. A job still running finishes, and its result goes to the
+  conversation that asked for it; a job still queued runs under the
+  settings its conversation had when it ended. Each conversation keeps
+  its own checkpoint, so `--resume` brings back that conversation's
+  worker as its last job left it.
+
+# corteza 0.8.0.23
+
+- A turn that ends on an error no longer leaves a tool call without a
+  result. Every later request from that history failed (Anthropic
+  answers 400), so a room stayed broken until `/reset`. Before the
+  error leaves `turn()`, each call with no result gets a placeholder
+  and a note says the turn stopped on that error; a turn also closes,
+  before its first request, any call an earlier turn or process left
+  open. Anthropic, OpenAI and Responses histories alike.
+
 # corteza 0.8.0.22
 
 - Retention also clears corteza's state stores, in the same daily run
