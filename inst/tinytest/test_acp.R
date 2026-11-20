@@ -912,6 +912,73 @@ local({
     expect_identical(closed, 1L)
 })
 
+# ---- Sessions share no R objects --------------------------------------------
+# Each session's run_r runs in a worker of its own: an object one session
+# makes is not there for another, nor in corteza's process. A config that
+# asked for run_r in corteza's own process is told why not, once per
+# session, after the session's answer. Starts R workers, so not on CRAN.
+if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
+    local({
+        fx <- acp_fixture()
+        on.exit(fx$restore(), add = TRUE)
+        dir <- tools::R_user_dir("corteza", "config")
+        dir.create(dir, recursive = TRUE)
+        jsonlite::write_json(list(run_r_mode = "in_process"),
+                             file.path(dir, "config.json"), auto_unbox = TRUE)
+        other <- file.path(fx$root, "other")
+        dir.create(other)
+        run <- function(code) list(tool = "run_r", args = list(code = code))
+        model <- fake_model(list(run("acp_kept <- 42; exists('acp_kept')"),
+                                 list(text = "Made."),
+                                 run("exists('acp_kept')"),
+                                 list(text = "Looked.")))
+        first <- NULL
+        second <- NULL
+        msgs <- with_model(model, acp_run(list(
+            req(1L, "initialize", list(protocolVersion = 1L)),
+            req(2L, "session/new", list(cwd = fx$proj, mcpServers = list())),
+            req(3L, "session/new", list(cwd = other, mcpServers = list()))),
+            function(msg, client) {
+                if (is_answer(2L)(msg)) {
+                    first <<- msg$result$sessionId
+                }
+                if (is_answer(3L)(msg)) {
+                    second <<- msg$result$sessionId
+                    client$write(prompt(4L, first, "Make it."))
+                }
+                if (is_permission(msg)) {
+                    grant(client, msg, "allow_once")
+                }
+                if (is_answer(4L)(msg)) {
+                    client$write(prompt(5L, second, "Is it there?"))
+                }
+                if (is_answer(5L)(msg)) {
+                    client$finish()
+                }
+            }))
+        result_of <- function(sid) {
+            done <- Filter(function(m) {
+                is_update("tool_call_update")(m) &&
+                    identical(m$params$sessionId, sid) &&
+                    identical(m$params$update$status, "completed")
+            }, msgs)
+            done[[1L]]$params$update$content[[1L]]$content$text
+        }
+        expect_true(grepl("TRUE", result_of(first), fixed = TRUE))
+        expect_true(grepl("FALSE", result_of(second), fixed = TRUE))
+        expect_false(exists("acp_kept", envir = globalenv()))
+        # The note, once for each session, after its answer.
+        notes <- at(msgs, function(m) {
+            is_update("agent_message_chunk")(m) &&
+                grepl("run_r runs in a worker", m$params$update$content$text,
+                      fixed = TRUE)
+        })
+        expect_identical(length(notes), 2L)
+        expect_true(notes[[1L]] > at(msgs, is_answer(2L)))
+        expect_identical(msgs[[notes[[1L]]]]$params$sessionId, first)
+    })
+}
+
 # ---- The command, over pipes ------------------------------------------------
 # The agent in a process of its own, as a client starts it: protocol on
 # standard output and nothing else there, though the model's code prints

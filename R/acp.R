@@ -78,6 +78,8 @@
     st$answers <- list()
     # Closes of the running session, answered after its prompt is.
     st$after <- list()
+    # What a session's opening has to say (.acp_notes_send()).
+    st$notes <- list()
     st
 }
 
@@ -131,6 +133,7 @@
     if (!is.null(reply)) {
         .acp_send(st$ch, reply)
     }
+    .acp_notes_send(st)
     if (identical(msg$method, "session/prompt")) {
         .acp_after_prompt(st)
     }

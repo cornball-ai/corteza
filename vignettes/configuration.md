@@ -1342,6 +1342,21 @@ corteza acp
 corteza acp --provider openai --tools core,git
 ```
 
+A client needs the command's full path: the one `install_cli()` reports ("Installed corteza to: ...") and returns. The command reads `~/.Renviron` as the terminal does, so the provider's key need not be in the editor's environment. In Zed, for example, a custom agent goes under `agent_servers` in `settings.json` (Zed's page "External Agents", section "Custom Agents"):
+
+```json
+{
+  "agent_servers": {
+    "corteza": {
+      "type": "custom",
+      "command": "/home/you/.local/share/R/corteza/bin/corteza",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
 What a client gets:
 
 - `session/new`, `session/resume`, `session/list` and `session/close`. ACP sessions are kept with the terminal's (Session records below), so `corteza --resume` takes up a conversation a client started in that directory, and a client can resume a terminal's. A resume sends the model the conversation's history and the client none of it.
@@ -1352,7 +1367,7 @@ What a client gets:
 
 corteza connects to no MCP server a client names. A `session/new` or `session/resume` that lists one is refused, naming each server by its `name` alone; send an empty `mcpServers` list.
 
-One process can hold several sessions, and they share no R objects: each session's `run_r` runs in a worker process of its own, whatever `run_r_mode` says. One prompt runs at a time. A prompt for another session waits until the running one ends, and a second prompt for the running session is refused. The requests that need no turn (opening, listing, closing, setting a mode) are answered while a prompt runs, each time the turn checks for a cancel. A close of the running session cancels its prompt and is answered after it.
+One process can hold several sessions, and they share no R objects: each session's `run_r` runs in a worker process of its own, whatever `run_r_mode` says, and a session whose config asks for `"in_process"` is told so when it opens. What corteza's own process holds is still shared: the options it sets and the packages a skill loads in it, which trusted R code can change for every session. One prompt runs at a time. A prompt for another session waits until the running one ends, and a second prompt for the running session is refused. The requests that need no turn (opening, listing, closing, setting a mode) are answered while a prompt runs, each time the turn checks for a cancel. A close of the running session cancels its prompt and is answered after it.
 
 Nothing corteza or a tool prints reaches the protocol: while the command runs, R's standard output goes to standard error.
 

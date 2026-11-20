@@ -134,6 +134,18 @@
                              model = route$model, tools = st$tools,
                              history = history)
     session$config$run_r_mode <- "worker"
+    # A config that asked for run_r in corteza's own process is told
+    # why not, in the session's first update (.acp_notes_send()). The
+    # files are read as load_config() reads them, the project's only
+    # where it is trusted; the default fills in nothing here.
+    asked <- project_config(cwd)$run_r_mode %||%
+        load_config_file(corteza_config_path("config.json"))$run_r_mode
+    if (identical(asked, "in_process")) {
+        session$acp_notes <- paste("corteza: run_r runs in a worker process",
+                                   "of this session's own, not in corteza's",
+                                   "process as your config's run_r_mode asks,",
+                                   "so sessions share no R objects.")
+    }
     session$handle_store <- new.env(parent = emptyenv())
     # The approval mode the config chose, which the client may come back
     # to (.acp_mode_ids()).
@@ -156,7 +168,21 @@
     add_observer(session, function(event) .acp_on_tool(st, sid, event))
     review_apply(session)
     st$sessions[[sid]] <- session
+    for (text in session$acp_notes) {
+        st$notes <- c(st$notes, list(list(sid = sid, text = text)))
+    }
     invisible(session)
+}
+
+# What a session's opening has to say, sent once its answer has gone,
+# since the client learns the session's id from the answer.
+.acp_notes_send <- function(st) {
+    notes <- st$notes
+    st$notes <- list()
+    for (note in notes) {
+        .acp_update(st, note$sid, .acp_text_chunk(note$text))
+    }
+    invisible(NULL)
 }
 
 # The modes a session offers: "ask" and "review", and the config's own
