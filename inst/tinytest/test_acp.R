@@ -588,6 +588,51 @@ local({
                     at(msgs, is_answer(3L)))
 })
 
+# During a long command: a list is answered while it runs; a cancel ends
+# it, its call fails saying so, and the turn ends `cancelled` without
+# asking the model again. Starts processes, so not on CRAN.
+if (.Platform$OS.type != "windows" &&
+    (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true"))) {
+    local({
+        fx <- acp_fixture()
+        on.exit(fx$restore(), add = TRUE)
+        model <- fake_model(list(list(tool = "bash", args = list(
+            command = "sleep 30", timeout = 60L)), list(text = "Never.")))
+        sid <- NULL
+        began <- NULL
+        msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+            if (is_answer(2L)(msg)) {
+                sid <<- msg$result$sessionId
+                client$write(prompt(3L, sid, "Wait."))
+            }
+            if (is_permission(msg)) {
+                grant(client, msg, "allow_once")
+            }
+            if (is_update("tool_call_update")(msg) &&
+                identical(msg$params$update$status, "in_progress")) {
+                began <<- Sys.time()
+                client$write(req(4L, "session/list", list(cwd = fx$proj)))
+            }
+            if (is_answer(4L)(msg)) {
+                client$write(ns$.acp_notification("session/cancel",
+                                                  list(sessionId = sid)))
+            }
+            if (is_answer(3L)(msg)) {
+                client$finish()
+            }
+        }))
+        expect_true(as.numeric(difftime(Sys.time(), began, units = "secs")) < 10)
+        expect_true(at(msgs, is_answer(4L)) < at(msgs, is_answer(3L)))
+        expect_identical(answer(msgs, 3L)$result$stopReason, "cancelled")
+        expect_identical(model$i, 1L)
+        ended <- Filter(is_update("tool_call_update"), msgs)
+        ended <- ended[[length(ended)]]$params$update
+        expect_identical(ended$status, "failed")
+        expect_true(grepl("cancelled", ended$content[[1L]]$content$text,
+                          fixed = TRUE))
+    })
+}
+
 # A stop asked for leaves the conversation as it was: no summary is
 # asked for, and one asked for before the stop came is not installed.
 # The stop is read when the request returns, a failed one too: that read

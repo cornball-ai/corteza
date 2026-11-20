@@ -571,11 +571,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             # directory. Falls back to getwd() when the session
             # doesn't carry one.
             # The handler that runs is the session's (R/tool-table.R),
-            # the one whose definition was offered.
-            call_skill(name, as.list(args),
-                       ctx = list(session = session, cwd = session$cwd %||% getwd()),
-                       timeout = session$config$skill_timeout %||% 30L,
-                       dry_run = session_dry_run(), table = session$tool_table)
+            # the one whose definition was offered. A tool that waits
+            # long asks this session whether to stop (R/tool-stop.R).
+            .tool_stop_with(session, call_skill(name, as.list(args),
+                    ctx = list(session = session,
+                               cwd = session$cwd %||% getwd()),
+                    timeout = session$config$skill_timeout %||% 30L,
+                    dry_run = session_dry_run(), table = session$tool_table))
         }
     }
     # A custom executor may need the provider's read-only call metadata to
