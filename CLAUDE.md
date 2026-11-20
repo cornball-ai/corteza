@@ -395,6 +395,22 @@ no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
 has no journal, so bare sessions in tests see no change.
 `journal_enabled: false` turns it off.
 
+## Tool calls left open (`R/turn-repair.R`)
+
+llm.api mirrors a tool call into `session$history` before the tool
+runs, so an error that leaves a turn mid-call leaves the call without
+a result, and the provider refuses every later request made from that
+history (Anthropic: 400, "tool_use ids were found without tool_result
+blocks"). `turn()` closes such calls twice: in its error handler,
+before the error goes on, and at the start of each turn, before
+anything reads the history, for a process stopped mid-call or a
+history from before the fix. `.history_close_open_calls()` puts a
+placeholder result right after the message that made each call, where
+the provider looks for it (rooms and jobs add messages between turns,
+so that is not always the end), and `.turn_close_open_calls()`
+installs the result through `history_replace()`. A turn that fails
+before anything is mirrored leaves the history alone.
+
 ## Retention (`R/retention.R`)
 
 Once a day, from `run_repl_loop()` and `bot_run_step()`,
