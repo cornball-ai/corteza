@@ -18,7 +18,8 @@ matrix_configure(
   display_name = NULL,
   fallback = NULL,
   cwd = NULL,
-  operators = NULL
+  operators = NULL,
+  project_roots = NULL
 )
 }
 \arguments{
@@ -95,12 +96,12 @@ or \code{openai} is labeled as billable usage prominently in the reply.
 \code{reasoning_effort}, when configured, applies to every candidate.
 NULL (default) means a limit error is reported like any other error.}
 
-\item{cwd}{Character or NULL. The directory a room works in when its
-topic names none. It must exist: corteza does not create it. NULL
-(default) saves none, and such a room then works in a scratch folder
-under the session's temporary directory, which is deleted when the
-process ends. Up to 0.8.0 the default was \code{~/<bot name>},
-created on first use.}
+\item{cwd}{Character or NULL. The directory a room works in when no
+operator has bound it to one with \code{/cd}. It must exist: corteza
+does not create it. NULL (default) saves none, and such a room then
+works in a scratch folder under the session's temporary directory,
+which is deleted when the process ends. Up to 0.8.0 the default was
+\code{~/<bot name>}, created on first use.}
 
 \item{operators}{Character vector or NULL. The people the bot answers
 to, each a full Matrix id such as \code{"@you:example.org"}. The bot
@@ -110,6 +111,13 @@ approvals from them. NULL (default) saves none. A bot with no
 operators accepts no invites: it works in the room it was configured
 with and in rooms it has already joined. Up to 0.8.0 it accepted
 every invite.}
+
+\item{project_roots}{Character vector or NULL. The directories inside
+which an operator may bind a room with \code{/cd} and list with
+\code{/ls}. Each must exist: corteza does not create them. NULL
+(default) saves none, and \code{/cd <dir>} is then refused. Up to
+0.8.0 a room worked in a directory its topic named; a topic names
+none now.}
 }
 \value{
 See \code{\link{bot_configure}}.

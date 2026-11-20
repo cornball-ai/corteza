@@ -22,24 +22,43 @@ bot_room_state_path <- function(cfg, room_id) {
               paste0(bot_session_id(cfg, room_id), ".json"))
 }
 
-# The room's state, or an empty list when there is none. A file that
-# cannot be read is set aside, named for when, rather than replaced at
-# the next write: it holds every thread's record.
+# The room's state, or an empty list when there is none.
+#
+# A file that is there and cannot be read is copied aside, named for
+# when, since it holds every thread's record. In its place goes a state
+# whose binding is unknown, which holds the room to no directory until
+# an operator runs /cd (bot_room_binding()). Read as no binding at all,
+# it would give the bot's default directory to a room an operator had
+# bound to none or to another directory. The marker replaces the file
+# in one rename, so until it is written the unreadable file stays, and
+# the next read finds it the same way.
 bot_room_state_read <- function(cfg, room_id) {
     path <- bot_room_state_path(cfg, room_id)
+    if (!file.exists(path)) {
+        return(list())
+    }
     state <- tryCatch(job_read_file(path), error = function(e) e)
-    if (is.null(state)) {
-        return(list())
+    if (is.list(state) && !inherits(state, "error")) {
+        return(state)
     }
-    if (inherits(state, "error") || !is.list(state)) {
-        aside <- paste0(path, ".unreadable-",
-                        format(Sys.time(), "%Y%m%dT%H%M%S"))
-        file.rename(path, aside)
-        message("bot: set aside a room state file it could not read: ", aside)
-        log_event("room_state_unreadable", level = "warn", path = aside)
-        return(list())
+    marker <- list(binding = list(state = "unknown"))
+    aside <- paste0(path, ".unreadable-", format(Sys.time(), "%Y%m%dT%H%M%S"))
+    if (!file.exists(aside) && !isTRUE(file.copy(path, aside))) {
+        message("bot: could not copy aside a room state file it could not read: ",
+                path, "; the room reads and talks only")
+        log_event("room_state_unreadable", level = "warn", path = path,
+                  replaced = FALSE)
+        return(marker)
     }
-    state
+    replaced <- tryCatch({
+        bot_room_state_write(cfg, room_id, marker)
+        TRUE
+    }, error = function(e) FALSE)
+    message("bot: set aside a room state file it could not read: ", aside,
+            "; the room reads and talks only until an operator runs /cd")
+    log_event("room_state_unreadable", level = "warn", path = aside,
+              replaced = replaced)
+    marker
 }
 
 bot_room_state_write <- function(cfg, room_id, state) {
@@ -146,11 +165,13 @@ bot_conversation_acked <- function(cfg, key, room_id, record, ack) {
 }
 
 # The conversation a new session for `key` takes: the one on record, so
-# a restart goes on with it, or a new one, recorded now.
+# a restart goes on with it, or a new one, recorded now. A new one in a
+# room that was moved (/cd, R/room-binding.R) starts at the move, so a
+# thread first seen after it is seeded with nothing from before.
 bot_conversation_open <- function(cfg, key, room_id) {
     record <- bot_conversation_get(cfg, key, room_id)
     if (is.null(record)) {
-        record <- bot_conversation_new()
+        record <- bot_conversation_new(bot_room_state_read(cfg, room_id)$moved)
         bot_conversation_save(cfg, key, room_id, record)
         # Made now, so its record for the monitor begins now too
         # (bot_get_or_create_session()). Not saved: it describes this

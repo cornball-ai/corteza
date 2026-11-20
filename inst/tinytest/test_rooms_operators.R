@@ -38,11 +38,12 @@ local({
         "operators must be full Matrix IDs")
 
     # After `cwd`, which is after everything 0.8.0 had: a call written
-    # by position against 0.8.0 still matches.
+    # by position against 0.8.0 still matches. Only `project_roots`
+    # comes after it (test_room_binding.R).
     for (name in c("bot_configure", "matrix_configure")) {
         f <- formals(getExportedValue("corteza", name))
-        expect_identical(utils::tail(names(f), 2L), c("cwd", "operators"),
-                         info = name)
+        expect_identical(utils::tail(names(f), 3L),
+                         c("cwd", "operators", "project_roots"), info = name)
         expect_null(f$operators, info = name)
     }
 })

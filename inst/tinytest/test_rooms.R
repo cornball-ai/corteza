@@ -521,38 +521,36 @@ expect_error(
   pattern = "Matrix ID"
 )
 
-# Topic parser.
+# Topic parser. A topic names no directory since 0.8.1 (WP12): the
+# description is what follows a leading path, and the path is read only
+# to tell the room (bot_topic_path()).
 expect_equal(
   corteza:::bot_parse_topic("~/To_Do | todo management"),
-  list(cwd = "~/To_Do", description = "todo management")
+  list(description = "todo management")
 )
+expect_identical(corteza:::bot_topic_path("~/To_Do | todo management"),
+                 "~/To_Do")
 expect_equal(
   corteza:::bot_parse_topic("/tmp/scratch | quick stuff"),
-  list(cwd = "/tmp/scratch", description = "quick stuff")
+  list(description = "quick stuff")
 )
-expect_equal(
-  corteza:::bot_parse_topic("./relative | works"),
-  list(cwd = "./relative", description = "works")
-)
+expect_identical(corteza:::bot_topic_path("./relative | works"), "./relative")
 # Description-only topic (no leading path).
 expect_equal(
   corteza:::bot_parse_topic("Discussing the wiki contents"),
-  list(cwd = NULL, description = "Discussing the wiki contents")
+  list(description = "Discussing the wiki contents")
 )
+expect_null(corteza:::bot_topic_path("Discussing the wiki contents"))
 # Pipe without leading path — treated as description containing a pipe.
 expect_equal(
   corteza:::bot_parse_topic("a | b | c"),
-  list(cwd = NULL, description = "a | b | c")
+  list(description = "a | b | c")
 )
+expect_null(corteza:::bot_topic_path("a | b | c"))
 # Empty / NULL topic.
-expect_equal(
-  corteza:::bot_parse_topic(NULL),
-  list(cwd = NULL, description = NULL)
-)
-expect_equal(
-  corteza:::bot_parse_topic("   "),
-  list(cwd = NULL, description = NULL)
-)
+expect_equal(corteza:::bot_parse_topic(NULL), list(description = NULL))
+expect_equal(corteza:::bot_parse_topic("   "), list(description = NULL))
+expect_null(corteza:::bot_topic_path(NULL))
 
 if (at_home() && nzchar(Sys.getenv("MX_TEST_SERVER"))) {
   # Live round-trip would configure, send, and poll here. Skipped in

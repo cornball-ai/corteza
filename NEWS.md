@@ -1,3 +1,27 @@
+# corteza 0.8.0.31
+
+- A bot's room works where an operator binds it with `/cd`, inside the
+  bot's project roots, and no longer in a directory its topic names.
+  Anyone allowed to change a topic could change that directory, and with
+  it the checkout where the supervisor lets writes through.
+  `project_roots`, a new last argument of `bot_configure()`, `bot_run()`,
+  `bot_run_init()` and `bot_poll()` and a key of the bot config, names
+  the roots. Each must exist; corteza creates none.
+- An operator's `/cd` in a room says where the room works, and binds it:
+  `/cd <dir>` to an existing directory inside a root, `/cd none` to no
+  directory, `/cd default` back to the bot's `cwd`. `/ls` lists the
+  roots, and `/ls <dir>` the directories in one. A move refuses while a
+  job of the room is open, files each conversation as `/clear` does, and
+  starts each conversation again in the new directory, with a new doer.
+- A room's directory is its binding, else the bot's `cwd`, else the
+  scratch folder. A binding to a directory that is gone, or outside every
+  root, gives the scratch folder. A room whose topic starts with a path
+  works in the bot's `cwd` until an operator binds it, and is told so
+  once.
+- A room state file that is there and cannot be read is set aside, and
+  the room works in the scratch folder until an operator's `/cd` binds it
+  again; it does not fall back to the bot's `cwd`.
+
 # corteza 0.8.0.30
 
 - A bot's room answers through a talker by default: a session with

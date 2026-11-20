@@ -95,7 +95,9 @@ takes <- list(
         !is.null(p) && is.null(p$error)
     },
     effort = function(b) !is.null(ns$.effort_parse_command(b)),
-    `context-edit` = function(b) !is.null(ns$.context_edit_parse_command(b)))
+    `context-edit` = function(b) !is.null(ns$.context_edit_parse_command(b)),
+    cd = function(b) !is.null(ns$bot_parse_cd_command(b)),
+    ls = function(b) !is.null(ns$bot_parse_ls_command(b)))
 expect_identical(sort(names(takes)), sort(tbl$name[tbl$room]))
 # The list above is by hand, so it is held to the loop: each command
 # parser bot_poll() calls is one a row of it calls, and none goes

@@ -96,8 +96,8 @@ local({
     expect_identical(d$rule, "unbound_room")
     expect_true(grepl("this room has no directory, so it only reads and talks: write_file would write files",
                       d$reason, fixed = TRUE))
-    expect_true(grepl("takes its directory from its topic", d$reason, fixed = TRUE))
-    expect_true(grepl("or from the bot's cwd", d$reason, fixed = TRUE))
+    expect_true(grepl("gives a room its directory with /cd", d$reason, fixed = TRUE))
+    expect_true(grepl("sets a default for every room (`cwd`)", d$reason, fixed = TRUE))
     expect_true(grepl("bash would run commands", room("bash", list(command = "ls"))$reason,
                       fixed = TRUE))
     expect_true(grepl("spawn_subagent would start work", room("spawn_subagent")$reason,
