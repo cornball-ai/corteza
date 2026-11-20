@@ -7,8 +7,10 @@
 # control or continue. A tool that declares none is "unknown".
 #
 # Order (approval-engine note, WP18):
-#   1. The session's mode. Plan mode refuses write, exec, continue and
-#      unknown. Nothing after this lifts a mode's deny.
+#   1. The session's mode. A room with no directory (WP10) refuses all
+#      but reads and the control tools it names; plan mode refuses
+#      write, exec, continue and unknown. Nothing after this lifts a
+#      mode's deny.
 #   2. The credential rule. A path under a credential store asks, and the
 #      verdict carries rule = "credential", so no saved "always" answers
 #      it. Neither the user's policy function nor the config can lift it.
@@ -27,8 +29,9 @@
 #   urls      - character, URLs touched (resolved from args if NULL)
 #   channel   - character, one of "cli", "console", "matrix"
 #   context   - list, optional; context$recent_classes carries sticky
-#               classifications from earlier calls in the same turn, and
-#               context$plan_mode the session's mode
+#               classifications from earlier calls in the same turn,
+#               context$plan_mode the session's mode, and
+#               context$unbound whether it is a room with no directory
 #   class     - character, optional: the tool's class, as the session's
 #               table holds it (turn() sets it, R/tool-table.R). Without
 #               it the class is read from the registry.
@@ -244,13 +247,52 @@ classify_data <- function(call, context = NULL) {
 
 # The verdict each mode gives each class. A mode other than the default
 # only refuses: a call it lets through is decided as in the default, by
-# the rules after it.
+# the rules after it. A room with no directory (`unbound`) refuses the
+# control tools too, but for those .unbound_control names.
 .mode_verdicts <- list(
                        default = c(read = "allow", write = "ask", exec = "ask",
                                    control = "allow", continue = "allow", unknown = "ask"),
                        plan = c(read = "allow", write = "deny", exec = "deny", control = "allow",
-                                continue = "deny", unknown = "deny")
+                                continue = "deny", unknown = "deny"),
+                       unbound = c(read = "allow", write = "deny", exec = "deny",
+                                   control = "deny", continue = "deny", unknown = "deny")
 )
+
+# The control tools a room with no directory may still use. Each acts on
+# the session's own conversation or task list, or stops a job the
+# session may see (job_cancel checks). Not spawn_subagent: its child
+# would not keep the room's limits. Not kill_subagent or bg_kill: their
+# registries belong to the process, and neither checks whose a subagent
+# or a background process is, so either could stop another room's work.
+.unbound_control <- c("task_create", "task_update", "edit_context",
+                      "exit_plan_mode", "job_cancel")
+
+# Run the gate of a room with no directory (WP10). It reads and talks:
+# a read passes, and so does a control tool .unbound_control names.
+# Returns a deny decision for anything else, or NULL. The refusal says
+# how the room gets a directory.
+check_unbound_room <- function(call) {
+    if (!isTRUE(call$context$unbound)) {
+        return(NULL)
+    }
+    tool <- call$tool %||% ""
+    op <- classify_op(tool)
+    if (!identical(.mode_verdicts$unbound[[op]], "deny") ||
+        (identical(op, "control") && tool %in% .unbound_control)) {
+        return(NULL)
+    }
+    why <- switch(op, write = "would write files", exec = "would run commands",
+                  continue = "would run work in a child, a worker or another room",
+                  control = "would start work that does not keep the room's limits",
+                  "has no class, so it may modify state")
+    list(
+         model = "cloud",
+         approval = "deny",
+         reason = sprintf("this room has no directory, so it only reads and talks: %s %s. %s",
+                          tool, why, bot_unbound_how()),
+         rule = "unbound_room"
+    )
+}
 
 # Run the plan-mode gate. Returns a deny decision to short-circuit when
 # the session is in plan mode and the tool's class is one plan mode
@@ -345,8 +387,9 @@ default_policy <- function(call) {
 #' \code{"cloud"} or \code{"local"}; nothing routes on it yet.
 #' \code{approval} is \code{"allow"}, \code{"ask"}, or \code{"deny"}. A
 #' verdict from the credential rule also carries
-#' \code{rule = "credential"}, and one from plan mode
-#' \code{rule = "plan_mode"}.
+#' \code{rule = "credential"}, one from plan mode
+#' \code{rule = "plan_mode"}, and one from a room with no directory
+#' \code{rule = "unbound_room"}.
 #'
 #' Every tool has a class, declared where it is registered:
 #' \code{"read"}, \code{"write"}, \code{"exec"}, \code{"control"} (acts on
@@ -355,8 +398,10 @@ default_policy <- function(call) {
 #' \code{"unknown"}. By default \code{read}, \code{control} and
 #' \code{continue} are allowed, and \code{write}, \code{exec} and
 #' \code{unknown} ask. Plan mode refuses \code{write}, \code{exec},
-#' \code{continue} and \code{unknown}, and nothing lifts that refusal.
-#' A path under a credential store asks next, whatever follows.
+#' \code{continue} and \code{unknown}. A Matrix room with no directory
+#' (\code{context$unbound}) refuses everything but \code{read} and a few
+#' named \code{control} tools. Nothing lifts a mode's refusal. A path
+#' under a credential store asks next, whatever follows.
 #'
 #' When \code{config} is supplied, the user's settings are overlaid on
 #' the table: a \code{permissions} entry replaces the verdict for its
@@ -393,7 +438,12 @@ policy <- function(call, config = NULL) {
     }
 
     # The mode first: a credential prompt answered yes must not perform
-    # what plan mode refuses.
+    # what the mode refuses. A room with no directory before plan mode,
+    # whose refusal it outlasts.
+    unbound <- check_unbound_room(call)
+    if (!is.null(unbound)) {
+        return(unbound)
+    }
     plan <- check_plan_mode(call)
     if (!is.null(plan)) {
         return(plan)

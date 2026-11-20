@@ -202,7 +202,7 @@ Commands:
   /auto [--exec] [goal]  Continue the current task unattended, or start a goal
   /auto status|resume   Inspect or resume the last unattended run
   /max-tokens [N|default]  Show or change the response output budget
-  /quit, /exit   Exit corteza
+  /quit, /exit, /q  Exit corteza
   /status        Alias for /context
   /doctor        Check provider, git, MCP, and context health
   /tools         List available tools
@@ -212,13 +212,15 @@ Commands:
   /permissions   Show tool approval and sandbox settings
   /trust [yes]   Show whether this directory is trusted, or trust it
   /plan [task]   Toggle plan mode (reads only, LLM proposes plan)
-  /clear         Clear conversation (keeps session)
+  /clear, /reset, /new  Clear conversation (keeps session)
   /compact       Summarize conversation to free context
   /flush         Write durable memories from the conversation
+  /refine [list|rollback <id>|promote <id>]  Review the conversation into one-line lessons
   /paste [text]  Multi-line. Collects every line verbatim until /end.
   /copy          Copy the last assistant response to the system clipboard.
   /tasks [clear] Show (or clear) the current task list.
   /jobs [id]     List delegated jobs (talker mode), or show one.
+  /job resume <id>  Continue an incomplete job as a new attempt.
   /cancel <id>   Cancel a delegated job.
   /r <expr>      Eval R locally (skips policy/dryrun); output staged for next prompt.
   ! <cmd>        Run shell locally (skips policy/dryrun); output staged for next prompt.
@@ -248,6 +250,7 @@ Skills:
   /skill install <path|url>   Install a skill
   /skill remove <name>        Remove a skill
   /skill test <path>          Run skill tests
+  /skills ...                 Same as /skill
 
 Tool output:
   /last [N]      Show tool output (1=most recent)

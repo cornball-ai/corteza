@@ -1,3 +1,38 @@
+# corteza 0.8.0.19
+
+- A Matrix room with no directory (its topic names none, and the bot
+  has no `cwd`) reads and talks only. It works in a scratch folder, and
+  until now it could write files there, run commands, start subagents
+  and hand off or take jobs. Writes, commands, work in a child, a
+  worker or another room, and tools with no class are refused before
+  they run, and no later rule, setting or approval lifts the refusal,
+  which says how the room gets a directory. Room listings say "no
+  directory" in place of the scratch folder's path.
+
+# corteza 0.8.0.18
+
+- A compaction's summary ends with the names of the R objects `run_r`
+  made that are still in the session, and the handles still open, so
+  the model does not rebuild what it has. Names only, read with `ls()`,
+  so no object's code runs; at most 30 names. The terminal, `chat()`
+  and a child process list them; a room, whose objects are the bot's,
+  and a session whose `run_r` runs in a worker do not.
+
+# corteza 0.8.0.17
+
+- A room's trust messages go out as Markdown, with what a session left
+  alone as a list: the notice a room gets once, the `/trust` reply and
+  the trust lines of `status`. A client that renders Markdown had run
+  the indented items together. The terminal and `chat()` are unchanged.
+
+# corteza 0.8.0.16
+
+- `/help` lists every command. The terminal's had left out `/q`,
+  `/reset` and `/new` (the same as `/quit` and `/clear`), `/refine`,
+  `/job resume` and `/skills`, and `chat()`'s had left out `/skills`.
+  corteza keeps a table of the commands of each surface, and a test
+  holds both help texts and the dispatchers to it.
+
 # corteza 0.8.0.15
 
 - **Changed default: no package functions are registered as tools
