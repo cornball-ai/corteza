@@ -2,13 +2,14 @@
 #
 # A session may carry `stop_requested`, a function of no arguments that
 # returns TRUE once a stop is asked for. turn() asks it before each
-# model request, before each tool call and, when the turn streams, on
-# each delta. A stop ends the turn with status `cancelled`, its history
-# repaired as after an interrupt (apply_exit_marker()): a call that got
-# no result gets a placeholder and the interrupt marker follows, so the
-# next request is valid. ACP's session/cancel is the first caller
-# (WP26). Ctrl+C at the terminal and remote control's stop keep their
-# own handling (R/interrupt.R, .remote_check_stop()).
+# model request, before each tool call, again just before the call runs
+# (after any wait at the gate or the approval prompt) and, when the turn
+# streams, on each delta. A stop ends the turn with status `cancelled`,
+# its history repaired as after an interrupt (apply_exit_marker()): a
+# call that got no result gets a placeholder and the interrupt marker
+# follows, so the next request is valid. ACP's session/cancel is the
+# first caller (WP26). Ctrl+C at the terminal and remote control's stop
+# keep their own handling (R/interrupt.R, .remote_check_stop()).
 #
 # Not reachable: the wait for a reply before its first delta, and a
 # provider that does not stream. llm.api runs no hook there.

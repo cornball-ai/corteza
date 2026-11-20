@@ -905,6 +905,15 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             }
         }
 
+        # A stop asked for while the call waited for the gate (a review,
+        # the monitor, a person in the room) or at the approval prompt
+        # ends the turn here, before the call runs (R/turn-stop.R).
+        if (.turn_stop_requested(session)) {
+            .audit_safe(.audit_tool_event(session, list(call = call,
+                        outcome = "stopped", success = FALSE)))
+            stop(.turn_stop_condition())
+        }
+
         .fire_observers(session, list(
                                       call = call,
                                       decision = decision,
@@ -1204,13 +1213,15 @@ observer_progress <- function() {
 #' A program that runs turns for someone else can let them stop one. It
 #' sets \code{session$stop_requested} to a function of no arguments that
 #' returns \code{TRUE} once a stop is asked for. The turn asks it before
-#' each request to the model, before each tool call and, when the turn
-#' streams (\code{session$on_delta}), before each piece of the reply goes
-#' out. A stop ends the turn with status \code{cancelled}: a tool call that
-#' got no result is given a placeholder, and the history ends on a note
-#' that the turn was stopped, so the next turn can go on from it. A stop
-#' cannot cut short a request already waiting for its first word, nor the
-#' reply of a provider that does not stream.
+#' each request to the model, before each tool call, again just before the
+#' call runs (a call can wait for an approval or a review in between) and,
+#' when the turn streams (\code{session$on_delta}), before each piece of
+#' the reply goes out. A stop ends the turn with status
+#' \code{cancelled}: a tool call that got no result is given a
+#' placeholder, and the history ends on a note that the turn was stopped,
+#' so the next turn can go on from it. A stop cannot cut short a request
+#' already waiting for its first word, nor the reply of a provider that
+#' does not stream.
 #'
 #' @param prompt Character. User prompt.
 #' @param session A session environment created by \code{\link{new_session}}.

@@ -990,6 +990,7 @@ if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
 
     fresh <- corteza:::bot_reset_session(
         reg, "!c:ex", cfg, "$ack1", "Cleared. Starting a fresh session.",
+        corteza:::bot_conversation_begin(cfg, "!c:ex", "!c:ex", NULL),
         provider = "moonshot", model = "kimi-k2.5")
 
     # It really is a new session, not the old one handed back.
@@ -1013,7 +1014,8 @@ if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
 
     # A send that failed leaves nothing to remember or replay.
     reg2 <- corteza:::bot_new_session_registry()
-    none <- corteza:::bot_reset_session(reg2, "!c:ex", cfg, NULL, "ack")
+    none <- corteza:::bot_reset_session(reg2, "!c:ex", cfg, NULL, "ack",
+                                        corteza:::bot_conversation_new())
     expect_equal(length(none$transcript), 0L)
 })
 

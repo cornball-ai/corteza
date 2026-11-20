@@ -4,7 +4,8 @@
 # thread has no session id on disk, so the bot keeps a record for each:
 # an id, and the event that started it. The record is made with the
 # session (bot_get_or_create_session()), so a restart goes on with the
-# same conversation, and replaced at /clear (bot_reset_session()). The
+# same conversation, and replaced at /clear (bot_conversation_begin(),
+# before the room is answered or the session replaced). The
 # job system reads the id (session_conversation(), R/job-conversation.R),
 # and a restart's backfill seeds nothing from before the starting event
 # (bot_backfill_sessions(), rule 9).
@@ -57,10 +58,11 @@ bot_key_thread <- function(key) {
 }
 
 # A new conversation's record. `start` is the message that began it (a
-# /clear), and `ack` the ids of the bot's answer to it, which belongs to
-# the conversation that ended. A conversation made with a session has
+# /clear). The ids of the bot's answer to it, which belongs to the
+# conversation that ended, are added once it is sent
+# (bot_conversation_acked()). A conversation made with a session has
 # neither: nothing before it is left out.
-bot_conversation_new <- function(start = NULL, ack = NULL) {
+bot_conversation_new <- function(start = NULL) {
     record <- list(id = job_new_id())
     if (!is.null(start$id)) {
         record$since <- as.character(start$id)
@@ -68,11 +70,6 @@ bot_conversation_new <- function(start = NULL, ack = NULL) {
         if (length(at) == 1L && is.finite(at)) {
             record$at <- at
         }
-    }
-    ack <- as.character(ack %||% character())
-    ack <- ack[!is.na(ack) & nzchar(ack)]
-    if (length(ack)) {
-        record$ack <- ack
     }
     record
 }
@@ -118,6 +115,34 @@ bot_conversation_save <- function(cfg, key, room_id, record) {
                   room = room_id, error = conditionMessage(e))
         FALSE
     })
+}
+
+# The conversation a /clear begins (`start`), saved before anything acts
+# on it: a restart opens the conversation the record names, so a /clear
+# whose record could not be written would come undone at the next
+# restart. NULL when it could not be saved, and then the room's
+# conversation goes on.
+bot_conversation_begin <- function(cfg, key, room_id, start) {
+    record <- bot_conversation_new(start)
+    if (!isTRUE(bot_conversation_save(cfg, key, room_id, record))) {
+        return(NULL)
+    }
+    record
+}
+
+# The record with the ids of the bot's answer to the /clear that began
+# it, saved again once the answer is sent, so a restart's backfill leaves
+# the answer out. A save that fails leaves the record without them: the
+# conversation stands, and the answer would only be seeded into it.
+bot_conversation_acked <- function(cfg, key, room_id, record, ack) {
+    ack <- as.character(ack %||% character())
+    ack <- ack[!is.na(ack) & nzchar(ack)]
+    if (!length(ack)) {
+        return(record)
+    }
+    record$ack <- ack
+    bot_conversation_save(cfg, key, room_id, record)
+    record
 }
 
 # The conversation a new session for `key` takes: the one on record, so

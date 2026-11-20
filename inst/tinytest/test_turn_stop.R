@@ -204,6 +204,77 @@ local({
     expect_identical(out$result$session$history, s$history)
 })
 
+# While a call waits, at the approval prompt or at the gate (a review,
+# the monitor, a person in a room): a stop asked for then ends the turn
+# when the wait ends, whatever its answer, and the call does not run
+# (Codex, #284). The audit says it was stopped.
+local({
+    outcomes <- character()
+    real <- ns$.audit_tool_event
+    assignInNamespace(".audit_tool_event", function(session, event) {
+        outcomes <<- c(outcomes, event$outcome)
+        invisible(NULL)
+    }, ns = "corteza")
+    on.exit(assignInNamespace(".audit_tool_event", real, ns = "corteza"),
+            add = TRUE)
+    write <- list(kind = "tool", name = "write_file",
+                  args = list(path = "notes.txt", content = "x"))
+    # The approval prompt: the person says yes after the stop.
+    s <- stoppable()
+    s$config <- list(approval_mode = "ask")
+    flag <- FALSE
+    s$stop_requested <- function() flag
+    asked <- 0L
+    s$approval_cb <- function(call, decision) {
+        asked <<- asked + 1L
+        flag <<- TRUE
+        TRUE
+    }
+    out <- run_turn(s, list(write, list(kind = "reply", deltas = "never")))
+    expect_identical(asked, 1L)
+    expect_identical(out$result$termination$status, "cancelled")
+    expect_identical(out$ran, character())
+    expect_true(complete(s$history))
+    expect_identical(last_text(s), marker)
+    expect_identical(outcomes, c("approval", "stopped"))
+    # The gate: it lets the call through after the stop.
+    outcomes <- character()
+    s <- stoppable()
+    flag <- FALSE
+    s$stop_requested <- function() flag
+    gated <- 0L
+    s$auto_gate <- function(call, decision) {
+        gated <<- gated + 1L
+        flag <<- TRUE
+        list(action = "proceed")
+    }
+    out <- run_turn(s, list(
+        list(kind = "tool", name = "read_file", args = list(path = "notes.txt")),
+        list(kind = "reply", deltas = "never")))
+    expect_identical(gated, 1L)
+    expect_identical(out$result$termination$status, "cancelled")
+    expect_identical(out$ran, character())
+    expect_true(complete(s$history))
+    expect_identical(last_text(s), marker)
+    expect_identical(outcomes, c("gate", "stopped"))
+    # With no stop, each wait's yes runs the call.
+    s <- stoppable()
+    s$config <- list(approval_mode = "ask")
+    s$stop_requested <- function() FALSE
+    s$approval_cb <- function(call, decision) TRUE
+    out <- run_turn(s, list(write, list(kind = "reply", deltas = "Done.")))
+    expect_identical(out$result$termination$status, "done")
+    expect_identical(out$ran, "write_file")
+    s <- stoppable()
+    s$stop_requested <- function() FALSE
+    s$auto_gate <- function(call, decision) list(action = "proceed")
+    out <- run_turn(s, list(
+        list(kind = "tool", name = "read_file", args = list(path = "notes.txt")),
+        list(kind = "reply", deltas = "Done.")))
+    expect_identical(out$result$termination$status, "done")
+    expect_identical(out$ran, "read_file")
+})
+
 # On a streamed delta: nothing after the stop reaches the client, the
 # reply is what was said before it, and the history ends on the marker.
 local({
