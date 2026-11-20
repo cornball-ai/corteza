@@ -300,7 +300,11 @@ write and exec calls only, and never on one the person allowed always
 the transcript (`review_conversation()`), never from
 `session$history`: a compaction leaves its summary there as a user
 message, which would pass for the person's words. Every prompt goes in
-whole, each after the whole reply it answers. Each prompt in the
+whole, each after all the agent said since the prompt before it: the
+reply and a job's result (marked `job`). Every surface writes a line
+after each prompt, an error included, so a prompt with none before the
+next is a reply the transcript lost, and the person decides for the
+rest of the conversation. Each prompt in the
 transcript says how it was sent (`staged`, and `typed` when more went
 with it: staged output, or an `/auto` run's driver text around its
 goal), and the reviewer reads the file with `transcript_load_strict()`,

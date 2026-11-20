@@ -635,16 +635,23 @@ if (.Platform$OS.type != "windows" &&
 
 # A stop asked for leaves the conversation as it was: no summary is
 # asked for, and one asked for before the stop came is not installed.
+# The stop is read when the request returns, a failed one too: that read
+# is where an ACP session takes the client's cancel (.acp_stop()).
 local({
     fx <- acp_fixture()
     on.exit(fx$restore(), add = TRUE)
     stop_now <- FALSE
     asked <- 0L
+    seen <- FALSE
     llm <- asNamespace("llm.api")
     old_chat <- get("chat", envir = llm)
     on.exit(utils::assignInNamespace("chat", old_chat, "llm.api"), add = TRUE)
     utils::assignInNamespace("chat", function(...) {
         asked <<- asked + 1L
+        if (identical(stop_now, "failing")) {
+            stop_now <<- TRUE
+            stop("the summary request failed")
+        }
         if (identical(stop_now, "during")) {
             stop_now <<- TRUE
         }
@@ -656,7 +663,12 @@ local({
     fresh <- function() {
         s <- corteza::new_session(provider = "anthropic",
                                   model_map = list(cloud = "claude-test"))
-        s$stop_requested <- function() isTRUE(stop_now)
+        s$stop_requested <- function() {
+            if (isTRUE(stop_now)) {
+                seen <<- TRUE
+            }
+            isTRUE(stop_now)
+        }
         turns <- c("one", "two", "three")
         s$history <- unlist(lapply(turns, function(t) {
             list(list(role = "user", content = t),
@@ -677,10 +689,22 @@ local({
     expect_identical(s$history, before)
     # Asked while the summary was written: it is not installed.
     stop_now <- "during"
+    seen <- FALSE
     s <- fresh()
     expect_false(isTRUE(compact(s)))
     expect_identical(asked, 1L)
+    expect_true(seen)
     expect_identical(s$history, before)
+    # Asked while a request that failed was made: the stop is read all
+    # the same, and the failure recorded as one.
+    stop_now <- "failing"
+    seen <- FALSE
+    s <- fresh()
+    expect_false(isTRUE(compact(s)))
+    expect_identical(asked, 2L)
+    expect_true(seen)
+    expect_identical(s$history, before)
+    expect_identical(s$last_compaction_failure$reason, "summarizer_error")
     # Not asked: the same conversation compacts.
     stop_now <- FALSE
     s <- fresh()
@@ -1205,6 +1229,67 @@ local({
     expect_true(file.exists(file.path(fx$proj, "b.md")))
     expect_false(file.exists(file.path(fx$proj, "c.md")))
     expect_identical(answer(msgs, 4L)$result$stopReason, "end_turn")
+})
+
+# A reply the transcript lost: the agent asked a question, its write
+# failed, and the person's "Yes." answers what the reviewer would not
+# see. The reviewer is not asked; the person is, and told why.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    question <- "Before writing, shall I show you a draft?"
+    names <- c("transcript_append", "review_ask")
+    old <- mget(names, envir = ns)
+    on.exit(for (n in names) utils::assignInNamespace(n, old[[n]], "corteza"),
+            add = TRUE)
+    utils::assignInNamespace("transcript_append", function(session, role,
+                                                           content, ...) {
+        if (identical(role, "assistant") && identical(content, question)) {
+            stop("the disk is full")
+        }
+        old$transcript_append(session, role, content, ...)
+    }, "corteza")
+    reviews <- 0L
+    utils::assignInNamespace("review_ask", function(session, q) {
+        reviews <<- reviews + 1L
+        list(verdict = "approve", reason = "the person said yes")
+    }, "corteza")
+    target <- file.path(fx$proj, "notes.txt")
+    model <- fake_model(list(list(text = question),
+                             list(tool = "write_file",
+                                  args = list(path = target, content = "x")),
+                             list(text = "Done.")))
+    sid <- NULL
+    msgs <- NULL
+    said <- utils::capture.output(
+        msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+            if (is_answer(2L)(msg)) {
+                sid <<- msg$result$sessionId
+                client$write(req(3L, "session/set_mode",
+                                 list(sessionId = sid, modeId = "review")))
+            }
+            if (is_answer(3L)(msg)) {
+                client$write(prompt(4L, sid, "Write notes.txt once I confirm."))
+            }
+            if (is_answer(4L)(msg)) {
+                client$write(prompt(5L, sid, "Yes."))
+            }
+            if (is_permission(msg)) {
+                grant(client, msg, "reject_once")
+            }
+            if (is_answer(5L)(msg)) {
+                client$finish()
+            }
+        })), type = "message")
+    expect_true(any(grepl("the disk is full", said, fixed = TRUE)))
+    expect_identical(answer(msgs, 4L)$result$stopReason, "end_turn")
+    expect_identical(reviews, 0L)
+    asks <- Filter(is_permission, msgs)
+    expect_identical(length(asks), 1L)
+    expect_true(grepl("missing from the transcript",
+                      asks[[1L]]$params$toolCall$title, fixed = TRUE))
+    expect_false(file.exists(target))
+    expect_false(is.null(answer(msgs, 5L)$result))
 })
 
 # A cancel ends the wait on the reviewer, and withdraws the request

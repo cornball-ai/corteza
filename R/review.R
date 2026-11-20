@@ -209,8 +209,9 @@ review_question <- function(session, call, decision, notes, conversation) {
 
 # The conversation as the reviewer reads it, from the session's
 # transcript (R/session.R), a line each, oldest first: every prompt of
-# the person's, whole, as "Person: ...", and before each the whole reply
-# it follows, as "Worker: ...", so that a "yes" comes with what it
+# the person's, whole, as "Person: ...", and before each, whole, what
+# the agent said since the prompt before it, as "Worker: ...": its reply
+# and a job's result that came after. So a "yes" comes with what it
 # agreed to.
 #
 # The transcript is appended to and never rewritten. A compaction or a
@@ -229,8 +230,9 @@ review_question <- function(session, call, decision, notes, conversation) {
 # call, and is NULL when it can. It cannot when the conversation cannot
 # be read whole: no transcript, a line or message it cannot read, a
 # prompt that does not say how it was sent (every one written before
-# 0.8.1), or more than `budget` characters. Nothing is left out to make
-# it fit.
+# 0.8.1), a prompt with no reply before the next (a write that failed,
+# or a process that stopped mid-turn), or more than `budget` characters.
+# Nothing is left out to make it fit.
 review_conversation <- function(session_id, budget = 100000L) {
     unread <- function(why) list(lines = character(), why = why)
     record <- NULL
@@ -251,7 +253,11 @@ review_conversation <- function(session_id, budget = 100000L) {
                     if (record$bad == 1L) "line" else "lines")))
     }
     lines <- character()
-    reply <- ""
+    # What the agent said since the last prompt, and whether it has
+    # answered that prompt: a job's result (`job`) and a compaction's
+    # marker are not the reply.
+    since <- character()
+    open <- FALSE
     runs <- character()
     for (e in record$entries) {
         said <- review_message_text(e)
@@ -260,13 +266,28 @@ review_conversation <- function(session_id, budget = 100000L) {
         }
         if (identical(e$role, "assistant")) {
             if (!identical(e$model, "compaction")) {
-                reply <- said
+                since <- c(since, said)
+                if (is.null(e$job)) {
+                    open <- FALSE
+                }
             }
             next
         }
         if (!identical(e$role, "user")) {
             return(unread("the transcript holds a message from neither you nor the agent"))
         }
+        # Every prompt is answered before the next, an error or a stop
+        # included, so a prompt with no answer before the next one is a
+        # reply the transcript lost: the person may have answered what
+        # the reviewer would not see. Until the conversation ends, the
+        # person decides. The last prompt is the one being answered.
+        if (open) {
+            return(unread(paste("the agent's reply to an earlier message is",
+                                "missing from the transcript")))
+        }
+        open <- TRUE
+        reply <- since
+        since <- character()
         typed <- e$typed
         typed_ok <- isTRUE(e$staged) && is.character(typed) &&
         length(typed) == 1L && !is.na(typed)
@@ -290,11 +311,10 @@ review_conversation <- function(session_id, budget = 100000L) {
         if (!nzchar(said)) {
             next
         }
-        if (nzchar(trimws(reply))) {
+        for (r in reply[nzchar(trimws(reply))]) {
             lines <- c(lines, paste("Worker:",
-                                    .sanitize_inline(reply, max_chars = budget)))
+                                    .sanitize_inline(r, max_chars = budget)))
         }
-        reply <- ""
         lines <- c(lines, paste("Person:", said))
     }
     if (!length(lines)) {
