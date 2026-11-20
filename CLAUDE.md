@@ -270,17 +270,26 @@ history, written by the idle doer, copied from the old checkpoint
 by `job_pump()` once it settles (`.job_starts`). A job in flight
 finishes under the conversation that asked for it, and the terminal
 sends its result to that conversation's transcript, not to the new
-talker's history.
+talker's history. A job that conversation queued and had not started
+does the same: just before the conversation ends, the surface calls
+`job_conversation_hold()`, which keeps the spec and the authority the
+conversation gives each such job (`session$.job_held`, moved with the
+jobs by `job_state_move()`), and `job_dispatch()` starts it under them.
+A job from an ended conversation with nothing held does not run.
 
 A room or a thread keeps its record in the bot's room-state file
 (`R/room-conversation.R`, `<state>/rooms/`, one file per room and bot):
 an id, the `/clear` that started the conversation (`since`, `at`) and
 the bot's answer to it (`ack`). `bot_get_or_create_session()` takes the
 record, or makes one, so a restart goes on with the conversation. The
-`/clear` command hands the old session to `bot_reset_session()`, which
-makes the new record, clears the old context, moves the jobs and worker
-to the replacement (the authority cache stays behind, which freezes an
-old job's record) and calls `job_conversation_clear()`. A room keeps
+`/clear` command saves the new record (`bot_conversation_begin()`)
+before it answers or discards anything; one it cannot save clears
+nothing, and the room is told. The answer's ids are added once it is
+sent (`bot_conversation_acked()`). Then `bot_reset_session()` takes the
+record and the old session: it holds the old conversation's queued
+jobs, clears the old context, moves the jobs and worker to the
+replacement (the authority cache stays behind, which freezes an old
+job's record) and calls `job_conversation_clear()`. A room keeps
 one checkpoint for each session key, so its clear writes none. A result
 after a clear is posted marked as asked before it and goes into the new
 history, since a restart seeds the timeline from there. The backfill

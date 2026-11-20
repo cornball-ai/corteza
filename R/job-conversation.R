@@ -7,7 +7,8 @@
 # process: the R objects stay, the history starts empty, and the prompt
 # and tools are those of a session built now (.job_worker_child_run()).
 # A job in flight finishes where it started, under the conversation that
-# asked for it.
+# asked for it, and a job that conversation queued runs under what it
+# allowed as it ended (job_conversation_hold()).
 #
 # Where a surface keeps a checkpoint for each conversation (the
 # terminal, by `repl:<id>`), the new conversation gets a starting
@@ -24,6 +25,46 @@
 # NULL where a surface has none, and then no worker is rebuilt.
 session_conversation <- function(session) {
     session$conversation_id %||% session$sessionId
+}
+
+# A conversation that ends with jobs it asked for still queued keeps
+# them, as it keeps a job in flight (rule 4): each is held with the spec
+# and the authority the conversation gives it now, and runs under them
+# when its turn comes, whichever conversation's pump starts it
+# (job_dispatch()). A surface calls this just before a conversation
+# ends, while the session still holds its settings and ids: the
+# terminal's /clear, and a room's reset before the replacement takes
+# the jobs. Returns how many jobs it held.
+job_conversation_hold <- function(session) {
+    if (!is.environment(session)) {
+        return(invisible(0L))
+    }
+    conversation <- session_conversation(session)
+    queued <- job_list(status = "queued",
+                       origin_key = job_worker_key(session),
+                       owner = job_worker_owner(session))
+    queued <- Filter(function(j) {
+        !j$backend %in% c("remote", "consultation")
+    }, queued)
+    ids <- vapply(queued, function(j) j$id, character(1))
+    held <- session$.job_held %||% list()
+    # A held job that is no longer queued (started, or cancelled) has
+    # nothing left to hold.
+    held <- held[intersect(names(held), ids)]
+    n <- 0L
+    for (j in queued) {
+        if (is.null(conversation) ||
+            !identical(j$origin$conversation, conversation) ||
+            !is.null(held[[j$id]])) {
+            next
+        }
+        held[[j$id]] <- list(conversation = conversation,
+                             spec = job_worker_spec(session, j$role),
+                             authority = job_authority_now(session))
+        n <- n + 1L
+    }
+    session$.job_held <- held
+    invisible(n)
 }
 
 # The session is now in `conversation`. `checkpoint_key` is the

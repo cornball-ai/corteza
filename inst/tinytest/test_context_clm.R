@@ -412,7 +412,8 @@ local({
             expect_true(grepl("New main-timeline message.", rendered(main), fixed = TRUE))
             expect_true(grepl("Earlier topic, original words.", rendered(thread), fixed = TRUE))
             expect_false(grepl("Current request", rendered(thread), fixed = TRUE))
-            cleared <- f("bot_reset_session")(restarted, room, cfg, "$clear", "Cleared.", system = "Pinned")
+            cleared <- f("bot_reset_session")(restarted, room, cfg, "$clear", "Cleared.",
+                                              f("bot_conversation_new")(), system = "Pinned")
             expect_equal(length(cleared$history), 0L)
             expect_true("$clear" %in% cleared$seen_event_ids)
 
