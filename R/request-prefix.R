@@ -41,11 +41,14 @@
          send_room_file = is.function(session$send_room_file))
 }
 
-# Can this session be in plan mode? The terminal and chat() turn it on
-# with /plan; a subagent takes its parent's at spawn. A room never is,
-# and a job's worker may not leave it (`plan_mode_locked`), so neither
-# is offered exit_plan_mode. Once a session has been in plan mode it
-# stays offered, so the list does not change when plan mode ends.
+# Can this session be in plan mode? The terminal and chat(), with their
+# whole tool set, turn it on with /plan; a subagent takes its parent's
+# at spawn. A room never is, nor is a monitor, which reads with a tool
+# list of its own, and a job's worker may not leave it
+# (`plan_mode_locked`): none is offered exit_plan_mode. Once a session
+# has been in plan mode it stays offered, so the list does not change
+# when plan mode ends; one with a narrowed list that turns plan mode on
+# is offered it from then, a reset the log records.
 .prefix_plan_capable <- function(session) {
     if (isTRUE(session$plan_mode_locked)) {
         return(FALSE)
@@ -54,7 +57,8 @@
         session$.plan_capable <- TRUE
     }
     isTRUE(session$.plan_capable) ||
-    (session$channel %||% "") %in% c("cli", "console")
+    ((session$channel %||% "") %in% c("cli", "console") &&
+        is.null(session$tools_filter))
 }
 
 # The session's tools as its table gives them, the availability tests

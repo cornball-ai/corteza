@@ -351,6 +351,17 @@ local({
                               model_map = list(cloud = "fixture"))
     w$plan_mode_locked <- TRUE
     expect_false("exit_plan_mode" %in% names_of(ns$session_request_prefix(w)))
+    # A console session with a list of its own, as a monitor has, is not
+    # offered it either, until it is in plan mode; then it keeps it.
+    m <- corteza::new_session(channel = "console", provider = "anthropic",
+                              model_map = list(cloud = "fixture"),
+                              tools_filter = c("read_file", "grep_files"))
+    expect_true(setequal(names_of(ns$session_request_prefix(m)),
+                         c("read_file", "grep_files")))
+    m$plan_mode <- TRUE
+    expect_true("exit_plan_mode" %in% names_of(ns$session_request_prefix(m)))
+    m$plan_mode <- FALSE
+    expect_true("exit_plan_mode" %in% names_of(ns$session_request_prefix(m)))
     # A session that starts in plan mode (a subagent takes its parent's)
     # is offered it on any channel, and keeps it when plan mode ends.
     sub <- corteza::new_session(channel = "matrix", provider = "anthropic",
@@ -385,7 +396,12 @@ local({
     ctx$config <- s$config
     ctx$config_set <- "approval_mode"
     s$.prefix_seen <- list(plan_mode = TRUE, auto = FALSE, tasks = list())
+    composed <- ns$session_request_prefix(s)
+    expect_false(is.null(s$.prefix_base))
     ns$.repl_session_rebuild(ctx)
+    expect_null(s$.prefix_base)
+    expect_null(s$.request_prefix)
+    expect_false(identical(ns$session_request_prefix(s)$system, composed$system))
     expect_true(isTRUE(s$project_trusted))
     expect_true(grepl("MARK-PROJECT-INSTRUCTIONS", s$system, fixed = TRUE))
     expect_false(identical(s$tool_table, old_table))

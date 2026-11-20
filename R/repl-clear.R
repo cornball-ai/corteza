@@ -119,6 +119,9 @@
         }
         review_apply(s)
     }
+    # Composed again at the next turn, availability tested again.
+    s$.prefix_base <- NULL
+    s$.request_prefix <- NULL
     s$.prefix_seen <- NULL
     invisible(s)
 }
