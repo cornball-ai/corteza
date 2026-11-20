@@ -1179,6 +1179,9 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             cat(sprintf("%sAuto-compacted (context was %.0f%%).%s\n",
                         ctx$palette$dim, pct, ctx$palette$reset))
         }
+        # A job the turn handed off: stay with it, printing as it goes,
+        # until it ends or Ctrl+C (R/repl-jobs.R).
+        .repl_attach_jobs(ctx)
     }
 
     invisible(NULL)

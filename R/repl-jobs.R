@@ -79,6 +79,84 @@
     invisible(length(events))
 }
 
+# Is a job of this session's open: running in its worker, or waiting
+# to start?
+.repl_jobs_open <- function(ctx) {
+    s <- ctx$session
+    !is.null(s$.job_current) ||
+    length(job_list(status = JOB_STATUSES_OPEN, origin_key = job_worker_key(s),
+                    owner = job_worker_owner(s))) > 0L
+}
+
+# Stay with the session's jobs while one is open (WP20c): pump on a short
+# sleep and print what comes, a step's progress, an approval question
+# and the result, as a room posts them. Otherwise they would wait for
+# the next Enter. An interrupt returns the prompt and leaves the job
+# running, and /jobs stays with it again. A terminal driven from a room
+# (remote control) does not stay: the room's next message is read as
+# before, and the job's events show between messages.
+.repl_attach_jobs <- function(ctx, interval = 0.5) {
+    if (!isTRUE(ctx$session$.repl_jobs_ready) || !is.null(ctx$remote_dir) ||
+        !.repl_jobs_open(ctx)) {
+        return(invisible(FALSE))
+    }
+    p <- ctx$palette
+    cat(sprintf("%sStaying with the job; Ctrl+C returns the prompt and leaves it running.%s\n",
+                p$dim %||% "", p$reset %||% ""))
+    done <- .repl_interruptible({
+        repeat {
+            .repl_pump_jobs(ctx)
+            if (!.repl_jobs_open(ctx)) {
+                break
+            }
+            Sys.sleep(interval)
+        }
+        TRUE
+    }, p)
+    if (inherits(done, "repl_interrupted")) {
+        cat(sprintf("%sThe job goes on; /jobs shows it and stays with it again.%s\n",
+                    p$dim %||% "", p$reset %||% ""))
+    }
+    invisible(TRUE)
+}
+
+# One line for each step a job's worker reported: what it said, then
+# each tool call, as a room's activity post has them
+# (rooms_activity_record()).
+.repl_job_progress_lines <- function(ev) {
+    id <- ev$job$id
+    lines <- character()
+    for (r in ev$records) {
+        said <- .sanitize_inline(r$narration %||% "", max_chars = 160L)
+        if (nzchar(said)) {
+            lines <- c(lines, sprintf("job %s: %s", id, said))
+        }
+        t <- r$tool
+        if (is.list(t)) {
+            what <- .sanitize_inline(trimws(paste(t$tool %||% "",
+                                                  t$command %||% "")),
+                                     max_chars = 160L)
+            how <- if (isTRUE(t$refused)) {
+                " (refused)"
+            } else if (!isTRUE(t$success)) {
+                " (failed)"
+            } else {
+                ""
+            }
+            lines <- c(lines, sprintf("job %s: - %s%s", id, what, how))
+        }
+    }
+    lines
+}
+
+.repl_job_progress <- function(ctx, ev) {
+    p <- ctx$palette
+    for (line in .repl_job_progress_lines(ev)) {
+        cat(sprintf("%s%s%s\n", p$dim %||% "", line, p$reset %||% ""))
+    }
+    invisible(NULL)
+}
+
 .repl_present_job_event <- function(ctx, ev) {
     p <- ctx$palette
     switch(ev$type,
@@ -107,6 +185,7 @@
            blocked = cat(sprintf("%s%s%s\n", p$dim, job_blocked_text(ev),
                                  p$reset)),
            approval = .repl_job_approval(ctx, ev),
+           progress = .repl_job_progress(ctx, ev),
            # "started": the talker already said so.
            NULL)
     invisible(NULL)
@@ -189,7 +268,8 @@
     invisible(NULL)
 }
 
-# /jobs [id]: pump, then list this session's jobs or show one.
+# /jobs [id]: pump, then list this session's jobs or show one, and stay
+# with them while one is open (.repl_attach_jobs()).
 .repl_cmd_jobs <- function(ctx, parts) {
     if (!isTRUE(ctx$session$.repl_jobs_ready)) {
         cat(.repl_jobs_off_text(ctx))
@@ -199,6 +279,7 @@
     res <- tool_job_status(id = if (length(parts) >= 2L) parts[2] else NULL,
                            ctx = list(session = ctx$session))
     cat(res$content[[1L]]$text, "\n", sep = "")
+    .repl_attach_jobs(ctx)
     invisible(NULL)
 }
 
