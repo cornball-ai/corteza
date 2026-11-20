@@ -119,7 +119,7 @@ for (p in c("~/proj", "/srv/proj", "./proj", "C:/proj", "c:\\proj")) {
 for (p in c("corteza", "C:", "proj/sub", "!room:ex")) {
     expect_false(corteza:::bot_path_like(p), info = p)
 }
-expect_identical(corteza:::bot_parse_topic("C:\\proj | the project")$cwd, "C:\\proj")
+expect_identical(corteza:::bot_topic_path("C:\\proj | the project"), "C:\\proj")
 expect_true(corteza:::r_path_like("C:/Users/x/.ssh/id_rsa"))
 
 # ---- get_auto_config ----

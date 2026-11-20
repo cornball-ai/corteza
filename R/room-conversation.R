@@ -146,11 +146,13 @@ bot_conversation_acked <- function(cfg, key, room_id, record, ack) {
 }
 
 # The conversation a new session for `key` takes: the one on record, so
-# a restart goes on with it, or a new one, recorded now.
+# a restart goes on with it, or a new one, recorded now. A new one in a
+# room that was moved (/cd, R/room-binding.R) starts at the move, so a
+# thread first seen after it is seeded with nothing from before.
 bot_conversation_open <- function(cfg, key, room_id) {
     record <- bot_conversation_get(cfg, key, room_id)
     if (is.null(record)) {
-        record <- bot_conversation_new()
+        record <- bot_conversation_new(bot_room_state_read(cfg, room_id)$moved)
         bot_conversation_save(cfg, key, room_id, record)
         # Made now, so its record for the monitor begins now too
         # (bot_get_or_create_session()). Not saved: it describes this
