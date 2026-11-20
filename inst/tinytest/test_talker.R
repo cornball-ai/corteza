@@ -1,8 +1,9 @@
 library(tinytest)
 
-# Talker mode: the session runs on a fast model with read-only tools and
-# the job tools; its configured model moves to the doer. Nothing here
-# calls a provider -- the job worker's init and run are replaced.
+# Talker mode: the session runs with read-only tools and the job tools,
+# on its own model unless the config names another; its configured model
+# and reasoning settings go to the doer. Nothing here calls a provider --
+# the job worker's init and run are replaced.
 
 state <- tempfile("talker-state")
 dir.create(state)
@@ -10,21 +11,49 @@ old_state <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
 Sys.setenv(CORTEZA_STATE_DIR = state)
 
 # --- Config ---
+# `talker.enabled` decides; without it the default does: off at the
+# terminal, on in a bot's rooms (WP20b).
 expect_null(corteza:::talker_config(list()))
 expect_null(corteza:::talker_config(list(talker = list(enabled = FALSE))))
 expect_identical(corteza:::talker_config(
     list(talker = list(enabled = TRUE, model = "m")))$model, "m")
+expect_null(corteza:::talker_config(list(talker = list(model = "m"))))
+expect_identical(corteza:::talker_config(list(), default = TRUE), list())
+expect_identical(corteza:::talker_config(list(talker = list(model = "m")),
+                                         default = TRUE)$model, "m")
+expect_null(corteza:::talker_config(list(talker = list(enabled = FALSE)),
+                                    default = TRUE))
+# A value that is no object says what it should be.
+expect_error(corteza:::talker_config(list(talker = FALSE)), "must be an object")
+# A room: on unless its config turns it off, or the bot's tools are
+# restricted, by its config or by the run. A doer gets the work tools
+# whatever the list says, so such a bot gets one only when it asks.
+expect_identical(corteza:::bot_talker_config(list()), list())
+expect_null(corteza:::bot_talker_config(list(talker = list(enabled = FALSE))))
+expect_null(corteza:::bot_talker_config(list(tools_filter = "read_file")))
+expect_null(corteza:::bot_talker_config(list(), tools_filter = "read_file"))
+expect_identical(corteza:::bot_talker_config(list(tools_filter = list())),
+                 list())
+expect_true(isTRUE(corteza:::bot_talker_config(
+    list(tools_filter = "read_file", talker = list(enabled = TRUE)))$enabled))
+# A room with no directory hands no work to a doer (WP10): not by
+# default, only where the config asks.
+expect_null(corteza:::bot_talker_config(list(), unbound = TRUE))
+expect_true(isTRUE(corteza:::bot_talker_config(
+    list(talker = list(enabled = TRUE)), unbound = TRUE)$enabled))
 
-# --- Enabling moves the configured model to the doer ---
+# --- Enabling: the talker on the session's own model, which the doer keeps ---
 s <- corteza::new_session("matrix", provider = "anthropic",
                           model_map = list(cloud = "claude-opus-5-5"),
                           system = "base prompt")
 corteza:::talker_enable(s, list(enabled = TRUE))
 expect_true(isTRUE(s$talker))
-expect_identical(s$model_map$cloud, "claude-haiku-4-5-20251001")
-expect_identical(corteza:::.resolve_model(s), "claude-haiku-4-5-20251001")
+expect_identical(s$model_map$cloud, "claude-opus-5-5")
+expect_identical(corteza:::.resolve_model(s), "claude-opus-5-5")
 expect_identical(s$doer_model, "claude-opus-5-5")
 expect_identical(s$doer_provider, "anthropic")
+# With no model or provider of its own, it follows /model.
+expect_true(isTRUE(s$talker_follows))
 expect_identical(s$tools_filter, corteza:::TALKER_TOOLS)
 # No write or exec tool is the talker's own.
 expect_false(any(c("write_file", "replace_in_file", "bash", "run_r",
@@ -75,33 +104,51 @@ expect_identical(spec$model, "claude-opus-5-5")
 expect_identical(spec$provider, "anthropic")
 expect_identical(spec$channel, "matrix")
 
-# The provider picks the default talker model; config can name another.
+# The talker runs on the session's own model; the config can name
+# another, faster one, and the talker then keeps it through /model.
 o <- corteza::new_session("matrix", provider = "openai",
                           model_map = list(cloud = "gpt-6"))
 corteza:::talker_enable(o, list(enabled = TRUE))
-expect_identical(o$model_map$cloud, "gpt-6-luna")
+expect_identical(o$model_map$cloud, "gpt-6")
 expect_identical(o$doer_model, "gpt-6")
-x <- corteza::new_session("matrix", provider = "anthropic")
+x <- corteza::new_session("matrix", provider = "anthropic",
+                          model_map = list(cloud = "claude-opus-5-5"))
 corteza:::talker_enable(x, list(enabled = TRUE, model = "claude-sonnet-5-5"))
 expect_identical(x$model_map$cloud, "claude-sonnet-5-5")
-# The subscription providers the bots run on have defaults too, and the
-# doer keeps the provider the session was configured with.
-for (p in list(c("anthropic_claude", "claude-haiku-4-5-20251001"),
-               c("openai_codex", "gpt-6-luna"))) {
+expect_identical(x$doer_model, "claude-opus-5-5")
+expect_false(isTRUE(x$talker_follows))
+# On the subscription providers the bots run on, both keep the model and
+# the provider the session was configured with.
+for (p in c("anthropic_claude", "openai_codex")) {
     b <- corteza::new_session("matrix", provider = "anthropic",
                               model_map = list(cloud = "claude-opus-5"))
-    b$provider <- p[1L]
+    b$provider <- p
     corteza:::talker_enable(b, list(enabled = TRUE))
-    expect_identical(b$model_map$cloud, p[2L], info = p[1L])
-    expect_identical(b$provider, p[1L], info = p[1L])
-    expect_identical(b$doer_provider, p[1L], info = p[1L])
-    expect_identical(b$doer_model, "claude-opus-5", info = p[1L])
+    expect_identical(b$model_map$cloud, "claude-opus-5", info = p)
+    expect_identical(b$provider, p, info = p)
+    expect_identical(b$doer_provider, p, info = p)
+    expect_identical(b$doer_model, "claude-opus-5", info = p)
 }
+# A talker on another provider, with no model named, takes that
+# provider's default; one with no default there needs the model named.
+y <- corteza::new_session("matrix", provider = "anthropic",
+                          model_map = list(cloud = "claude-opus-5-5"))
+corteza:::talker_enable(y, list(enabled = TRUE, provider = "openai"))
+expect_identical(y$provider, "openai")
+expect_identical(y$model_map$cloud, corteza::default_provider_model("openai"))
+expect_identical(y$doer_provider, "anthropic")
+expect_identical(y$doer_model, "claude-opus-5-5")
+expect_false(isTRUE(y$talker_follows))
+expect_error(corteza:::talker_enable(
+    corteza::new_session("matrix", provider = "anthropic"),
+    list(enabled = TRUE, provider = "openai_compatible")), "no default model")
 # --- Reasoning settings move to the doer with the model ---
-# They were chosen for the configured model. Sent with the talker's fast
-# model they are a 400 ("This model does not support the effort
-# parameter"), so every reply fails -- which is what a bot configured
-# with reasoning_effort did the first time talker mode was turned on.
+# They were chosen for the configured model, which does the work. The
+# talker runs on the provider's defaults unless the talker config names
+# its own, on its own model or the session's: on a faster model they
+# are a 400 ("This model does not support the effort parameter"), so
+# every reply fails -- which is what a bot configured with
+# reasoning_effort did the first time talker mode was turned on.
 e <- corteza::new_session("matrix", provider = "anthropic",
                           model_map = list(cloud = "claude-opus-5"),
                           reasoning_effort = "xhigh",
@@ -263,12 +310,17 @@ local({
     expect_null(seen[[2L]]$thinking)
 })
 
-# A provider with no default and no configured model is an error, not a
-# silent fall-through to some other model.
-m <- corteza::new_session("matrix", provider = "anthropic")
-m$provider <- "moonshot"
-expect_error(corteza:::talker_enable(m, list(enabled = TRUE)),
-             "needs a model")
+# A provider outside the old table of fast models stopped talker mode
+# with an error until 0.8.1. The talker runs on the session's model.
+for (p in list(c("moonshot", "kimi-k2.5"), c("ollama", "llama3.2"))) {
+    m <- corteza::new_session("matrix", provider = "anthropic",
+                              model_map = list(cloud = p[2L]))
+    m$provider <- p[1L]
+    corteza:::talker_enable(m, list(enabled = TRUE))
+    expect_identical(m$model_map$cloud, p[2L], info = p[1L])
+    expect_identical(m$provider, p[1L], info = p[1L])
+    expect_identical(m$doer_model, p[2L], info = p[1L])
+}
 
 # --- The job tools are registered and shown only to talkers ---
 corteza::ensure_skills()

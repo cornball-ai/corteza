@@ -10,7 +10,13 @@ tbl <- ns$corteza_commands()
 
 # ---- The table ---------------------------------------------------------------
 expect_identical(names(tbl), c("name", "same_as", "argument", "description",
-                               "terminal", "room", "remote"))
+                               "terminal", "room", "remote", "talker"))
+# What a command acts on in a talker session. A room is a talker by
+# default (WP20b), so each name a room takes says; test_talker_commands.R
+# holds the room's commands to it.
+expect_true(all(tbl$talker %in% c("", "talker", "doer", "both")))
+expect_true(all(nzchar(tbl$talker[tbl$room])),
+            info = paste(tbl$name[tbl$room & !nzchar(tbl$talker)], collapse = " "))
 expect_false(anyDuplicated(tbl$name) > 0L)
 expect_true(all(grepl("^[a-z][a-z-]*$", tbl$name)))
 expect_true(all(nzchar(tbl$description)))

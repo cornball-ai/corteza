@@ -26,15 +26,9 @@ for (provider in default_providers) {
 }
 expect_null(corteza::default_provider_model("openai_compatible"))
 
-# The models corteza names itself: the talker defaults and the target of
-# the kimi-k2 alias.
-talkers <- corteza:::TALKER_DEFAULT_MODELS
-expect_true(length(talkers) >= 4L)
-for (provider in names(talkers)) {
-    expect_false(is.null(corteza:::.context_limit_row(talkers[[provider]],
-                                                      provider)),
-                 info = paste(provider, talkers[[provider]]))
-}
+# The model corteza names itself: the target of the kimi-k2 alias. (The
+# talker's fast models were the others until 0.8.1, when a talker took
+# the session's own model.)
 expect_false(is.null(corteza:::.context_limit_row(
     corteza:::resolve_provider_model("moonshot", "kimi-k2"), "moonshot")))
 

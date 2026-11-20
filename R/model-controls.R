@@ -1,8 +1,70 @@
 # Model and effort controls shared by the REPL and Matrix rooms.
+#
+# /model and /effort act on the session's own model, the one that does
+# the work. In a talker session that is the doer's (talker_enable()):
+# the talker follows /model only where its config names no model or
+# provider of its own, and takes its reasoning settings from the
+# `talker` block alone.
+
+# The model /model shows and sets.
+.session_work_model <- function(session) {
+    if (isTRUE(session$talker)) {
+        return(list(model = session$doer_model,
+                    provider = session$doer_provider))
+    }
+    list(model = session$model_map$cloud, provider = session$provider)
+}
+
+# Set it, and the provider when one is given.
+.set_work_model <- function(session, model, provider = NULL) {
+    if (!isTRUE(session$talker)) {
+        bot_set_session_model(session, model)
+        if (!is.null(provider)) {
+            session$provider <- provider
+        }
+        return(invisible(session))
+    }
+    if (!identical(session$doer_model, model)) {
+        # A thinking type belongs to one model (.session_thinking()), as
+        # bot_set_session_model() has it for a session's own.
+        session$doer_thinking <- NULL
+    }
+    session$doer_model <- model
+    if (!is.null(provider)) {
+        session$doer_provider <- provider
+    }
+    if (isTRUE(session$talker_follows)) {
+        bot_set_session_model(session, model)
+        if (!is.null(provider)) {
+            session$provider <- provider
+        }
+    }
+    invisible(session)
+}
+
+# What /model says once it has set one.
+.work_model_ack <- function(session) {
+    work <- .session_work_model(session)
+    set <- sprintf("Model set: %s (provider: %s).",
+                   .sanitize_inline(work$model %||% "", max_chars = 80L),
+                   .sanitize_inline(work$provider %||% "(unchanged)", max_chars = 40L))
+    if (!isTRUE(session$talker)) {
+        return(paste(set, "Effective on the next reply."))
+    }
+    if (isTRUE(session$talker_follows)) {
+        return(paste(set, "Effective on the next reply and the next job."))
+    }
+    paste(set, sprintf(paste("Effective on the next job; replies stay on %s,",
+                             "the config's talker model."),
+                       .sanitize_inline(bot_session_model(session) %||% "",
+                                        max_chars = 80L)))
+}
+
 .model_menu_entries <- function(session, cfg = NULL) {
     cfg <- cfg %||% session$config %||% list()
-    provider <- session$provider %||% cfg$provider %||% "anthropic"
-    model <- session$model_map$cloud %||% cfg$model %||%
+    work <- .session_work_model(session)
+    provider <- work$provider %||% cfg$provider %||% "anthropic"
+    model <- work$model %||% cfg$model %||%
     default_provider_model(provider)
     entries <- list()
     add <- function(id, p) {
@@ -56,8 +118,10 @@
         return("Usage: /model [name [provider] | number]")
     }
     ack <- bot_apply_model_command(ctx$session, cmd, cfg = ctx$config)
-    ctx$model <- ctx$session$model_map$cloud
-    ctx$provider <- ctx$session$provider
+    # The session's own model, which --resume starts from.
+    work <- .session_work_model(ctx$session)
+    ctx$model <- work$model
+    ctx$provider <- work$provider
     if (!is.null(ctx$disk_session)) {
         ctx$disk_session$session$model <- ctx$model
         ctx$disk_session$session$provider <- ctx$provider
@@ -80,18 +144,20 @@
     if (isTRUE(cmd$invalid)) {
         return(usage)
     }
-    provider <- session$provider %||% ""
+    # A talker session's setting is the doer's (see the top of the file).
+    talker <- isTRUE(session$talker)
+    provider <- .session_work_model(session)$provider %||% ""
     supported <- provider %in% c(.reasoning_effort_providers,
                                  .anthropic_providers)
     value <- cmd$value
     if (!is.null(value)) {
         if (identical(value, "default")) {
-            if (isTRUE(session$talker)) {
-                configured <- cfg$talker$reasoning_effort
+            if (talker) {
+                session$doer_reasoning_effort <- session$doer_reasoning_default
             } else {
-                configured <- cfg$reasoning_effort
+                session$reasoning_effort <- .check_reasoning_effort(
+                    cfg$reasoning_effort, "/effort default")
             }
-            session$reasoning_effort <- .check_reasoning_effort(configured, "/effort default")
             session$effort_command_override <- FALSE
         } else {
             if (!supported) {
@@ -101,13 +167,22 @@
                 return(usage)
             }
             # The provider owns the vocabulary; new levels need no client update.
-            session$reasoning_effort <- .check_reasoning_effort(value, "/effort")
+            effort <- .check_reasoning_effort(value, "/effort")
+            if (talker) {
+                session$doer_reasoning_effort <- effort
+            } else {
+                session$reasoning_effort <- effort
+            }
             session$effort_command_override <- TRUE
         }
     }
-    effort <- .session_reasoning_effort(session)
+    if (talker) {
+        effort <- session$doer_reasoning_effort
+    } else {
+        effort <- .session_reasoning_effort(session)
+    }
     source <- if (isTRUE(session$effort_command_override)) "session override" else
-    if (!is.null(session$reasoning_effort) && is.null(cfg)) {
+    if (!talker && !is.null(session$reasoning_effort) && is.null(cfg)) {
         "session setting"
     } else
     if (!is.null(effort)) {

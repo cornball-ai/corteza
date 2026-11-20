@@ -290,7 +290,7 @@ local({
     # A session that holds a history from before begins partial: a room's
     # context restored from its journal.
     p <- patching()
-    p$set(".context_room_restore", function(session, dir, cfg) {
+    p$set(".context_room_restore", function(session, dir, cfg, ...) {
         session$history <- list(list(role = "user", content = "from before"))
         invisible(TRUE)
     })

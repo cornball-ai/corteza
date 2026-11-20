@@ -738,6 +738,22 @@ bot_is_status_command <- function(body) {
                          ignore.case = TRUE)
 }
 
+# What /status answers in a room. `model` is the one /model sets; a
+# talker session also names the model its replies come from.
+bot_status_text <- function(session) {
+    work <- .session_work_model(session)
+    lines <- c(sprintf("model: %s", work$model %||% "(unset)"),
+               sprintf("provider: %s", work$provider %||% "(unset)"))
+    if (isTRUE(session$talker)) {
+        lines <- c(lines, sprintf("replies: %s (%s)",
+                                  bot_session_model(session) %||% "(unset)",
+                                  session$provider %||% "(unset)"))
+    }
+    paste(c(lines, sprintf("cwd: %s", session$cwd %||% getwd()),
+            .context_edit_status(session), bot_trust_status(session)),
+          collapse = "\n")
+}
+
 # Match `/trust` and `/trust yes`, with or without the slash. NULL when
 # the message is neither, else what followed the word: "" or one word.
 # With the slash any one word is the command's (and gets its usage line
@@ -933,8 +949,9 @@ bot_set_session_model <- function(session, model) {
 }
 
 bot_render_model_menu <- function(entries, session) {
-    cur_model <- bot_session_model(session) %||% ""
-    cur_provider <- session$provider %||% ""
+    work <- .session_work_model(session)
+    cur_model <- work$model %||% ""
+    cur_provider <- work$provider %||% ""
     current <- sprintf("Current: %s (%s)",
                        .sanitize_inline(if (nzchar(cur_model)) cur_model else "(unset)",
                                         max_chars = 80L),
@@ -962,10 +979,10 @@ bot_render_model_menu <- function(entries, session) {
 
 # Apply a parsed model command to a session. Returns the ack text to
 # post back to the room. For a query (`/model` with no args), renders
-# the numbered menu of available models. For a setter, mutates the
-# session's model (bot_set_session_model()) and optionally its provider
-# in place so the next
-# turn picks them up; a bare number picks that menu entry, so nobody
+# the numbered menu of available models. For a setter, sets the
+# session's own model and optionally its provider in place
+# (.set_work_model(): a talker session's doer, and its talker where that
+# follows), so the next turn and job pick them up; a bare number picks that menu entry, so nobody
 # has to thumb-type a model name from a phone client. `available` is
 # injectable for tests; NULL assembles the menu from cfg + live Ollama.
 bot_apply_model_command <- function(session, cmd, cfg = NULL,
@@ -990,19 +1007,15 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
                           .model_menu_text(available, session)))
         }
         entry <- available[[idx]]
-        bot_set_session_model(session, entry$model)
-        session$provider <- entry$provider
-        return(sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-                       .sanitize_inline(entry$model, max_chars = 80L),
-                       .sanitize_inline(entry$provider, max_chars = 40L)))
+        .set_work_model(session, entry$model, entry$provider)
+        return(.work_model_ack(session))
     }
-    bot_set_session_model(session, cmd$model)
+    provider <- NULL
     if (!is.na(cmd$provider)) {
-        session$provider <- cmd$provider
+        provider <- cmd$provider
     }
-    sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-            .sanitize_inline(bot_session_model(session) %||% "", max_chars = 80L),
-            .sanitize_inline(session$provider %||% "(unchanged)", max_chars = 40L))
+    .set_work_model(session, cmd$model, provider)
+    .work_model_ack(session)
 }
 
 # Badge mode from config: "never" (default), "non_default", "always".
@@ -2033,7 +2046,8 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # process, and a room has no on-disk session id of its own.
     if (!is.null(journal_key)) {
         dir <- bot_journal_dir(cfg, journal_key)
-        .context_room_restore(s, dir, cfg)
+        .context_room_restore(s, dir, cfg,
+                              bot_talker_config(cfg, tools_filter, s$unbound))
         journal_install(s, dir = dir)
         bot_session_record(cfg, s, journal_key, dir, room_name = info$name)
     }
@@ -2177,9 +2191,9 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
-    context <- .context_room_config(cfg)
+    talker <- bot_talker_config(cfg, tools_filter, s$unbound)
+    context <- .context_room_config(cfg, talker)
     .context_conversation_enable(s, context$editing, context$vault)
-    talker <- talker_config(cfg)
     if (!is.null(talker)) {
         talker_enable(s, talker)
         # The talker model is this session's default; only a /model
@@ -2565,11 +2579,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_status_command(m$body)) {
-            ack <- sprintf("model: %s\nprovider: %s\ncwd: %s\n%s",
-                           bot_session_model(session) %||% "(unset)",
-                           session$provider %||% "(unset)",
-                           session$cwd %||% getwd(), .context_edit_status(session))
-            ack <- paste(c(ack, bot_trust_status(session)), collapse = "\n")
+            ack <- bot_status_text(session)
             sent_id <- tryCatch(
                                 bot_reply_send(chat, m$channel, ack, markdown = TRUE,
                     thread = m$thread),
