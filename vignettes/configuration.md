@@ -219,6 +219,30 @@ every dispatched call.
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
 
+The `auto` block of `config.json` sets a run's bounds and its monitor. The
+first of these limits to be reached stops the run.
+
+The iteration limit is the exception. `/auto --loops N` stops after N
+iterations. `/auto` without `--loops` runs with no iteration limit, whatever
+`max_loops` says, and the other limits stop it. `/auto resume` keeps the
+count of the run it resumes. One iteration can run many model turns.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `max_loops` | 10 | Iterations, for a run that sets no count of its own. `/auto` always sets one or runs without, so it does not read this |
+| `max_tool_calls` | 300 | Tool calls, the bound that holds whatever a turn does |
+| `max_minutes` | 30 | Minutes since the run started |
+| `max_cost` | 5 | Dollars spent. Skipped where the provider reports no price, as on a subscription, and `max_tokens` holds instead |
+| `max_tokens` | 2000000 | Tokens used |
+| `stall_loops` | 2 | Iterations in a row that changed nothing on disk |
+| `allow_exec` | `false` | Whether the monitor may rule on shell and R calls. Your config or `--exec` grants it; a project's config can only refuse it |
+| `never_broker` | none | Tools that always stop the run for you. Yours and the project's together |
+| `monitor_model` | the session's model | The model the monitor runs on. The monitor uses the session's provider, so name a model of that provider |
+| `monitor_timeout` | 120 | Seconds the monitor has to rule on a call |
+
+The monitor makes a request for each call it rules on, so a long run makes
+many. A smaller model in `monitor_model` costs less for each ruling.
+
 ## Matrix remote control
 
 `/remote-control [--bot @bot:server] [room]` hands the current CLI or `chat()`
