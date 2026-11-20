@@ -324,8 +324,14 @@ reaches its next call; a room's worker keeps its room's gate. What the
 rules leave open comes to the job pump with `route` "monitor", and
 `.repl_job_review()` asks the reviewer, judged by the conversation that
 asked for the job (`origin$conversation`) and the task the talker
-wrote. A job's calls never take the terminal's "allow always" answers,
-as a room's never do.
+wrote. Before the reviewer, `.repl_job_answered()` asks the session's
+callback's `answered` rule, given the rule the request records
+(`rule`, written by `job_approval_request()`): a tool allowed always
+answers a job's call as it answers the session's own, never the
+credential rule's ask, and a request that names no rule is asked. The
+job's prompt offers "always" through the callback's `always` attribute
+(`.repl_job_always()`), so the terminal saves it for the directory and
+`chat()` holds it for the session. A room's jobs take none of these.
 
 ## Talker mode (`R/talker.R`)
 
@@ -665,7 +671,18 @@ The same run clears the state stores (`R/retention-state.R`): job
 chains (jobs linked by `resume_of`, `review_of` or `parent`) once all
 ended, worker folders with no checkpoint, and remote-control sessions
 that closed or whose process here ended. A chain with an incomplete job
-nothing resumed waits `retention$incomplete_days` (180). A folder is
+nothing resumed waits `retention$incomplete_days` (180). A worker folder
+with a checkpoint (kind `"checkpoint"`) goes once it and the place its
+identity names have both gone unused: `repl:<id>` is the terminal's
+session `<id>`, any other key a room's or thread's journal under agent
+`matrix` (`retention_checkpoint_place()`, by `bot_session_id()`'s
+naming, a sidebar's epoch taken off the key). Any worker folder is
+held (`retention_worker_held()`) while its worker lives
+(`worker.json`, written by `.job_worker_child_mark()`), its session is
+in the caller's `keep` (the terminal's ids, a bot's registry through
+`bot_retention_keep()`), or a job is open in its workspace or runs
+under its identity; the holds and both last uses are read again just
+before removal (`retention_checkpoint_moved()`). A folder is
 judged only when its name and record are corteza's; anything else stays
 and is listed as `"unknown"`. A record is read only where it is a file
 of the folder itself (`retention_record()`), never through a link. A

@@ -142,7 +142,8 @@ make_gate <- function(answer, mode = "monitor", cwd = root, on_decision = NULL) 
     corteza:::supervisor_gate(
         ask = function(route, call, decision, notes) {
             asked$calls[[length(asked$calls) + 1L]] <- list(
-                route = route, reason = decision$reason, notes = notes)
+                route = route, reason = decision$reason, rule = decision$rule,
+                notes = notes)
             if (is.function(answer)) answer() else answer
         }, cwd = cwd, mode = mode, on_decision = on_decision)
 }
@@ -193,6 +194,17 @@ g <- make_gate(list(approved = TRUE, by = "@troy:ex"), mode = "human")
 g(bash("ls"), ask_d)
 expect_identical(asked$calls[[1L]]$route, "human")
 expect_identical(asked$calls[[1L]]$reason, ask_d$reason)
+# The policy's rule goes with the ask, so that no saved "always" answers
+# the credential rule's (.repl_job_answered()); a call with none gives
+# the ask none.
+g <- make_gate(list(approved = FALSE, by = "@troy:ex"))
+g(call, d)
+expect_identical(d$rule, "credential")
+expect_identical(asked$calls[[1L]]$route, "human")
+expect_identical(asked$calls[[1L]]$rule, "credential")
+g <- make_gate(list(approved = FALSE, by = "@troy:ex"))
+g(bash("git push origin main"), ask_d)
+expect_null(asked$calls[[1L]]$rule)
 # Nobody answering is never a yes.
 g <- make_gate(function() stop("room unreachable"))
 r <- g(bash("ls"), ask_d)
