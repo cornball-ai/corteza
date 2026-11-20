@@ -87,8 +87,40 @@ takes <- list(
     job = function(b) {
         p <- ns$bot_parse_job_resume(b)
         !is.null(p) && is.null(p$error)
-    })
+    },
+    effort = function(b) !is.null(ns$.effort_parse_command(b)),
+    `context-edit` = function(b) !is.null(ns$.context_edit_parse_command(b)))
 expect_identical(sort(names(takes)), sort(tbl$name[tbl$room]))
+# The list above is by hand, so it is held to the loop: each command
+# parser bot_poll() calls is one a row of it calls, and none goes
+# unlisted. It missed /effort and /context-edit until 0.8.0.28.
+calls_in <- function(f) {
+    found <- character()
+    walk <- function(e) {
+        if (!is.call(e)) {
+            return(invisible(NULL))
+        }
+        if (is.name(e[[1L]])) {
+            found <<- c(found, as.character(e[[1L]]))
+        } else {
+            walk(e[[1L]])
+        }
+        for (a in as.list(e)[-1L]) {
+            if (!identical(a, quote(expr = ))) {
+                walk(a)
+            }
+        }
+    }
+    walk(body(f))
+    unique(found)
+}
+parser_name <- "^bot_is_.*_command$|^bot_parse_|_parse_command$"
+in_loop <- grep(parser_name, calls_in(ns$bot_poll), value = TRUE)
+in_takes <- unique(unlist(lapply(takes, function(f) {
+    grep(parser_name, sub("^ns\\$", "", all.names(body(f))), value = TRUE)
+})))
+expect_true(length(in_loop) >= 9L, info = paste(in_loop, collapse = " "))
+expect_identical(sort(in_loop), sort(in_takes))
 example <- function(name) {
     if (identical(name, "job")) {
         return("/job resume 20261119T000000-0000abcd")

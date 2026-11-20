@@ -644,8 +644,10 @@ line saying what it does, and whether the terminal and `chat()`, a bot's
 room, or a room controlling a terminal takes it. Nothing dispatches
 from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
 and `.remote_bot_route()` for the names they compare with, asks each
-room parser, and checks both `/help` texts, so a new command needs a
-row, a line in both help texts, and its surface's match.
+room parser, holds its list of parsers to the ones `bot_poll()` calls
+(a name matching `bot_is_*_command`, `bot_parse_*` or `*_parse_command`),
+and checks both `/help` texts, so a new command needs a row, a line in
+both help texts, and its surface's match.
 
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`

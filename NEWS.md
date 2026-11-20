@@ -1,3 +1,9 @@
+# corteza 0.8.0.29
+
+- The command table (`corteza:::corteza_commands()`) says that a bot's
+  room takes `/effort` and `/context-edit`, as it does; it listed both
+  for the terminal alone.
+
 # corteza 0.8.0.28
 
 - A tool's time limit (`skill_timeout`) stays inside the tool. R checks
