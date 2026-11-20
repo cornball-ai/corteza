@@ -197,12 +197,22 @@ session_request_parts <- function(session) {
     list(notes = notes, seen = now)
 }
 
-# The prompt with its notes ahead of it.
+# The prompt with its notes ahead of it. A prompt in parts, as one with
+# an image is (llm.api's llm_content, R/media.R), gets the notes as a
+# text part of its own in front, and its parts go on as they were.
 .prefix_prompt <- function(prompt, notes) {
     if (!length(notes) || is.null(prompt)) {
         return(prompt)
     }
-    paste(c(notes, prompt), collapse = "\n\n")
+    text <- paste(notes, collapse = "\n\n")
+    if (inherits(prompt, "llm_content")) {
+        part <- structure(list(text = text), class = "llm_text")
+        return(structure(c(list(part), unclass(prompt)), class = class(prompt)))
+    }
+    if (is.list(prompt)) {
+        return(c(list(list(type = "text", text = text)), prompt))
+    }
+    paste(c(text, prompt), collapse = "\n\n")
 }
 
 # Record that the model has been told `field`, as a tool's result told

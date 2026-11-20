@@ -224,6 +224,28 @@ local({
     quiet <- ask("proceed")
     expect_equal(count_notes(last_prompt(quiet)), 0L)
 
+    # A prompt with an image keeps its parts: the note goes ahead as a
+    # text part of its own, and the image goes out as an image.
+    png <- file.path(dir, "fixture.png")
+    writeBin(as.raw(c(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)), png)
+    s$plan_mode <- TRUE
+    before <- length(bodies)
+    corteza::turn(llm.api::llm_content("look at this", llm.api::llm_image(png)), s)
+    expect_equal(length(bodies), before + 1L)
+    pictured <- bodies[[length(bodies)]]
+    blocks <- pictured$messages[[length(pictured$messages)]]$content
+    expect_identical(vapply(blocks, function(b) b$type, ""),
+                     c("text", "text", "image"))
+    expect_true(grepl("^\\[Plan mode is on\\.", blocks[[1L]]$text))
+    expect_identical(blocks[[2L]]$text, "look at this")
+    expect_identical(prefix_of(pictured), prefix_of(first))
+    expect_true(appended_only(quiet, pictured))
+    s$plan_mode <- FALSE
+    # Content given as plain blocks keeps them the same way.
+    blocks <- ns$.prefix_prompt(list(list(type = "text", text = "p")), "[note]")
+    expect_identical(blocks, list(list(type = "text", text = "[note]"),
+                                  list(type = "text", text = "p")))
+
     # What the prefix is made from changes: composed again, and logged.
     # The tools stay: availability was tested for the table, and the
     # repository made above adds no git tool.
@@ -413,4 +435,22 @@ local({
     expect_false(isTRUE(s$config$dry_run))
     expect_identical(ctx$config, s$config)
     expect_null(s$.prefix_seen)
+
+    # A talker keeps its guidance (Codex, #293 review): it is a source of
+    # the session's context, ordered last, so a rebuild renders it where
+    # the talker put it, once, and the manifest lists it.
+    guidance <- trimws(ns$TALKER_GUIDANCE, which = "right")
+    times <- function(text) {
+        lengths(regmatches(text, gregexpr(guidance, text, fixed = TRUE)))
+    }
+    ns$talker_enable(s, list(enabled = TRUE))
+    talker_system <- s$system
+    expect_true(endsWith(talker_system, guidance))
+    for (i in 1:2) {
+        ns$.repl_session_rebuild(ctx)
+        expect_equal(times(s$system), 1L, info = i)
+        expect_identical(s$system, talker_system, info = i)
+        expect_identical(s$system, saber::context_render(s$context_manifest),
+                         info = i)
+    }
 })

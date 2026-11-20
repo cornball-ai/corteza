@@ -196,4 +196,29 @@ local({
         session$instruction_catalog, "project:refresh"
     )
     expect_true(grepl("new-skill-body", refreshed_skill, fixed = TRUE))
+
+    # A talker's guidance is a source of its context as well, ordered
+    # last, so the refresh renders it again, once (the terminal's /clear
+    # dropped it the same way, Codex's #293 review).
+    corteza:::talker_enable(session, list(enabled = TRUE))
+    guidance <- trimws(corteza:::TALKER_GUIDANCE, which = "right")
+    expect_true(endsWith(session$system, guidance))
+    session$history <- list(
+        list(role = "user", content = "archive this turn too"),
+        list(role = "assistant", content = "finished again")
+    )
+    corteza:::maybe_archive_turn(
+        turn_session = session,
+        prompt = "archive this turn too",
+        pre_turn_len = 0L,
+        result = list(reply = "finished again"),
+        config = config,
+        parent_session_id = "test-parent"
+    )
+    expect_equal(lengths(regmatches(session$system,
+                                    gregexpr(guidance, session$system, fixed = TRUE))), 1L)
+    expect_true(endsWith(session$system, guidance))
+    expect_identical(session$system,
+                     saber::context_render(session$context_manifest))
+    expect_true(grepl("matrix-prefix-sentinel", session$system, fixed = TRUE))
 })
