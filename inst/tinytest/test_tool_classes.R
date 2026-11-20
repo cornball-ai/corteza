@@ -148,6 +148,35 @@ local({
     expect_identical(ran, c("read_file", "job_cancel"))
     expect_identical(asked, 0L)
 })
+# The gate judges the class of the entry that runs (call_class()), as
+# the session's table holds it. A session's own read tool, which the
+# registry does not know, runs in such a room; with no class, or as a
+# write, the same name is refused.
+local({
+    gate <- function(...) {
+        corteza:::check_unbound_room(list(tool = "fixture_lookup",
+                                          context = list(unbound = TRUE), ...))
+    }
+    expect_null(gate(class = "read"))
+    expect_true(grepl("fixture_lookup has no class", gate()$reason,
+                      fixed = TRUE))
+    expect_true(grepl("fixture_lookup would write files",
+                      gate(class = "write")$reason, fixed = TRUE))
+    s <- corteza::new_session("matrix")
+    s$unbound <- TRUE
+    s$tool_table <- corteza:::tool_table_new()
+    corteza:::tool_table_add(s$tool_table, list(name = "fixture_lookup",
+        description = "A fixture.", class = "read",
+        handler = function(args, ctx) list()),
+        corteza:::tool_origin("project", "/fixture"))
+    ran <- character()
+    h <- corteza:::.make_tool_handler(s, tool_executor = function(name, args) {
+        ran <<- c(ran, name)
+        list(content = list(list(type = "text", text = "ran")))
+    })
+    h("fixture_lookup", list())
+    expect_identical(ran, "fixture_lookup")
+})
 
 # ---- A package tool, with a class and without --------------------------
 local({

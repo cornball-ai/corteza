@@ -276,7 +276,7 @@ check_unbound_room <- function(call) {
         return(NULL)
     }
     tool <- call$tool %||% ""
-    op <- classify_op(tool)
+    op <- call_class(call)
     if (!identical(.mode_verdicts$unbound[[op]], "deny") ||
         (identical(op, "control") && tool %in% .unbound_control)) {
         return(NULL)
