@@ -1,3 +1,22 @@
+# corteza 0.8.0.39
+
+- `corteza acp` serves an Agent Client Protocol client (protocol
+  version 1) on standard input and output: a session for each directory
+  the client names, prompts of text and file links, the reply streamed,
+  tool calls and their results, the terminal's approval answers, and the
+  `ask` and `review` modes. A session keeps the terminal's records, so
+  `corteza --resume` and a client's resume take up each other's
+  conversations in the same directory. Sessions in one process share no
+  R objects: each session's `run_r` runs in a worker of its own. Not on
+  Windows.
+- The reviewer (`approval_mode: "review"`) is shown everything the agent
+  said since the prompt before the call, a job's result included. A
+  reply missing from the transcript hands the call to the person.
+- The terminal writes a failed turn's error to the transcript, so every
+  prompt there has an answer.
+- A compaction asked to stop before or during its summary leaves the
+  conversation as it was.
+
 # corteza 0.8.0.38
 
 - On Windows, retention of the state stores removed nothing: no job
