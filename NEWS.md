@@ -1,3 +1,11 @@
+# corteza 0.8.0.38
+
+- On Windows, retention of the state stores removed nothing: no job
+  chain, worker folder or remote-control session ever went. A path
+  there mixes `\` and `/`, and the check that it lies inside the data
+  folder compared it as text with one that does not. The check now
+  compares with forward slashes, and on Windows in any case.
+
 # corteza 0.8.0.37
 
 - A job whose worker exits as its reply is read is settled
