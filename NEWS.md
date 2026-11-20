@@ -1,3 +1,17 @@
+# corteza 0.8.0.20
+
+- Each session takes its tools once, when it starts: corteza's own and
+  any a host registered, the user's skills, the config's package tools
+  and, in a trusted directory, the project's skills. A bot's rooms
+  share one process, and each now sees only its own project's tools. A
+  name is taken once: a later source never replaces an earlier one's
+  tool, so a skill named like a built-in tool is skipped, with a
+  message. Policy, the supervisor, the monitors, the reviewer and the
+  approval prompt judge the class of the tool that runs, as does the
+  gate of a room with no directory. A child process (a subagent, a
+  job's worker) now gets the config's package tools, as its parent
+  does.
+
 # corteza 0.8.0.19
 
 - A Matrix room with no directory (its topic names none, and the bot
