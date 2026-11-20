@@ -212,8 +212,10 @@ asks its own user.
 
 A Matrix room session and the job workers it starts carry a gate on
 `session$auto_gate` (`supervisor_gate()`), which `turn()` consults for
-every call that survived `policy()`, "allow" verdicts included. Three
-steps, in order:
+every call that survived `policy()`, "allow" verdicts included. A call
+`policy()` denied is refused by turn()'s handler before any gate: the
+gate is shown it, for its record (an `/auto` run's decision log), and
+its answer is not read. Three steps, in order:
 
 1. **Rules in code** (`supervisor_route()`, `R/exec-scan.R`). They read
    path arguments and the text of shell commands and R code. A hit

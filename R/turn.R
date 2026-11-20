@@ -535,6 +535,16 @@ new_session <- function(channel = c("cli", "console", "matrix"),
     invisible(NULL)
 }
 
+# The ids a call carries to a session's gate: the run-local alias
+# (`auto_call_id`), and the canonical id where the turn minted none
+# (a bare handler caller without a turn keeps the alias as its id).
+.gate_call_ids <- function(session, call) {
+    session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
+    call$auto_call_id <- sprintf("c%d", session$auto_call_seq)
+    call$call_id <- call$call_id %||% call$auto_call_id
+    call
+}
+
 .make_tool_handler <- function(session, tool_executor = NULL) {
     .secret_environment(session)
     .validate_tool_output_caps(session$config)
@@ -801,14 +811,21 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             text
         }
 
-        # Policy denial, attended path. In auto mode the same denial
-        # routes through the gate below instead -- not so the monitor
-        # can weigh in (it cannot; the gate's deny branch is mechanical
-        # and first) but so the denial leaves the same structured,
-        # call_id-carrying record as every other decision. The
-        # model-visible message is identical on both paths.
-        if (identical(decision$approval, "deny") &&
-            !is.function(session$auto_gate)) {
+        # Policy denial is final: nothing after policy() lifts it, a gate
+        # included, so the handler refuses here whatever a gate would
+        # answer. A session with a gate still shows it the call, so the
+        # denial leaves the same structured, call_id-carrying record as
+        # every other decision (an /auto run's decision log). Its answer
+        # is not read, and its failure changes nothing.
+        if (identical(decision$approval, "deny")) {
+            if (is.function(session$auto_gate)) {
+                call <- .gate_call_ids(session, call)
+                tryCatch(session$auto_gate(call, decision),
+                         error = function(e) NULL)
+                .audit_safe(.audit_tool_event(session, list(call = call,
+                            outcome = "gate", decision = list(action = "deny",
+                                reason = decision$reason))))
+            }
             return(outcome_text(
                                 "deny",
                                 nudge(sprintf("[corteza policy denied: %s]",
@@ -831,18 +848,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
         # here. A supervisor wired to approval_cb would be decorative
         # in exactly the repos people run this in.
         #
-        # So the gate sees every call that survived policy, whatever
-        # the verdict, and it is the thing that decides. It returns
+        # So the gate sees every call that survived policy, "allow"
+        # verdicts included, and it is the thing that decides. It returns
         # "proceed", "refuse" (tell the model no, keep the turn alive),
         # or "escalate" (abort the whole turn for a human).
         gate_approved <- FALSE
         if (is.function(session$auto_gate)) {
-            # Retain the run-local alias. The canonical call_id was minted
-            # before policy; bare handler callers without a turn keep the
-            # older alias as their ID.
-            session$auto_call_seq <- (session$auto_call_seq %||% 0L) + 1L
-            call$auto_call_id <- sprintf("c%d", session$auto_call_seq)
-            call$call_id <- call$call_id %||% call$auto_call_id
+            call <- .gate_call_ids(session, call)
             gate <- tryCatch(
                              session$auto_gate(call, decision),
                              # A gate that errored did not approve anything.
@@ -856,8 +868,9 @@ new_session <- function(channel = c("cli", "console", "matrix"),
             .audit_safe(.audit_tool_event(session, list(call = call,
                         outcome = "gate", decision = gate)))
             if (identical(action, "deny")) {
-                # Policy's verdict, surfaced through the gate purely so
-                # it was recorded; same message as the attended branch.
+                # A gate answers deny for a call policy() denied, which
+                # never gets here; one that answers it for another call
+                # is refused all the same.
                 return(outcome_text(
                                     "deny",
                                     nudge(sprintf("[corteza policy denied: %s]",
