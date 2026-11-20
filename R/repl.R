@@ -574,7 +574,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 files <- ctx$config$context_files %||% character(0)
                 sources <- ctx$session$context_manifest$sources %||% NULL
                 tools <- tryCatch(
-                                  skills_as_api_tools(ctx$session$tools_filter),
+                                  skills_as_api_tools(ctx$session$tools_filter, ctx$session$tool_table),
                                   error = function(e) list()
                 )
                 tools <- .context_edit_tools(tools, ctx$session)
@@ -641,7 +641,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                             ctx$config,
                             kind = ctx$session$kind %||% NULL,
                             tools = tryCatch(
-                                skills_as_api_tools(ctx$session$tools_filter),
+                                skills_as_api_tools(ctx$session$tools_filter, ctx$session$tool_table),
                                 error = function(e) NULL),
                             system = ctx$session$system,
                             threshold = 0,
@@ -707,7 +707,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 next
             }
             if (cmd == "/doctor") {
-                tools <- skills_as_api_tools(ctx$session$tools_filter)
+                tools <- skills_as_api_tools(ctx$session$tools_filter, ctx$session$tool_table)
                 disp_model <- ctx$model %||% ctx$session$model_map$cloud %||%
                 "(default)"
                 docs <- tryCatch(list_skill_docs(),
@@ -1133,7 +1133,7 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
         sys_tok <- estimate_text_tokens(
                                         .context_edit_system(ctx$session$system, ctx$session) %||% "")
         compact_tools <- tryCatch(
-                                  skills_as_api_tools(ctx$session$tools_filter),
+                                  skills_as_api_tools(ctx$session$tools_filter, ctx$session$tool_table),
                                   error = function(e) list())
         compact_tools <- .context_edit_tools(compact_tools, ctx$session)
         tools_tok <- estimate_tool_tokens(compact_tools)

@@ -375,6 +375,17 @@ wait as silence.
 In the terminal an automatic compaction also runs the memory flush first
 (`memory_flush_enabled`), which is a request of its own.
 
+The R objects outlive the turns that made them: a compaction leaves every
+object in place, whatever its size. So the summary ends with the names of the
+objects `run_r` made that are still there, up to 30 of them, then the open
+handles. The agent can use an object instead of rebuilding it. Only names are
+listed, since reading an object can run code: a binding made with
+`makeActiveBinding()` or `delayedAssign()` is named and left alone. This is
+for the terminal, `chat()` and a subagent or doer, whose R process is the
+session's own. A bot's rooms share one, so a room's summary has no list, and
+neither does a session whose `run_r` runs in a worker process
+(`run_r_mode: "worker"`).
+
 None of the three applies to a session that manages its own context
 (`context_edit` with `"strategy": "clm"`, under "Conversation context
 editing"). Such a session is never compacted, and `/context` says so.
@@ -1016,7 +1027,12 @@ A room works in the first of these that exists:
    `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
    wins over the saved one.
 3. A scratch folder under the session's temporary directory, deleted when the
-   process ends. The room is told it has no project directory.
+   process ends. The room is told it has no project directory, and it
+   reads, searches and talks only. It writes no files, runs no commands,
+   starts no subagent and hands no work to a doer or another room, and
+   no room hands work to it. A refusal says how to give the room a
+   directory. Room lists show it as having none, and it is named by its
+   id or name, never by the scratch folder.
 
 corteza creates neither of the first 2. A `cwd` that does not exist is an
 error where it is given, and a run stops at its start when the saved one has
@@ -1280,6 +1296,17 @@ A room or a thread a Matrix bot answers in:
 A room has no transcript. How recently it was used is the modification time
 of `live.json` in its journal folder, a file that is not there before the
 session's first turn.
+
+## What a delegated job obeys
+
+A delegated job runs with the model, provider, reasoning settings and limits
+its conversation has when the job starts, in a worker that may have run
+earlier jobs. While it runs it follows the conversation's `/plan`,
+`/permissions` and `/dryrun`: the worker checks them before each call, and
+again just before the call runs, so a `/plan` typed while a call waits for
+your approval stops that call. A worker cannot end plan mode; you do. After
+`/clear`, a job started before it keeps the settings its conversation last
+had, and `/cancel` stops it.
 
 ## Incomplete worker jobs
 

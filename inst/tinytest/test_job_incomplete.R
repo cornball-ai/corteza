@@ -207,7 +207,9 @@ local({
     writeLines("fixture", file.path(root, "marker.txt"))
     s <- corteza::new_session("cli", provider = "anthropic", web_search = FALSE)
     s$cwd <- root
-    s$config <- list()
+    # The turn limit is the job's: a worker applies its spec at each job
+    # (.job_worker_child_apply_spec()), whatever it was started with.
+    s$config <- list(jobs = list(max_turns = 1L))
     s$job_key <- "incomplete-fixture"
     s$job_worker_spec <- list(init_fn = function(spec) {
         Sys.setenv(ANTHROPIC_API_KEY = "offline-fixture")

@@ -142,9 +142,12 @@ local({
     expect_identical(normalizePath(r$after$cwd), normalizePath(d))
     expect_true(grepl(paste("Working directory:", r$after$cwd), r$after$system,
                       fixed = TRUE))
+    expect_false(isTRUE(r$after$unbound))
     r <- run_clear(hooks = NULL)
     expect_true(corteza:::bot_is_scratch(r$after$cwd))
     expect_true(grepl("no project directory", r$after$system, fixed = TRUE))
+    # Marked, so that its tools read and talk only (WP10).
+    expect_true(isTRUE(r$after$unbound))
     # The session's own spelling of the path still reads as the scratch
     # folder once the folder is gone, which is when a turn has to make
     # it again. A path that does not exist normalizes to itself, so a

@@ -14,9 +14,11 @@ Invisible TRUE on success.
 \description{
 Runs inside a subagent's private `callr::r_session` subprocess
 (invoked via `corteza::worker_init()` across the callr boundary).
-Sets the subprocess cwd, ensures built-in skills are registered, and
-loads the user's skills, and the project's where \code{cwd} is a
-trusted directory, so the subagent can execute tools.
+Sets the subprocess cwd and ensures the built-in skills are
+registered. The child's session takes its own tools when
+\code{\link{subagent_turn_init}} makes it: the user's skills, the config's
+package tools, and the project's skills where \code{cwd} is a trusted
+directory.
 }
 \details{
 Exported (with `@keywords internal`) because it is called as
