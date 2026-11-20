@@ -1330,6 +1330,16 @@ your approval stops that call. A worker cannot end plan mode; you do. After
 `/clear`, a job started before it keeps the settings its conversation last
 had, and `/cancel` stops it.
 
+At the terminal, `/clear` starts a new conversation for the worker too. Its R
+objects stay, as they do in the terminal's own session, and its history does
+not: the next job starts from an empty conversation, with the instructions and
+tools a session started now would have, so a `/trust` before the `/clear`
+reaches it. A job still running at `/clear` finishes, and its result is shown
+and saved to the conversation that asked for it. Each conversation keeps its
+own checkpoint, so `corteza --resume <id>` brings back that conversation's
+worker as its last job left it, and a new conversation's objects are a copy
+taken at the `/clear`.
+
 ## Incomplete worker jobs
 
 A worker that exhausts its tool-turn or output budget is recorded as

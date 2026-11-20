@@ -246,12 +246,39 @@ the failure refuses rather than leaving a looser record standing.
 
 Only the conversation that dispatched a job writes its record: the
 cache on the session (`.job_authority`) names the job and the
-`sessionId`, and is not in `JOB_SESSION_STATE`, so neither the
-terminal's `/clear` nor a room's replacement session updates an old
-job's record. A worker cannot end plan mode (`plan_mode_locked`): it is
-not offered `exit_plan_mode`, the handler refuses it by name, and its
-plan-mode text and refusals say the person ends it. The monitor runs no
-job and has neither.
+conversation (`session_conversation()`), and is not in
+`JOB_SESSION_STATE`, so neither the terminal's `/clear` nor a room's
+replacement session updates an old job's record. A worker cannot end
+plan mode (`plan_mode_locked`): it is not offered `exit_plan_mode`, the
+handler refuses it by name, and its plan-mode text and refusals say the
+person ends it. The monitor runs no job and has neither.
+
+## A worker follows its conversation (`R/job-conversation.R`)
+
+A conversation's id is `session_conversation()`: the session id at the
+terminal; a room has none yet. Each job's spec and origin carry it. A
+warm worker holds the conversation it built its session for
+(`.job_worker_state$conversation`); a job from another one rebuilds the
+session in the same process (`.job_worker_child_session()`: config,
+trust, prompt, tools, callbacks) with an empty history, and leaves the
+R objects. A checkpoint records its conversation, and a restore takes
+the history only from its own conversation's checkpoint.
+
+A surface's `/clear` gives the session its new id and calls
+`job_conversation_clear()`, and touches no worker or checkpoint itself.
+The terminal keeps a checkpoint for each conversation (`repl:<id>`), so
+its new conversation gets a starting checkpoint: the R objects and no
+history, written by the idle doer, copied from the old checkpoint
+(`job_checkpoint_copy()`) when none is alive, or, with a job in flight,
+by `job_pump()` once it settles (`.job_starts`). A job in flight
+finishes under the conversation that asked for it, and the terminal
+sends its result to that conversation's transcript, not to the new
+talker's history. A job that conversation queued and had not started
+does the same: just before the conversation ends, the surface calls
+`job_conversation_hold()`, which keeps the spec and the authority the
+conversation gives each such job (`session$.job_held`, moved with the
+jobs by `job_state_move()`), and `job_dispatch()` starts it under them.
+A job from an ended conversation with nothing held does not run.
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 

@@ -489,11 +489,20 @@ for (i in 1:50) {
 expect_identical(corteza:::job_read(running)$status, "running")
 second <- make_session("room-replaced", waiter)
 worker_pid <- first$.job_worker$get_pid()
+# Starting checkpoints a /clear left for later go with the job in flight
+# (R/job-conversation.R). The running job's authority cache does not
+# (R/job-authority.R): only the conversation that dispatched it writes
+# its record.
+first$.job_starts <- list(list(conversation = "pending"))
 corteza:::job_state_move(first, second)
 expect_null(first$.job_worker)
 expect_null(first$.job_current)
+expect_null(first$.job_starts)
 expect_identical(second$.job_current, running)
 expect_identical(second$.job_worker$get_pid(), worker_pid)
+expect_identical(second$.job_starts, list(list(conversation = "pending")))
+expect_null(second$.job_authority)
+second$.job_starts <- NULL
 file.create(gate)
 seen <- pump_until(second, running)
 expect_identical(corteza:::job_read(running)$status, "done")

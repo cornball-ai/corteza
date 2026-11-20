@@ -16,7 +16,9 @@
 # writes its record. After the terminal's /clear (a new session id), or
 # once a room's job passes to the session that replaces it
 # (job_state_move()), the record stays as the old conversation left
-# it, and /cancel stops the job.
+# it, and /cancel stops the job. A job that conversation queued and had
+# not started is held with what it allowed as it ended
+# (job_conversation_hold()), and its record is written from that.
 
 job_authority_path <- function(id) {
     file.path(job_dir(id), "authority.json")
@@ -35,9 +37,14 @@ job_authority_now <- function(session) {
 # job's record had, so a worker can tell that its record changed while
 # a call waited. A write that fails removes the record: one that no
 # longer says what the conversation allows must not stand, and with
-# none the worker refuses every call until a later write.
-job_authority_write <- function(session, id) {
-    now <- job_authority_now(session)
+# none the worker refuses every call until a later write. A job held
+# from a conversation that has ended (job_conversation_hold()) passes
+# that conversation and what it allowed, so no later pump of another
+# conversation writes the record again (job_authority_sync()).
+job_authority_write <- function(session, id,
+                                values = job_authority_now(session),
+                                conversation = session_conversation(session)) {
+    now <- values
     path <- job_authority_path(id)
     last <- session$.job_authority
     seqs <- 0L
@@ -58,7 +65,7 @@ job_authority_write <- function(session, id) {
         unlink(path)
         stop(conditionMessage(written), call. = FALSE)
     }
-    session$.job_authority <- list(job = id, conversation = session$sessionId,
+    session$.job_authority <- list(job = id, conversation = conversation,
                                    values = now, seq = seq)
     invisible(seq)
 }
@@ -70,7 +77,7 @@ job_authority_sync <- function(session) {
     id <- session$.job_current
     last <- session$.job_authority
     if (is.null(id) || !identical(last$job, id) ||
-        !identical(last$conversation, session$sessionId)) {
+        !identical(last$conversation, session_conversation(session))) {
         return(invisible(FALSE))
     }
     if (identical(last$values, job_authority_now(session))) {
