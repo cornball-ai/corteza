@@ -313,10 +313,14 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     restored
 }
 
-# Record in the worker's folder which process holds it. Retention leaves
-# a folder whose worker is alive, whatever its age (R/retention-state.R):
-# idle retirement can be turned off, and a running job is never retired.
-# A worker that cannot write it still runs; its folder is then judged as
+# Record in a folder the worker uses which process holds it. Retention
+# leaves a folder whose worker is alive, whatever its age
+# (R/retention-state.R): idle retirement can be turned off, and a running
+# job is never retired. A worker uses more than the folder it started in:
+# after a /clear its checkpoints go to the new conversation's folder,
+# the first of them written before any job, so each checkpoint marks its
+# folder too. While a job runs, the open job holds its folder. A worker
+# that cannot write the record still runs; its folder is then judged as
 # one with no live worker.
 .job_worker_child_mark <- function(state_dir) {
     tryCatch({
@@ -497,6 +501,7 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     conversation = .job_worker_state$conversation) {
     dir.create(state_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     Sys.chmod(state_dir, "0700")
+    .job_worker_child_mark(state_dir)
     objects <- .workspace_checkpoint_write(globalenv(),
         file.path(state_dir, "workspace.RData"))
     if (!is.null(history)) {

@@ -612,3 +612,75 @@ local({
 
     expect_identical(unasked, 0L)
 })
+
+# ---- Retention leaves the folders a live worker uses ----------------------
+# Codex's case on #295: the worker names its process in the folder it
+# starts in, and a /clear has it write the new conversation's start in
+# another. Retention run by another session, its clock past the limit,
+# took that folder while the worker lived. Each checkpoint names the
+# process now.
+local({
+    root <- tempfile("conversation-retention-")
+    dir.create(root)
+    vars <- c("R_USER_DATA_DIR", "R_USER_CONFIG_DIR", "CORTEZA_STATE_DIR",
+              "CORTEZA_REMOTE_DIR")
+    old <- Sys.getenv(vars, unset = NA)
+    Sys.setenv(R_USER_DATA_DIR = file.path(root, "data"),
+               R_USER_CONFIG_DIR = file.path(root, "config"))
+    Sys.setenv(CORTEZA_STATE_DIR = file.path(ns$corteza_data_dir(), "state"),
+               CORTEZA_REMOTE_DIR = file.path(ns$corteza_data_dir(), "remote"))
+    on.exit({
+        for (v in vars) {
+            if (is.na(old[[v]])) {
+                Sys.unsetenv(v)
+            } else {
+                do.call(Sys.setenv, stats::setNames(list(old[[v]]), v))
+            }
+        }
+        unlink(root, recursive = TRUE)
+    }, add = TRUE)
+    proj <- file.path(root, "proj")
+    dir.create(proj)
+    s <- corteza::new_session("cli", provider = "anthropic", web_search = FALSE)
+    s$cwd <- proj
+    s$sessionId <- "conv-a"
+    s$job_checkpoint_key <- "repl:conv-a"
+    s$job_checkpoint_owner <- "local:fixture"
+    s$config <- list(jobs = list(idle_minutes = 0))
+    s$job_worker_spec <- list(init_fn = function(spec) {
+        assign("session", corteza::new_session("cli", provider = "anthropic",
+                                               web_search = FALSE),
+               envir = asNamespace("corteza")$.subagent_state)
+    })
+    folder <- function() {
+        ns$job_worker_state_dir(ns$job_worker_identity(s, "doer"))
+    }
+    first <- folder()
+    ns$job_worker_start(s)
+    on.exit(ns$job_worker_close(s), add = TRUE, after = FALSE)
+    s$.job_worker$run(function() assign("kept", 42, globalenv()))
+    s$sessionId <- "conv-b"
+    ns$job_conversation_clear(s, "conv-b", checkpoint_key = "repl:conv-b")
+    second <- folder()
+    expect_false(identical(first, second))
+    expect_true(file.exists(file.path(second, "checkpoint.json")))
+    marked <- ns$job_read_file(file.path(second, "worker.json"))
+    expect_identical(as.integer(marked$pid), s$.job_worker$get_pid())
+    expect_identical(marked$host, Sys.info()[["nodename"]])
+    # Another session's run: its own conversation is all it keeps.
+    later <- Sys.time() + 100 * 24 * 60 * 60
+    found <- ns$retention_prune(90, keep = "elsewhere", now = later)
+    expect_false(any(found$removed))
+    expect_true(file.exists(file.path(second, "checkpoint.json")))
+    expect_true(file.exists(file.path(first, "worker.json")))
+    expect_true(s$.job_worker$is_alive())
+    # With the worker gone, the same run takes both folders: nothing but
+    # the worker held them.
+    ns$job_worker_close(s)
+    if (.Platform$OS.type != "windows") {
+        found <- ns$retention_prune(90, keep = "elsewhere", now = later)
+        expect_true(second %in% found$path[found$removed])
+        expect_true(first %in% found$path[found$removed])
+        expect_false(file.exists(file.path(second, "checkpoint.json")))
+    }
+})

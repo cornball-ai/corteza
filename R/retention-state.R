@@ -33,13 +33,14 @@
 #   or whose process on this host has ended.
 #
 # A worker folder stays, whatever its age, while it is held: its worker
-# is alive (`worker.json`, which the worker writes when it starts), its
-# session is open in the process that runs retention (`keep`), or a job
-# is open in its workspace, or ran there under its identity. Retirement
-# of an idle worker can be turned off, and a running job is never
-# retired, so a live worker is not a matter of age. Each of these, and
-# the folder's and the place's last use, is read again just before the
-# folder goes.
+# is alive (`worker.json`, which the worker writes when it starts and
+# with each checkpoint, so the new conversation's folder after a /clear
+# has it too), its session is open in the process that runs retention
+# (`keep`), or a job is open in its workspace, or ran there under its
+# identity. Retirement of an idle worker can be turned off, and a running
+# job is never retired, so a live worker is not a matter of age. Each of
+# these, and the folder's and the place's last use, is read again just
+# before the folder goes.
 #
 # A folder is judged only when it reads as corteza's: a name of the form
 # corteza gives it, and for a job or a remote session a record that
@@ -423,7 +424,7 @@ retention_worker_held <- function(d, identity = NULL, keep = character(),
 }
 
 # Is the folder's worker alive? The record a worker writes when it
-# starts names its process. A process on this host that is gone is not
+# starts, and with each checkpoint, names its process. A process on this host that is gone is not
 # alive, nor is a folder with no record; a record another host wrote,
 # one on Windows, or one there that cannot be read is taken as alive,
 # since nothing here says otherwise (job_lock_process_gone()).
