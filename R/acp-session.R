@@ -120,7 +120,7 @@
         .acp_refuse(sprintf("Session %s belongs to %s, not to %s.",
                             .sanitize_inline(sid, max_chars = 80L),
                             .sanitize_inline(dir %||% "another directory",
-                                             max_chars = 300L),
+                    max_chars = 300L),
                             .sanitize_inline(cwd, max_chars = 300L)))
     }
     invisible(TRUE)
@@ -164,7 +164,8 @@
 # shows is the one in force.
 .acp_mode_ids <- function(session) {
     own <- session$acp_config_mode
-    c("ask", "review", if (identical(own, "allow") || identical(own, "deny")) own)
+    c("ask", "review",
+        if (identical(own, "allow") || identical(own, "deny")) own)
 }
 
 .acp_mode_of <- function(session) {

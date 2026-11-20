@@ -182,17 +182,17 @@
 # R/review.R) by its name. "allow" and "deny" are offered only where the
 # config chose them (.acp_mode_ids()).
 .ACP_MODES <- list(
-    ask = list(name = "Ask",
-               description = "Every call that needs approval is asked of you."),
-    review = list(name = "Review",
-                  description = paste("The reviewer rules first on what would be",
-                                      "asked, and passes on what it cannot judge.")),
-    allow = list(name = "Allow",
-                 description = paste("Your config's approval_mode: every call",
-                                     "that would ask runs.")),
-    deny = list(name = "Deny",
-                description = paste("Your config's approval_mode: every call",
-                                    "that would ask is refused.")))
+                   ask = list(name = "Ask",
+                              description = "Every call that needs approval is asked of you."),
+                   review = list(name = "Review",
+                                 description = paste("The reviewer rules first on what would be",
+            "asked, and passes on what it cannot judge.")),
+                   allow = list(name = "Allow",
+                                description = paste("Your config's approval_mode: every call",
+            "that would ask runs.")),
+                   deny = list(name = "Deny",
+                               description = paste("Your config's approval_mode: every call",
+            "that would ask is refused.")))
 
 .acp_modes <- function(current, ids = c("ask", "review")) {
     list(currentModeId = current,
