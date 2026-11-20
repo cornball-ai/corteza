@@ -351,6 +351,17 @@ wait as silence.
 In the terminal an automatic compaction also runs the memory flush first
 (`memory_flush_enabled`), which is a request of its own.
 
+The R objects outlive the turns that made them: a compaction leaves every
+object in place, whatever its size. So the summary ends with the names of the
+objects `run_r` made that are still there, up to 30 of them, then the open
+handles. The agent can use an object instead of rebuilding it. Only names are
+listed, since reading an object can run code: a binding made with
+`makeActiveBinding()` or `delayedAssign()` is named and left alone. This is
+for the terminal, `chat()` and a subagent or doer, whose R process is the
+session's own. A bot's rooms share one, so a room's summary has no list, and
+neither does a session whose `run_r` runs in a worker process
+(`run_r_mode: "worker"`).
+
 None of the three applies to a session that manages its own context
 (`context_edit` with `"strategy": "clm"`, under "Conversation context
 editing"). Such a session is never compacted, and `/context` says so.

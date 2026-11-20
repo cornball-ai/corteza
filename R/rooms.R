@@ -402,6 +402,30 @@ bot_markup <- function(markdown) {
     }
 }
 
+# Lines written for the terminal, made ready to send to a room as
+# Markdown. A run of lines indented by 2 spaces, a list at the terminal,
+# becomes a Markdown list: in a room the indent renders as nothing and
+# the items run together. Blank lines set the list off, so a line after
+# it does not join its last item where the plain text is rendered.
+bot_markdown_list <- function(lines) {
+    item <- startsWith(lines, "  ")
+    out <- character()
+    for (i in seq_along(lines)) {
+        if (!item[[i]]) {
+            out <- c(out, lines[[i]])
+            next
+        }
+        if (i == 1L || !item[[i - 1L]]) {
+            out <- c(out, "")
+        }
+        out <- c(out, paste0("- ", sub("^ +", "", lines[[i]])))
+        if (i < length(lines) && !item[[i + 1L]]) {
+            out <- c(out, "")
+        }
+    }
+    out
+}
+
 # chat_send() reports "no event id" as character(0): it as.character()s
 # whatever the send returned, and mx.client returns NULL when a 200 from
 # the homeserver carries no event_id. Every caller here tests the result
@@ -732,7 +756,8 @@ bot_trust_command <- function(cfg, session, sender, arg) {
     if (is.null(cwd) || bot_is_scratch(cwd)) {
         return("This room has no project directory, so there is nothing to trust.")
     }
-    paste(trust_command(cwd, arg, when = bot_trust_when()), collapse = "\n")
+    paste(bot_markdown_list(trust_command(cwd, arg, when = bot_trust_when())),
+          collapse = "\n")
 }
 
 # The lines `status` adds about trust. None for a room in the scratch
@@ -743,7 +768,8 @@ bot_trust_status <- function(session) {
         return(character())
     }
     word <- trust_status_word(session$project_trusted, project_trusted(cwd))
-    c(sprintf("trusted: %s", word), trust_left_alone(session, cwd))
+    bot_markdown_list(c(sprintf("trusted: %s", word),
+                        trust_left_alone(session, cwd)))
 }
 
 # Which rooms have been told that their directory is not trusted.
@@ -774,7 +800,8 @@ bot_trust_notice <- function(session) {
     if (is.null(note)) {
         return(NULL)
     }
-    paste(c(note, "Only an operator of this bot can do that."), collapse = "\n")
+    paste(bot_markdown_list(c(note, "Only an operator of this bot can do that.")),
+          collapse = "\n")
 }
 
 # Record that a room was told, so it is not told again. Called once the
@@ -2462,7 +2489,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$cwd %||% getwd(), .context_edit_status(session))
             ack <- paste(c(ack, bot_trust_status(session)), collapse = "\n")
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                bot_reply_send(chat, m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -2480,7 +2508,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             ack <- tryCatch(bot_trust_command(cfg, session, sender, trust_arg),
                             error = function(e) conditionMessage(e))
             sent_id <- tryCatch(
-                                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                                bot_reply_send(chat_now(), m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
                                 error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
@@ -2631,7 +2660,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         trust_note <- bot_trust_notice(session)
         if (!is.null(trust_note)) {
             sent_id <- tryCatch(
-                                bot_reply_send(chat_now(), m$channel, trust_note, thread = m$thread),
+                                bot_reply_send(chat_now(), m$channel, trust_note,
+                    markdown = TRUE, thread = m$thread),
                                 error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
