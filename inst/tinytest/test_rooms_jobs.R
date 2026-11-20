@@ -78,7 +78,8 @@ rx <- function(key, target, sender = "@troy:ex", room = "!room:ex",
 job_waiting <- function(s, cmd = "rm x", route = NULL) {
     id <- corteza:::job_create("rm stale files",
                                origin = list(session_key = s$job_key,
-                                             room = s$room_id))
+                                             room = s$room_id,
+                                             conversation = s$conversation_id))
     corteza:::job_mark_dispatched(id)
     req <- corteza:::job_approval_request(
         id, list(tool = "bash", args = list(cmd = cmd)),
@@ -143,12 +144,28 @@ fake_monitor <- function(task) {
     list(reply = sprintf("REQUEST: %s\nVERDICT: %s\nREASON: because %s", id,
                          verdict, verdict))
 }
+# The monitor reads the conversation that asked for the job
+# (R/room-record.R): a record that begins with it, holding a line from
+# someone who may approve. test_room_record.R covers the rest.
 monitored <- function(key) {
     s <- make_session(key)
     s$cwd <- tempdir()
+    s$conversation_id <- corteza:::job_new_id()
+    corteza:::bot_record_attach(s, cfg, key, "conversation")
+    corteza:::bot_transcript_add(s, "$asked", "user", "tidy the package",
+                                 event = list(sender = "@troy:ex",
+                                              body = "tidy the package"))
     s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
                               run_fn = fake_monitor)
     s
+}
+# Who may approve, as the room's members would say; the returned
+# function puts the real lookup back.
+approvers_are <- function(who) {
+    real <- corteza:::bot_room_approvers
+    assignInNamespace("bot_room_approvers", function(cfg, room_id) who,
+                      "corteza")
+    function() assignInNamespace("bot_room_approvers", real, "corteza")
 }
 auto_cfg <- c(cfg, list(auto_approve_asks = TRUE))
 # Collect the monitor's answer the way the bot's loop does.
@@ -165,6 +182,8 @@ monitor_answer <- function(chat, s, timeout = 20) {
 local({
     rec <- new.env()
     chat <- make_chat(rec)
+    undo <- approvers_are("@troy:ex")
+    on.exit(undo(), add = TRUE)
     s <- monitored("!mon:ex")
     on.exit(corteza:::job_worker_close_all(s), add = TRUE)
     reg <- registry(s)
@@ -253,6 +272,8 @@ local({
 local({
     rec <- new.env()
     chat <- make_chat(rec)
+    undo <- approvers_are("@troy:ex")
+    on.exit(undo(), add = TRUE)
     s <- monitored("!nomon:ex")
     s$job_worker_spec$init_fn <- function(spec) stop("no provider key")
     w <- job_waiting(s, "git add R/x.R", route = "monitor")
@@ -489,6 +510,35 @@ expect_identical(rr("nowhere"), character())
 # A room with no name is known by its id.
 expect_identical(corteza:::bot_room_label(rooms_dir[[3L]]), "!c:ex")
 
+# A room with no directory (WP10) works in the scratch folder every such
+# room shares, which names nothing of the room's: a list says it has no
+# directory, and it is matched by its id or name only.
+local({
+    scratch <- corteza:::bot_scratch_path()
+    chat_room <- list(id = "!u:ex", name = "chat", cwd = scratch)
+    rooms <- c(rooms_dir, list(chat_room))
+    listing <- corteza:::bot_room_listing(rooms)
+    expect_true(grepl("- chat (!u:ex), no directory", listing, fixed = TRUE))
+    expect_false(grepl(scratch, listing, fixed = TRUE))
+    expect_true(grepl("- Corteza (!b:ex), working in", listing, fixed = TRUE))
+    ids <- function(want) {
+        vapply(corteza:::bot_resolve_room(rooms, want), function(r) r$id, "")
+    }
+    expect_identical(ids("chat"), "!u:ex")
+    expect_identical(ids("!u:ex"), "!u:ex")
+    expect_identical(ids(scratch), character())
+    expect_identical(ids(basename(scratch)), character())
+    # Nor is it near a name by its folder, and nothing beside the scratch
+    # folder, in the temp directory, is offered as a project no room has.
+    expect_identical(corteza:::bot_rooms_near(list(chat_room), "unbound"), list())
+    beside <- file.path(dirname(scratch), "beside-scratch")
+    dir.create(beside, showWarnings = FALSE)
+    on.exit(unlink(beside, recursive = TRUE), add = TRUE)
+    expect_null(corteza:::bot_room_unclaimed_dir(list(chat_room), "beside-scratch"))
+    expect_false(corteza:::bot_room_bound(chat_room))
+    expect_true(corteza:::bot_room_bound(rooms_dir[[2L]]))
+})
+
 # The directory comes from the transport: joined rooms, names, topics.
 local({
     proj <- tempfile("handoff-proj")
@@ -554,6 +604,26 @@ local({
     # This room is not another room.
     same <- hand("llm.api")
     expect_true(grepl("this room", text_of(same)))
+    # A room with no directory hands no work on, and takes none (WP10).
+    a$unbound <- TRUE
+    asked <- hand("corteza")
+    a$unbound <- NULL
+    expect_true(isTRUE(asked$isError))
+    expect_true(grepl("This room has no directory, so it hands no work",
+                      text_of(asked), fixed = TRUE))
+    expect_true(grepl("takes its directory from its topic", text_of(asked),
+                      fixed = TRUE))
+    unbound_rooms <- c(rooms_dir, list(list(id = "!u:ex", name = "chat",
+                                            cwd = corteza:::bot_scratch_path())))
+    taken <- corteza:::bot_job_handoff(reg, a, ops_cfg, chat, "@troy:ex", origin,
+        room = "chat", task = "raise the llm.api floor", rooms = unbound_rooms,
+        new_session = function(id) {
+            opened <<- c(opened, id)
+            NULL
+        })
+    expect_true(isTRUE(taken$isError))
+    expect_true(grepl("chat has no directory, so it takes no work",
+                      text_of(taken), fixed = TRUE))
     expect_identical(length(corteza:::job_list()), before)
     expect_identical(length(rec$sent), 0L)
     expect_identical(opened, character())
@@ -897,6 +967,38 @@ local({
                                     ctx = list(session = s))
     expect_null(here$isError)
     corteza:::job_worker_close_all(s)
+    # A room with no directory hands work to no doer, its own or another
+    # room's (WP10), and nothing is submitted.
+    s$unbound <- TRUE
+    jobs <- length(corteza:::job_list(origin_key = "repl"))
+    for (room in list(NULL, "corteza")) {
+        no <- corteza:::tool_delegate("do z", room = room, ctx = list(session = s))
+        expect_true(isTRUE(no$isError))
+        expect_true(grepl("This room has no directory, so it hands no work to a doer",
+                          text_of(no), fixed = TRUE))
+    }
+    expect_identical(length(corteza:::job_list(origin_key = "repl")), jobs)
+    # Nor does it run a job that reached its queue another way, or resume
+    # one. The dispatch refuses before any worker starts.
+    u <- corteza::new_session("matrix")
+    u$unbound <- TRUE
+    u$job_key <- "unbound-room"
+    u$job_owner <- "bot"
+    u$cwd <- tempdir()
+    u$config <- list()
+    queued <- corteza:::job_create("do w", workspace = u$cwd,
+                                   origin = list(session_key = "unbound-room"),
+                                   owner = "bot")
+    corteza:::job_pump(u)
+    j <- corteza:::job_read(queued)
+    expect_identical(j$status, "failed")
+    expect_true(grepl("this room has no directory, so it runs no jobs",
+                      j$outcome$error, fixed = TRUE))
+    expect_null(u$.job_worker)
+    resumed <- tryCatch(corteza:::job_resume(u, queued, by = "op"),
+                        error = conditionMessage)
+    expect_true(grepl("This room has no directory, so it resumes no job",
+                      resumed, fixed = TRUE))
 })
 
 if (is.na(old_state)) {

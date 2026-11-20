@@ -1,3 +1,127 @@
+# corteza 0.8.0.27
+
+- A room's monitor (`auto_approve_asks: true`) reads the room's
+  conversation, as the terminal's reviewer does, where it was told the
+  task in one line. Each conversation keeps a record in the room's
+  journal folder that a flush, `/clear` or restart leaves whole. The
+  monitor sends the call to a person when it cannot read the record
+  whole: nobody may approve, the record has a break (a restart whose
+  backfill did not reach its last event, or failed), or it is too long.
+
+# corteza 0.8.0.26
+
+- A program that runs turns for someone else can let them stop one:
+  `session$stop_requested`, a function the turn asks before each
+  request to the model, before each tool call, again just before a call
+  runs and on each streamed piece of the reply. A stop ends the turn
+  with status `cancelled` and a history the next turn can use. A
+  cancelled job's reason says what it leaves: the files it wrote stay,
+  and the next job starts from its worker's last checkpoint.
+
+# corteza 0.8.0.25
+
+- A Matrix room and each of its threads keep a record of the
+  conversation they hold, so a restart goes on with it and seeds
+  nothing from before its `/clear`. A room's `/clear` saves the new
+  record before it answers or replaces the session; when it cannot,
+  nothing is cleared and the room is told. A job the room asked for
+  finishes in the conversation that asked, and its result is posted
+  marked as asked before the `/clear`.
+
+# corteza 0.8.0.24
+
+- At the terminal, `/clear` starts a new conversation for a job's
+  worker too: its R objects stay and its history does not, and the
+  next job gets the instructions and tools a session started now would
+  have. A job still running finishes, and its result goes to the
+  conversation that asked for it; a job still queued runs under the
+  settings its conversation had when it ended. Each conversation keeps
+  its own checkpoint, so `--resume` brings back that conversation's
+  worker as its last job left it.
+
+# corteza 0.8.0.23
+
+- A turn that ends on an error no longer leaves a tool call without a
+  result. Every later request from that history failed (Anthropic
+  answers 400), so a room stayed broken until `/reset`. Before the
+  error leaves `turn()`, each call with no result gets a placeholder
+  and a note says the turn stopped on that error; a turn also closes,
+  before its first request, any call an earlier turn or process left
+  open. Anthropic, OpenAI and Responses histories alike.
+
+# corteza 0.8.0.22
+
+- Retention also clears corteza's state stores, in the same daily run
+  and in `sessions_prune()`: a chain of jobs once every job in it has
+  ended and none of its folders has changed for `retention.session_days`
+  (an incomplete job nothing resumed waits `retention.incomplete_days`,
+  180 by default), a worker's folder with no checkpoint, and a
+  remote-control session that was closed or whose process is gone. An
+  open job keeps its chain, and audit records, checkout lock numbers,
+  room state, the archive's files and transcripts stay. A folder whose
+  name or record corteza did not make is listed and left, and nothing is
+  read or removed through a link.
+
+# corteza 0.8.0.21
+
+- A job's worker obeys its conversation's plan mode, approval mode and
+  dry run. Each job applies its whole spec when it starts (provider,
+  model, reasoning settings, plan mode, tools, turn limit), and the
+  worker reads what its conversation allows before each tool call and
+  again just before the call runs, so a `/plan`, `/permissions` or
+  `/dryrun` typed while a job runs reaches its next call. A record the
+  worker cannot read refuses every call. A worker cannot end plan mode;
+  the person does.
+
+# corteza 0.8.0.20
+
+- Each session takes its tools once, when it starts: corteza's own and
+  any a host registered, the user's skills, the config's package tools
+  and, in a trusted directory, the project's skills. A bot's rooms
+  share one process, and each now sees only its own project's tools. A
+  name is taken once: a later source never replaces an earlier one's
+  tool, so a skill named like a built-in tool is skipped, with a
+  message. Policy, the supervisor, the monitors, the reviewer and the
+  approval prompt judge the class of the tool that runs, as does the
+  gate of a room with no directory. A child process (a subagent, a
+  job's worker) now gets the config's package tools, as its parent
+  does.
+
+# corteza 0.8.0.19
+
+- A Matrix room with no directory (its topic names none, and the bot
+  has no `cwd`) reads and talks only. It works in a scratch folder, and
+  until now it could write files there, run commands, start subagents
+  and hand off or take jobs. Writes, commands, work in a child, a
+  worker or another room, and tools with no class are refused before
+  they run, and no later rule, setting or approval lifts the refusal,
+  which says how the room gets a directory. Room listings say "no
+  directory" in place of the scratch folder's path.
+
+# corteza 0.8.0.18
+
+- A compaction's summary ends with the names of the R objects `run_r`
+  made that are still in the session, and the handles still open, so
+  the model does not rebuild what it has. Names only, read with `ls()`,
+  so no object's code runs; at most 30 names. The terminal, `chat()`
+  and a child process list them; a room, whose objects are the bot's,
+  and a session whose `run_r` runs in a worker do not.
+
+# corteza 0.8.0.17
+
+- A room's trust messages go out as Markdown, with what a session left
+  alone as a list: the notice a room gets once, the `/trust` reply and
+  the trust lines of `status`. A client that renders Markdown had run
+  the indented items together. The terminal and `chat()` are unchanged.
+
+# corteza 0.8.0.16
+
+- `/help` lists every command. The terminal's had left out `/q`,
+  `/reset` and `/new` (the same as `/quit` and `/clear`), `/refine`,
+  `/job resume` and `/skills`, and `chat()`'s had left out `/skills`.
+  corteza keeps a table of the commands of each surface, and a test
+  holds both help texts and the dispatchers to it.
+
 # corteza 0.8.0.15
 
 - **Changed default: no package functions are registered as tools

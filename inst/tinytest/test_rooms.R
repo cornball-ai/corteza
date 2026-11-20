@@ -156,9 +156,11 @@ local({
   dir.create(file.path(proj, ".git"), recursive = TRUE)
   fake <- function(task) {
     id <- sub(".*REQUEST-ID: ([A-Za-z0-9_-]+).*", "\\1", task)
-    verdict <- if (grepl("refuse-me", task)) {
+    # The call's own arguments: the request also lists the earlier calls.
+    args <- sub("(?s).*ARGUMENTS:\n(.*?)\n\n.*", "\\1", task, perl = TRUE)
+    verdict <- if (grepl("refuse-me", args)) {
       "refuse"
-    } else if (grepl("escalate-me", task)) {
+    } else if (grepl("escalate-me", args)) {
       "escalate"
     } else {
       "approve"
@@ -166,12 +168,25 @@ local({
     list(reply = sprintf("REQUEST: %s\nVERDICT: %s\nREASON: because %s", id,
                          verdict, verdict))
   }
+  # The monitor reads the room's conversation (R/room-record.R): it needs
+  # a record that begins with the conversation, and someone who may
+  # approve, whose line asks for the work. test_room_record.R covers the
+  # rest.
+  real_approvers <- corteza:::bot_room_approvers
+  assignInNamespace("bot_room_approvers", function(cfg, room_id) "@troy:ex",
+                    ns = "corteza")
+  on.exit(assignInNamespace("bot_room_approvers", real_approvers,
+                            ns = "corteza"), add = TRUE)
   supervised <- function(auto) {
     s <- new.env()
     s$cwd <- proj
     s$config <- list()
     s$job_key <- "!r:ex"
-    s$supervisor_goal <- list(text = "tidy the package", id = "$m1")
+    s$conversation_id <- corteza:::job_new_id()
+    corteza:::bot_record_attach(s, cfg, "!r:ex", "conversation")
+    corteza:::bot_transcript_add(s, "$m1", "user", "tidy the package",
+                                 event = list(sender = "@troy:ex",
+                                              body = "tidy the package"))
     s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
                               run_fn = fake)
     corteza:::bot_supervise_session(s, c(cfg, list(auto_approve_asks = auto)),
@@ -975,6 +990,7 @@ if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
 
     fresh <- corteza:::bot_reset_session(
         reg, "!c:ex", cfg, "$ack1", "Cleared. Starting a fresh session.",
+        corteza:::bot_conversation_begin(cfg, "!c:ex", "!c:ex", NULL),
         provider = "moonshot", model = "kimi-k2.5")
 
     # It really is a new session, not the old one handed back.
@@ -998,7 +1014,8 @@ if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
 
     # A send that failed leaves nothing to remember or replay.
     reg2 <- corteza:::bot_new_session_registry()
-    none <- corteza:::bot_reset_session(reg2, "!c:ex", cfg, NULL, "ack")
+    none <- corteza:::bot_reset_session(reg2, "!c:ex", cfg, NULL, "ack",
+                                        corteza:::bot_conversation_new())
     expect_equal(length(none$transcript), 0L)
 })
 

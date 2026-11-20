@@ -7,8 +7,10 @@
 # control or continue. A tool that declares none is "unknown".
 #
 # Order (approval-engine note, WP18):
-#   1. The session's mode. Plan mode refuses write, exec, continue and
-#      unknown. Nothing after this lifts a mode's deny.
+#   1. The session's mode. A room with no directory (WP10) refuses all
+#      but reads and the control tools it names; plan mode refuses
+#      write, exec, continue and unknown. Nothing after this lifts a
+#      mode's deny.
 #   2. The credential rule. A path under a credential store asks, and the
 #      verdict carries rule = "credential", so no saved "always" answers
 #      it. Neither the user's policy function nor the config can lift it.
@@ -27,8 +29,16 @@
 #   urls      - character, URLs touched (resolved from args if NULL)
 #   channel   - character, one of "cli", "console", "matrix"
 #   context   - list, optional; context$recent_classes carries sticky
-#               classifications from earlier calls in the same turn, and
-#               context$plan_mode the session's mode
+#               classifications from earlier calls in the same turn,
+#               context$plan_mode the session's mode,
+#               context$plan_mode_locked whether the session may end it
+#               (not a job's worker, R/job-authority.R), and
+#               context$unbound whether it is a room with no directory
+#   class     - character, optional: the tool's class, as the session's
+#               table holds it (turn() sets it, R/tool-table.R). Without
+#               it the class is read from the registry.
+#   origin    - character, optional: where the tool came from ("builtin",
+#               "host", "user", "package", "project"), set with class
 
 # ---- Hard safety ----
 
@@ -86,16 +96,20 @@ tool_class_check <- function(class, name = "") {
 .session_tool_classes <- c(send_room_file = "write", ask_room = "continue",
                            delegate_to = "continue", edit_context = "control")
 
-# The registry's entry for a tool, registering the built-in tools first
-# when nothing is registered yet.
-.registered_tool <- function(tool_name) {
+# A tool's entry: the session's table's (R/tool-table.R) where it has
+# one, else the registry's, registering the built-in tools first when
+# nothing is registered yet.
+.registered_tool <- function(tool_name, table = NULL) {
+    if (!is.null(table)) {
+        return(tool_entry(tool_name, table))
+    }
     ensure_skills()
     get_skill(tool_name)
 }
 
 # Whether corteza wrote the tool's arguments, so that resolve_paths()
 # can read its paths by argument name.
-.args_named_by_corteza <- function(tool_name) {
+.args_named_by_corteza <- function(tool_name, table = NULL) {
     if (!is.character(tool_name) || length(tool_name) != 1L ||
         is.na(tool_name) || !nzchar(tool_name)) {
         return(FALSE)
@@ -103,7 +117,7 @@ tool_class_check <- function(class, name = "") {
     if (tool_name %in% names(.session_tool_classes)) {
         return(TRUE)
     }
-    isTRUE(.registered_tool(tool_name)$builtin)
+    isTRUE(.registered_tool(tool_name, table)$builtin)
 }
 
 # ---- Path / URL resolution ----
@@ -130,7 +144,7 @@ tool_class_check <- function(class, name = "") {
 # argument name is not missed.
 resolve_paths <- function(call) {
     args <- call$args %||% list()
-    if (!.args_named_by_corteza(call$tool %||% "")) {
+    if (!call_named_by_corteza(call)) {
         return(.string_args(args))
     }
     out <- character()
@@ -159,8 +173,10 @@ resolve_urls <- function(call) {
 # ---- Classifiers ----
 
 # The class of a tool: the one it declared where it was registered, or
-# "unknown". A session tool a host adds is looked up first.
-classify_op <- function(tool_name) {
+# "unknown". A session tool a host adds is looked up first. With a
+# session's table, the table's entry decides, whatever the registry
+# holds.
+classify_op <- function(tool_name, table = NULL) {
     if (!is.character(tool_name) || length(tool_name) != 1L ||
         is.na(tool_name) || !nzchar(tool_name)) {
         return("unknown")
@@ -168,7 +184,33 @@ classify_op <- function(tool_name) {
     if (tool_name %in% names(.session_tool_classes)) {
         return(.session_tool_classes[[tool_name]])
     }
-    .registered_tool(tool_name)$class %||% "unknown"
+    .registered_tool(tool_name, table)$class %||% "unknown"
+}
+
+# turn() resolves a call's tool in the session's table once, when it
+# dispatches the call, and records on the call the class and the origin
+# of the entry it found: `call$class` and `call$origin`. Every reader of
+# a call (the gate, the supervisor, the monitors, the approval prompt)
+# asks these two, so all of them see the entry that runs. A call built
+# elsewhere, with neither, is read from the registry.
+call_class <- function(call) {
+    class <- call$class
+    if (is.character(class) && length(class) == 1L &&
+        class %in% c(.tool_classes, "unknown")) {
+        return(class)
+    }
+    classify_op(call$tool %||% "")
+}
+
+# Whether corteza wrote the call's tool, so that its paths are read by
+# argument name. A tool a host adds to a room session is corteza's.
+call_named_by_corteza <- function(call) {
+    origin <- call$origin
+    if (is.character(origin) && length(origin) == 1L) {
+        return(identical(origin, "builtin") ||
+               isTRUE((call$tool %||% "") %in% names(.session_tool_classes)))
+    }
+    .args_named_by_corteza(call$tool %||% "")
 }
 
 # Classify the data class of a tool call. Sticky: if any prior call in the
@@ -207,13 +249,52 @@ classify_data <- function(call, context = NULL) {
 
 # The verdict each mode gives each class. A mode other than the default
 # only refuses: a call it lets through is decided as in the default, by
-# the rules after it.
+# the rules after it. A room with no directory (`unbound`) refuses the
+# control tools too, but for those .unbound_control names.
 .mode_verdicts <- list(
                        default = c(read = "allow", write = "ask", exec = "ask",
                                    control = "allow", continue = "allow", unknown = "ask"),
                        plan = c(read = "allow", write = "deny", exec = "deny", control = "allow",
-                                continue = "deny", unknown = "deny")
+                                continue = "deny", unknown = "deny"),
+                       unbound = c(read = "allow", write = "deny", exec = "deny",
+                                   control = "deny", continue = "deny", unknown = "deny")
 )
+
+# The control tools a room with no directory may still use. Each acts on
+# the session's own conversation or task list, or stops a job the
+# session may see (job_cancel checks). Not spawn_subagent: its child
+# would not keep the room's limits. Not kill_subagent or bg_kill: their
+# registries belong to the process, and neither checks whose a subagent
+# or a background process is, so either could stop another room's work.
+.unbound_control <- c("task_create", "task_update", "edit_context",
+                      "exit_plan_mode", "job_cancel")
+
+# Run the gate of a room with no directory (WP10). It reads and talks:
+# a read passes, and so does a control tool .unbound_control names.
+# Returns a deny decision for anything else, or NULL. The refusal says
+# how the room gets a directory.
+check_unbound_room <- function(call) {
+    if (!isTRUE(call$context$unbound)) {
+        return(NULL)
+    }
+    tool <- call$tool %||% ""
+    op <- call_class(call)
+    if (!identical(.mode_verdicts$unbound[[op]], "deny") ||
+        (identical(op, "control") && tool %in% .unbound_control)) {
+        return(NULL)
+    }
+    why <- switch(op, write = "would write files", exec = "would run commands",
+                  continue = "would run work in a child, a worker or another room",
+                  control = "would start work that does not keep the room's limits",
+                  "has no class, so it may modify state")
+    list(
+         model = "cloud",
+         approval = "deny",
+         reason = sprintf("this room has no directory, so it only reads and talks: %s %s. %s",
+                          tool, why, bot_unbound_how()),
+         rule = "unbound_room"
+    )
+}
 
 # Run the plan-mode gate. Returns a deny decision to short-circuit when
 # the session is in plan mode and the tool's class is one plan mode
@@ -225,19 +306,24 @@ check_plan_mode <- function(call) {
         return(NULL)
     }
     tool <- call$tool %||% ""
-    op <- classify_op(tool)
+    op <- call_class(call)
     if (!identical(.mode_verdicts$plan[[op]], "deny")) {
         return(NULL)
     }
     why <- switch(op, continue = "runs work that does not follow plan mode",
                   unknown = "has no class, so it may modify state",
                   "would modify state")
+    # A job's worker cannot end plan mode (R/job-authority.R), so it is
+    # not told to.
+    then <- if (isTRUE(call$context$plan_mode_locked)) {
+        "report the plan; only the person can end plan mode"
+    } else {
+        "present a plan via exit_plan_mode first"
+    }
     list(
          model = "cloud",
          approval = "deny",
-         reason = sprintf(
-                          "plan mode: %s %s; present a plan via exit_plan_mode first",
-                          tool, why),
+         reason = sprintf("plan mode: %s %s; %s", tool, why, then),
          rule = "plan_mode"
     )
 }
@@ -284,7 +370,7 @@ check_safety <- function(call) {
 # would answer is not at a prompt. A read of it is allowed.
 default_policy <- function(call) {
     data_class <- classify_data(call, call$context)
-    op <- classify_op(call$tool %||% "")
+    op <- call_class(call)
     channel <- call$channel %||% "cli"
 
     approval <- .mode_verdicts$default[[op]]
@@ -308,8 +394,9 @@ default_policy <- function(call) {
 #' \code{"cloud"} or \code{"local"}; nothing routes on it yet.
 #' \code{approval} is \code{"allow"}, \code{"ask"}, or \code{"deny"}. A
 #' verdict from the credential rule also carries
-#' \code{rule = "credential"}, and one from plan mode
-#' \code{rule = "plan_mode"}.
+#' \code{rule = "credential"}, one from plan mode
+#' \code{rule = "plan_mode"}, and one from a room with no directory
+#' \code{rule = "unbound_room"}.
 #'
 #' Every tool has a class, declared where it is registered:
 #' \code{"read"}, \code{"write"}, \code{"exec"}, \code{"control"} (acts on
@@ -318,8 +405,10 @@ default_policy <- function(call) {
 #' \code{"unknown"}. By default \code{read}, \code{control} and
 #' \code{continue} are allowed, and \code{write}, \code{exec} and
 #' \code{unknown} ask. Plan mode refuses \code{write}, \code{exec},
-#' \code{continue} and \code{unknown}, and nothing lifts that refusal.
-#' A path under a credential store asks next, whatever follows.
+#' \code{continue} and \code{unknown}. A Matrix room with no directory
+#' (\code{context$unbound}) refuses everything but \code{read} and a few
+#' named \code{control} tools. Nothing lifts a mode's refusal. A path
+#' under a credential store asks next, whatever follows.
 #'
 #' When \code{config} is supplied, the user's settings are overlaid on
 #' the table: a \code{permissions} entry replaces the verdict for its
@@ -356,7 +445,12 @@ policy <- function(call, config = NULL) {
     }
 
     # The mode first: a credential prompt answered yes must not perform
-    # what plan mode refuses.
+    # what the mode refuses. A room with no directory before plan mode,
+    # whose refusal it outlasts.
+    unbound <- check_unbound_room(call)
+    if (!is.null(unbound)) {
+        return(unbound)
+    }
     plan <- check_plan_mode(call)
     if (!is.null(plan)) {
         return(plan)

@@ -164,10 +164,63 @@ ev <- corteza:::job_pump(slow)
 expect_identical(corteza:::job_read(q3)$status, "cancelled")
 expect_true(as.numeric(difftime(Sys.time(), t_cancel, units = "secs")) < 5)
 expect_false(corteza:::job_worker_alive(slow))
+# Its report names the checkpoint the next job starts from: the one the
+# job before it left.
+expect_true(grepl(sprintf("since job %s ended", q2),
+                  corteza:::job_read(q3)$outcome$reason, fixed = TRUE))
 # Cancelling an ended job reports FALSE.
 expect_false(corteza:::job_cancel(slow, q3))
 # A job from another session cannot be cancelled from this one.
 expect_error(corteza:::job_cancel(slow, a), "no job")
+
+# --- What a job stopped mid-run leaves ---
+# A file it wrote stays; an R object it made since the last checkpoint
+# is gone, and the next job starts from that checkpoint. Its report says
+# both (WP20a, rule 10).
+cancel_dir <- tempfile("job-cancel-")
+dir.create(cancel_dir)
+Sys.setenv(JOB_TEST_GATE = file.path(cancel_dir, "gate"),
+           JOB_TEST_FILE = file.path(cancel_dir, "written"))
+stopper <- make_session("room-stopper", function(task) {
+    if (identical(task, "keep")) {
+        assign("kept", 1, envir = globalenv())
+    }
+    if (identical(task, "lose")) {
+        assign("lost", 2, envir = globalenv())
+        writeLines("written", Sys.getenv("JOB_TEST_FILE"))
+        deadline <- Sys.time() + 30
+        while (!file.exists(Sys.getenv("JOB_TEST_GATE")) &&
+               Sys.time() < deadline) {
+            Sys.sleep(0.05)
+        }
+    }
+    list(reply = paste(task, exists("kept", envir = globalenv()),
+                       exists("lost", envir = globalenv())))
+})
+kept <- corteza:::job_submit(stopper, "keep")
+pump_until(stopper, kept)
+lost <- corteza:::job_submit(stopper, "lose")
+deadline <- Sys.time() + 30
+while (!file.exists(Sys.getenv("JOB_TEST_FILE")) && Sys.time() < deadline) {
+    corteza:::job_pump(stopper)
+    Sys.sleep(0.05)
+}
+expect_true(corteza:::job_cancel(stopper, lost))
+corteza:::job_pump(stopper)
+stopped_job <- corteza:::job_read(lost)
+expect_identical(stopped_job$status, "cancelled")
+expect_true(file.exists(Sys.getenv("JOB_TEST_FILE")))
+expect_true(grepl("Files it wrote stay", stopped_job$outcome$reason,
+                  fixed = TRUE))
+expect_true(grepl(sprintf("since job %s ended", kept),
+                  stopped_job$outcome$reason, fixed = TRUE))
+after_stop <- corteza:::job_submit(stopper, "next")
+pump_until(stopper, after_stop)
+expect_identical(corteza:::job_read(after_stop)$outcome$result,
+                 "next TRUE FALSE")
+corteza:::job_worker_close_all(stopper)
+Sys.unsetenv(c("JOB_TEST_GATE", "JOB_TEST_FILE"))
+unlink(cancel_dir, recursive = TRUE)
 
 # --- A turn error is the job's outcome, and still checkpoints ---
 failing <- make_session("room-fail", function(task) {
@@ -489,11 +542,20 @@ for (i in 1:50) {
 expect_identical(corteza:::job_read(running)$status, "running")
 second <- make_session("room-replaced", waiter)
 worker_pid <- first$.job_worker$get_pid()
+# Starting checkpoints a /clear left for later go with the job in flight
+# (R/job-conversation.R). The running job's authority cache does not
+# (R/job-authority.R): only the conversation that dispatched it writes
+# its record.
+first$.job_starts <- list(list(conversation = "pending"))
 corteza:::job_state_move(first, second)
 expect_null(first$.job_worker)
 expect_null(first$.job_current)
+expect_null(first$.job_starts)
 expect_identical(second$.job_current, running)
 expect_identical(second$.job_worker$get_pid(), worker_pid)
+expect_identical(second$.job_starts, list(list(conversation = "pending")))
+expect_null(second$.job_authority)
+second$.job_starts <- NULL
 file.create(gate)
 seen <- pump_until(second, running)
 expect_identical(corteza:::job_read(running)$status, "done")

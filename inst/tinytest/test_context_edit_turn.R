@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Exercise turn() with the real dispatcher, checkpoint and journal, replacing
 # only the remote model. No API keys, services, or live user state required.
 local({

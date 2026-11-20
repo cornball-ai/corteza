@@ -134,6 +134,10 @@ bot_rehydrate_session <- function(session, chat, room_id, thread_root,
     seed <- list(list(role = "user", content = framing),
                  list(role = "assistant", content = ack))
     history_replace(session, c(seed, session$history %||% list()), "rehydrate")
+    # The thread now goes on from words its record does not hold
+    # (R/room-record.R).
+    bot_record_break(session, paste("the thread went on from an archived",
+                                    "conversation that this record does not hold"))
     message("corteza: rehydrated thread ", thread_root, " from the ",
             archive$kind, " ", archive$vault)
     invisible(TRUE)

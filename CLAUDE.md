@@ -56,9 +56,22 @@ transport. `serve()` (`R/serve.R`) is a separate, spec-compliant MCP
 server for external clients only. Subagents are the one place a child R
 process is still used (`callr::r_session`, initialized via `worker_init()`).
 
-**Tool registry** (`R/registry.R`): `.skill_registry` is the single
-source of truth. `ensure_skills()` / `register_builtin_skills()`
-populate it on first use. `skills_as_api_tools()` converts to the
+**Tool registry** (`R/registry.R`): `.skill_registry` holds corteza's
+own tools and any a host registers by hand. `ensure_skills()` /
+`register_builtin_skills()` populate it on first use.
+
+**A session's tools** (`R/tool-table.R`): a session takes its tools
+once, when it starts, into `session$tool_table`
+(`session_tool_table()`): the registry's, the user's skills, the
+config's package tools and a trusted project's skills. A later source
+never takes a name an earlier one holds; it is skipped with a message.
+`turn()` offers the table, runs the table's handler, and puts the
+entry's `class` and `origin` on each call, which `call_class()` and
+`call_named_by_corteza()` read. Every surface builds one:
+`session_setup()` (`chat()`, rooms), the terminal, a child's
+`subagent_turn_init()` and `serve()`. A session made by `new_session()`
+alone reads the registry. So a bot's rooms, which share a process, each
+see their own project's tools. `skills_as_api_tools()` converts to the
 `llm.api::agent()` format; `sanitize_tool_name()` maps `::` to `__`
 for API compatibility.
 
@@ -125,14 +138,21 @@ Every tool has a class, declared where it is registered: `class =` in
 session's own work: subagents it starts, tasks, `exit_plan_mode`) or
 `continue` (runs work in a child, a worker or a room whose mode was set
 elsewhere: `query_subagent`, `delegate`, `job_resume`). A tool that
-names none is `unknown`. `classify_op()` reads the class from the
-registry; a room host's tools (`send_room_file` and 3 more) are in
-`.session_tool_classes`. A new built-in tool needs a class and a row in
+names none is `unknown`. A call carries the class of the entry it runs
+(`call_class()`); `classify_op()` reads a name's class from the
+session's table, or the registry without one; a room host's tools
+(`send_room_file` and 3 more) are in `.session_tool_classes`. A new built-in tool needs a class and a row in
 `test_tool_classes.R`'s table, or that file fails.
 
 **Order (`policy()`); nothing later lifts an earlier deny:**
 1. The mode. Plan mode refuses `write`, `exec`, `continue` and
-   `unknown` (`.mode_verdicts`, `check_plan_mode()`).
+   `unknown` (`.mode_verdicts`, `check_plan_mode()`). A Matrix room
+   with no directory (`session$unbound`, set where `bot_new_session()`
+   gives it the scratch folder) refuses all but `read` and the control
+   tools `.unbound_control` names (`check_unbound_room()`); a new
+   control tool is refused there until it is named.
+   `tool_delegate()` and `bot_job_handoff()` refuse such a room as well,
+   asking or asked.
 2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
    and the rest asks, marked `rule = "credential"`. No saved "always"
    answers it: both approval callbacks ask each time and offer none.
@@ -180,6 +200,33 @@ call unseen: `auto_approve_asks` chooses between steps 2 and 3 for what
 step 1 leaves open. Settings live under `supervisor` in the user's
 config only (`supervisor_config()`); a project config cannot set them.
 
+The monitor reads the room's conversation (`R/room-record.R`), never
+`session$transcript`, which the archive empties at a flush and at
+`/clear`. Each conversation keeps `conversation-<id>.jsonl` in the
+room's journal folder, written where the transcript queue is fed
+(`bot_transcript_add()`; the backfill writes its own through
+`bot_record_backfill()`): the sender from the event, the text as sent,
+the bot's note (an attachment's receipt) apart, and the kind (`message`,
+`request` for a peer's, `post` for the bot's). Its first line says
+`conversation` or `partial`, and a break is a `gap` line. A restart
+(`bot_run_init()`, or the backfill itself) marks its registry
+(`bot_record_restart()`, an attribute, since the archive walks every
+name in the registry), and the backfill keeps each room's window on
+it. A record from before the restart continues only when its room's
+window holds its last event; any other gets a gap line when a session
+takes it (`bot_record_restart_check()`): the rooms could not be
+listed, the room's history could not be read, the backfill failed
+partway through the room (`bot_backfill_room()`), or the window does
+not reach back far enough, as for a quiet thread.
+`bot_record_conversation()` gives the monitor `Person:` lines for the
+room's approvers (`bot_approvers()`, membership read fresh), `Other
+(<id>):` for anyone else and `Worker:` for posts, or a reason to ask a
+person instead: nobody may approve, a partial start, a gap, an
+unreadable line, no person's line, or past 100,000 characters. A job is
+judged by `origin$conversation` (a hand-off by `origin$from`), read
+when its request comes. Each request is a scope of its own
+(`review:<id>`), with `earlier` for what came of the calls before it.
+
 `R/monitor.R` is the older hall monitor for `/auto` runs in the CLI and
 `chat()`. Same idea, another failure rule: it ends the run where this
 one asks a person. `exec_scan()` is not a sandbox. A path built at run
@@ -207,6 +254,102 @@ nothing between calls. A wait cut short (an interrupt, an error) cancels the req
 installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set
 `"review"` (`load_config()`).
+
+## A worker obeys its conversation (`R/job-authority.R`)
+
+A job's worker (a doer or a reviewer) is a process whose session was
+built when it started. Each job brings a spec, and the child applies
+all of it at the job's start (`.job_worker_child_apply_spec()`):
+provider, model, reasoning settings, plan mode, tools, turn limit.
+Plan mode, approval mode and dry run can change while the job runs, so
+the session that dispatched it writes them to `authority.json` beside
+the job: in `job_dispatch()`, and from `job_pump()` when one changes
+(`job_authority_sync()`). turn()'s handler reads the record
+(`session$authority`, `.authority_apply()`) before each call and again
+just before the call runs; a different `seq` the second time refuses
+the call. A record that is missing, unreadable, or names another job or
+conversation refuses every call. A failed write removes the record, so
+the failure refuses rather than leaving a looser record standing.
+
+Only the conversation that dispatched a job writes its record: the
+cache on the session (`.job_authority`) names the job and the
+conversation (`session_conversation()`), and is not in
+`JOB_SESSION_STATE`, so neither the terminal's `/clear` nor a room's
+replacement session updates an old job's record. A worker cannot end
+plan mode (`plan_mode_locked`): it is not offered `exit_plan_mode`, the
+handler refuses it by name, and its plan-mode text and refusals say the
+person ends it. The monitor runs no job and has neither.
+
+## A worker follows its conversation (`R/job-conversation.R`)
+
+A conversation's id is `session_conversation()`: the session id at the
+terminal, and for a room or a thread the id in its record (below). Each
+job's spec and origin carry it. A warm worker holds the conversation it
+built its session for (`.job_worker_state$conversation`); a job from
+another one rebuilds the session in the same process
+(`.job_worker_child_session()`: config, trust, prompt, tools,
+callbacks) with an empty history, and leaves the R objects. A
+checkpoint records its conversation, and a restore takes the history
+only from its own conversation's checkpoint: one from before 0.8.1
+names none and gives its R objects only, except to a session with no
+conversation of its own.
+
+A surface's `/clear` gives the session its new id and calls
+`job_conversation_clear()`, and touches no worker or checkpoint itself.
+The terminal keeps a checkpoint for each conversation (`repl:<id>`), so
+its new conversation gets a starting checkpoint: the R objects and no
+history, written by the idle doer, copied from the old checkpoint
+(`job_checkpoint_copy()`) when none is alive, or, with a job in flight,
+by `job_pump()` once it settles (`.job_starts`). A job in flight
+finishes under the conversation that asked for it, and the terminal
+sends its result to that conversation's transcript, not to the new
+talker's history. A job that conversation queued and had not started
+does the same: just before the conversation ends, the surface calls
+`job_conversation_hold()`, which keeps the spec and the authority the
+conversation gives each such job (`session$.job_held`, moved with the
+jobs by `job_state_move()`), and `job_dispatch()` starts it under them.
+A job from an ended conversation with nothing held does not run.
+
+A room or a thread keeps its record in the bot's room-state file
+(`R/room-conversation.R`, `<state>/rooms/`, one file per room and bot):
+an id, the `/clear` that started the conversation (`since`, `at`) and
+the bot's answer to it (`ack`). `bot_get_or_create_session()` takes the
+record, or makes one, so a restart goes on with the conversation. The
+`/clear` command saves the new record (`bot_conversation_begin()`)
+before it answers or discards anything; one it cannot save clears
+nothing, and the room is told. The answer's ids are added once it is
+sent (`bot_conversation_acked()`). Then `bot_reset_session()` takes the
+record and the old session: it holds the old conversation's queued
+jobs, clears the old context, moves the jobs and worker to the
+replacement (the authority cache stays behind, which freezes an old
+job's record) and calls `job_conversation_clear()`. A room keeps
+one checkpoint for each session key, so its clear writes none. A result
+after a clear is posted marked as asked before it and goes into the new
+history, since a restart seeds the timeline from there. The backfill
+seeds nothing from before a conversation's start
+(`bot_conversation_before()`), each thread by its own record. Retention
+never removes the file.
+
+## A turn can be asked to stop (`R/turn-stop.R`)
+
+A session may carry `stop_requested`, a function of no arguments.
+`turn()` asks it before each model request (wrapped around the audit's
+`request_callback`, at phase `start`), before each tool call (in the
+handler, beside `.remote_check_stop()`), again just before the call
+runs, after any wait at the gate or the approval prompt (audited as
+`stopped`), and on each streamed delta
+(`.turn_stop_sink()`). The first three raise `corteza_stop`, classed
+`interrupt` so the `error` handlers around tool dispatch and llm.api's
+notifier let it through; the sink raises `llm_cancelled`, and `agent()`
+returns with the history so far. `turn()` catches both, repairs the
+history with `apply_exit_marker()` and returns status `cancelled`.
+Ctrl+C and remote control's stop keep their own path. Nothing sets the
+function yet; ACP's `session/cancel` will. No turn waits on a doer
+today (`delegate` returns at once), and a loop that does must read the
+same function and call `job_cancel()`. A cancelled job's reason
+(`job_cancel_reason()`) names the checkpoint the next job starts from,
+read through the identity in the job's dispatch record, since the
+session's may have moved with a `/clear`.
 
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 
@@ -366,6 +509,22 @@ no `sessionId` plus `journal_agent_id`, and no explicit `journal_dir`,
 has no journal, so bare sessions in tests see no change.
 `journal_enabled: false` turns it off.
 
+## Tool calls left open (`R/turn-repair.R`)
+
+llm.api mirrors a tool call into `session$history` before the tool
+runs, so an error that leaves a turn mid-call leaves the call without
+a result, and the provider refuses every later request made from that
+history (Anthropic: 400, "tool_use ids were found without tool_result
+blocks"). `turn()` closes such calls twice: in its error handler,
+before the error goes on, and at the start of each turn, before
+anything reads the history, for a process stopped mid-call or a
+history from before the fix. `.history_close_open_calls()` puts a
+placeholder result right after the message that made each call, where
+the provider looks for it (rooms and jobs add messages between turns,
+so that is not always the end), and `.turn_close_open_calls()`
+installs the result through `history_replace()`. A turn that fails
+before anything is mirrored leaves the history alone.
+
 ## Retention (`R/retention.R`)
 
 Once a day, from `run_repl_loop()` and `bot_run_step()`,
@@ -374,6 +533,24 @@ session unused for `retention$session_days` (default 90, 0 for off).
 The setting is read from the user's config only (`retention_config()`),
 and a value it cannot read turns retention off. Transcripts always stay.
 `sessions_prune()` is the exported form.
+
+The same run clears the state stores (`R/retention-state.R`): job
+chains (jobs linked by `resume_of`, `review_of` or `parent`) once all
+ended, worker folders with no checkpoint, and remote-control sessions
+that closed or whose process here ended. A chain with an incomplete job
+nothing resumed waits `retention$incomplete_days` (180). A folder is
+judged only when its name and record are corteza's; anything else stays
+and is listed as `"unknown"`. A record is read only where it is a file
+of the folder itself (`retention_record()`), never through a link. A
+removal takes the record that makes a folder live first (`intent.json`,
+`request.json`), and where that record is there but may not go (a
+link, a folder), it removes nothing. Checkout lock generations are
+never removed (`R/job-lock.R`).
+
+A test that hands retention a clock in the future points
+`CORTEZA_STATE_DIR` and `CORTEZA_REMOTE_DIR` into its own temporary
+folder, as `test_retention.R` does: run where either names a bot's live
+state, it would otherwise remove that.
 
 Two things to keep in mind when changing it or the journal:
 
@@ -449,6 +626,15 @@ off to `run_repl_loop()` (`R/repl.R`), which dispatches every slash
 command, so the command set is identical across both. The
 `/status /doctor /config /diff /review /last /outputs` commands (once
 CLI-only) now work in `chat()` too.
+
+`corteza_commands()` (`R/commands.R`) is the table of every surface's
+commands: a row a name, with what it is the same as, its argument, a
+line saying what it does, and whether the terminal and `chat()`, a bot's
+room, or a room controlling a terminal takes it. Nothing dispatches
+from it. `test_commands.R` reads `run_repl_loop()`, `.remote_input()`
+and `.remote_bot_route()` for the names they compare with, asks each
+room parser, and checks both `/help` texts, so a new command needs a
+row, a line in both help texts, and its surface's match.
 
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`

@@ -402,6 +402,30 @@ bot_markup <- function(markdown) {
     }
 }
 
+# Lines written for the terminal, made ready to send to a room as
+# Markdown. A run of lines indented by 2 spaces, a list at the terminal,
+# becomes a Markdown list: in a room the indent renders as nothing and
+# the items run together. Blank lines set the list off, so a line after
+# it does not join its last item where the plain text is rendered.
+bot_markdown_list <- function(lines) {
+    item <- startsWith(lines, "  ")
+    out <- character()
+    for (i in seq_along(lines)) {
+        if (!item[[i]]) {
+            out <- c(out, lines[[i]])
+            next
+        }
+        if (i == 1L || !item[[i - 1L]]) {
+            out <- c(out, "")
+        }
+        out <- c(out, paste0("- ", sub("^ +", "", lines[[i]])))
+        if (i < length(lines) && !item[[i + 1L]]) {
+            out <- c(out, "")
+        }
+    }
+    out
+}
+
 # chat_send() reports "no event id" as character(0): it as.character()s
 # whatever the send returned, and mx.client returns NULL when a 200 from
 # the homeserver carries no event_id. Every caller here tests the result
@@ -598,7 +622,15 @@ bot_msg_record <- function(m, addressed = FALSE) {
 # So the ledger is appended at the moments a Matrix event is seen or
 # successfully sent, and nowhere else. Backfill produces the same shape
 # from the server, which is what makes restart dedup exact.
-bot_transcript_add <- function(session, event_id, role, content) {
+#
+# The conversation's record for its monitor (R/room-record.R) is
+# written here too, unless `record` is FALSE: the backfill writes its
+# own. `event` is the message someone else sent, which gives the record
+# its sender and its text as sent, `note` what the bot made of it, and
+# `kind` says when it is a peer's request rather than a message.
+bot_transcript_add <- function(session, event_id, role, content,
+                               event = NULL, note = NULL, kind = NULL,
+                               record = TRUE) {
     # A send can create several events (attachments, then the text). Only
     # one of them is the conversational turn, and it is the last: the
     # attachments are remembered for echo suppression but are not
@@ -618,6 +650,17 @@ bot_transcript_add <- function(session, event_id, role, content) {
     session$transcript <- c(session$transcript %||% list(),
                             list(list(event_id = as.character(event_id), role = role,
                                       content = text)))
+    if (isTRUE(record)) {
+        if (is.null(kind)) {
+            if (identical(role, "assistant")) {
+                kind <- "post"
+            } else {
+                kind <- "message"
+            }
+        }
+        bot_record_write(session, bot_record_event_line(event_id, text, kind,
+                event = event, note = note))
+    }
     invisible(NULL)
 }
 
@@ -732,7 +775,8 @@ bot_trust_command <- function(cfg, session, sender, arg) {
     if (is.null(cwd) || bot_is_scratch(cwd)) {
         return("This room has no project directory, so there is nothing to trust.")
     }
-    paste(trust_command(cwd, arg, when = bot_trust_when()), collapse = "\n")
+    paste(bot_markdown_list(trust_command(cwd, arg, when = bot_trust_when())),
+          collapse = "\n")
 }
 
 # The lines `status` adds about trust. None for a room in the scratch
@@ -743,7 +787,8 @@ bot_trust_status <- function(session) {
         return(character())
     }
     word <- trust_status_word(session$project_trusted, project_trusted(cwd))
-    c(sprintf("trusted: %s", word), trust_left_alone(session, cwd))
+    bot_markdown_list(c(sprintf("trusted: %s", word),
+                        trust_left_alone(session, cwd)))
 }
 
 # Which rooms have been told that their directory is not trusted.
@@ -774,7 +819,8 @@ bot_trust_notice <- function(session) {
     if (is.null(note)) {
         return(NULL)
     }
-    paste(c(note, "Only an operator of this bot can do that."), collapse = "\n")
+    paste(bot_markdown_list(c(note, "Only an operator of this bot can do that.")),
+          collapse = "\n")
 }
 
 # Record that a room was told, so it is not told again. Called once the
@@ -1443,14 +1489,28 @@ bot_is_scratch <- function(cwd) {
               normalizePath(bot_scratch_path(), winslash = "/", mustWork = FALSE))
 }
 
-# What a room in the scratch folder is told. The path is there because
-# its tools run in it. The rest is what to say when someone asks for
-# work that needs a place to keep files.
+# How a room gets a directory, as a refusal in a room without one says
+# it (check_unbound_room(), tool_delegate(), bot_job_handoff()).
+bot_unbound_how <- function() {
+    paste("A room takes its directory from its topic (an existing directory",
+          "at its start, then /clear) or from the bot's cwd.")
+}
+
+# TRUE for a room, as bot_room_directory() lists it, that has a
+# directory of its own: not the scratch folder.
+bot_room_bound <- function(room) {
+    !bot_is_scratch(room$cwd)
+}
+
+# What a room in the scratch folder is told. Its tools refuse all but
+# reading (check_unbound_room()), and the path is there because they
+# run in it. The rest is what to say when someone asks for work that
+# needs a project.
 bot_scratch_notice <- function(cwd) {
-    c("This room has no project directory.",
-        sprintf(paste("Working directory: %s, a scratch folder that is",
-                      "deleted when the bot stops. Keep nothing there that",
-                      "should last."), cwd),
+    c(paste("This room has no project directory, so it reads, searches",
+            "and talks only: it writes no files, runs no commands and hands",
+            "no work to a doer."),
+        sprintf("Its tools work in %s, an empty scratch folder.", cwd),
         paste("When someone asks for work that needs a project, say that",
               "the room has no directory and how to give it one: put the",
               "path of an existing directory at the start of the room",
@@ -1573,6 +1633,10 @@ bot_supervise_session <- function(s, cfg, room_id) {
         log_event("supervisor_decision", tool = record$tool,
                   action = record$action, by = record$by,
                   route = record$route, reason = record$reason)
+        # What came of the session's calls, for the monitor's next
+        # request (bot_supervised_earlier()).
+        s$.supervised_log <- utils::tail(c(s$.supervised_log, list(record)),
+            15L)
     })
     invisible(s)
 }
@@ -1580,27 +1644,40 @@ bot_supervise_session <- function(s, cfg, room_id) {
 # How a call made in a room session's own turn gets answered. The turn
 # holds the bot's loop, so this waits: for the monitor, then, if the
 # monitor passes the call on or cannot be asked, for a reaction.
+#
+# The monitor reads the conversation (R/room-record.R), whole, as the
+# terminal's reviewer does, and each request is a scope of its own. A
+# conversation it cannot judge by goes to a person, with the reason.
 bot_supervisor_ask <- function(s, cfg, room_id) {
     force(room_id)
     function(route, call, decision, notes) {
-        if (identical(route, "monitor")) {
-            goal <- s$supervisor_goal %||% list()
-            v <- job_monitor_ask_wait(s, list(
-                    scope = paste0("turn:", goal$id %||% ""),
-                    request_id = sprintf("t%06d", sample.int(999999L, 1L)),
-                    goal = goal$text %||% "(a message in the room)",
-                    tool = call$tool, args = job_approval_args(call$args),
-                    reason = decision$reason, notes = notes))
-            if (v$verdict %in% c("approve", "refuse")) {
-                return(list(approved = identical(v$verdict, "approve"),
-                            by = "monitor", reason = v$reason))
-            }
-            decision$reason <- sprintf("the monitor passed this to you: %s",
-                                       v$reason %||% "no reason given")
-        }
         # Derived at the point of use: the token rotates (see
         # bot_approval_cb()).
         live <- tryCatch(bot_load_config(), error = function(e) cfg)
+        if (identical(route, "monitor")) {
+            review <- bot_record_conversation(s$review_record$path,
+                bot_room_approvers(live, room_id))
+            if (is.null(review$why)) {
+                s$.review_seq <- (s$.review_seq %||% 0L) + 1L
+                id <- sprintf("t%06d", s$.review_seq)
+                v <- job_monitor_ask_wait(s, list(
+                        scope = paste0("review:", id), request_id = id,
+                        conversation = review$lines, room = TRUE,
+                        narration = call$model_context$assistant_text,
+                        tool = call$tool, args = job_approval_args(call$args),
+                        reason = decision$reason, notes = notes,
+                        earlier = bot_supervised_earlier(s)))
+                if (v$verdict %in% c("approve", "refuse")) {
+                    return(list(approved = identical(v$verdict, "approve"),
+                                by = "monitor", reason = v$reason))
+                }
+                decision$reason <- sprintf("the monitor passed this to you: %s",
+                    v$reason %||% "no reason given")
+            } else {
+                decision$reason <- sprintf("the monitor was not asked (%s); policy said: %s",
+                    review$why, decision$reason %||% "ask")
+            }
+        }
         approved <- bot_reaction_approval(live, call, decision,
             room_id = room_id)
         list(approved = isTRUE(approved), by = "person",
@@ -1944,6 +2021,9 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # A room with no directory reads and talks only (WP10): policy()
+    # refuses the rest (check_unbound_room()).
+    s$unbound <- bot_is_scratch(room_cwd)
     # Tool results cut for length are kept for this room alone. A bot's
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
@@ -2002,28 +2082,48 @@ bot_new_session_registry <- function() {
 # self-echo arriving through sync appends the acknowledgement a second
 # time. And it must ledger it, or backfill reinserts that event later
 # among already archived ones.
-bot_reset_session <- function(registry, key, cfg, sent_id, ack,
+#
+# `conversation` is the new conversation's record, which the handler
+# saved before it answered the /clear (bot_conversation_begin(),
+# R/room-conversation.R): nothing is discarded before the record that
+# replaces it is on disk.
+bot_reset_session <- function(registry, key, cfg, sent_id, ack, conversation,
                               system = NULL, model = NULL, provider = NULL,
                               tools_filter = NULL, room_id = key) {
+    if (!is.list(conversation) || !is.character(conversation$id)) {
+        stop("bot_reset_session() needs the new conversation's saved record",
+             call. = FALSE)
+    }
     old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
         old <- get(key, envir = registry)
+        # Jobs the ending conversation queued keep what it allows them,
+        # taken while the session is still its own (R/job-conversation.R).
+        job_conversation_hold(old)
         .context_room_clear(old)
         rm(list = key, envir = registry)
     }
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
                                    tools_filter = tools_filter,
-                                   room_id = room_id)
+                                   room_id = room_id,
+                                   conversation = conversation)
     # The room's jobs outlive its conversation. A job running when the
     # session is replaced is pumped by whichever session holds the
     # registry key, so the worker handles and the job in flight move to
     # the replacement; left on the discarded session, the job would never
-    # be settled and its worker would run on unowned.
+    # be settled and its worker would run on unowned. The job keeps the
+    # conversation it was asked in, and its authority record stays as
+    # that conversation left it: the cache that writes it does not move.
+    # What was held for its queued jobs moves with them.
     if (is.environment(old)) {
         job_state_move(old, s)
         s$context_edit <- old$context_edit
     }
+    # The clear every surface makes (R/job-conversation.R). A room keeps
+    # one checkpoint for each session key, which records the conversation
+    # it was saved in, so nothing is written for it here.
+    job_conversation_clear(s, conversation$id)
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -2034,7 +2134,8 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
 
 bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
                                       model = NULL, provider = NULL,
-                                      tools_filter = NULL, room_id = key) {
+                                      tools_filter = NULL, room_id = key,
+                                      conversation = NULL) {
     if (exists(key, envir = registry, inherits = FALSE)) {
         return(get(key, envir = registry))
     }
@@ -2049,6 +2150,30 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # The session key is the job key: a thread's jobs belong to the
     # thread's session, and their results come back to it.
     s$job_key <- key
+    # The conversation it holds (R/room-conversation.R): the one on
+    # record, so a restart goes on with it, unless /clear hands in a new
+    # one.
+    cleared <- !is.null(conversation)
+    if (!cleared) {
+        conversation <- bot_conversation_open(cfg, key, room_id)
+    }
+    bot_conversation_attach(s, conversation)
+    # And its record for the monitor (R/room-record.R). One with no file
+    # yet begins with the conversation when /clear started it, or when
+    # the conversation is new and the session holds nothing from before;
+    # otherwise it begins `partial`, and the monitor rules on nothing
+    # until /clear.
+    whole <- cleared || (isTRUE(attr(conversation, "made")) &&
+        !length(s$history))
+    if (whole) {
+        start <- "conversation"
+    } else {
+        start <- "partial"
+    }
+    bot_record_attach(s, cfg, key, start, cleared = cleared)
+    # After a restart, a record from before it continues only where the
+    # restart's backfill shows that nothing was missed.
+    bot_record_restart_check(s, bot_record_restart(registry), room_id)
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
@@ -2348,7 +2473,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
-        bot_transcript_add(session, m$id, "user", ingest_body)
+        bot_transcript_add(session, m$id, "user", ingest_body, event = m,
+                           note = media$receipt)
         if (!bot_should_respond(m, self_id, members, bots = bots,
                                 engaged_until = engaged_until,
                                 now = now,
@@ -2445,7 +2571,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                            session$cwd %||% getwd(), .context_edit_status(session))
             ack <- paste(c(ack, bot_trust_status(session)), collapse = "\n")
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                bot_reply_send(chat, m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -2463,7 +2590,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             ack <- tryCatch(bot_trust_command(cfg, session, sender, trust_arg),
                             error = function(e) conditionMessage(e))
             sent_id <- tryCatch(
-                                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                                bot_reply_send(chat_now(), m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
                                 error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
@@ -2558,6 +2686,27 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 next
             }
             archived <- filing$answer
+            # The new conversation is on disk before anything says it
+            # began or the session that holds this one goes: a restart
+            # opens the conversation the room's record names, so a
+            # record that could not be written would bring this one
+            # back. Then nothing is cleared, and the room is told.
+            conversation <- bot_conversation_begin(cfg, skey, m$channel, m)
+            if (is.null(conversation)) {
+                ack <- paste("Not cleared: the new conversation could not be",
+                             "recorded, so a restart would bring this one",
+                             "back. This session keeps it. Try /clear again.")
+                sent_id <- tryCatch(
+                                    bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                    error = function(e) NULL)
+                if (!is.null(sent_id)) {
+                    session$seen_event_ids <- bot_remember_event(
+                        session$seen_event_ids, sent_id)
+                    bot_transcript_add(session, sent_id, "assistant", ack)
+                }
+                replied <- replied + 1L
+                next
+            }
             # Whether the ended conversation becomes a room of its own
             # is the host's call, through the on_clear hook (see
             # bot_run_init()). Only when the host archived it: its
@@ -2582,9 +2731,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 }
                 )
             }
-            if (exists(skey, envir = sessions, inherits = FALSE)) {
-                rm(list = skey, envir = sessions)
-            }
+            # The session stays in the registry until bot_reset_session()
+            # takes it: the helper clears its context, moves its jobs and
+            # worker to the replacement, and finds nothing to do with a
+            # session already gone.
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
             cfg <- bot_update_displayname(cfg, model = model, chat = chat,
@@ -2598,8 +2748,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                 bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
+            conversation <- bot_conversation_acked(cfg, skey, m$channel,
+                conversation, sent_id)
             bot_reset_session(sessions, skey, cfg, sent_id, ack,
-                              system = system, model = model,
+                              conversation, system = system, model = model,
                               provider = provider,
                               tools_filter = tools_filter,
                               room_id = m$channel)
@@ -2614,7 +2766,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         trust_note <- bot_trust_notice(session)
         if (!is.null(trust_note)) {
             sent_id <- tryCatch(
-                                bot_reply_send(chat_now(), m$channel, trust_note, thread = m$thread),
+                                bot_reply_send(chat_now(), m$channel, trust_note,
+                    markdown = TRUE, thread = m$thread),
                                 error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
@@ -2652,10 +2805,6 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             function(id) bot_job_resume(sessions, request_session, cfg,
                                         request_sender, request_event, id)
         })
-        # What was asked, for a monitor ruling on a call this turn makes
-        # itself (bot_supervisor_ask()). The message id marks where one
-        # request's calls end and the next one's begin.
-        session$supervisor_goal <- list(text = ingest_body, id = m$id)
         # And how to hand a job to another room's doer, should this turn
         # ask to (`delegate` with `room`). Per turn, like the two fields
         # above, and removed after it: it holds this poll's client and
@@ -2761,8 +2910,16 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                                   model = NULL, provider = NULL,
                                   tools_filter = NULL, limit = 30L,
                                   thread_context = NULL, on_message = NULL) {
-    rooms <- tryCatch(chat.api::chat_channels(chat),
-                      error = function(e) character())
+    # Each room's window, for the records its sessions take
+    # (bot_record_restart_check()). A room with none, because the rooms
+    # could not be listed or its history could not be read, leaves each
+    # record from before with a gap.
+    restart <- bot_record_restart(sessions, create = TRUE)
+    rooms <- tryCatch(chat.api::chat_channels(chat), error = function(e) {
+        message("bot_run: backfill could not list the rooms: ",
+                conditionMessage(e))
+        character()
+    })
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
                         error = function(e) NA_character_)
     n <- 0L
@@ -2778,105 +2935,167 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         # grow a restart's context without bound.
         msgs <- tryCatch(chat.api::chat_history(chat, rid,
                 limit = as.integer(limit))$messages,
-                         error = function(e) NULL)
-        if (is.null(msgs) || !length(msgs)) {
+                         error = function(e) {
+            message("bot_run: backfill could not read ", rid, ": ",
+                    conditionMessage(e))
+            NULL
+        })
+        if (is.null(msgs)) {
             next
         }
-        # Attribution mirrors the live path: label senders in multi-human
-        # rooms, and label known bot senders even in one-human rooms.
-        # Membership is not fetched during backfill, so multi-human is
-        # inferred from the distinct human senders in this window.
-        room_bots <- bot_known_bots(cfg, self_id)
-        human_senders <- setdiff(
-                                 unique(vapply(msgs, function(m) m$sender %||% "", character(1))),
-                                 c(room_bots, "")
-        )
-        multi_human <- length(human_senders) > 1L
+        ids <- vapply(msgs, function(m) as.character(m$id %||% ""),
+                      character(1))
+        restart$windows[[rid]] <- ids
+        if (!length(msgs)) {
+            next
+        }
         added <- 0L
-        for (m in msgs) {
-            # Only ordinary messages carry a turn. chat_history() has
-            # already dropped the msgtypes the contract has no word for,
-            # so this is the notice/emote filter and nothing else.
-            if (!identical(m$kind, "message")) {
-                next
+        done <- tryCatch({
+            added <- bot_backfill_room(chat, sessions, cfg, rid, msgs, ids,
+                                       self_id, system = system, model = model,
+                                       provider = provider,
+                                       tools_filter = tools_filter,
+                                       thread_context = thread_context,
+                                       on_message = on_message)
+            TRUE
+        }, error = function(e) {
+            message("bot_run: backfill failed partway through ", rid, ": ",
+                    conditionMessage(e))
+            FALSE
+        })
+        # What it took of the room may stop short of the window: each of
+        # the room's records says so, and a session that takes one later
+        # finds no window.
+        if (!done) {
+            restart$windows[[rid]] <- NULL
+            for (s in bot_sessions_list(sessions)) {
+                if (identical(s$room_id, rid)) {
+                    bot_record_break(s, paste("the backfill failed partway",
+                            "through the room's history"))
+                }
             }
-            body <- m$body
-            if (is.null(body) || !nzchar(body)) {
-                next
-            }
-            # Per message, not per room: a threaded message belongs to
-            # its thread's session, the same way the live path routes
-            # it. Backfilling every message into the room's session put
-            # each topic's history into the main timeline's context and
-            # left the threads themselves empty, so a restart both
-            # polluted the room and lost the threads.
-            session <- bot_get_or_create_session(
-                sessions, bot_session_key(rid, m$thread), cfg,
-                system = system, model = model,
-                provider = provider, tools_filter = tools_filter,
-                room_id = rid
-            )
-            if (m$id %in% session$seen_event_ids) {
-                next
-            }
-            # The host's first refusal, as on the live path. It answers
-            # from the room's own state and drives nothing (backfill =
-            # TRUE), and what it takes stays out of the history.
-            if (bot_host_message(on_message, chat, cfg, sessions, session,
-                                 m, backfill = TRUE)) {
-                next
-            }
-            # A thread's archive is older context than this window, so
-            # it goes in before the window does. Once per session: the
-            # flag is what stops the second backfilled message in a
-            # thread asking again.
-            bot_maybe_rehydrate(session, chat, rid, m$thread, thread_context)
-            is_self <- isTRUE(m$self)
-            if (is_self) {
-                role <- "assistant"
-            } else {
-                role <- "user"
-            }
-            content <- if (is_self) {
-                body
-            } else {
-                bot_ingest_body(m$sender, body,
-                                multi_human || m$sender %in% room_bots)
-            }
-            # A picture sent while the bot was not running is kept as the
-            # live path keeps one, and the history gets its receipt, with
-            # the kept file's path. None goes to the model and nothing is
-            # posted: backfill answers nothing. The event is marked seen
-            # below, so the live path never sees the picture.
-            if (!is_self && length(m$attachments)) {
-                content <- tryCatch({
-                    key <- bot_session_key(rid, m$thread)
-                    bot_message_media(chat, m, content, session$provider,
-                                      cfg = cfg,
-                                      save_dir = bot_attachments_dir(cfg, key),
-                                      not_shown = "received while the bot was not running")$text
-                }, error = function(e) {
-                    message("bot_run: backfill kept no attachment of ", m$id,
-                            ": ", conditionMessage(e))
-                    content
-                })
-            }
-            session$history <- c(
-                                 session$history %||% list(),
-                                 list(list(role = role, content = content))
-            )
-            bot_transcript_add(session, m$id, role, content)
-            session$seen_event_ids <- bot_remember_event(
-                session$seen_event_ids, m$id
-            )
-            .context_room_snapshot(session)
-            added <- added + 1L
         }
         if (added > 0L) {
             n <- n + 1L
         }
     }
     invisible(n)
+}
+
+# The backfill of room `rid`: its window `msgs`, whose event ids are
+# `ids`, into the sessions of its timeline and threads. Returns how many
+# messages it added.
+bot_backfill_room <- function(chat, sessions, cfg, rid, msgs, ids, self_id,
+                              system = NULL, model = NULL, provider = NULL,
+                              tools_filter = NULL, thread_context = NULL,
+                              on_message = NULL) {
+    # Attribution mirrors the live path: label senders in multi-human
+    # rooms, and label known bot senders even in one-human rooms.
+    # Membership is not fetched during backfill, so multi-human is
+    # inferred from the distinct human senders in this window.
+    room_bots <- bot_known_bots(cfg, self_id)
+    human_senders <- setdiff(
+                             unique(vapply(msgs, function(m) m$sender %||% "", character(1))),
+                             c(room_bots, "")
+    )
+    multi_human <- length(human_senders) > 1L
+    added <- 0L
+    for (i in seq_along(msgs)) {
+        m <- msgs[[i]]
+        # Only ordinary messages carry a turn. chat_history() has
+        # already dropped the msgtypes the contract has no word for,
+        # so this is the notice/emote filter and nothing else.
+        if (!identical(m$kind, "message")) {
+            next
+        }
+        body <- m$body
+        if (is.null(body) || !nzchar(body)) {
+            next
+        }
+        # Per message, not per room: a threaded message belongs to
+        # its thread's session, the same way the live path routes
+        # it. Backfilling every message into the room's session put
+        # each topic's history into the main timeline's context and
+        # left the threads themselves empty, so a restart both
+        # polluted the room and lost the threads.
+        session <- bot_get_or_create_session(sessions,
+            bot_session_key(rid, m$thread), cfg, system = system,
+            model = model, provider = provider, tools_filter = tools_filter,
+            room_id = rid)
+        if (m$id %in% session$seen_event_ids) {
+            next
+        }
+        # From a conversation a /clear ended: its session began after
+        # it (R/room-conversation.R). Each thread by its own record.
+        if (bot_conversation_before(session, ids, i, m$ts)) {
+            next
+        }
+        # The host's first refusal, as on the live path. It answers
+        # from the room's own state and drives nothing (backfill =
+        # TRUE), and what it takes stays out of the history.
+        if (bot_host_message(on_message, chat, cfg, sessions, session,
+                             m, backfill = TRUE)) {
+            next
+        }
+        # A thread's archive is older context than this window, so
+        # it goes in before the window does. Once per session: the
+        # flag is what stops the second backfilled message in a
+        # thread asking again.
+        bot_maybe_rehydrate(session, chat, rid, m$thread, thread_context)
+        is_self <- isTRUE(m$self)
+        if (is_self) {
+            role <- "assistant"
+        } else {
+            role <- "user"
+        }
+        content <- if (is_self) {
+            body
+        } else {
+            bot_ingest_body(m$sender, body,
+                            multi_human || m$sender %in% room_bots)
+        }
+        # A picture sent while the bot was not running is kept as the
+        # live path keeps one, and the history gets its receipt, with
+        # the kept file's path. None goes to the model and nothing is
+        # posted: backfill answers nothing. The event is marked seen
+        # below, so the live path never sees the picture.
+        receipt <- NULL
+        if (!is_self && length(m$attachments)) {
+            media <- tryCatch({
+                key <- bot_session_key(rid, m$thread)
+                bot_message_media(chat, m, content, session$provider,
+                                  cfg = cfg,
+                                  save_dir = bot_attachments_dir(cfg, key),
+                                  not_shown = "received while the bot was not running")
+            }, error = function(e) {
+                message("bot_run: backfill kept no attachment of ", m$id,
+                        ": ", conditionMessage(e))
+                list(text = content)
+            })
+            content <- media$text
+            receipt <- media$receipt
+        }
+        session$history <- c(
+                             session$history %||% list(),
+                             list(list(role = role, content = content))
+        )
+        bot_transcript_add(session, m$id, role, content, record = FALSE)
+        # The conversation's record (R/room-record.R) takes what it
+        # does not hold yet, and says when the window leaves a break.
+        if (is_self) {
+            line <- bot_record_event_line(m$id, body, "post", via = "backfill")
+        } else {
+            line <- bot_record_event_line(m$id, content, "message",
+                event = m, note = receipt, via = "backfill")
+        }
+        bot_record_backfill(session, ids, i, line)
+        session$seen_event_ids <- bot_remember_event(
+            session$seen_event_ids, m$id
+        )
+        .context_room_snapshot(session)
+        added <- added + 1L
+    }
+    added
 }
 
 # Run one turn with R's process-wide getwd() pointed at the session's
@@ -3051,6 +3270,10 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
     # directory when its room's topic names none.
     bot_run_cwd_set(cwd)
     sessions <- bot_new_session_registry()
+    # A restart: the records its sessions take are checked against the
+    # backfill below, and a room it cannot read leaves its records with
+    # a gap (R/room-record.R).
+    bot_record_restart(sessions, create = TRUE)
     chat <- NULL
 
     # Catch up on pending invites that predate the saved sync token.

@@ -429,13 +429,21 @@ get_dry_run_hint <- function(tool_name, args) {
 #' Load skills from a directory
 #'
 #' Sources all .R files in the directory. Each file should call
-#' register_skill() to add skills to the registry.
+#' register_skill() to add skills. With a session's \code{table}
+#' (R/tool-table.R), each file's register_skill() adds to that table
+#' with \code{origin}; without one, to the registry.
 #'
 #' @param path Directory path containing skill files
 #' @param pattern File pattern to match (default "*.R")
+#' @param table A session's tool table, or NULL for the registry.
+#' @param origin Where the tools come from (tool_origin()), with a table.
 #' @return Character vector of loaded file names (invisible)
 #' @noRd
-load_skills <- function(path, pattern = "*.R") {
+load_skills <- function(path, pattern = "*.R", table = NULL, origin = NULL) {
+    if (!is.null(table) && is.null(origin)) {
+        stop("load_skills() needs the origin of what it adds to a table",
+             call. = FALSE)
+    }
     path <- path.expand(path)
     if (!dir.exists(path)) {
         return(invisible(character()))
@@ -446,7 +454,14 @@ load_skills <- function(path, pattern = "*.R") {
     # Create environment with skill functions available
     skill_env <- new.env(parent = globalenv())
     skill_env$skill_spec <- skill_spec
-    skill_env$register_skill <- register_skill
+    skill_env$register_skill <- if (is.null(table)) {
+        register_skill
+    } else {
+        function(skill) {
+            tool_table_add(table, skill, origin)
+            invisible(skill$name)
+        }
+    }
     skill_env$ok <- ok
     skill_env$err <- err
 
@@ -466,12 +481,13 @@ load_skills <- function(path, pattern = "*.R") {
 #'
 #' Returns skills in the format expected by MCP tools/list.
 #'
+#' @param table A session's tool table, or NULL for the registry.
 #' @return List of tool definitions (name, description, inputSchema)
 #' @noRd
-skills_as_tools <- function() {
-    skill_names <- list_skills()
+skills_as_tools <- function(table = NULL) {
+    skill_names <- tool_names(table)
     lapply(skill_names, function(name) {
-        skill <- get_skill(name)
+        skill <- tool_entry(name, table)
         list(name = skill$name, description = skill$description,
              inputSchema = skill$inputSchema)
     })
@@ -479,18 +495,21 @@ skills_as_tools <- function() {
 
 #' Call a skill by name
 #'
-#' Looks up skill in registry and executes it.
+#' Looks the skill up in the session's table, or in the registry when
+#' there is none, and executes it. A name the table does not hold is
+#' unknown, whatever the registry holds.
 #'
 #' @param name Skill name
 #' @param args Named list of arguments
 #' @param ctx Context list
 #' @param timeout Timeout in seconds
 #' @param dry_run If TRUE, validate only without executing
+#' @param table A session's tool table, or NULL for the registry.
 #' @return Result from skill handler
 #' @noRd
 call_skill <- function(name, args, ctx = list(), timeout = NULL,
-                       dry_run = FALSE) {
-    skill <- get_skill(name)
+                       dry_run = FALSE, table = NULL) {
+    skill <- tool_entry(name, table)
     if (is.null(skill)) {
         return(err(paste("Unknown skill:", name)))
     }

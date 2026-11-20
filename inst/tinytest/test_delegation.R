@@ -116,9 +116,20 @@ local({
     expect_identical(req$kind, "notice")
     expect_identical(req$mentions, "worker")
     expect_null(req$thread)
+    # The room the request comes into keeps a record for its monitor
+    # (R/room-record.R): the request is a peer's, never the person's.
+    jobs_room <- make("worker", "jobs")
+    jobs_room$conversation_id <- f("job_new_id")()
+    f("bot_record_attach")(jobs_room, cfg_b, "jobs", "conversation")
+    assign("jobs", jobs_room, registry_b)
     expect_true(route(req, cfg_b, b, registry_b))
+    held <- f("bot_record_read")(jobs_room$review_record$path)$lines
+    expect_identical(held[[2L]]$kind, "request")
+    expect_identical(held[[2L]]$sender, "requester")
     ack <- last()
     worker <- decode(ack)$fields$job
+    expect_identical(f("job_read")(worker)$origin$conversation,
+                     jobs_room$conversation_id)
     expect_identical(f("job_read")(worker)$requester, "requester")
     expect_equal(f("job_read")(worker)$hop, 1)
     expect_true(f("job_read")(worker)$review)
@@ -341,6 +352,27 @@ local({
     expect_true(grepl("Dry run", handler("delegate_to", list(bot = "worker", task = "Preview only"))))
     expect_equal(length(f("job_list")(owner = "requester")), before + 1L)
     source$dry_run <- FALSE
+
+    # A room with no directory takes no peer's job: the request is refused
+    # with its reason, and nothing is queued.
+    local({
+        key <- f("bot_session_key")("jobs", NULL)
+        had <- exists(key, envir = registry_b, inherits = FALSE)
+        held <- if (had) get(key, envir = registry_b)
+        on.exit(if (had) {
+            assign(key, held, envir = registry_b)
+        } else {
+            rm(list = key, envir = registry_b)
+        }, add = TRUE)
+        room <- make("worker", key)
+        room$unbound <- TRUE
+        assign(key, room, envir = registry_b)
+        before <- length(f("job_list")(owner = "worker"))
+        route(request(), cfg_b, b, registry_b)
+        expect_identical(decode()$kind, "refused")
+        expect_identical(decode()$fields$reason, "no-directory")
+        expect_equal(length(f("job_list")(owner = "worker")), before)
+    })
 
     # Fresh processes on both sides recover solely from the durable ledger.
     # Repeat the worker delivery in another process to exercise restart dedup.

@@ -233,6 +233,10 @@ job_worker_spec <- function(session, role = "doer") {
                  channel = session$channel %||% "console",
                  approval_timeout = as.numeric(cfg$approval_timeout_sec %||% 600),
                  identity = job_worker_identity(session, role),
+                 # The conversation the job comes from. A warm worker that
+                 # holds another builds its session again
+                 # (.job_worker_child_run()).
+                 conversation = session_conversation(session),
                  resume_of = session$.job_resume_of,
                  init_fn = NULL,
                  run_fn = NULL
@@ -297,6 +301,23 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 # any. Returns what was restored so the parent can report it.
 .job_worker_child_init <- function(cwd, spec, state_dir) {
     worker_init(cwd)
+    .job_worker_child_session(cwd, spec)
+    restored <- if (is.null(spec$resume_of)) {
+        .job_worker_child_restore(state_dir, spec$identity,
+                                  conversation = spec$conversation)
+    } else list(restored = FALSE)
+    # Installed after the restore, so a restored history is what an
+    # earlier live snapshot rolls over to rather than an empty one.
+    .job_worker_child_journal(spec, state_dir)
+    restored
+}
+
+# The child's turn session for `spec`'s conversation, built as a new
+# process builds it: the config, the trust decision, the prompt, the tool
+# table, and the callbacks that tie it to its jobs. The history starts
+# empty. Run at start, and again when a job brings another conversation
+# (WP20a, rule 3); the R objects are not touched either time.
+.job_worker_child_session <- function(cwd, spec) {
     init <- spec$init_fn %||% function(spec) {
         system <- spec$system
         scope <- spec$project_context
@@ -321,6 +342,17 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
     .job_worker_state$monitor_run_fn <- if (identical(spec$role, "monitor")) {
         spec$run_fn
     }
+    # A job's worker obeys its conversation (R/job-authority.R): plan
+    # mode, approval mode and dry run come from its job's record at each
+    # call, and plan mode is not its to end. Not the monitor, which runs
+    # no job and only reads.
+    if (!is.null(.subagent_state$session) && !identical(spec$role, "monitor")) {
+        .subagent_state$session$plan_mode_locked <- TRUE
+        .subagent_state$session$authority <- function() {
+            job_authority_read(.job_worker_state$job_id,
+                               .job_worker_state$session_key)
+        }
+    }
     # Replace the subagent default (deny everything) with the bridge.
     if (!is.null(.subagent_state$session)) {
         .subagent_state$session$approval_cb <- .job_worker_child_ask
@@ -340,18 +372,20 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             })
         }
     }
-    restored <- if (is.null(spec$resume_of)) {
-        .job_worker_child_restore(state_dir, spec$identity)
-    } else list(restored = FALSE)
-    # Installed after the restore, so a restored history is what an
-    # earlier live snapshot rolls over to rather than an empty one.
+    .job_worker_state$conversation <- spec$conversation
+    invisible(NULL)
+}
+
+# The session's journal, in the folder of the checkpoint it is saved
+# with, owned by the same identity.
+.job_worker_child_journal <- function(spec, state_dir) {
     if (!is.null(.subagent_state$session)) {
         .subagent_state$session$job_owner <- spec$identity$owner
         .subagent_state$session$job_key <- spec$identity$key
         journal_install(.subagent_state$session,
                         dir = job_worker_journal_dir(state_dir))
     }
-    restored
+    invisible(NULL)
 }
 
 # The supervised worker's way of getting a call answered: the request
@@ -388,9 +422,16 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 }
 
 # `workspace` is the environment the worker's run_r code evaluates in, which
-# in a worker process is that process's global environment.
+# in a worker process is that process's global environment. The R objects
+# come back whenever the identity matches; the history only when the
+# checkpoint was saved in `conversation`. A room keeps one checkpoint
+# for all its conversations, so one that names none (written before
+# checkpoints recorded it) could hold a history a /clear ended, and
+# gives its R objects only. A session with no conversation of its own
+# reads one that names none.
 .job_worker_child_restore <- function(state_dir, identity,
-                                      workspace = globalenv()) {
+                                      workspace = globalenv(),
+                                      conversation = NULL) {
     marker <- file.path(state_dir, "checkpoint.json")
     if (!file.exists(marker)) {
         return(list(restored = FALSE))
@@ -414,7 +455,10 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                                        try(library(pkg, character.only = TRUE), silent = TRUE))
     }
     history_path <- file.path(state_dir, "history.rds")
-    if (!is.null(.subagent_state$session) && file.exists(history_path)) {
+    same <- identical(info$conversation, conversation)
+    history <- same && !is.null(.subagent_state$session) &&
+    file.exists(history_path)
+    if (history) {
         # The worker's system text was built again when it started, from
         # a briefing that changes, so the thinking blocks of the history
         # it left would be refused at its first request
@@ -422,18 +466,22 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
         history_replace(.subagent_state$session, readRDS(history_path),
                         "restore")
     }
-    list(restored = TRUE, job = info$job, at = info$at, objects = names(values))
+    list(restored = TRUE, job = info$job, at = info$at,
+         objects = names(values), history = history)
 }
 
 # Warm-worker checkpoint at a job boundary. These shared files may be
 # overwritten by later work; only the separate immutable job snapshot is a
 # resume source. The marker does not make this multi-file update atomic.
-.job_worker_child_checkpoint <- function(state_dir, identity, job_id) {
+# It records the conversation the history belongs to; with no history
+# there is no history file.
+.job_worker_child_checkpoint <- function(state_dir, identity, job_id,
+    history = .subagent_state$session$history,
+    conversation = .job_worker_state$conversation) {
     dir.create(state_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     Sys.chmod(state_dir, "0700")
     objects <- .workspace_checkpoint_write(globalenv(),
         file.path(state_dir, "workspace.RData"))
-    history <- .subagent_state$session$history
     if (!is.null(history)) {
         tmp <- tempfile("history.", tmpdir = state_dir)
         saveRDS(history, tmp)
@@ -441,14 +489,52 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
             unlink(tmp)
             stop("could not write worker history checkpoint", call. = FALSE)
         }
+    } else {
+        unlink(file.path(state_dir, "history.rds"))
     }
     attached <- sub("^package:", "", grep("^package:", search(), value = TRUE))
     job_write_file(file.path(state_dir, "checkpoint.json"),
                    list(identity = identity, job = job_id, at = job_now(),
-                        objects = objects, packages = attached))
+                        objects = objects, packages = attached,
+                        conversation = conversation))
     Sys.chmod(file.path(state_dir, c("workspace.RData", "history.rds",
                                      "checkpoint.json")), "0600")
     objects
+}
+
+# A new conversation's starting checkpoint, written by an idle worker at
+# /clear (R/job-conversation.R): its R objects as they are now, and no
+# history, in the folder of that conversation's own checkpoint.
+.job_worker_child_start_checkpoint <- function(state_dir, identity,
+    conversation) {
+    .job_worker_child_checkpoint(state_dir, identity, NULL, history = NULL,
+                                 conversation = conversation)
+}
+
+# A job brings the settings it runs with, and a warm worker takes all
+# of them (WP20a, rule 7). Before, only the tools and the turn limit
+# reached a worker after its first job: the provider, the model, the
+# reasoning settings and plan mode stayed as the first job left them.
+# A history in another provider's shape is bridged at the next request
+# (.agent_with_fallback()), as when a session switches providers.
+.job_worker_child_apply_spec <- function(session, spec) {
+    if (!is.null(spec$provider)) {
+        session$provider <- spec$provider
+    }
+    if (!is.null(spec$model)) {
+        session$model_map$cloud <- spec$model
+    }
+    session$reasoning_effort <- .check_reasoning_effort(spec$reasoning_effort,
+        "job spec (reasoning_effort)")
+    session$thinking_budget_tokens <- .check_max_tokens(spec$thinking_budget_tokens,
+        "job spec (thinking_budget_tokens)", what = "thinking_budget_tokens")
+    session$thinking <- .check_thinking(spec[["thinking"]], "job spec (thinking)")
+    session$plan_mode <- isTRUE(spec$plan_mode)
+    session$tools_filter <- spec$tools
+    if (!is.null(spec$max_turns)) {
+        session$max_turns <- as.integer(spec$max_turns)
+    }
+    invisible(session)
 }
 
 # Run one job in the child. Errors from the turn are the job's outcome,
@@ -457,9 +543,21 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
 .job_worker_child_run <- function(job_id, task, spec, state_dir) {
     .job_worker_state$job_id <- job_id
     on.exit(.job_worker_state$job_id <- NULL, add = TRUE)
+    # A job from another conversation than the one this worker holds (a
+    # /clear since its last job): the session is built again, and the R
+    # objects stay (WP20a, rule 3).
+    if (!identical(spec$conversation, .job_worker_state$conversation)) {
+        .job_worker_child_session(getwd(), spec)
+        .job_worker_child_journal(spec, state_dir)
+    }
     session <- .subagent_state$session
     job <- job_read(job_id)
+    # The conversation the job came from, which its authority record has
+    # to name (job_authority_read()).
+    .job_worker_state$session_key <- job$origin$session_key
+    on.exit(.job_worker_state$session_key <- NULL, add = TRUE)
     if (is.environment(session)) {
+        .job_worker_child_apply_spec(session, spec)
         old_tools <- session$tools_filter
         old_allowed <- session$job_allowed_tools
         old_search <- session$web_search
@@ -815,7 +913,7 @@ JOB_SESSION_STATE <- c(".job_worker", ".job_worker_role",
                        ".job_current", ".job_events", ".job_asked",
                        ".job_progress_cursor", ".job_activity",
                        ".job_blocked", ".job_prompts", ".job_monitor",
-                       ".job_monitor_pending")
+                       ".job_monitor_pending", ".job_starts", ".job_held")
 
 # Move a session's job state to the session that replaces it under the
 # same key (a /clear, a /model switch). The ledger finds a room's jobs
@@ -844,6 +942,7 @@ job_submit <- function(session, task, role = "doer", requester = "local",
                        origin = list(), parent = NULL, limits = list(),
                        review = FALSE, context = NULL) {
     origin$session_key <- job_worker_key(session)
+    origin$conversation <- origin$conversation %||% session_conversation(session)
     origin$audit_parent <- origin$audit_parent %||% session$.audit_turn$ref
     limits$max_turns <- limits$max_turns %||% job_worker_spec(session, role)$max_turns
     id <- job_create(task, role = role,
@@ -881,6 +980,33 @@ job_cancel <- function(session, id, by = "local") {
     TRUE
 }
 
+# What a job stopped mid-run leaves (WP20a, rule 10), so nobody reads
+# "cancelled" as "nothing happened". Files it wrote stay. Its R objects
+# and history since its worker's last checkpoint go with the worker,
+# and the next job starts from that checkpoint, which the job's own
+# identity names (its dispatch record), whatever the session's is now.
+job_cancel_reason <- function(j) {
+    identity <- j$dispatch$worker$identity
+    info <- NULL
+    if (!is.null(identity)) {
+        path <- file.path(job_worker_state_dir(identity), "checkpoint.json")
+        info <- tryCatch(job_read_file(path), error = function(e) NULL)
+    }
+    if (is.null(info)) {
+        return(paste("stopped mid-job. Files it wrote stay; the R objects",
+                     "and history its worker held are gone, and the next",
+                     "job starts without them."))
+    }
+    since <- if (is.null(info$job)) {
+        "this conversation began"
+    } else {
+        sprintf("job %s ended", info$job)
+    }
+    sprintf(paste("stopped mid-job. Files it wrote stay; the R objects and",
+                  "history made since %s are gone, and the next job starts",
+                  "from there."), since)
+}
+
 # Advance this session's jobs without blocking. Returns a list of
 # events, each list(type = ..., job = <record>) with type one of
 # "settled", "started", or "restored" (the last carrying `restore`).
@@ -889,6 +1015,13 @@ job_cancel <- function(session, id, by = "local") {
 job_pump <- function(session) {
     events <- session$.job_events %||% list()
     session$.job_events <- NULL
+    # The running job's record follows its conversation's settings
+    # (R/job-authority.R). A write that fails leaves no record, so the
+    # worker refuses its calls until a later pump writes one.
+    tryCatch(job_authority_sync(session), error = function(e) {
+        message("jobs: could not update the authority record: ",
+                conditionMessage(e))
+    })
     current <- session$.job_current
     if (!is.null(current)) {
         ev <- job_pump_current(session, current)
@@ -901,6 +1034,9 @@ job_pump <- function(session) {
         }
     }
     if (is.null(session$.job_current)) {
+        # A /clear while a job ran left the new conversation's starting
+        # checkpoint for now (R/job-conversation.R).
+        job_start_checkpoints(session)
         events <- c(events, job_dispatch_next(session))
     }
     current <- session$.job_current
@@ -983,9 +1119,7 @@ job_pump_current <- function(session, id) {
         # Its memory goes with it; the next job restores the checkpoint
         # from before this one.
         job_worker_close(session)
-        return(finish("cancelled",
-                      reason = paste("stopped mid-job; changes it made",
-                                     "before stopping are kept")))
+        return(finish("cancelled", reason = job_cancel_reason(j)))
     }
     wall <- j$limits$wall_seconds
     if (!is.null(wall) && !is.null(j$dispatch)) {
@@ -1066,6 +1200,18 @@ job_dispatch_next <- function(session) {
     events <- list()
     checkouts <- list()
     for (j in queued) {
+        # A room with no directory runs no job, whatever queued it: the
+        # backstop behind the refusals where work is asked for. Ahead of
+        # the lock, which such a job neither waits for nor holds.
+        if (isTRUE(session$unbound)) {
+            job_settle(j$id, "failed",
+                       error = paste("this room has no directory, so it runs",
+                                     "no jobs; nothing was run.",
+                                     bot_unbound_how()))
+            settled <- list(type = "settled", job = job_read(j$id))
+            events <- c(events, list(settled))
+            next
+        }
         checkout <- NULL
         if (job_role_locks(j$role)) {
             # One git lookup per workspace per pass, not per job.
@@ -1133,6 +1279,23 @@ job_dispatch <- function(session, j, checkout) {
                                      "was run. Ask again."),
                               wanted, job_worker_dir(session))))
     }
+    # A job from a conversation that has ended runs under what that
+    # conversation gave it as it ended (job_conversation_hold()), never
+    # under the conversation that starts it now. One nothing was held for
+    # does not run. A job from before jobs named their conversation
+    # belongs to the session's.
+    asked <- j$origin$conversation
+    held <- NULL
+    if (!is.null(asked) && !identical(asked, session_conversation(session))) {
+        held <- session$.job_held[[j$id]]
+        if (is.null(held)) {
+            return(refuse(paste0("the conversation that asked for this job ",
+                                 "ended before it started, and what it ",
+                                 "allowed was not kept; nothing was run. ",
+                                 "Ask again.")))
+        }
+    }
+    session$.job_held[[j$id]] <- NULL
     # Always through job_worker_activate(): it reuses a live worker only
     # when that worker is in the session's directory.
     old_resume <- session$.job_resume_of
@@ -1160,7 +1323,12 @@ job_dispatch <- function(session, j, checkout) {
             job = j, restore = restore)
     }
     job_worker_note(session, j$role)
-    spec <- job_worker_spec(session, j$role)
+    if (is.null(held)) {
+        spec <- job_worker_spec(session, j$role)
+    } else {
+        spec <- held$spec
+        spec$resume_of <- j$resume_of
+    }
     # Every way out of the hand-off ends the job and gives back the lock.
     # Without this, a failure here left the job marked running and
     # holding its checkout, with no current job for later pumps to find.
@@ -1171,9 +1339,28 @@ job_dispatch <- function(session, j, checkout) {
         }
         c(events, list(list(type = "settled", job = job_read(j$id))))
     }
+    # What the conversation allows the job, which the worker reads at
+    # each call (R/job-authority.R). Written before the worker has the
+    # job: without it every call would be refused.
+    write_authority <- function() {
+        if (is.null(held)) {
+            return(job_authority_write(session, j$id))
+        }
+        job_authority_write(session, j$id, values = held$authority,
+                            conversation = held$conversation)
+    }
+    authority <- tryCatch(write_authority(), error = function(e) e)
+    if (inherits(authority, "error")) {
+        why <- paste("could not write the job's authority record:",
+                     conditionMessage(authority))
+        return(abandon("failed", error = why))
+    }
     marked <- tryCatch({
+        # The identity whose checkpoint the job starts from, which a
+        # cancel names (job_cancel_reason()).
         job_mark_dispatched(j$id, worker = list(
-                pid = session$.job_worker$get_pid()),
+                pid = session$.job_worker$get_pid(),
+                identity = spec$identity),
                             # What the checkout looked like as the job began, so its
                             # review can show exactly what it changed. Only taken for a
                             # job that will be reviewed: nothing else reads it.

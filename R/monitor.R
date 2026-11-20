@@ -469,7 +469,7 @@ monitor_in_envelope <- function(call, decision, config = list(),
     }
 
     # 3. Unresolvable effect: exec tools when exec brokering is off.
-    op <- classify_op(tool)
+    op <- call_class(call)
     if (tool %in% .MONITOR_EXEC_TOOLS && !isTRUE(auto$allow_exec)) {
         return(outside(sprintf(
                                "%s executes code whose effect can't be resolved from its arguments, and auto.allow_exec is off",

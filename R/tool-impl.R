@@ -1838,14 +1838,16 @@ register_builtin_skills <- function() {
 #' @param ctx Optional context (cwd, session, etc.)
 #' @param timeout Timeout in seconds (default 30)
 #' @param dry_run If TRUE, validate only without executing
+#' @param table serve()'s tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return MCP tool result
 #' @noRd
 call_tool <- function(name, args, ctx = list(), timeout = 30L,
-                      dry_run = FALSE) {
+                      dry_run = FALSE, table = NULL) {
     args <- args %||% list()
 
     # Try skill system first
-    skill <- get_skill(name)
+    skill <- tool_entry(name, table)
     if (!is.null(skill)) {
         return(skill_run(skill, args, ctx, timeout, dry_run))
     }

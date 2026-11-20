@@ -12,6 +12,10 @@
 #      `.make_tool_handler`) flips `session$plan_mode` back to FALSE.
 #
 # Subagents inherit plan_mode from their parent via `subagent_spawn()`.
+# A job's worker reads it from its conversation at each call
+# (R/job-authority.R) and cannot end it (`session$plan_mode_locked`):
+# it is not offered `exit_plan_mode`, the handler refuses the call by
+# name, and its addendum says the person ends plan mode.
 
 #' Submit a plan and exit plan mode.
 #'
@@ -37,13 +41,14 @@ tool_exit_plan_mode <- function(plan) {
 
 # Add exit_plan_mode to (or strip it from) a tool list before it is
 # shipped to the LLM. Hidden the rest of the time so the LLM only sees
-# the escape hatch when it can actually use it.
-.plan_mode_filter_tools <- function(tools, in_plan_mode) {
+# the escape hatch when it can actually use it, and always from a
+# session that may not leave plan mode (`offer_exit = FALSE`).
+.plan_mode_filter_tools <- function(tools, in_plan_mode, offer_exit = TRUE) {
     has_exit <- vapply(tools, function(t) {
         identical(t$name %||% "", "exit_plan_mode")
     }, logical(1))
 
-    if (isTRUE(in_plan_mode)) {
+    if (isTRUE(in_plan_mode) && isTRUE(offer_exit)) {
         if (any(has_exit)) {
             return(tools)
         }
@@ -83,14 +88,36 @@ tool_exit_plan_mode <- function(plan) {
           sep = "\n")
 }
 
+# The addendum for a job's worker, which cannot leave plan mode: the
+# conversation that gave it the job is in plan mode, and the person
+# ends it.
+.plan_mode_worker_addendum <- function() {
+    paste(
+          "",
+          "# Plan mode",
+          "",
+          paste("The conversation that gave you this job is in plan mode.",
+                "Research with read-only tools. Editing files, running",
+                "shell commands and executing R code will be denied.",
+                "Report what you would change, in which files, and why.",
+                "Only the person can end plan mode.", sep = " "),
+          sep = "\n")
+}
+
 # Compose the system prompt for this turn. Outside plan mode this is
 # the session's stored system prompt verbatim. Inside plan mode we
-# append the addendum so the LLM knows the constraints.
-.plan_mode_compose_system <- function(base_system, in_plan_mode) {
+# append the addendum so the LLM knows the constraints; a session that
+# may not leave plan mode (`locked`) gets the worker's.
+.plan_mode_compose_system <- function(base_system, in_plan_mode,
+                                      locked = FALSE) {
     if (!isTRUE(in_plan_mode)) {
         return(base_system)
     }
-    addendum <- .plan_mode_system_addendum()
+    addendum <- if (isTRUE(locked)) {
+        .plan_mode_worker_addendum()
+    } else {
+        .plan_mode_system_addendum()
+    }
     if (is.null(base_system) || !nzchar(base_system)) {
         return(addendum)
     }

@@ -219,6 +219,30 @@ every dispatched call.
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
 
+The `auto` block of `config.json` sets a run's bounds and its monitor. The
+first of these limits to be reached stops the run.
+
+The iteration limit is the exception. `/auto --loops N` stops after N
+iterations. `/auto` without `--loops` runs with no iteration limit, whatever
+`max_loops` says, and the other limits stop it. `/auto resume` keeps the
+count of the run it resumes. One iteration can run many model turns.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `max_loops` | 10 | Iterations, for a run that sets no count of its own. `/auto` always sets one or runs without, so it does not read this |
+| `max_tool_calls` | 300 | Tool calls, the bound that holds whatever a turn does |
+| `max_minutes` | 30 | Minutes since the run started |
+| `max_cost` | 5 | Dollars spent. Skipped where the provider reports no price, as on a subscription, and `max_tokens` holds instead |
+| `max_tokens` | 2000000 | Tokens used |
+| `stall_loops` | 2 | Iterations in a row that changed nothing on disk |
+| `allow_exec` | `false` | Whether the monitor may rule on shell and R calls. Your config or `--exec` grants it; a project's config can only refuse it |
+| `never_broker` | none | Tools that always stop the run for you. Yours and the project's together |
+| `monitor_model` | the session's model | The model the monitor runs on. The monitor uses the session's provider, so name a model of that provider |
+| `monitor_timeout` | 120 | Seconds the monitor has to rule on a call |
+
+The monitor makes a request for each call it rules on, so a long run makes
+many. A smaller model in `monitor_model` costs less for each ruling.
+
 ## Matrix remote control
 
 `/remote-control [--bot @bot:server] [room]` hands the current CLI or `chat()`
@@ -350,6 +374,17 @@ wait as silence.
 `/context` shows the trigger in force and the window it is measured against.
 In the terminal an automatic compaction also runs the memory flush first
 (`memory_flush_enabled`), which is a request of its own.
+
+The R objects outlive the turns that made them: a compaction leaves every
+object in place, whatever its size. So the summary ends with the names of the
+objects `run_r` made that are still there, up to 30 of them, then the open
+handles. The agent can use an object instead of rebuilding it. Only names are
+listed, since reading an object can run code: a binding made with
+`makeActiveBinding()` or `delayedAssign()` is named and left alone. This is
+for the terminal, `chat()` and a subagent or doer, whose R process is the
+session's own. A bot's rooms share one, so a room's summary has no list, and
+neither does a session whose `run_r` runs in a worker process
+(`run_r_mode: "worker"`).
 
 None of the three applies to a session that manages its own context
 (`context_edit` with `"strategy": "clm"`, under "Conversation context
@@ -745,6 +780,26 @@ No setting approves a call unseen. The rules read text and are not a
 sandbox: a command can be written so that they miss it, which is what
 the monitor and the tool policy above are also there for.
 
+A room's monitor reads the conversation to judge a call. Each
+conversation keeps a record beside the room's journal, a file per
+conversation: who sent each message, in the words they sent, and the
+bot's own posts. Only the lines of someone who may approve are taken as
+instructions: the room's operators, or the one person in a private room.
+Anyone else's, another bot's or a peer's request included, are shown as
+theirs. A job's calls are judged by the conversation that asked for the
+job, read when the call comes, so a "stop" sent since is in it. A job
+handed over from another room is judged by that room's. The monitor is
+not asked, and a person is, when nobody in the room may approve or the
+record cannot be read whole:
+
+- one past 100,000 characters, or with a line it cannot read;
+- one with a break: a restart whose backfill did not reach back to the
+  last message on record, a line that could not be written, or a thread
+  that went on from its archive;
+- one that does not reach back to the start of the conversation. A
+  conversation under way when a bot first runs 0.8.1 is one of these,
+  and `/clear` starts one the monitor can read.
+
 At the terminal and in `chat()`, `"approval_mode": "review"` gives a
 session the same three steps for each call that would prompt. The
 monitor there is called the reviewer. It rules on reads, writes and
@@ -812,22 +867,46 @@ what it removed.
 Transcripts, session stores, workspaces, config and audit records stay.
 A session whose journal is gone still resumes from its transcript, and
 says what is gone. A room that restores its context from its journal
-starts its next conversation fresh.
+starts its next conversation fresh. A room's records of its
+conversations go with its journal, and the room's calls then go to a
+person until `/clear`.
 
 A session's audit records are kept in its journal folder, under
 `audit/`. Retention leaves them and the folder in place:
 `audit_payload_expire()` removes audit payloads, and only when called.
 
+The same run clears corteza's state folder (`state/` beside the sessions,
+or `CORTEZA_STATE_DIR`) and its remote-control folder:
+
+- A delegated job's records go with every job linked to it as a resume,
+  a review or a delegation, once all of them have ended and none has
+  changed for `session_days`. While one of them is queued or running,
+  all stay.
+- A job that ended incomplete and was never resumed holds the snapshot a
+  resume starts from. Its chain waits `incomplete_days` instead, and
+  never fewer than `session_days`. The terminal names each such job when
+  it goes.
+- A worker process's folder with no checkpoint loses its journal, less
+  its audit records. A folder with a checkpoint stays.
+- A remote-control session goes once it was closed, or once its process
+  on this machine has ended. One from another machine stays.
+
+A folder there whose name and record are not of the form corteza writes
+stays whole. Once it is old enough the terminal counts it, and
+`sessions_prune(dry_run = TRUE)` lists it with kind `"unknown"`.
+
 `sessions_prune(dry_run = TRUE)` reports what a run would remove.
 `sessions_prune()` runs one now.
 
-This key is read from the user's config file only. A project's
-`.corteza/config.json` cannot set it. A config file that does not parse,
-or a value that is not one non-negative number, turns retention off.
+These keys are read from the user's config file only. A project's
+`.corteza/config.json` cannot set them. A config file that does not
+parse turns retention off, and a value that is not one non-negative
+number keeps everything that key governs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed. `0` keeps everything |
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` keeps everything |
+| `retention.incomplete_days` | number | `180` | Days a job chain that ended incomplete, and was never resumed, is kept for its resume snapshot. Never fewer than `session_days`. `0` keeps it |
 
 ### Skills
 
@@ -992,7 +1071,12 @@ A room works in the first of these that exists:
    `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
    wins over the saved one.
 3. A scratch folder under the session's temporary directory, deleted when the
-   process ends. The room is told it has no project directory.
+   process ends. The room is told it has no project directory, and it
+   reads, searches and talks only. It writes no files, runs no commands,
+   starts no subagent and hands no work to a doer or another room, and
+   no room hands work to it. A refusal says how to give the room a
+   directory. Room lists show it as having none, and it is named by its
+   id or name, never by the scratch folder.
 
 corteza creates neither of the first 2. A `cwd` that does not exist is an
 error where it is given, and a run stops at its start when the saved one has
@@ -1256,6 +1340,69 @@ A room or a thread a Matrix bot answers in:
 A room has no transcript. How recently it was used is the modification time
 of `live.json` in its journal folder, a file that is not there before the
 session's first turn.
+
+A bot also records which conversation each of a room's sessions holds, in one
+file for each room, named by the `sessionId` of the room's own entry:
+
+```
+<state>/rooms/<sessionId>.json
+```
+
+`<state>` is the folder `CORTEZA_STATE_DIR` names, else `state` in the data
+directory. Retention leaves the file alone.
+
+| Field | Meaning |
+|-------|---------|
+| `room` | The room id |
+| `main` | The room's own conversation |
+| `threads` | Each thread's conversation, by the thread's root event id |
+
+Each conversation:
+
+| Field | Meaning |
+|-------|---------|
+| `id` | The conversation's id. A job asked in it carries the same id |
+| `since` | The event id of the `/clear` that started it. Absent for a conversation the bot started with the session |
+| `at` | When that `/clear` was sent, in seconds since 1970 |
+| `ack` | The event ids of the bot's answer to that `/clear` |
+
+A restart seeds each conversation with the room's messages after `since`, and
+leaves `ack` out.
+
+## What a delegated job obeys
+
+A delegated job runs with the model, provider, reasoning settings and limits
+its conversation has when the job starts, in a worker that may have run
+earlier jobs. While it runs it follows the conversation's `/plan`,
+`/permissions` and `/dryrun`: the worker checks them before each call, and
+again just before the call runs, so a `/plan` typed while a call waits for
+your approval stops that call. A worker cannot end plan mode; you do. After
+`/clear`, a job started before it keeps the settings its conversation last
+had, and `/cancel` stops it.
+
+A job stopped mid-run keeps what it wrote to files. The R objects and history
+its worker made since its last checkpoint are gone. The job's report names
+that checkpoint, which the next job starts from.
+
+At the terminal, `/clear` starts a new conversation for the worker too. Its R
+objects stay, as they do in the terminal's own session, and its history does
+not: the next job starts from an empty conversation, with the instructions and
+tools a session started now would have, so a `/trust` before the `/clear`
+reaches it. A job still running at `/clear` finishes, and its result is shown
+and saved to the conversation that asked for it. Each conversation keeps its
+own checkpoint, so `corteza --resume <id>` brings back that conversation's
+worker as its last job left it, and a new conversation's objects are a copy
+taken at the `/clear`.
+
+In a room or a thread, `/clear` does the same for that conversation's worker:
+the R objects stay and the next job starts from an empty conversation. A job
+still running finishes and posts its result, marked as asked before the
+`/clear`. After a restart the bot seeds each conversation, the room's and each
+thread's, with nothing from before its own `/clear`.
+
+A checkpoint saved before 0.8.1 does not say which conversation it belongs to,
+so the first job after upgrading keeps the worker's R objects and starts its
+history over.
 
 ## Incomplete worker jobs
 

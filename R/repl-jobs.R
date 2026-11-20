@@ -84,6 +84,19 @@
     switch(ev$type,
            settled = {
         text <- .repl_job_result_text(ev$job)
+        asked <- ev$job$origin$conversation
+        current <- session_conversation(ctx$session)
+        if (!is.null(asked) && !identical(asked, current)) {
+            # Asked before a /clear: the result goes to the conversation
+            # that asked for it, and the new one's talker does not take it.
+            cat(sprintf("\n%s%s%s\n%s(asked in session %s, before /clear)%s\n\n",
+                        p$cyan %||% "", text, p$reset %||% "", p$dim %||% "",
+                        asked, p$reset %||% ""))
+            record <- list(sessionId = asked, cwd = ctx$session$cwd)
+            tryCatch(transcript_append(record, "assistant", text),
+                     error = function(e) NULL)
+            return(invisible(NULL))
+        }
         cat(sprintf("\n%s%s%s\n\n", p$cyan %||% "", text, p$reset %||% ""))
         # Into the talker's history, so it knows the job ended.
         ctx$session$history <- c(ctx$session$history %||% list(),
@@ -110,7 +123,7 @@
 # approves; anything else, including EOF, declines.
 .repl_job_approval <- function(ctx, ev) {
     req <- ev$request
-    call <- list(tool = req$tool, args = req$args)
+    call <- job_request_call(req)
     cat(sprintf("\n%sJob %s asks: %s%s\n", ctx$palette$yellow %||% "",
                 ev$job$id,
                 bot_approval_prompt(call, list(reason = req$reason),
