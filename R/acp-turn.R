@@ -29,6 +29,21 @@
     on.exit(setwd(here), add = TRUE)
     setwd(session$cwd)
 
+    # One of the session's commands runs in place of a turn, and what it
+    # prints is the reply (R/acp-commands.R). It runs as the prompt it
+    # is, so a cancel reaches it as it reaches a turn: /compact asks the
+    # model for its summary.
+    if (!is.null(.acp_command_name(text))) {
+        said <- .acp_command(st, session, text)
+        if (nzchar(trimws(said))) {
+            .acp_update(st, sid, .acp_text_chunk(said))
+        }
+        if (isTRUE(live$cancelled) || st$ch$closed) {
+            return(list(stopReason = "cancelled"))
+        }
+        return(list(stopReason = "end_turn"))
+    }
+
     # The client speaks for the person: its prompt is written whole, as
     # what was typed, which is what the reviewer reads (R/review.R). A
     # prompt that cannot be written runs nothing: the reviewer would judge
