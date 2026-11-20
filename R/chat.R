@@ -285,7 +285,8 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     set_log_enabled(FALSE)
     on.exit(set_log_enabled(TRUE), add = TRUE)
 
-    n_tools <- length(skills_as_api_tools(tools))
+    # The tools the session sends, composed now, once (R/request-prefix.R).
+    n_tools <- length(session_request_parts(turn_session)$tools)
     # Resolve a placeholder NULL model to the provider's default name
     # (from llm.api's table) so the banner shows the actual model the
     # agent is about to call, matching the CLI's display.
@@ -370,15 +371,31 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
 chat_approval_cb <- function(cwd = getwd()) {
     approved <- new.env(parent = emptyenv())
     color <- ansi_colors()
+    # Has the person answered this call for good, "allow always" for its
+    # tool in this session? The credential rule's ask is answered each
+    # time: an "always" given for the tool, for any file, does not
+    # answer it, and its prompt offers none. The reviewer (R/review.R)
+    # asks this first, so it never rules on an answer the person gave.
+    answered <- function(call, decision) {
+        !identical(decision$rule, "credential") &&
+        isTRUE(approved[[call$tool %||% ""]])
+    }
 
-    function(call, decision) {
+    cb <- function(call, decision) {
         key <- call$tool %||% ""
-        if (isTRUE(approved[[key]])) {
+        once_only <- identical(decision$rule, "credential")
+        if (answered(call, decision)) {
             return(TRUE)
         }
 
-        persistent_label <- "Allow always for this session"
-        lines <- cli_approval_lines(call, decision, cwd = cwd,
+        if (once_only) {
+            persistent_label <- NULL
+        } else {
+            persistent_label <- "Allow always for this session"
+        }
+        lines <- cli_approval_lines(call, decision,
+                                    gate_reason = decision$gate_reason,
+                                    cwd = cwd,
                                     persistent_label = persistent_label,
                                     deny_label = .console_deny_label())
         cat(paste(lines, collapse = "\n"), "\n")
@@ -388,7 +405,7 @@ chat_approval_cb <- function(cwd = getwd()) {
             ans <- ""
         }
         ans <- trimws(ans)
-        if (ans == "") {
+        if (ans == "" || (once_only && ans == "2")) {
             ans <- "1"
         }
         if (ans == "2") {
@@ -409,6 +426,15 @@ chat_approval_cb <- function(cwd = getwd()) {
         }
         ans %in% c("1", "2")
     }
+    attr(cb, "answered") <- answered
+    # A job's prompt keeps "always" the same way, for this session
+    # (R/repl-jobs.R), and prints what this returns.
+    attr(cb, "always") <- function(call) {
+        name <- call$tool %||% ""
+        approved[[name]] <- TRUE
+        sprintf("%s is allowed always in this session.", name)
+    }
+    cb
 }
 
 # Resolve the on-disk session, returning list(session, sessionId, history,

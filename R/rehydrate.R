@@ -15,6 +15,7 @@
 # The archive a thread root stands for, through the host's hook, or NULL
 # when there is no hook, the root is not a fold (an ordinary thread
 # someone started in a room), or the answer is not a usable pointer.
+# The file is a transcript unless the host says it is a summary.
 bot_thread_context <- function(thread_context, chat, room_id, thread_root) {
     if (!is.function(thread_context) || is.null(thread_root) ||
         !nzchar(thread_root)) {
@@ -28,13 +29,16 @@ bot_thread_context <- function(thread_context, chat, room_id, thread_root) {
     if (!is.character(ref) || length(ref) != 1L || is.na(ref) || !nzchar(ref)) {
         return(NULL)
     }
-    list(segment = ctx$segment, vault = ref)
+    kind <- "transcript"
+    if (identical(ctx$kind, "summary")) {
+        kind <- "summary"
+    }
+    list(segment = ctx$segment, vault = ref, kind = kind)
 }
 
-# Absolute path of a vault-relative archive reference. The inverse of
-# bot_vault_ref(): the pointer is stored relative to the vault root so
-# it survives the vault moving hosts, which means resolving it needs
-# the root back.
+# Absolute path of a vault-relative archive reference. A host stores
+# its pointer relative to the vault root so it survives the vault moving
+# hosts, which means resolving it needs the root back.
 bot_vault_path <- function(ref) {
     if (is.null(ref) || !length(ref) || !nzchar(ref[[1L]])) {
         return(NULL)
@@ -51,15 +55,16 @@ bot_vault_path <- function(ref) {
     file.path(root, p)
 }
 
-# The archived transcript, tail-bounded.
+# The archived file, bounded.
 #
-# The tail rather than the head: resuming a conversation, the last
-# exchanges are the ones the next message answers, and the fold's root
-# message already carries the topic. Bounded because the whole point is
+# A transcript's tail rather than its head: resuming a conversation, the
+# last exchanges are the ones the next message answers, and the fold's
+# root message already carries the topic. A summary's head: it is
+# written to be read from the start. Bounded because the whole point is
 # to continue a conversation, not to spend the context window
 # reconstructing one -- a transcript stuffed in whole crowds out the
 # turns that follow it.
-bot_archive_excerpt <- function(path, max_chars = 6000L) {
+bot_archive_excerpt <- function(path, max_chars = 6000L, kind = "transcript") {
     if (is.null(path) || !file.exists(path)) {
         return(NULL)
     }
@@ -70,6 +75,10 @@ bot_archive_excerpt <- function(path, max_chars = 6000L) {
     }
     if (nchar(txt) <= max_chars) {
         return(txt)
+    }
+    if (identical(kind, "summary")) {
+        return(paste0(substring(txt, 1L, max_chars),
+                      "\n\n[the rest of the summary omitted]"))
     }
     paste0("[earlier turns omitted]\n\n",
            substring(txt, nchar(txt) - max_chars + 1L))
@@ -97,7 +106,8 @@ bot_rehydrate_session <- function(session, chat, room_id, thread_root,
     if (is.null(archive)) {
         return(invisible(FALSE))
     }
-    excerpt <- bot_archive_excerpt(bot_vault_path(archive$vault))
+    excerpt <- bot_archive_excerpt(bot_vault_path(archive$vault),
+                                   kind = archive$kind)
     if (is.null(excerpt)) {
         message("bot_rehydrate_session: archive ", archive$vault,
                 " is unreadable; continuing unseeded")
@@ -107,15 +117,29 @@ bot_rehydrate_session <- function(session, chat, room_id, thread_root,
                       "This thread continues an earlier conversation that was ",
                       "archived. Its transcript follows; treat it as the ",
                       "conversation so far and carry on from it.\n\n", excerpt)
+    ack <- "I have the earlier conversation in mind. Go ahead."
+    # A summary says it is one: the model knows the conversation only as
+    # someone else put it, and should not quote it as said.
+    if (identical(archive$kind, "summary")) {
+        framing <- paste0(
+                          "This thread continues an earlier conversation that ",
+                          "was archived as a summary, not word for word. The ",
+                          "summary follows; carry on from it.\n\n", excerpt)
+        ack <- "I have the summary of the earlier conversation in mind. Go ahead."
+    }
     # Entries put in front of what the session holds change what every
     # later entry follows, so this is a replacement and not an append
     # (R/history-replace.R). A journal that cannot record it raises, and
     # the caller goes on unseeded.
-    ack <- "I have the earlier conversation in mind. Go ahead."
     seed <- list(list(role = "user", content = framing),
                  list(role = "assistant", content = ack))
     history_replace(session, c(seed, session$history %||% list()), "rehydrate")
-    message("corteza: rehydrated thread ", thread_root, " from ", archive$vault)
+    # The thread now goes on from words its record does not hold
+    # (R/room-record.R).
+    bot_record_break(session, paste("the thread went on from an archived",
+                                    "conversation that this record does not hold"))
+    message("corteza: rehydrated thread ", thread_root, " from the ",
+            archive$kind, " ", archive$vault)
     invisible(TRUE)
 }
 

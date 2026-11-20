@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Output-token budget wiring (new_session -> .session_max_tokens ->
 # llm.api::agent). Same resolution idiom as web_search / base_url:
 # explicit session field wins, config is the fallback, NULL defers to

@@ -232,6 +232,7 @@ run_memory_flush <- function(ctx) {
                                  max_turns = 20L
     )
     flush_session$config <- config
+    flush_session$tool_table <- session$tool_table
     .audit_safe({
         flush_session$audit_enabled <- session$audit_enabled
         flush_session$config$audit <- session$config$audit %||% config$audit
@@ -329,6 +330,7 @@ chat_help_text <- function() {
           "  /skill install <path|url>     Install a skill (--force to reinstall)",
           "  /skill remove <name>          Remove a skill",
           "  /skill test <path>            Run skill tests",
+          "  /skills ...                   Same as /skill",
           "",
           "Keys:",
           "  Esc                           Interrupt the current turn and return to the prompt.",
@@ -472,7 +474,8 @@ chat_handle_copy <- function(text) {
 #' Format the active tool list for /tools.
 #' @noRd
 chat_format_tools_list <- function(turn_session) {
-    api_tools <- tryCatch(skills_as_api_tools(turn_session$tools_filter),
+    # The tools the next request carries (R/request-prefix.R).
+    api_tools <- tryCatch(session_request_parts(turn_session)$tools,
                           error = function(e) list())
     # The task tools are offered only where the task list is on.
     api_tools <- .task_filter_tools(api_tools, .task_list_on(turn_session))

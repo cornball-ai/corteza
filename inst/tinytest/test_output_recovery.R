@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 local({
     ns <- asNamespace("llm.api")
     original <- get("agent", ns)
@@ -69,6 +72,13 @@ local({
     expect_true(out$raw$truncated)
     expect_true(grepl("/max-tokens", out$reply, fixed = TRUE))
     expect_equal(out$usage$total_tokens, 4 * 4106L)
+    # A talker is not told to use /max-tokens, which sets its doer's
+    # budget there.
+    s <- make_session()
+    s$talker <- TRUE
+    out <- suppressMessages(corteza::turn("fixture", s, tools = list()))
+    expect_true(out$raw$truncated)
+    expect_false(grepl("/max-tokens", out$reply, fixed = TRUE))
 
     # Deliberately configured limits and disabled retries remain effective.
     for (config in list(list(max_tokens = 4096L), list(output_retries = 0L))) {
@@ -112,14 +122,22 @@ local({
 })
 
 local({
+    # harness_note is a write the envelope can never approve (it names no
+    # path), and spawn_subagent and delegate drive other work: a run the
+    # monitor brokers refuses each at the call. The tool list stays the
+    # session's (WP14; test_request_prefix.R runs the refusal).
     names <- c("read_file", "read_handle", "write_file", "bash", "run_r",
-               "base__file.remove", "edit_context", "task_create")
-    tools <- lapply(names, function(name) list(name = name))
-    shown <- function(config) vapply(corteza:::.auto_filter_tools(tools, config),
-                                     function(x) x$name, "")
-    expect_identical(shown(NULL), names)
+               "base__file.remove", "edit_context", "task_create",
+               "harness_note", "spawn_subagent", "delegate", "job_status")
+    shown <- function(config) {
+        names[vapply(names, function(name) {
+            corteza:::.auto_tool_allowed(corteza:::unsanitize_tool_name(name),
+                                         config, tool = list(name = name))
+        }, logical(1))]
+    }
     expect_identical(shown(list()),
-                     c("read_file", "read_handle", "write_file", "edit_context", "task_create"))
+                     c("read_file", "read_handle", "write_file", "edit_context",
+                       "task_create", "job_status"))
     expect_true(all(c("bash", "run_r") %in% shown(list(auto = list(allow_exec = TRUE)))))
     expect_false("base__file.remove" %in% shown(list(auto = list(allow_exec = TRUE))))
     expect_false("read_file" %in% shown(list(auto = list(never_broker = "read_file"))))

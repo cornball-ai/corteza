@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # Drive run_auto_loop() end to end with no network: the turn function is
@@ -115,6 +118,19 @@ expect_equal(turns, 3L)
 # being broken rather than a run having ended.
 expect_null(ctx$session$auto_gate)
 expect_null(ctx$auto_halt)
+
+# The transcript keeps the goal as what the person typed of each prompt
+# the driver wrote, and the reviewer (R/review.R) shows it once. The
+# goal leaves the session with the run.
+rec <- corteza:::transcript_load_strict(ctx$disk_session$session$sessionId)
+prompts <- Filter(function(e) identical(e$role, "user"), rec$entries)
+expect_equal(length(prompts), 3L)
+expect_true(all(vapply(prompts, function(e) {
+    isTRUE(e$staged) && identical(e$typed, "do a thing") && !is.null(e$auto_run_id)
+}, logical(1))))
+expect_identical(corteza:::review_conversation(ctx$disk_session$session$sessionId)$lines,
+                 "Person: /auto do a thing")
+expect_null(ctx$session$auto_typed)
 
 # ---- stops when the monitor says stop ----
 
@@ -731,6 +747,16 @@ expect_true(any(grepl("Continue the current task", out)))
 expect_true(any(grepl("Auto is off. Last run:", out, fixed = TRUE)))
 expect_true(isTRUE(ctx$last_auto_request$allow_exec))
 expect_null(ctx$session$auto_config)
+# The transcript keeps what the person typed to start each run, not the
+# goal corteza wrote for the bare one, and the reviewer reads that.
+rec <- corteza:::transcript_load_strict(ctx$disk_session$session$sessionId)
+started <- Filter(function(e) identical(e$role, "user"), rec$entries)
+expect_identical(vapply(started, function(e) {
+    if (is.character(e$typed)) e$typed else NA_character_
+}, character(1)), c("", "resume"))
+expect_identical(corteza:::review_conversation(ctx$disk_session$session$sessionId)$lines,
+                 c("Person: /auto", "Worker: working", "Person: /auto resume"))
+expect_null(ctx$session$auto_typed)
 
 # An unrecovered cutoff stops before the monitor can mistake it for progress.
 reset_wt()

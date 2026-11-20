@@ -222,12 +222,12 @@ bot_save_config <- function(cfg) {
 #'   or \code{openai} is labeled as billable usage prominently in the reply.
 #'   \code{reasoning_effort}, when configured, applies to every candidate.
 #'   NULL (default) means a limit error is reported like any other error.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none. It must exist: corteza does not create it. NULL
-#'   (default) saves none, and such a room then works in a scratch folder
-#'   under the session's temporary directory, which is deleted when the
-#'   process ends. Up to 0.8.0 the default was \code{~/<bot name>},
-#'   created on first use.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one with \code{/cd}. It must exist: corteza
+#'   does not create it. NULL (default) saves none, and such a room then
+#'   works in a scratch folder under the session's temporary directory,
+#'   which is deleted when the process ends. Up to 0.8.0 the default was
+#'   \code{~/<bot name>}, created on first use.
 #' @param operators Character vector or NULL. The people the bot answers
 #'   to, each a full Matrix id such as \code{"@you:example.org"}. The bot
 #'   accepts an invite only from one of them, answers a room with one
@@ -236,6 +236,12 @@ bot_save_config <- function(cfg) {
 #'   operators accepts no invites: it works in the room it was configured
 #'   with and in rooms it has already joined. Up to 0.8.0 it accepted
 #'   every invite.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd} and list with
+#'   \code{/ls}. Each must exist: corteza does not create them. NULL
+#'   (default) saves none, and \code{/cd <dir>} is then refused. Up to
+#'   0.8.0 a room worked in a directory its topic named; a topic names
+#'   none now.
 #'
 #' @return The saved configuration, invisibly.
 #' @examples
@@ -256,13 +262,14 @@ bot_configure <- function(server, user, password, room, model = NULL,
                           models = NULL,
                           model_badge = c("never", "non_default", "always"),
                           display_name = NULL, fallback = NULL, cwd = NULL,
-                          operators = NULL) {
+                          operators = NULL, project_roots = NULL) {
     providers <- c("anthropic", "anthropic_claude", "openai", "moonshot",
                    "openai_codex", "ollama")
     # Before the transport is asked for anything: a directory that is
     # not there should not cost a login, and neither should an operator
     # written without a server.
     cwd <- bot_check_cwd(cwd)
+    project_roots <- bot_check_roots(project_roots)
     operators <- bot_check_operators(operators)
     bot_require_mx()
     provider <- match.arg(provider, providers)
@@ -299,7 +306,7 @@ bot_configure <- function(server, user, password, room, model = NULL,
                      bots = bots, models = models, fallback = fallback,
                      model_badge = model_badge,
                      display_name = display_name, cwd = cwd,
-                     operators = operators))
+                     operators = operators, project_roots = project_roots))
     message(sprintf("Configured %s in room %s", cfg$user_id, cfg$room_id))
     if (is.null(operators)) {
         message(bot_no_operators_note())
@@ -400,6 +407,30 @@ bot_markup <- function(markdown) {
     } else {
         "plain"
     }
+}
+
+# Lines written for the terminal, made ready to send to a room as
+# Markdown. A run of lines indented by 2 spaces, a list at the terminal,
+# becomes a Markdown list: in a room the indent renders as nothing and
+# the items run together. Blank lines set the list off, so a line after
+# it does not join its last item where the plain text is rendered.
+bot_markdown_list <- function(lines) {
+    item <- startsWith(lines, "  ")
+    out <- character()
+    for (i in seq_along(lines)) {
+        if (!item[[i]]) {
+            out <- c(out, lines[[i]])
+            next
+        }
+        if (i == 1L || !item[[i - 1L]]) {
+            out <- c(out, "")
+        }
+        out <- c(out, paste0("- ", sub("^ +", "", lines[[i]])))
+        if (i < length(lines) && !item[[i + 1L]]) {
+            out <- c(out, "")
+        }
+    }
+    out
 }
 
 # chat_send() reports "no event id" as character(0): it as.character()s
@@ -542,8 +573,7 @@ bot_cfg_object <- function(cfg) {
 # "I cannot ask" (an error), and both mean the same thing to every caller
 # here: fall back to a default. So the error is absorbed once, in one
 # place, rather than at four call sites that would each have to
-# remember. A NULL chat is the no-transport case -- archiving from a
-# registry with no live client, which is a real path.
+# remember. A NULL chat is the no-transport case.
 bot_channel_info <- function(chat, room_id) {
     empty <- list(id = room_id, name = NULL, topic = NULL)
     if (is.null(chat) || is.null(room_id)) {
@@ -551,10 +581,6 @@ bot_channel_info <- function(chat, room_id) {
     }
     tryCatch(chat.api::chat_channel_info(chat, room_id),
              error = function(e) empty)
-}
-
-bot_room_name <- function(chat, room_id) {
-    bot_channel_info(chat, room_id)$name
 }
 
 # The record shape this file's poll loop reads, from the contract's
@@ -603,7 +629,15 @@ bot_msg_record <- function(m, addressed = FALSE) {
 # So the ledger is appended at the moments a Matrix event is seen or
 # successfully sent, and nowhere else. Backfill produces the same shape
 # from the server, which is what makes restart dedup exact.
-bot_transcript_add <- function(session, event_id, role, content) {
+#
+# The conversation's record for its monitor (R/room-record.R) is
+# written here too, unless `record` is FALSE: the backfill writes its
+# own. `event` is the message someone else sent, which gives the record
+# its sender and its text as sent, `note` what the bot made of it, and
+# `kind` says when it is a peer's request rather than a message.
+bot_transcript_add <- function(session, event_id, role, content,
+                               event = NULL, note = NULL, kind = NULL,
+                               record = TRUE) {
     # A send can create several events (attachments, then the text). Only
     # one of them is the conversational turn, and it is the last: the
     # attachments are remembered for echo suppression but are not
@@ -623,6 +657,17 @@ bot_transcript_add <- function(session, event_id, role, content) {
     session$transcript <- c(session$transcript %||% list(),
                             list(list(event_id = as.character(event_id), role = role,
                                       content = text)))
+    if (isTRUE(record)) {
+        if (is.null(kind)) {
+            if (identical(role, "assistant")) {
+                kind <- "post"
+            } else {
+                kind <- "message"
+            }
+        }
+        bot_record_write(session, bot_record_event_line(event_id, text, kind,
+                event = event, note = note))
+    }
     invisible(NULL)
 }
 
@@ -649,9 +694,9 @@ bot_archive_state_read <- function(room_id) {
     tryCatch(readLines(path, warn = FALSE), error = function(e) character())
 }
 
-# Bounded rolling tail. Only ever called after a successful ingest, so a
-# failed archive leaves the previous state untouched and the same turns
-# are retried on the next flush.
+# Bounded rolling tail. Only ever called after the host took a range
+# (R/archive.R), so a range it did not take leaves the previous state
+# untouched and is offered again.
 bot_archive_state_write <- function(room_id, keys, cap = 512L) {
     path <- bot_archive_state_path(room_id)
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
@@ -666,167 +711,6 @@ bot_archive_state_write <- function(room_id, keys, cap = 512L) {
         stop("could not update archive state for ", room_id, call. = FALSE)
     }
     invisible(keys)
-}
-
-# Format ledger entries from `start` onward as a markdown transcript.
-# Reads the Matrix-visible transcript, not session$history, so tool
-# calls and tool results stay in the provider context where they are
-# needed and out of the human conversation archive. Returns NULL when
-# there is nothing new.
-bot_session_to_markdown <- function(session, room_id, room_name = NULL,
-                                    which = NULL) {
-    entries <- session$transcript %||% list()
-    if (is.null(which)) {
-        which <- seq_along(entries)
-    }
-    which <- which[which >= 1L & which <= length(entries)]
-    if (!length(which)) {
-        return(NULL)
-    }
-    new_msgs <- entries[which]
-    parts <- vapply(new_msgs, function(m) {
-        role <- m$role %||% "?"
-        text <- if (is.character(m$content)) {
-            paste(m$content, collapse = "\n")
-        } else {
-            as.character(m$content %||% "")
-        }
-        sprintf("## %s\n\n%s", role, text)
-    }, character(1))
-    header <- sprintf("# %s", room_id)
-    room_label <- room_name %||% ""
-    if (length(room_label)) {
-        room_label <- room_label[[1L]]
-    } else {
-        room_label <- ""
-    }
-    room_label <- .sanitize_inline(room_label, max_chars = 100L)
-    metadata <- if (nzchar(room_label)) {
-        sprintf("Room name at archive time: %s", room_label)
-    } else {
-        character()
-    }
-    paste(c(header, "", metadata, parts), collapse = "\n\n")
-}
-
-# Archive new turns from one room's session to the pensar vault and
-# advance the watermark so the same turns aren't re-ingested. Silent
-# no-op when pensar isn't installed or there's nothing new.
-bot_archive_session <- function(session, room_id, chat = NULL) {
-    # pensar is an optional cornball-ai companion package, declared in
-    # Suggests. The dynamic getExportedValue lookup keeps archiving a
-    # no-op when it is absent rather than erroring at load.
-    #
-    # It used to be off CRAN, which is why it went undeclared. It has
-    # been on CRAN since 0.6.4, and Writing R Extensions requires a
-    # package used from a function body or conditionally in tests to be
-    # declared, so the omission was a bug.
-    pensar_ingest <- tryCatch(getExportedValue("pensar", "ingest"),
-                              error = function(e) NULL)
-    if (is.null(pensar_ingest)) {
-        return(invisible(NULL))
-    }
-
-    entries <- session$transcript %||% list()
-    if (!length(entries)) {
-        return(invisible(NULL))
-    }
-    # Matrix event ids are unique and stable across a restart, so
-    # "already archived" is exact set membership rather than an
-    # alignment guess. Anything the persisted tail has not seen is new,
-    # in ledger order.
-    ids <- bot_transcript_ids(entries)
-    persisted <- bot_archive_state_read(room_id)
-    fresh <- which(!(ids %in% persisted))
-    if (!length(fresh)) {
-        # Everything queued is already archived -- a restart backfill
-        # replaying known events. Drop it: leaving it queued lets an
-        # entry outlive its id in the bounded persisted tail and come
-        # back as fresh later.
-        session$transcript <- list()
-        .context_room_snapshot(session)
-        return(invisible(NULL))
-    }
-
-    room_name <- bot_room_name(chat, room_id)
-    md <- bot_session_to_markdown(session, room_id, room_name, which = fresh)
-    if (is.null(md)) {
-        return(invisible(NULL))
-    }
-    out <- tryCatch(
-                    pensar_ingest(content = md, type = "matrix",
-                                  source = room_id,
-                                  title = room_id),
-                    error = function(e) {
-        message("bot_archive_session: pensar ingest failed: ",
-                conditionMessage(e))
-        NULL
-    }
-    )
-    if (!is.null(out)) {
-        bot_archive_state_write(room_id, c(persisted, ids[fresh]))
-        # Consume everything present, not just what was archived: the
-        # rest was already in persisted state. The queue can grow past
-        # the tail's size between flushes -- what it must never do is
-        # hold an already-archived entry long enough for that entry's id
-        # to age out of the tail, which is how one got archived twice.
-        # Draining on every pass is what rules that out.
-        session$transcript <- list()
-        .context_room_snapshot(session)
-    } else {
-        # Ingest failed. Keep only what still needs archiving so a retry
-        # does not resend events already in persisted state.
-        session$transcript <- entries[fresh]
-    }
-    invisible(out)
-}
-
-#' Flush all in-memory matrix sessions to the pensar vault
-#'
-#' Walks the per-room session registry and archives each room's
-#' unarchived Matrix events via the pensar archive ingest. Archived
-#' events are consumed from the session ledger, and their Matrix event
-#' ids are persisted per room under \code{CORTEZA_STATE_DIR} so a
-#' restart's backfill is recognized rather than archived again. Silent
-#' no-op when \code{pensar} is not installed.
-#'
-#' @param sessions A registry environment built by
-#'   \code{bot_run}/\code{bot_poll}. Keys are room IDs, values
-#'   are session environments carrying \code{$transcript}, the
-#'   Matrix-visible event ledger.
-#' @param chat Optional chat.api client for room-name lookups. When
-#'   NULL, the room ID is used as the source identifier.
-#'
-#' @return Integer count of rooms ingested, invisibly.
-#' @examples
-#' \dontrun{
-#' # Requires a running Matrix session registry and the optional
-#' # pensar package for the actual archive step.
-#' reg <- new.env(parent = emptyenv())
-#' bot_archive_all(reg)
-#' }
-#' @export
-bot_archive_all <- function(sessions, chat = NULL) {
-    if (!is.environment(sessions)) {
-        stop("sessions must be an environment registry", call. = FALSE)
-    }
-    n <- 0L
-    for (key in ls(envir = sessions, all.names = TRUE)) {
-        s <- get(key, envir = sessions, inherits = FALSE)
-        # The session's own room, not the registry key: a thread's key
-        # is room and root joined, and archiving under it would file the
-        # transcript against a room id no homeserver has ever heard of.
-        room_id <- s$room_id %||% key
-        # Count what actually reached the vault. Inspecting session
-        # state before and after cannot: a room whose pending events
-        # turn out to be already archived leaves state changed while
-        # ingesting nothing, which reported archived rooms that were
-        # never written.
-        if (!is.null(bot_archive_session(s, room_id, chat))) {
-            n <- n + 1L
-        }
-    }
-    invisible(n)
 }
 
 # Matrix clients such as Element intercept single-slash commands before
@@ -859,6 +743,22 @@ bot_is_status_command <- function(body) {
     cmd <- bot_command_text(body)
     nzchar(cmd) && grepl("^/+status\\s*$|^status\\s*$", cmd, perl = TRUE,
                          ignore.case = TRUE)
+}
+
+# What /status answers in a room. `model` is the one /model sets; a
+# talker session also names the model its replies come from.
+bot_status_text <- function(session) {
+    work <- .session_work_model(session)
+    lines <- c(sprintf("model: %s", work$model %||% "(unset)"),
+               sprintf("provider: %s", work$provider %||% "(unset)"))
+    if (isTRUE(session$talker)) {
+        lines <- c(lines, sprintf("replies: %s (%s)",
+                                  bot_session_model(session) %||% "(unset)",
+                                  session$provider %||% "(unset)"))
+    }
+    paste(c(lines, sprintf("cwd: %s", session$cwd %||% getwd()),
+            .context_edit_status(session), bot_trust_status(session)),
+          collapse = "\n")
 }
 
 # Match `/trust` and `/trust yes`, with or without the slash. NULL when
@@ -898,7 +798,8 @@ bot_trust_command <- function(cfg, session, sender, arg) {
     if (is.null(cwd) || bot_is_scratch(cwd)) {
         return("This room has no project directory, so there is nothing to trust.")
     }
-    paste(trust_command(cwd, arg, when = bot_trust_when()), collapse = "\n")
+    paste(bot_markdown_list(trust_command(cwd, arg, when = bot_trust_when())),
+          collapse = "\n")
 }
 
 # The lines `status` adds about trust. None for a room in the scratch
@@ -909,7 +810,8 @@ bot_trust_status <- function(session) {
         return(character())
     }
     word <- trust_status_word(session$project_trusted, project_trusted(cwd))
-    c(sprintf("trusted: %s", word), trust_left_alone(session, cwd))
+    bot_markdown_list(c(sprintf("trusted: %s", word),
+                        trust_left_alone(session, cwd)))
 }
 
 # Which rooms have been told that their directory is not trusted.
@@ -940,7 +842,8 @@ bot_trust_notice <- function(session) {
     if (is.null(note)) {
         return(NULL)
     }
-    paste(c(note, "Only an operator of this bot can do that."), collapse = "\n")
+    paste(bot_markdown_list(c(note, "Only an operator of this bot can do that.")),
+          collapse = "\n")
 }
 
 # Record that a room was told, so it is not told again. Called once the
@@ -1053,8 +956,9 @@ bot_set_session_model <- function(session, model) {
 }
 
 bot_render_model_menu <- function(entries, session) {
-    cur_model <- bot_session_model(session) %||% ""
-    cur_provider <- session$provider %||% ""
+    work <- .session_work_model(session)
+    cur_model <- work$model %||% ""
+    cur_provider <- work$provider %||% ""
     current <- sprintf("Current: %s (%s)",
                        .sanitize_inline(if (nzchar(cur_model)) cur_model else "(unset)",
                                         max_chars = 80L),
@@ -1082,10 +986,10 @@ bot_render_model_menu <- function(entries, session) {
 
 # Apply a parsed model command to a session. Returns the ack text to
 # post back to the room. For a query (`/model` with no args), renders
-# the numbered menu of available models. For a setter, mutates the
-# session's model (bot_set_session_model()) and optionally its provider
-# in place so the next
-# turn picks them up; a bare number picks that menu entry, so nobody
+# the numbered menu of available models. For a setter, sets the
+# session's own model and optionally its provider in place
+# (.set_work_model(): a talker session's doer, and its talker where that
+# follows), so the next turn and job pick them up; a bare number picks that menu entry, so nobody
 # has to thumb-type a model name from a phone client. `available` is
 # injectable for tests; NULL assembles the menu from cfg + live Ollama.
 bot_apply_model_command <- function(session, cmd, cfg = NULL,
@@ -1110,19 +1014,15 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
                           .model_menu_text(available, session)))
         }
         entry <- available[[idx]]
-        bot_set_session_model(session, entry$model)
-        session$provider <- entry$provider
-        return(sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-                       .sanitize_inline(entry$model, max_chars = 80L),
-                       .sanitize_inline(entry$provider, max_chars = 40L)))
+        .set_work_model(session, entry$model, entry$provider)
+        return(.work_model_ack(session))
     }
-    bot_set_session_model(session, cmd$model)
+    provider <- NULL
     if (!is.na(cmd$provider)) {
-        session$provider <- cmd$provider
+        provider <- cmd$provider
     }
-    sprintf("Model set: %s (provider: %s). Effective on the next reply.",
-            .sanitize_inline(bot_session_model(session) %||% "", max_chars = 80L),
-            .sanitize_inline(session$provider %||% "(unchanged)", max_chars = 40L))
+    .set_work_model(session, cmd$model, provider)
+    .work_model_ack(session)
 }
 
 # Badge mode from config: "never" (default), "non_default", "always".
@@ -1609,23 +1509,38 @@ bot_is_scratch <- function(cwd) {
               normalizePath(bot_scratch_path(), winslash = "/", mustWork = FALSE))
 }
 
-# What a room in the scratch folder is told. The path is there because
-# its tools run in it. The rest is what to say when someone asks for
-# work that needs a place to keep files.
-bot_scratch_notice <- function(cwd) {
-    c("This room has no project directory.",
-        sprintf(paste("Working directory: %s, a scratch folder that is",
-                      "deleted when the bot stops. Keep nothing there that",
-                      "should last."), cwd),
-        paste("When someone asks for work that needs a project, say that",
-              "the room has no directory and how to give it one: put the",
-              "path of an existing directory at the start of the room",
-              "topic, as in \"~/project | what the room is for\", then",
-              "send /clear. The bot's operator can also set a default",
-              "directory for every room (`cwd`). corteza creates neither."))
+# How a room gets a directory, as a refusal in a room without one says
+# it (check_unbound_room(), tool_delegate(), bot_job_handoff()).
+bot_unbound_how <- function() {
+    paste("An operator of the bot gives a room its directory with",
+          "/cd <dir>, inside one of the bot's project roots, or sets a",
+          "default for every room (`cwd`).")
 }
 
-# Where a room works when its topic names no directory: the bot's `cwd`,
+# TRUE for a room, as bot_room_directory() lists it, that has a
+# directory of its own: not the scratch folder.
+bot_room_bound <- function(room) {
+    !bot_is_scratch(room$cwd)
+}
+
+# What a room in the scratch folder is told. Its tools refuse all but
+# reading (check_unbound_room()), and the path is there because they
+# run in it. The rest is what to say when someone asks for work that
+# needs a project.
+bot_scratch_notice <- function(cwd) {
+    c(paste("This room has no project directory, so it reads, searches",
+            "and talks only: it writes no files, runs no commands and hands",
+            "no work to a doer."),
+        sprintf("Its tools work in %s, an empty scratch folder.", cwd),
+        paste("When someone asks for work that needs a project, say that",
+              "the room has no directory and how it gets one: an operator",
+              "of the bot sends /cd with an existing directory inside one",
+              "of the bot's project roots, as in \"/cd ~/project\", or sets",
+              "a default directory for every room (`cwd`). corteza creates",
+              "neither."))
+}
+
+# Where a room works when no operator bound it to one: the bot's `cwd`,
 # else the scratch folder.
 bot_default_cwd <- function(cfg) {
     bot_configured_cwd(cfg) %||% bot_scratch_cwd()
@@ -1637,55 +1552,22 @@ bot_path_like <- function(x) {
     grepl("^(~/|/|\\./)", x) || grepl("^[A-Za-z]:[/\\\\]", x)
 }
 
-# Parse a topic string into its cwd + description parts. The
-# convention is "<path> | <description>" where <path> looks like a
-# directory (bot_path_like()). A leading segment that does not look like
-# a path is treated as pure description (cwd = NULL).
+# A topic's description: the topic, less the directory it started with
+# up to 0.8.0 ("<path> | <description>"). A topic names no directory
+# (R/room-binding.R); bot_topic_path() reads that part only to say so.
 bot_parse_topic <- function(topic) {
     if (is.null(topic)) {
-        return(list(cwd = NULL, description = NULL))
+        return(list(description = NULL))
     }
     topic <- trimws(topic)
     if (!nzchar(topic)) {
-        return(list(cwd = NULL, description = NULL))
+        return(list(description = NULL))
     }
-
+    if (is.null(bot_topic_path(topic))) {
+        return(list(description = topic))
+    }
     parts <- strsplit(topic, "\\s*\\|\\s*", perl = TRUE)[[1]]
-    if (length(parts) >= 2L && bot_path_like(parts[1L])) {
-        list(cwd = parts[1L], description = paste(parts[-1L], collapse = " | "))
-    } else {
-        list(cwd = NULL, description = topic)
-    }
-}
-
-# Effective cwd for a room: the directory its topic names when that
-# exists, else the bot's `cwd`, else the scratch folder. Never returns a
-# directory that does not exist, and creates none outside the session's
-# temp directory.
-# Takes the topic rather than fetching one. bot_new_session() already
-# has it -- name and topic arrive together from a single
-# chat_channel_info() call -- and re-reading it here was the third state
-# lookup for one session, which is the round trip this verb exists to
-# save.
-bot_room_cwd <- function(cfg, topic = NULL) {
-    if (is.null(topic)) {
-        return(bot_default_cwd(cfg))
-    }
-    parsed <- bot_parse_topic(topic)
-    if (is.null(parsed$cwd)) {
-        return(bot_default_cwd(cfg))
-    }
-
-    candidate <- path.expand(parsed$cwd)
-    if (!dir.exists(candidate)) {
-        default_dir <- bot_default_cwd(cfg)
-        message(sprintf(
-                        "matrix: topic cwd %s does not exist; falling back to %s",
-                        candidate, default_dir
-            ))
-        return(default_dir)
-    }
-    candidate
+    list(description = paste(parts[-1L], collapse = " | "))
 }
 
 # Build the approval callback for the Matrix channel: post an approval
@@ -1739,6 +1621,10 @@ bot_supervise_session <- function(s, cfg, room_id) {
         log_event("supervisor_decision", tool = record$tool,
                   action = record$action, by = record$by,
                   route = record$route, reason = record$reason)
+        # What came of the session's calls, for the monitor's next
+        # request (bot_supervised_earlier()).
+        s$.supervised_log <- utils::tail(c(s$.supervised_log, list(record)),
+            15L)
     })
     invisible(s)
 }
@@ -1746,27 +1632,40 @@ bot_supervise_session <- function(s, cfg, room_id) {
 # How a call made in a room session's own turn gets answered. The turn
 # holds the bot's loop, so this waits: for the monitor, then, if the
 # monitor passes the call on or cannot be asked, for a reaction.
+#
+# The monitor reads the conversation (R/room-record.R), whole, as the
+# terminal's reviewer does, and each request is a scope of its own. A
+# conversation it cannot judge by goes to a person, with the reason.
 bot_supervisor_ask <- function(s, cfg, room_id) {
     force(room_id)
     function(route, call, decision, notes) {
-        if (identical(route, "monitor")) {
-            goal <- s$supervisor_goal %||% list()
-            v <- job_monitor_ask_wait(s, list(
-                    scope = paste0("turn:", goal$id %||% ""),
-                    request_id = sprintf("t%06d", sample.int(999999L, 1L)),
-                    goal = goal$text %||% "(a message in the room)",
-                    tool = call$tool, args = job_approval_args(call$args),
-                    reason = decision$reason, notes = notes))
-            if (v$verdict %in% c("approve", "refuse")) {
-                return(list(approved = identical(v$verdict, "approve"),
-                            by = "monitor", reason = v$reason))
-            }
-            decision$reason <- sprintf("the monitor passed this to you: %s",
-                                       v$reason %||% "no reason given")
-        }
         # Derived at the point of use: the token rotates (see
         # bot_approval_cb()).
         live <- tryCatch(bot_load_config(), error = function(e) cfg)
+        if (identical(route, "monitor")) {
+            review <- bot_record_conversation(s$review_record$path,
+                bot_room_approvers(live, room_id))
+            if (is.null(review$why)) {
+                s$.review_seq <- (s$.review_seq %||% 0L) + 1L
+                id <- sprintf("t%06d", s$.review_seq)
+                v <- job_monitor_ask_wait(s, list(
+                        scope = paste0("review:", id), request_id = id,
+                        conversation = review$lines, room = TRUE,
+                        narration = call$model_context$assistant_text,
+                        tool = call$tool, args = job_approval_args(call$args),
+                        reason = decision$reason, notes = notes,
+                        earlier = bot_supervised_earlier(s)))
+                if (v$verdict %in% c("approve", "refuse")) {
+                    return(list(approved = identical(v$verdict, "approve"),
+                                by = "monitor", reason = v$reason))
+                }
+                decision$reason <- sprintf("the monitor passed this to you: %s",
+                    v$reason %||% "no reason given")
+            } else {
+                decision$reason <- sprintf("the monitor was not asked (%s); policy said: %s",
+                    review$why, decision$reason %||% "ask")
+            }
+        }
         approved <- bot_reaction_approval(live, call, decision,
             room_id = room_id)
         list(approved = isTRUE(approved), by = "person",
@@ -1998,15 +1897,38 @@ bot_no_approver_notice <- function(call) {
             .sanitize_inline(call$tool %||% "", max_chars = 60L))
 }
 
-# Where a room or thread session's journal lives (R/journal.R). Two bots
-# can share one data directory and one room, so the bot's identity is
-# part of the name along with the session's registry key, the way the
-# job ledger names its owner. A digest, since both carry characters that
-# do not belong in a path.
+# A room or thread session's id, which names its journal (R/journal.R)
+# and its pending archive (R/archive.R). Two bots can share one data
+# directory and one room, so the bot's identity is part of it along with
+# the session's registry key, the way the job ledger names its owner. A
+# digest, since both carry characters that do not belong in a path.
+bot_session_id <- function(cfg, key) {
+    digest::digest(paste(bot_job_owner(cfg), key, sep = "\n"),
+                   algo = "sha256", serialize = FALSE)
+}
+
+# The sessions a bot's registry holds open, by the id retention knows
+# them by (bot_session_id(), from the owner each session was made with),
+# so a daily run leaves them and their workers' folders alone.
+bot_retention_keep <- function(sessions) {
+    if (!is.environment(sessions)) {
+        return(character())
+    }
+    ids <- vapply(ls(sessions, all.names = TRUE), function(key) {
+        s <- get(key, envir = sessions, inherits = FALSE)
+        if (!is.environment(s) || is.null(s$job_owner)) {
+            return(NA_character_)
+        }
+        digest::digest(paste(s$job_owner, key, sep = "\n"), algo = "sha256",
+                       serialize = FALSE)
+    }, character(1), USE.NAMES = FALSE)
+    ids[!is.na(ids)]
+}
+
+# Where a room or thread session's journal lives.
 bot_journal_dir <- function(cfg, key) {
-    name <- digest::digest(paste(bot_job_owner(cfg), key, sep = "\n"),
-                           algo = "sha256", serialize = FALSE)
-    file.path(sessions_dir("matrix"), paste0(name, ".journal"))
+    file.path(sessions_dir("matrix"),
+              paste0(bot_session_id(cfg, key), ".journal"))
 }
 
 # A room or thread session's entry in the session store (R/session.R),
@@ -2074,12 +1996,11 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
         tools_filter <- NULL
     }
 
-    # One lookup for both fields. This was three state reads, and the
-    # topic was one of them twice: bot_room_cwd() fetched it for the
-    # cwd, and the block below fetched it again for the description.
+    # The room's name and topic, in one lookup. The topic describes the
+    # room; where it works is its binding's (R/room-binding.R).
     chat <- tryCatch(bot_chat_client(cfg), error = function(e) NULL)
     info <- bot_channel_info(chat, room_id)
-    room_cwd <- bot_room_cwd(cfg, info$topic)
+    room_cwd <- bot_room_cwd(cfg, room_id)
 
     context_manifest <- NULL
     if (is.null(system)) {
@@ -2105,6 +2026,12 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     )
     s$room_id <- room_id
     s$cwd <- room_cwd
+    # A room with no directory reads and talks only (WP10): policy()
+    # refuses the rest (check_unbound_room()).
+    s$unbound <- bot_is_scratch(room_cwd)
+    # A directory the topic starts with is no longer read; the room is
+    # told so once (bot_topic_notice()).
+    s$topic_path <- bot_topic_path(info$topic)
     # Tool results cut for length are kept for this room alone. A bot's
     # rooms share one process, and the process's handle store would let
     # one room's `read_handle` open what another room's tools returned.
@@ -2114,7 +2041,8 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
     # process, and a room has no on-disk session id of its own.
     if (!is.null(journal_key)) {
         dir <- bot_journal_dir(cfg, journal_key)
-        .context_room_restore(s, dir, cfg)
+        .context_room_restore(s, dir, cfg,
+                              bot_talker_config(cfg, tools_filter, s$unbound))
         journal_install(s, dir = dir)
         bot_session_record(cfg, s, journal_key, dir, room_name = info$name)
     }
@@ -2163,28 +2091,48 @@ bot_new_session_registry <- function() {
 # self-echo arriving through sync appends the acknowledgement a second
 # time. And it must ledger it, or backfill reinserts that event later
 # among already archived ones.
-bot_reset_session <- function(registry, key, cfg, sent_id, ack,
+#
+# `conversation` is the new conversation's record, which the handler
+# saved before it answered the /clear (bot_conversation_begin(),
+# R/room-conversation.R): nothing is discarded before the record that
+# replaces it is on disk.
+bot_reset_session <- function(registry, key, cfg, sent_id, ack, conversation,
                               system = NULL, model = NULL, provider = NULL,
                               tools_filter = NULL, room_id = key) {
+    if (!is.list(conversation) || !is.character(conversation$id)) {
+        stop("bot_reset_session() needs the new conversation's saved record",
+             call. = FALSE)
+    }
     old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
         old <- get(key, envir = registry)
+        # Jobs the ending conversation queued keep what it allows them,
+        # taken while the session is still its own (R/job-conversation.R).
+        job_conversation_hold(old)
         .context_room_clear(old)
         rm(list = key, envir = registry)
     }
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
                                    tools_filter = tools_filter,
-                                   room_id = room_id)
+                                   room_id = room_id,
+                                   conversation = conversation)
     # The room's jobs outlive its conversation. A job running when the
     # session is replaced is pumped by whichever session holds the
     # registry key, so the worker handles and the job in flight move to
     # the replacement; left on the discarded session, the job would never
-    # be settled and its worker would run on unowned.
+    # be settled and its worker would run on unowned. The job keeps the
+    # conversation it was asked in, and its authority record stays as
+    # that conversation left it: the cache that writes it does not move.
+    # What was held for its queued jobs moves with them.
     if (is.environment(old)) {
         job_state_move(old, s)
         s$context_edit <- old$context_edit
     }
+    # The clear every surface makes (R/job-conversation.R). A room keeps
+    # one checkpoint for each session key, which records the conversation
+    # it was saved in, so nothing is written for it here.
+    job_conversation_clear(s, conversation$id)
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -2195,7 +2143,8 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
 
 bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
                                       model = NULL, provider = NULL,
-                                      tools_filter = NULL, room_id = key) {
+                                      tools_filter = NULL, room_id = key,
+                                      conversation = NULL) {
     if (exists(key, envir = registry, inherits = FALSE)) {
         return(get(key, envir = registry))
     }
@@ -2210,12 +2159,36 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # The session key is the job key: a thread's jobs belong to the
     # thread's session, and their results come back to it.
     s$job_key <- key
+    # The conversation it holds (R/room-conversation.R): the one on
+    # record, so a restart goes on with it, unless /clear hands in a new
+    # one.
+    cleared <- !is.null(conversation)
+    if (!cleared) {
+        conversation <- bot_conversation_open(cfg, key, room_id)
+    }
+    bot_conversation_attach(s, conversation)
+    # And its record for the monitor (R/room-record.R). One with no file
+    # yet begins with the conversation when /clear started it, or when
+    # the conversation is new and the session holds nothing from before;
+    # otherwise it begins `partial`, and the monitor rules on nothing
+    # until /clear.
+    whole <- cleared || (isTRUE(attr(conversation, "made")) &&
+        !length(s$history))
+    if (whole) {
+        start <- "conversation"
+    } else {
+        start <- "partial"
+    }
+    bot_record_attach(s, cfg, key, start, cleared = cleared)
+    # After a restart, a record from before it continues only where the
+    # restart's backfill shows that nothing was missed.
+    bot_record_restart_check(s, bot_record_restart(registry), room_id)
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
-    context <- .context_room_config(cfg)
+    talker <- bot_talker_config(cfg, tools_filter, s$unbound)
+    context <- .context_room_config(cfg, talker)
     .context_conversation_enable(s, context$editing, context$vault)
-    talker <- talker_config(cfg)
     if (!is.null(talker)) {
         talker_enable(s, talker)
         # The talker model is this session's default; only a /model
@@ -2281,11 +2254,16 @@ bot_accept_invites <- function(chat, invites) {
 #' @param hooks Named list of functions or NULL, as validated by
 #'   \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
 #'   host nothing.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none, for this call. It must exist: corteza does not
-#'   create it. NULL (default) uses the \code{cwd} saved by
-#'   \code{\link{bot_configure}}. With neither, such a room works in a
-#'   scratch folder under the session's temporary directory.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one with \code{/cd}, for this call. It must
+#'   exist: corteza does not create it. NULL (default) uses the
+#'   \code{cwd} saved by \code{\link{bot_configure}}. With neither, such
+#'   a room works in a scratch folder under the session's temporary
+#'   directory.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd}, for this call.
+#'   Each must exist. NULL (default) uses the ones saved by
+#'   \code{\link{bot_configure}}.
 #'
 #' @return An integer count of messages replied to, invisibly.
 #' @examples
@@ -2296,10 +2274,12 @@ bot_accept_invites <- function(chat, invites) {
 #' @export
 bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                      tools_filter = NULL, timeout = 0L, sessions = NULL,
-                     hooks = NULL, cwd = NULL) {
+                     hooks = NULL, cwd = NULL, project_roots = NULL) {
     cwd <- bot_check_cwd(cwd)
+    project_roots <- bot_check_roots(project_roots)
     bot_require_mx()
     bot_run_cwd_set(cwd)
+    bot_run_roots_set(project_roots)
     cfg <- bot_load_config()
 
     # Receive over the transport contract. The adapter self-heals an
@@ -2398,7 +2378,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
     replied <- 0L
     bots <- bot_known_bots(cfg, self_id)
-    for (m in msgs) {
+    for (i in seq_along(msgs)) {
+        m <- msgs[[i]]
         if (tryCatch(.delegation_route(m, cfg, chat, sessions), error = function(e) {
             message("delegation input: ", conditionMessage(e))
             !is.null(.delegation_parse(m$body))
@@ -2423,6 +2404,13 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             system = system, model = model, provider = provider,
             tools_filter = tools_filter, room_id = m$channel)
         .delegation_bind(session, cfg)
+        # The host's first refusal (on_message, R/hooks.R), on the
+        # transport's own message: ahead of everything below, behind
+        # only remote control and delegation above, which keep theirs.
+        if (bot_host_message(hooks$on_message, chat_now(), cfg, sessions,
+                             session, res$messages[[i]])) {
+            next
+        }
         # A folded conversation's thread root stands for an archived
         # transcript, and replying there should continue that
         # conversation rather than open a blank one. Gated on the
@@ -2494,13 +2482,15 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         attribute_sender <- bot_needs_sender_attribution(members, sender, bots)
         ingest_body <- bot_ingest_body(sender, m$body, attribute_sender)
         media <- bot_message_media(chat_now(), m, ingest_body,
-                                   session$provider, cfg = cfg)
+                                   session$provider, cfg = cfg,
+                                   save_dir = bot_attachments_dir(cfg, skey))
         ingest_content <- media$content
         ingest_body <- media$text
         # Ledger the incoming event once, before the gate, so both the
         # replied-to and the merely-ingested branch record it exactly
         # once and in arrival order.
-        bot_transcript_add(session, m$id, "user", ingest_body)
+        bot_transcript_add(session, m$id, "user", ingest_body, event = m,
+                           note = media$receipt)
         if (!bot_should_respond(m, self_id, members, bots = bots,
                                 engaged_until = engaged_until,
                                 now = now,
@@ -2591,13 +2581,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         }
 
         if (bot_is_status_command(m$body)) {
-            ack <- sprintf("model: %s\nprovider: %s\ncwd: %s\n%s",
-                           bot_session_model(session) %||% "(unset)",
-                           session$provider %||% "(unset)",
-                           session$cwd %||% getwd(), .context_edit_status(session))
-            ack <- paste(c(ack, bot_trust_status(session)), collapse = "\n")
+            ack <- bot_status_text(session)
             sent_id <- tryCatch(
-                                bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                bot_reply_send(chat, m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
                                 error = function(e) NULL
             )
             if (!is.null(sent_id)) {
@@ -2615,7 +2602,8 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             ack <- tryCatch(bot_trust_command(cfg, session, sender, trust_arg),
                             error = function(e) conditionMessage(e))
             sent_id <- tryCatch(
-                                bot_reply_send(chat_now(), m$channel, ack, thread = m$thread),
+                                bot_reply_send(chat_now(), m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
                                 error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
@@ -2672,6 +2660,61 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             next
         }
 
+        # /cd: where the room works (R/room-binding.R). A move ends each
+        # conversation the room holds, as /clear does, and each session
+        # is replaced only once the move is saved and the room answered.
+        if (!is.null(bot_parse_cd_command(m$body))) {
+            move <- tryCatch(bot_cd_command(m, sender, sessions, cfg, chat_now(),
+                    hooks),
+                             error = function(e) {
+                list(ack = paste("Not moved:", conditionMessage(e)), moved = FALSE)
+            })
+            if (isTRUE(move$moved)) {
+                cfg <- bot_update_displayname(cfg, model = model, chat = chat,
+                    provider = provider)
+            }
+            sent_id <- tryCatch(
+                                bot_reply_send(chat, m$channel, move$ack, markdown = TRUE,
+                    thread = m$thread),
+                                error = function(e) NULL)
+            if (isTRUE(move$moved)) {
+                for (key in move$keys) {
+                    record <- bot_room_moved_record(move$state, key)
+                    if (identical(key, skey)) {
+                        record <- bot_conversation_acked(cfg, key, m$channel,
+                            record, sent_id)
+                    }
+                    bot_reset_session(sessions, key, cfg, sent_id, move$ack,
+                                      record, system = system, model = model,
+                                      provider = provider,
+                                      tools_filter = tools_filter,
+                                      room_id = m$channel)
+                }
+            } else if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids,
+                    sent_id)
+                bot_transcript_add(session, sent_id, "assistant", move$ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
+        ls_cmd <- bot_parse_ls_command(m$body)
+        if (!is.null(ls_cmd)) {
+            ack <- bot_ls_command(cfg, sender, ls_cmd$arg)
+            sent_id <- tryCatch(
+                                bot_reply_send(chat, m$channel, ack, markdown = TRUE,
+                    thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids,
+                    sent_id)
+                bot_transcript_add(session, sent_id, "assistant", ack)
+            }
+            replied <- replied + 1L
+            next
+        }
+
         if (bot_is_clear_command(m$body)) {
             # The segment title reads the transcript, so it must be
             # taken before the archive drains it.
@@ -2679,17 +2722,62 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             # Read here for the same reason as the title: the archive is
             # about to drain the transcript this reads.
             seg_worth <- bot_segment_worth_keeping(session)
-            # Archive whatever's in the session before nuking it so the
-            # topic isn't lost. Best-effort; failures already log.
-            archived <- tryCatch(
-                                 bot_archive_session(session, m$channel, chat_now()),
-                                 error = function(e) NULL
-            )
+            # The ended conversation goes to the host (on_archive,
+            # R/archive.R) before the session that holds it goes. What
+            # the host does not take waits on disk for a retry.
+            filing <- tryCatch(
+                               bot_archive_session(session, skey, chat_now(),
+                    hooks$on_archive, cfg, reason = "clear"),
+                               error = function(e) {
+                message("bot_poll: archive failed: ", conditionMessage(e))
+                list(answer = NULL, durable = FALSE)
+            })
+            # Neither with the host nor on disk: the session is all that
+            # holds the conversation, so it stays, and a later /clear
+            # tries again.
+            if (!isTRUE(filing$durable)) {
+                message("bot_poll: /clear kept the session in ", m$channel,
+                        ": its conversation could not be archived or saved")
+                ack <- paste("Not cleared: this conversation could not be",
+                             "archived or saved for a retry, so this session",
+                             "keeps it. Try /clear again.")
+                sent_id <- tryCatch(
+                                    bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                    error = function(e) NULL)
+                if (!is.null(sent_id)) {
+                    session$seen_event_ids <- bot_remember_event(
+                        session$seen_event_ids, sent_id)
+                    bot_transcript_add(session, sent_id, "assistant", ack)
+                }
+                replied <- replied + 1L
+                next
+            }
+            archived <- filing$answer
+            # The new conversation is on disk before anything says it
+            # began or the session that holds this one goes: a restart
+            # opens the conversation the room's record names, so a
+            # record that could not be written would bring this one
+            # back. Then nothing is cleared, and the room is told.
+            conversation <- bot_conversation_begin(cfg, skey, m$channel, m)
+            if (is.null(conversation)) {
+                ack <- paste("Not cleared: the new conversation could not be",
+                             "recorded, so a restart would bring this one",
+                             "back. This session keeps it. Try /clear again.")
+                sent_id <- tryCatch(
+                                    bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                    error = function(e) NULL)
+                if (!is.null(sent_id)) {
+                    session$seen_event_ids <- bot_remember_event(
+                        session$seen_event_ids, sent_id)
+                    bot_transcript_add(session, sent_id, "assistant", ack)
+                }
+                replied <- replied + 1L
+                next
+            }
             # Whether the ended conversation becomes a room of its own
             # is the host's call, through the on_clear hook (see
-            # bot_run_init()); without one it is simply archived. Only
-            # when something was archived: the transcript pointer is
-            # the segment's content.
+            # bot_run_init()). Only when the host archived it: its
+            # reference is the segment's content.
             # Not for a thread: a thread is already the segment of a
             # conversation that ended once, and filing it again would
             # make a segment room whose parent is a topic room. Clearing
@@ -2703,16 +2791,22 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 seg <- tryCatch(
                                 bot_hook_segment(hooks$on_clear(chat_now(), cfg,
                             m$channel, seg_title,
-                            bot_vault_ref(archived))),
+                            archived$ref)),
                                 error = function(e) {
                     message("on_clear hook: ", conditionMessage(e))
                     NULL
                 }
                 )
             }
-            if (exists(skey, envir = sessions, inherits = FALSE)) {
-                rm(list = skey, envir = sessions)
+            # The room the conversation was filed into works where this
+            # one does (WP22a).
+            if (!is.null(seg$id)) {
+                bot_room_binding_copy(cfg, m$channel, seg$id)
             }
+            # The session stays in the registry until bot_reset_session()
+            # takes it: the helper clears its context, moves its jobs and
+            # worker to the replacement, and finds nothing to do with a
+            # session already gone.
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
             cfg <- bot_update_displayname(cfg, model = model, chat = chat,
@@ -2726,8 +2820,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                 bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
+            conversation <- bot_conversation_acked(cfg, skey, m$channel,
+                conversation, sent_id)
             bot_reset_session(sessions, skey, cfg, sent_id, ack,
-                              system = system, model = model,
+                              conversation, system = system, model = model,
                               provider = provider,
                               tools_filter = tools_filter,
                               room_id = m$channel)
@@ -2742,12 +2838,27 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
         trust_note <- bot_trust_notice(session)
         if (!is.null(trust_note)) {
             sent_id <- tryCatch(
-                                bot_reply_send(chat_now(), m$channel, trust_note, thread = m$thread),
+                                bot_reply_send(chat_now(), m$channel, trust_note,
+                    markdown = TRUE, thread = m$thread),
                                 error = function(e) NULL)
             if (!is.null(sent_id)) {
                 session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
                 bot_transcript_add(session, sent_id, "assistant", trust_note)
                 bot_trust_told(session)
+            }
+        }
+        # A topic that starts with a directory no longer sets where the
+        # room works. The room is told once, in the same way.
+        topic_note <- bot_topic_notice(cfg, session)
+        if (!is.null(topic_note)) {
+            sent_id <- tryCatch(
+                                bot_reply_send(chat_now(), m$channel, topic_note,
+                    markdown = TRUE, thread = m$thread),
+                                error = function(e) NULL)
+            if (!is.null(sent_id)) {
+                session$seen_event_ids <- bot_remember_event(session$seen_event_ids, sent_id)
+                bot_transcript_add(session, sent_id, "assistant", topic_note)
+                bot_topic_told(cfg, session)
             }
         }
 
@@ -2780,10 +2891,6 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
             function(id) bot_job_resume(sessions, request_session, cfg,
                                         request_sender, request_event, id)
         })
-        # What was asked, for a monitor ruling on a call this turn makes
-        # itself (bot_supervisor_ask()). The message id marks where one
-        # request's calls end and the next one's begin.
-        session$supervisor_goal <- list(text = ingest_body, id = m$id)
         # And how to hand a job to another room's doer, should this turn
         # ask to (`delegate` with `room`). Per turn, like the two fields
         # above, and removed after it: it holds this poll's client and
@@ -2888,9 +2995,17 @@ bot_remember_event <- function(seen, event_id, cap = 256L) {
 bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                                   model = NULL, provider = NULL,
                                   tools_filter = NULL, limit = 30L,
-                                  thread_context = NULL) {
-    rooms <- tryCatch(chat.api::chat_channels(chat),
-                      error = function(e) character())
+                                  thread_context = NULL, on_message = NULL) {
+    # Each room's window, for the records its sessions take
+    # (bot_record_restart_check()). A room with none, because the rooms
+    # could not be listed or its history could not be read, leaves each
+    # record from before with a gap.
+    restart <- bot_record_restart(sessions, create = TRUE)
+    rooms <- tryCatch(chat.api::chat_channels(chat), error = function(e) {
+        message("bot_run: backfill could not list the rooms: ",
+                conditionMessage(e))
+        character()
+    })
     self_id <- tryCatch(chat.api::chat_whoami(chat)$id,
                         error = function(e) NA_character_)
     n <- 0L
@@ -2906,80 +3021,167 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         # grow a restart's context without bound.
         msgs <- tryCatch(chat.api::chat_history(chat, rid,
                 limit = as.integer(limit))$messages,
-                         error = function(e) NULL)
-        if (is.null(msgs) || !length(msgs)) {
+                         error = function(e) {
+            message("bot_run: backfill could not read ", rid, ": ",
+                    conditionMessage(e))
+            NULL
+        })
+        if (is.null(msgs)) {
             next
         }
-        # Attribution mirrors the live path: label senders in multi-human
-        # rooms, and label known bot senders even in one-human rooms.
-        # Membership is not fetched during backfill, so multi-human is
-        # inferred from the distinct human senders in this window.
-        room_bots <- bot_known_bots(cfg, self_id)
-        human_senders <- setdiff(
-                                 unique(vapply(msgs, function(m) m$sender %||% "", character(1))),
-                                 c(room_bots, "")
-        )
-        multi_human <- length(human_senders) > 1L
+        ids <- vapply(msgs, function(m) as.character(m$id %||% ""),
+                      character(1))
+        restart$windows[[rid]] <- ids
+        if (!length(msgs)) {
+            next
+        }
         added <- 0L
-        for (m in msgs) {
-            # Only ordinary messages carry a turn. chat_history() has
-            # already dropped the msgtypes the contract has no word for,
-            # so this is the notice/emote filter and nothing else.
-            if (!identical(m$kind, "message")) {
-                next
+        done <- tryCatch({
+            added <- bot_backfill_room(chat, sessions, cfg, rid, msgs, ids,
+                                       self_id, system = system, model = model,
+                                       provider = provider,
+                                       tools_filter = tools_filter,
+                                       thread_context = thread_context,
+                                       on_message = on_message)
+            TRUE
+        }, error = function(e) {
+            message("bot_run: backfill failed partway through ", rid, ": ",
+                    conditionMessage(e))
+            FALSE
+        })
+        # What it took of the room may stop short of the window: each of
+        # the room's records says so, and a session that takes one later
+        # finds no window.
+        if (!done) {
+            restart$windows[[rid]] <- NULL
+            for (s in bot_sessions_list(sessions)) {
+                if (identical(s$room_id, rid)) {
+                    bot_record_break(s, paste("the backfill failed partway",
+                            "through the room's history"))
+                }
             }
-            body <- m$body
-            if (is.null(body) || !nzchar(body)) {
-                next
-            }
-            # Per message, not per room: a threaded message belongs to
-            # its thread's session, the same way the live path routes
-            # it. Backfilling every message into the room's session put
-            # each topic's history into the main timeline's context and
-            # left the threads themselves empty, so a restart both
-            # polluted the room and lost the threads.
-            session <- bot_get_or_create_session(
-                sessions, bot_session_key(rid, m$thread), cfg,
-                system = system, model = model,
-                provider = provider, tools_filter = tools_filter,
-                room_id = rid
-            )
-            if (m$id %in% session$seen_event_ids) {
-                next
-            }
-            # A thread's archive is older context than this window, so
-            # it goes in before the window does. Once per session: the
-            # flag is what stops the second backfilled message in a
-            # thread asking again.
-            bot_maybe_rehydrate(session, chat, rid, m$thread, thread_context)
-            is_self <- isTRUE(m$self)
-            if (is_self) {
-                role <- "assistant"
-            } else {
-                role <- "user"
-            }
-            content <- if (is_self) {
-                body
-            } else {
-                bot_ingest_body(m$sender, body,
-                                multi_human || m$sender %in% room_bots)
-            }
-            session$history <- c(
-                                 session$history %||% list(),
-                                 list(list(role = role, content = content))
-            )
-            bot_transcript_add(session, m$id, role, content)
-            session$seen_event_ids <- bot_remember_event(
-                session$seen_event_ids, m$id
-            )
-            .context_room_snapshot(session)
-            added <- added + 1L
         }
         if (added > 0L) {
             n <- n + 1L
         }
     }
     invisible(n)
+}
+
+# The backfill of room `rid`: its window `msgs`, whose event ids are
+# `ids`, into the sessions of its timeline and threads. Returns how many
+# messages it added.
+bot_backfill_room <- function(chat, sessions, cfg, rid, msgs, ids, self_id,
+                              system = NULL, model = NULL, provider = NULL,
+                              tools_filter = NULL, thread_context = NULL,
+                              on_message = NULL) {
+    # Attribution mirrors the live path: label senders in multi-human
+    # rooms, and label known bot senders even in one-human rooms.
+    # Membership is not fetched during backfill, so multi-human is
+    # inferred from the distinct human senders in this window.
+    room_bots <- bot_known_bots(cfg, self_id)
+    human_senders <- setdiff(
+                             unique(vapply(msgs, function(m) m$sender %||% "", character(1))),
+                             c(room_bots, "")
+    )
+    multi_human <- length(human_senders) > 1L
+    added <- 0L
+    for (i in seq_along(msgs)) {
+        m <- msgs[[i]]
+        # Only ordinary messages carry a turn. chat_history() has
+        # already dropped the msgtypes the contract has no word for,
+        # so this is the notice/emote filter and nothing else.
+        if (!identical(m$kind, "message")) {
+            next
+        }
+        body <- m$body
+        if (is.null(body) || !nzchar(body)) {
+            next
+        }
+        # Per message, not per room: a threaded message belongs to
+        # its thread's session, the same way the live path routes
+        # it. Backfilling every message into the room's session put
+        # each topic's history into the main timeline's context and
+        # left the threads themselves empty, so a restart both
+        # polluted the room and lost the threads.
+        session <- bot_get_or_create_session(sessions,
+            bot_session_key(rid, m$thread), cfg, system = system,
+            model = model, provider = provider, tools_filter = tools_filter,
+            room_id = rid)
+        if (m$id %in% session$seen_event_ids) {
+            next
+        }
+        # From a conversation a /clear ended: its session began after
+        # it (R/room-conversation.R). Each thread by its own record.
+        if (bot_conversation_before(session, ids, i, m$ts)) {
+            next
+        }
+        # The host's first refusal, as on the live path. It answers
+        # from the room's own state and drives nothing (backfill =
+        # TRUE), and what it takes stays out of the history.
+        if (bot_host_message(on_message, chat, cfg, sessions, session,
+                             m, backfill = TRUE)) {
+            next
+        }
+        # A thread's archive is older context than this window, so
+        # it goes in before the window does. Once per session: the
+        # flag is what stops the second backfilled message in a
+        # thread asking again.
+        bot_maybe_rehydrate(session, chat, rid, m$thread, thread_context)
+        is_self <- isTRUE(m$self)
+        if (is_self) {
+            role <- "assistant"
+        } else {
+            role <- "user"
+        }
+        content <- if (is_self) {
+            body
+        } else {
+            bot_ingest_body(m$sender, body,
+                            multi_human || m$sender %in% room_bots)
+        }
+        # A picture sent while the bot was not running is kept as the
+        # live path keeps one, and the history gets its receipt, with
+        # the kept file's path. None goes to the model and nothing is
+        # posted: backfill answers nothing. The event is marked seen
+        # below, so the live path never sees the picture.
+        receipt <- NULL
+        if (!is_self && length(m$attachments)) {
+            media <- tryCatch({
+                key <- bot_session_key(rid, m$thread)
+                bot_message_media(chat, m, content, session$provider,
+                                  cfg = cfg,
+                                  save_dir = bot_attachments_dir(cfg, key),
+                                  not_shown = "received while the bot was not running")
+            }, error = function(e) {
+                message("bot_run: backfill kept no attachment of ", m$id,
+                        ": ", conditionMessage(e))
+                list(text = content)
+            })
+            content <- media$text
+            receipt <- media$receipt
+        }
+        session$history <- c(
+                             session$history %||% list(),
+                             list(list(role = role, content = content))
+        )
+        bot_transcript_add(session, m$id, role, content, record = FALSE)
+        # The conversation's record (R/room-record.R) takes what it
+        # does not hold yet, and says when the window leaves a break.
+        if (is_self) {
+            line <- bot_record_event_line(m$id, body, "post", via = "backfill")
+        } else {
+            line <- bot_record_event_line(m$id, content, "message",
+                event = m, note = receipt, via = "backfill")
+        }
+        bot_record_backfill(session, ids, i, line)
+        session$seen_event_ids <- bot_remember_event(
+            session$seen_event_ids, m$id
+        )
+        .context_room_snapshot(session)
+        added <- added + 1L
+    }
+    added
 }
 
 # Run one turn with R's process-wide getwd() pointed at the session's
@@ -3055,39 +3257,88 @@ bot_cwd_unavailable <- function(dir) {
 #' @param tools_filter Character vector or NULL. Tool filter override.
 #' @param hooks Named list of functions or NULL. Policy the loop asks
 #'   the host about; see Hooks. NULL, the default, means a bare bot:
-#'   \code{/clear} archives and resets without filing anything, and a
-#'   thread reply starts from the thread's own history.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none, for this run. It must exist: corteza does not
-#'   create it, and the run stops at its start when this directory, or
-#'   the one saved by \code{\link{bot_configure}}, is missing. NULL
-#'   (default) uses the saved one. With neither, such a room works in a
-#'   scratch folder under the session's temporary directory, which is
-#'   deleted when the process ends.
+#'   \code{/clear} resets and nothing is filed, a thread reply starts
+#'   from the thread's own history, and every message is the bot's to
+#'   answer.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one with \code{/cd}, for this run. It must
+#'   exist: corteza does not create it, and the run stops at its start
+#'   when this directory, or the one saved by \code{\link{bot_configure}},
+#'   is missing. NULL (default) uses the saved one. With neither, such a
+#'   room works in a scratch folder under the session's temporary
+#'   directory, which is deleted when the process ends.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd} and list with
+#'   \code{/ls}, for this run. Each must exist: corteza does not create
+#'   them. NULL (default) uses the ones saved by
+#'   \code{\link{bot_configure}}; with none, \code{/cd <dir>} is refused.
 #'
 #' @section Hooks:
-#' corteza runs a conversation. What becomes of one once it ends, and
-#' where a thread's earlier context comes from, belong to the host that
-#' runs the bot over time (cerebro files segments and folds them into
-#' topic rooms). Two slots, both optional:
+#' corteza runs a conversation. What becomes of one once it ends, where
+#' a thread's earlier context comes from, and which rooms' messages the
+#' host answers itself, belong to the host that runs the bot over time
+#' (cerebro files segments and folds them into topic rooms). Four
+#' slots, all optional:
 #'
 #' \describe{
+#'   \item{\code{on_archive(chat, cfg, room_id, archive)}}{Called with
+#'     each range of a room's or thread's conversation that nothing has
+#'     filed yet: at \code{/clear}, at a flush
+#'     (\code{\link{bot_request_flush}}), and again for every range the
+#'     hook did not take before. \code{archive} is a list: \code{id},
+#'     the same however often the range is offered; \code{bot}, the
+#'     bot's Matrix id; \code{room_id}; \code{thread}, the thread's root
+#'     event or NULL; \code{session}, the session's id;
+#'     \code{first_event} and \code{last_event}, the Matrix events that
+#'     bound the range; \code{entries}, oldest first, each
+#'     \code{list(event_id, role, content)} with the text as posted; and
+#'     \code{reason}, \code{"clear"} or \code{"flush"}. Returns
+#'     \code{list(archived = TRUE, ref)} once the host has filed the
+#'     range or chosen not to; \code{ref}, a string or NULL, is what
+#'     \code{on_clear} receives. Anything else, or an error, which is
+#'     reported, and the range waits under \code{CORTEZA_STATE_DIR} for
+#'     the next \code{/clear} or flush, through a restart. When it
+#'     cannot be written there either, \code{/clear} keeps the session
+#'     that holds it, and says so in the room. A range from
+#'     a flush takes the conversation's later entries under the same
+#'     \code{id}, so a host that filed one before replaces it. With no
+#'     hook nothing is filed.}
 #'   \item{\code{on_clear(chat, cfg, room_id, title, vault_ref)}}{Called
-#'     from the \code{/clear} handler once the conversation is archived,
-#'     when the user said something in it and the clear was not inside a
-#'     thread. \code{chat} is the live chat.api client, \code{cfg} the
-#'     bot config, \code{title} the segment title corteza derived from
-#'     the transcript's opening line, \code{vault_ref} the archive's
-#'     vault-relative path (or NULL). Returns \code{list(id, name)} for a
-#'     room it filed the conversation into, which the acknowledgement
-#'     names, or NULL for none. An error is reported and treated as
-#'     none: archive-and-reset is the critical path.}
+#'     from the \code{/clear} handler once \code{on_archive} took the
+#'     conversation, when the user said something in it and the clear
+#'     was not inside a thread. \code{chat} is the live chat.api client,
+#'     \code{cfg} the bot config, \code{title} the segment title corteza
+#'     derived from the transcript's opening line, \code{vault_ref} the
+#'     \code{ref} the archive hook returned (or NULL). Returns
+#'     \code{list(id, name)} for a room it filed the conversation into,
+#'     which the acknowledgement names, or NULL for none. An error is
+#'     reported and treated as none: archive-and-reset is the critical
+#'     path.}
 #'   \item{\code{thread_context(chat, room_id, thread_root)}}{Called once
 #'     per thread session before its first reply. Returns
-#'     \code{list(segment, vault)} naming the archived conversation the
-#'     thread continues, or NULL when it continues nothing; \code{vault}
-#'     is the transcript's path, vault-relative or absolute. A result
-#'     seeds the session with the transcript's tail.}
+#'     \code{list(segment, vault, kind)} naming the archived
+#'     conversation the thread continues, or NULL when it continues
+#'     nothing; \code{vault} is the file's path, vault-relative or
+#'     absolute. With \code{kind = "summary"} the file is a summary, and
+#'     the session is seeded with its start, said to be one; otherwise
+#'     it is a transcript, and the session is seeded with its tail.}
+#'   \item{\code{on_message(chat, cfg, room_id, message, session,
+#'     backfill)}}{The host's first refusal on each message from someone
+#'     else, for a host that answers some rooms itself. Called once per
+#'     event, after remote control and delegation take theirs and before
+#'     anything else: the read receipt, the media step, the reply rules,
+#'     commands and the turn. \code{message} is the transport's
+#'     \code{chat_message} as received, \code{raw} included;
+#'     \code{session} is the room's or the thread's session, where the
+#'     host may keep state of its own. Returns \code{list(handled = TRUE)}
+#'     when the host took the message: corteza marks it seen and does
+#'     nothing more with it, not even a read receipt, and from then on
+#'     records none of the bot's own messages in that room. Anything
+#'     else, or an error, which is reported, and the message goes on as
+#'     if there were no hook. In a restart's backfill \code{backfill} is
+#'     TRUE: the hook answers from the room's own state and drives
+#'     nothing, and a message it takes stays out of the session's
+#'     history.}
 #' }
 #'
 #' @return A list holding the session registry, startup session handle,
@@ -3102,14 +3353,22 @@ bot_cwd_unavailable <- function(dir) {
 #' }
 #' @export
 bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                         tools_filter = NULL, hooks = NULL, cwd = NULL) {
+                         tools_filter = NULL, hooks = NULL, cwd = NULL,
+                         project_roots = NULL) {
     cwd <- bot_check_cwd(cwd)
+    project_roots <- bot_check_roots(project_roots)
     bot_require_mx()
     hooks <- bot_hooks(hooks)
     # Before the backfill below builds a session: each takes the bot's
-    # directory when its room's topic names none.
+    # directory when no operator bound its room to one, and a bound
+    # room's directory has to lie inside a root.
     bot_run_cwd_set(cwd)
+    bot_run_roots_set(project_roots)
     sessions <- bot_new_session_registry()
+    # A restart: the records its sessions take are checked against the
+    # backfill below, and a room it cannot read leaves its records with
+    # a gap (R/room-record.R).
+    bot_record_restart(sessions, create = TRUE)
     chat <- NULL
 
     # Catch up on pending invites that predate the saved sync token.
@@ -3147,7 +3406,8 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
                     system = system, model = model,
                     provider = provider,
                     tools_filter = tools_filter,
-                    thread_context = hooks$thread_context),
+                    thread_context = hooks$thread_context,
+                    on_message = hooks$on_message),
                                 error = function(e) {
                 message("bot_run: backfill failed: ", conditionMessage(e))
                 0L
@@ -3182,7 +3442,7 @@ bot_run_init <- function(system = NULL, model = NULL, provider = NULL,
          flush_signal = flush_signal,
          opts = list(system = system, model = model,
                      provider = provider, tools_filter = tools_filter,
-                     hooks = hooks, cwd = cwd))
+                     hooks = hooks, cwd = cwd, project_roots = project_roots))
 }
 
 #' One Matrix long-poll iteration
@@ -3222,7 +3482,8 @@ bot_run_step <- function(state, timeout = 30000L) {
     replied <- bot_poll(system = o$system, model = o$model,
                         provider = o$provider, tools_filter = o$tools_filter,
                         timeout = timeout, sessions = state$sessions,
-                        hooks = o$hooks, cwd = o$cwd)
+                        hooks = o$hooks, cwd = o$cwd,
+                        project_roots = o$project_roots)
     # Advance every room's jobs: start queued ones, post results, raise
     # approval prompts. Never blocks on a worker. Client derived now, as
     # for the flush below.
@@ -3246,18 +3507,20 @@ bot_run_step <- function(state, timeout = 30000L) {
     # counted as idle from now. Needs no client.
     bot_retire_workers(state$sessions)
     # Out-of-band archive trigger: another process (e.g. a cornelius
-    # systemd timer) drops `archive.signal` to ask the bot to flush
-    # all in-memory room sessions to the pensar vault. The bot owns
-    # the registry; the schedule lives outside the package.
+    # systemd timer) drops `archive.signal` to ask the bot to hand all
+    # in-memory room sessions to the host's on_archive hook. The bot
+    # owns the registry; the schedule lives outside the package.
     # Derived now, not from state: a client built at startup holds a
-    # token every rotation since has invalidated, which silently costs
-    # the archive its room-name metadata.
-    flush_chat <- tryCatch(bot_chat_client(bot_load_config()),
-                           error = function(e) NULL)
-    bot_handle_flush_signal(state$flush_signal, state$sessions, flush_chat)
+    # token every rotation since has invalidated, and the host's hook
+    # works through it.
+    flush_cfg <- tryCatch(bot_load_config(), error = function(e) NULL)
+    flush_chat <- tryCatch(bot_chat_client(flush_cfg), error = function(e) NULL)
+    bot_handle_flush_signal(state$flush_signal, state$sessions, flush_chat,
+                            o$hooks$on_archive, flush_cfg)
     # Once a day, what old sessions no longer need goes (R/retention.R).
-    # It looks at the clock on most steps and does nothing else.
-    pruned <- retention_tick()
+    # It looks at the clock on most steps and does nothing else. The
+    # rooms this bot has open stay, and so do their workers' folders.
+    pruned <- retention_tick(keep = bot_retention_keep(state$sessions))
     if (!is.null(pruned)) {
         message("retention: ", pruned)
     }
@@ -3278,8 +3541,11 @@ bot_run_step <- function(state, timeout = 30000L) {
 #' @param model Character or NULL. Model override.
 #' @param provider Character or NULL. Provider override.
 #' @param tools_filter Character vector or NULL. Tool filter override.
-#' @param cwd Character or NULL. The directory a room works in when its
-#'   topic names none; see \code{\link{bot_run_init}}.
+#' @param cwd Character or NULL. The directory a room works in when no
+#'   operator has bound it to one; see \code{\link{bot_run_init}}.
+#' @param project_roots Character vector or NULL. The directories inside
+#'   which an operator may bind a room with \code{/cd}; see
+#'   \code{\link{bot_run_init}}.
 #'
 #' @return Never returns under normal operation. Crashes on fatal error
 #'   so systemd can restart.
@@ -3298,10 +3564,12 @@ bot_run_step <- function(state, timeout = 30000L) {
 #' }
 #' @export
 bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
-                    provider = NULL, tools_filter = NULL, cwd = NULL) {
+                    provider = NULL, tools_filter = NULL, cwd = NULL,
+                    project_roots = NULL) {
     state <- bot_run_init(system = system, model = model,
                           provider = provider, tools_filter = tools_filter,
-                          hooks = NULL, cwd = cwd)
+                          hooks = NULL, cwd = cwd,
+                          project_roots = project_roots)
     message("bot_run: starting long-poll loop")
     message("bot_run: flush signal at ", state$flush_signal)
     repeat {
@@ -3322,12 +3590,13 @@ bot_signal_dir <- function() {
     file.path(tools::R_user_dir("corteza", "data"), "state")
 }
 
-#' Ask the running matrix bot to archive sessions to pensar
+#' Ask the running matrix bot to archive its sessions
 #'
 #' Drops an \code{archive.signal} file in the corteza state directory.
 #' The next iteration of the long-poll loop in \code{\link{bot_run}}
-#' picks it up, runs \code{\link{bot_archive_all}}, and removes the
-#' file. Safe to call from any process or scheduler — systemd, Task
+#' picks it up, runs \code{\link{bot_archive_all}} with the host's
+#' \code{on_archive} hook, and removes the file. Safe to call from any
+#' process or scheduler — systemd, Task
 #' Scheduler, launchd, cron, or a separate R session — without needing
 #' to know the bot's PID or share its memory.
 #'
@@ -3353,23 +3622,36 @@ bot_request_flush <- function() {
     invisible(sig)
 }
 
-# Flush sessions to pensar when the signal file exists. Removes the
-# file on success so each touch fires exactly one flush. Errors are
-# logged, never raised — the long-poll loop must keep running.
-bot_handle_flush_signal <- function(flush_signal, sessions, chat = NULL) {
+# Hand the sessions to the host's on_archive hook when the signal file
+# exists. Removes the file so each touch fires exactly one flush. Errors
+# are logged, never raised — the long-poll loop must keep running.
+bot_handle_flush_signal <- function(flush_signal, sessions, chat = NULL,
+                                    on_archive = NULL, cfg = NULL) {
     if (!file.exists(flush_signal)) {
         return(invisible(0L))
     }
     n <- tryCatch(
-                  bot_archive_all(sessions, chat),
+                  bot_archive_all(sessions, chat, on_archive, cfg),
                   error = function(e) {
         message("bot_run: flush failed: ", conditionMessage(e))
         -1L
     }
     )
     tryCatch(file.remove(flush_signal), error = function(e) NULL)
-    if (isTRUE(n >= 0L)) {
-        message(sprintf("bot_run: archived %d room(s) to vault", n))
+    if (!is.function(on_archive)) {
+        message("bot_run: flush asked for; no on_archive hook, nothing filed")
+    } else if (isTRUE(n >= 0L)) {
+        message(sprintf("bot_run: the host archived %d range(s)", n))
+    }
+    # What is left waits until the host takes it: say how much, so its
+    # growth shows.
+    if (is.function(on_archive)) {
+        waiting <- tryCatch(bot_archive_waiting(cfg %||% bot_load_config()),
+                            error = function(e) NULL)
+        line <- bot_archive_waiting_line(waiting)
+        if (!is.null(line)) {
+            message(line)
+        }
     }
     invisible(n)
 }

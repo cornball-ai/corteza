@@ -181,7 +181,18 @@ session_accumulate_spend <- function(session, usage) {
         sp$pending_new <- FALSE
     }
     i <- length(sp$segments)
-    seg <- sp$segments[[i]]
+    seg <- .spend_segment_add(sp$segments[[i]], usage)
+    if (is.null(seg$id)) {
+        seg$id <- session$sessionId
+    }
+    sp$segments[[i]] <- seg
+    session$spend <- sp
+    invisible(session)
+}
+
+#' Add one turn's or one job's usage to a segment.
+#' @noRd
+.spend_segment_add <- function(seg, usage) {
     seg$input_tokens <- .spend_add_int(seg$input_tokens,
                                        .spend_input_tokens(usage))
     seg$output_tokens <- .spend_add_int(seg$output_tokens, usage$output_tokens)
@@ -200,10 +211,45 @@ session_accumulate_spend <- function(session, usage) {
         seg$cost <- seg$cost + as.numeric(usage$cost)
     }
     seg$turns <- seg$turns + 1L
-    if (is.null(seg$id)) {
-        seg$id <- session$sessionId
+    seg
+}
+
+#' Accumulate usage spent for an earlier conversation of this run.
+#'
+#' A job asked for before a /clear can settle after it. What it spent
+#' belongs to the conversation that asked for it: the last segment with
+#' that session id. A conversation with no segment yet gets one, placed
+#' before the open conversation's, so the open one stays last and the
+#' next turn's spend still reaches it.
+#'
+#' @param session Session environment or list.
+#' @param usage Usage list, as for `session_accumulate_spend()`.
+#' @param id The session id of the conversation that spent it.
+#' @return The session, invisibly (mutated in place for an env).
+#' @noRd
+spend_accumulate_for <- function(session, usage, id) {
+    if (is.null(usage)) {
+        return(invisible(session))
     }
-    sp$segments[[i]] <- seg
+    sp <- session$spend %||% list(segments = list())
+    ids <- vapply(sp$segments, function(s) {
+        s$id %||% NA_character_
+    }, character(1))
+    at <- which(ids %in% id)
+    if (length(at)) {
+        i <- max(at)
+        sp$segments[[i]] <- .spend_segment_add(sp$segments[[i]], usage)
+    } else {
+        seg <- .spend_segment_add(.spend_empty_segment(id = id), usage)
+        n <- length(sp$segments)
+        # With no segment pending, the last one is the open conversation's.
+        after <- if (n > 0L && !isTRUE(sp$pending_new)) {
+            n - 1L
+        } else {
+            n
+        }
+        sp$segments <- append(sp$segments, list(seg), after = after)
+    }
     session$spend <- sp
     invisible(session)
 }

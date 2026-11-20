@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # The monitor: a third worker process a session owns, asked to rule on

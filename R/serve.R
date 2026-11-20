@@ -39,6 +39,14 @@
 #' - `git_status`, `git_diff`, `git_log` - Git operations
 #' - `chat`, `chat_models` - LLM chat (requires llm.api)
 #'
+#' ## Approval
+#'
+#' A call from an MCP client runs without [policy()] and without an
+#' approval prompt: the client asks its own user, and a server has
+#' nobody to ask. What the server decides is which tools it offers.
+#' `tools` sets that list, a call to a tool outside it is refused, and
+#' the subagent tools are refused unless `expose_subagents` allows them.
+#'
 #' @return NULL (runs until interrupted or client disconnects)
 #' @export
 #'
@@ -66,19 +74,20 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL,
         setwd(cwd)
     }
 
-    # Register built-in R skills
-    ensure_skills()
+    # The server's tools (R/tool-table.R): built in, the user's skills,
+    # the config's package tools and, from a trusted directory only, the
+    # project's skills. Held for the life of the server, and the handler
+    # lists and runs these.
+    config <- load_config(getwd())
+    .mcp_state$table <- session_tool_table(getwd(), config)
+    on.exit(.mcp_state$table <- NULL, add = TRUE)
 
-    # Load user R skills (.R files)
-    load_skills(corteza_data_path("skills"))
-
-    # Load skill docs (SKILL.md files) for context injection
+    # Load skill docs (SKILL.md files) for context injection, the
+    # project's from a trusted directory only. Nobody is here to ask, so
+    # an untrusted directory that holds something is reported, on stderr:
+    # stdout carries the protocol.
     load_skill_docs(corteza_data_path("skills"))
-
-    # The project's skills and their docs, from a trusted directory only.
-    # Nobody is here to ask, so an untrusted directory that holds
-    # something is reported, on stderr: stdout carries the protocol.
-    load_project_skills(getwd())
+    load_project_skills(getwd(), code = FALSE)
     untrusted <- project_trust_note(getwd(),
                                     when = "the next start of the server")
     if (!is.null(untrusted)) {
@@ -87,10 +96,6 @@ serve <- function(port = NULL, cwd = NULL, tools = NULL,
                                 corteza_config_path("config.json"))),
                       collapse = "\n"))
     }
-
-    # Load skill packages from config
-    config <- load_config(getwd())
-    load_skill_packages(config)
 
     # Set tool filter option
     options(corteza.tools = tools)

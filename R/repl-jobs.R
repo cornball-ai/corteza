@@ -8,22 +8,32 @@
 # and an approval request is asked right there. The cost is that a job
 # waiting on approval waits until the next Enter; /jobs pumps on demand.
 
-# Wire jobs into a REPL session: the job key and owner, talker mode when
-# the config asks for it, and recovery of jobs left by local corteza
-# processes that have exited.
+# Whether a session here is a talker when its config does not say
+# (WP20c). The CLI's is, as a bot's room is (bot_talker_config()), and
+# chat()'s is not (open item 1). A session whose tools are restricted
+# (--tools, the config's `tools`) is no talker by default, as in a room,
+# since a doer gets the work tools whatever that list says.
+.repl_talker_default <- function(ctx) {
+    isTRUE(ctx$talker_default) && !length(ctx$session$tools_filter)
+}
+
+# Wire jobs into a REPL session: the job key and owner, talker mode
+# where the config or the surface's default asks for it, and recovery of
+# jobs left by local corteza processes that have exited.
 #
 # Only talker sessions can delegate, so a session not in talker mode
-# gets none of this: no job key, no ledger reads, no recovery. Existing
-# REPL behavior is untouched unless the config turns talker mode on.
+# gets none of this: no job key, no ledger reads, no recovery.
 .repl_jobs_setup <- function(ctx) {
     session <- ctx$session
     if (!is.environment(session) || isTRUE(session$.repl_jobs_ready)) {
         return(invisible(FALSE))
     }
-    talker <- talker_config(ctx$config %||% session$config)
+    cfg <- ctx$config %||% session$config
+    talker <- talker_config(cfg, default = .repl_talker_default(ctx))
     if (is.null(talker) && !isTRUE(session$talker)) {
         return(invisible(FALSE))
     }
+    by_default <- is.null(cfg$talker[["enabled"]])
     # One key for the whole process: a /clear starts a new conversation,
     # not a new set of jobs, and results still come back to it.
     session$job_key <- "repl"
@@ -39,6 +49,12 @@
         job_local_owner())
     if (!isTRUE(session$talker)) {
         talker_enable(session, talker)
+        if (by_default) {
+            cat(sprintf(paste0("%sTalker mode: this session answers, and work goes to a ",
+                               "doer of its own (/jobs).\n\"talker\": {\"enabled\": ",
+                               "false} in the corteza config turns it off.%s\n"),
+                        ctx$palette$dim %||% "", ctx$palette$reset %||% ""))
+        }
     }
     orphans <- tryCatch(job_recover_local_orphans(), error = function(e) NULL)
     if (!is.null(orphans)) {
@@ -79,21 +95,128 @@
     invisible(length(events))
 }
 
+# Is a job of this session's open: running in its worker, or waiting
+# to start?
+.repl_jobs_open <- function(ctx) {
+    s <- ctx$session
+    if (!is.null(s$.job_current)) {
+        return(TRUE)
+    }
+    open <- job_list(status = JOB_STATUSES_OPEN,
+                     origin_key = job_worker_key(s),
+                     owner = job_worker_owner(s))
+    length(open) > 0L
+}
+
+# Stay with the session's jobs while one is open (WP20c): pump on a short
+# sleep and print what comes, a step's progress, an approval question
+# and the result, as a room posts them. Otherwise they would wait for
+# the next Enter. An interrupt returns the prompt and leaves the job
+# running, and /jobs stays with it again. A terminal driven from a room
+# (remote control) does not stay: the room's next message is read as
+# before, and the job's events show between messages.
+.repl_attach_jobs <- function(ctx, interval = 0.5) {
+    if (!isTRUE(ctx$session$.repl_jobs_ready) || !is.null(ctx$remote_dir) ||
+        !.repl_jobs_open(ctx)) {
+        return(invisible(FALSE))
+    }
+    p <- ctx$palette
+    cat(sprintf("%sStaying with the job; Ctrl+C returns the prompt and leaves it running.%s\n",
+                p$dim %||% "", p$reset %||% ""))
+    done <- .repl_interruptible({
+        repeat {
+            .repl_pump_jobs(ctx)
+            if (!.repl_jobs_open(ctx)) {
+                break
+            }
+            Sys.sleep(interval)
+        }
+        TRUE
+    }, p)
+    if (inherits(done, "repl_interrupted")) {
+        cat(sprintf("%sThe job goes on; /jobs shows it and stays with it again.%s\n",
+                    p$dim %||% "", p$reset %||% ""))
+    }
+    invisible(TRUE)
+}
+
+# One line for each step a job's worker reported: what it said, then
+# each tool call, as a room's activity post has them
+# (rooms_activity_record()).
+.repl_job_progress_lines <- function(ev) {
+    id <- ev$job$id
+    lines <- character()
+    for (r in ev$records) {
+        said <- .sanitize_inline(r$narration %||% "", max_chars = 160L)
+        if (nzchar(said)) {
+            lines <- c(lines, sprintf("job %s: %s", id, said))
+        }
+        t <- r$tool
+        if (is.list(t)) {
+            what <- trimws(paste(t$tool %||% "", t$command %||% ""))
+            what <- .sanitize_inline(what, max_chars = 160L)
+            how <- if (isTRUE(t$refused)) {
+                " (refused)"
+            } else if (!isTRUE(t$success)) {
+                " (failed)"
+            } else {
+                ""
+            }
+            lines <- c(lines, sprintf("job %s: - %s%s", id, what, how))
+        }
+    }
+    lines
+}
+
+.repl_job_progress <- function(ctx, ev) {
+    p <- ctx$palette
+    for (line in .repl_job_progress_lines(ev)) {
+        cat(sprintf("%s%s%s\n", p$dim %||% "", line, p$reset %||% ""))
+    }
+    invisible(NULL)
+}
+
 .repl_present_job_event <- function(ctx, ev) {
     p <- ctx$palette
     switch(ev$type,
            settled = {
         text <- .repl_job_result_text(ev$job)
+        usage <- ev$job$outcome$usage
+        asked <- ev$job$origin$conversation
+        current <- session_conversation(ctx$session)
+        if (!is.null(asked) && !identical(asked, current)) {
+            # Asked before a /clear: the result and what the job spent go
+            # to the conversation that asked for it (/spent), and the new
+            # one's talker does not take it.
+            spend_accumulate_for(ctx$session, usage, asked)
+            cat(sprintf("\n%s%s%s\n%s(asked in session %s, before /clear)%s\n\n",
+                        p$cyan %||% "", text, p$reset %||% "", p$dim %||% "",
+                        asked, p$reset %||% ""))
+            record <- list(sessionId = asked, cwd = ctx$session$cwd)
+            tryCatch(transcript_append(record, "assistant", text),
+                     error = function(e) NULL)
+            return(invisible(NULL))
+        }
+        # What the job spent is this conversation's (/spent).
+        session_accumulate_spend(ctx$session, usage)
         cat(sprintf("\n%s%s%s\n\n", p$cyan %||% "", text, p$reset %||% ""))
-        # Into the talker's history, so it knows the job ended.
+        # Into the talker's history, so it knows the job ended, and into
+        # the transcript, which --resume seeds the history from and the
+        # reviewer reads (review_conversation()).
         ctx$session$history <- c(ctx$session$history %||% list(),
                                  list(list(role = "assistant", content = text)))
+        if (!is.null(ctx$disk_session)) {
+            tryCatch(transcript_append(ctx$disk_session$session, "assistant",
+                                       text),
+                     error = function(e) NULL)
+        }
     },
            restored = cat(sprintf("%s%s%s\n", p$dim,
                                   bot_job_restored_text(ev$restore), p$reset)),
            blocked = cat(sprintf("%s%s%s\n", p$dim, job_blocked_text(ev),
                                  p$reset)),
            approval = .repl_job_approval(ctx, ev),
+           progress = .repl_job_progress(ctx, ev),
            # "started": the talker already said so.
            NULL)
     invisible(NULL)
@@ -107,10 +230,37 @@
 }
 
 # Ask about one approval request at the prompt. Only an explicit y/yes
-# approves; anything else, including EOF, declines.
+# approves, or "a" where "always" is offered; anything else, including
+# EOF, declines. A tool the person allowed always in this directory is
+# allowed for a job's call as for the session's own, before the reviewer
+# and without a prompt. Under review (R/review.R), the reviewer rules
+# first on a read, write or exec call the doer's rules left open
+# (`route` "monitor"), as a room's monitor does (bot_job_approval());
+# what it passes on, or cannot judge, comes to the person with its
+# reason.
 .repl_job_approval <- function(ctx, ev) {
     req <- ev$request
-    call <- list(tool = req$tool, args = req$args)
+    call <- job_request_call(req)
+    p <- ctx$palette
+    cb <- ctx$session$approval_cb
+    if (.repl_job_answered(cb, req, call)) {
+        recorded <- tryCatch(job_answer(ctx$session, ev$job$id, req$id,
+                                        TRUE, by = "always"),
+                             error = function(e) FALSE)
+        if (isTRUE(recorded)) {
+            cat(sprintf("%sJob %s: %s allowed, as you allowed it always here.%s\n",
+                        p$dim %||% "", ev$job$id, call$tool, p$reset %||% ""))
+        }
+        return(invisible(recorded))
+    }
+    if (identical(req$route, "monitor") && review_mode(ctx$session) &&
+        call_class(call) %in% c("read", "write", "exec")) {
+        ruled <- .repl_job_review(ctx, ev$job, req)
+        if (isTRUE(ruled$answered)) {
+            return(invisible(ruled$recorded))
+        }
+        req$reason <- ruled$reason
+    }
     cat(sprintf("\n%sJob %s asks: %s%s\n", ctx$palette$yellow %||% "",
                 ev$job$id,
                 bot_approval_prompt(call, list(reason = req$reason),
@@ -121,9 +271,30 @@
     if (!is.null(ctx$remote_dir)) {
         approved <- .remote_approve(ctx, call, list(reason = req$reason))
     } else {
-        answer <- ctx$read_input("Approve? [y/N] ")
-        approved <- length(answer) == 1L &&
-        tolower(trimws(answer)) %in% c("y", "yes")
+        always <- .repl_job_always(cb, req)
+        question <- if (is.function(always)) {
+            "Approve? [y/a(lways)/N] "
+        } else {
+            "Approve? [y/N] "
+        }
+        # A Ctrl+C at the question is a no, as EOF is. Each request is
+        # asked once (job_pump_approvals()), and one left open would hold
+        # the worker until its wait ran out.
+        answer <- tryCatch(ctx$read_input(question),
+                           interrupt = function(e) character())
+        answer <- if (length(answer) == 1L) {
+            tolower(trimws(answer))
+        } else {
+            ""
+        }
+        kept <- is.function(always) && answer %in% c("a", "always")
+        approved <- kept || answer %in% c("y", "yes")
+        if (kept) {
+            said <- tryCatch(always(call), error = function(e) {
+                paste("It was not kept:", conditionMessage(e))
+            })
+            cat(sprintf("%s%s%s\n", p$dim %||% "", said, p$reset %||% ""))
+        }
     }
     recorded <- tryCatch(job_answer(ctx$session, ev$job$id, req$id,
                                     approved, by = "local"),
@@ -133,6 +304,83 @@
                     ctx$palette$dim, ctx$palette$reset))
     }
     invisible(recorded)
+}
+
+# Did the person answer a job's call for good: its tool allowed always in
+# this directory, saved or held for the session? The session's approval
+# callback says, by the rule it keeps for its own calls (its `answered`
+# attribute, which the reviewer reads too), given the rule the worker's
+# policy gave the call. That never covers the credential rule's ask, and
+# a request that names no rule, from before 0.8.1, is asked.
+.repl_job_answered <- function(cb, req, call) {
+    answered <- attr(cb, "answered")
+    rule <- req$rule
+    if (!is.function(answered) || !is.character(rule) || length(rule) != 1L) {
+        return(FALSE)
+    }
+    decision <- list(approval = "ask", reason = req$reason)
+    if (nzchar(rule)) {
+        decision$rule <- rule
+    }
+    isTRUE(tryCatch(answered(call, decision), error = function(e) FALSE))
+}
+
+# How a job's prompt keeps "always": the callback's own (its `always`
+# attribute), which keeps it as its own prompt does. NULL where it has
+# none, and for the credential rule's ask, which no "always" answers.
+.repl_job_always <- function(cb, req) {
+    always <- attr(cb, "always")
+    rule <- req$rule
+    if (!is.function(always) || !is.character(rule) || length(rule) != 1L ||
+        identical(rule, "credential")) {
+        return(NULL)
+    }
+    always
+}
+
+# The reviewer's ruling on a doer's request: the conversation that asked
+# for the job, read from its transcript (review_conversation()), the
+# task the talker wrote, and the call. An approval or a refusal answers
+# the request (list(answered, recorded)); anything else returns the
+# reason the person is told (list(reason)). A Ctrl+C while the reviewer
+# rules hands the call to the person.
+.repl_job_review <- function(ctx, job, req) {
+    session <- ctx$session
+    p <- ctx$palette
+    conv <- review_conversation(job$origin$conversation %||% session$sessionId)
+    if (!is.null(conv$why)) {
+        return(list(reason = paste("The reviewer was not asked:", conv$why)))
+    }
+    q <- bot_monitor_question(job, req, conv$lines)
+    q$room <- FALSE
+    r <- tryCatch(review_ask(session, q),
+                  interrupt = function(e) {
+        list(verdict = "escalate", reason = "you stopped the reviewer")
+    },
+                  error = function(e) {
+        list(verdict = "escalate",
+             reason = paste("the reviewer failed:", conditionMessage(e)))
+    })
+    why <- .sanitize_inline(r$reason %||% "", max_chars = 300L)
+    if (!nzchar(why)) {
+        why <- "no reason given"
+    }
+    if (isTRUE(r$verdict %in% c("approve", "refuse"))) {
+        approved <- identical(r$verdict, "approve")
+        recorded <- tryCatch(job_answer(session, job$id, req$id, approved,
+                                        by = "reviewer", reason = why),
+                             error = function(e) FALSE)
+        if (approved) {
+            verb <- "approved"
+        } else {
+            verb <- "refused"
+        }
+        tool <- .sanitize_inline(req$tool %||% "call", max_chars = 60L)
+        cat(sprintf("%sThe reviewer %s job %s's %s: %s%s\n", p$dim %||% "",
+                    verb, job$id, tool, why, p$reset %||% ""))
+        return(list(answered = TRUE, recorded = recorded))
+    }
+    list(reason = paste("The reviewer passed this to you:", why))
 }
 
 # On /quit: stop this process's jobs and say so. Settling them here
@@ -176,7 +424,8 @@
     invisible(NULL)
 }
 
-# /jobs [id]: pump, then list this session's jobs or show one.
+# /jobs [id]: pump, then list this session's jobs or show one, and stay
+# with them while one is open (.repl_attach_jobs()).
 .repl_cmd_jobs <- function(ctx, parts) {
     if (!isTRUE(ctx$session$.repl_jobs_ready)) {
         cat(.repl_jobs_off_text(ctx))
@@ -186,6 +435,7 @@
     res <- tool_job_status(id = if (length(parts) >= 2L) parts[2] else NULL,
                            ctx = list(session = ctx$session))
     cat(res$content[[1L]]$text, "\n", sep = "")
+    .repl_attach_jobs(ctx)
     invisible(NULL)
 }
 

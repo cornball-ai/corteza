@@ -4,14 +4,19 @@
 # on:
 #   1. `policy()` denies write/exec tool calls via `check_plan_mode()`,
 #      except for `exit_plan_mode` itself.
-#   2. `turn()` appends a plan-mode addendum to the system prompt so the
-#      LLM knows to research and propose rather than act.
-#   3. `turn()` adds `exit_plan_mode` to the tool list, hidden the rest
-#      of the time so the LLM doesn't see it when it can't use it.
+#   2. The next prompt opens with a note saying so (.plan_mode_note(),
+#      R/request-prefix.R), and another when it ends. The system text
+#      and the tool list stay as they are (WP14).
+#   3. `exit_plan_mode` is in the tool list of every session that can be
+#      in plan mode, and refused at the call outside it.
 #   4. A successful `exit_plan_mode` call (handled in
 #      `.make_tool_handler`) flips `session$plan_mode` back to FALSE.
 #
 # Subagents inherit plan_mode from their parent via `subagent_spawn()`.
+# A job's worker reads it from its conversation at each call
+# (R/job-authority.R) and cannot end it (`session$plan_mode_locked`):
+# it is not offered `exit_plan_mode`, the handler refuses the call by
+# name, and its note says the person ends plan mode.
 
 #' Submit a plan and exit plan mode.
 #'
@@ -20,8 +25,9 @@
 #' mode and the LLM proceeds with the work. On decline the session
 #' stays in plan mode and the LLM iterates.
 #'
-#' This tool is only exposed when the session is in plan mode. Outside
-#' plan mode it is hidden from the LLM's tool list.
+#' Every session that can be in plan mode is offered this tool, so its
+#' tool list stays the same when plan mode starts or ends. Outside plan
+#' mode the call is refused.
 #'
 #' @param plan (character) Markdown-formatted implementation plan. State
 #'   what will change, in which files, and why. Be concrete.
@@ -35,15 +41,16 @@ tool_exit_plan_mode <- function(plan) {
     ok("Plan approved. Proceeding with implementation.")
 }
 
-# Add exit_plan_mode to (or strip it from) a tool list before it is
-# shipped to the LLM. Hidden the rest of the time so the LLM only sees
-# the escape hatch when it can actually use it.
-.plan_mode_filter_tools <- function(tools, in_plan_mode) {
+# Add exit_plan_mode to (or strip it from) a tool list. The session's
+# prefix (R/request-prefix.R) calls it once with `in_plan_mode` saying
+# whether the session can be in plan mode at all; a session that may
+# not leave plan mode (`offer_exit = FALSE`) is never offered it.
+.plan_mode_filter_tools <- function(tools, in_plan_mode, offer_exit = TRUE) {
     has_exit <- vapply(tools, function(t) {
         identical(t$name %||% "", "exit_plan_mode")
     }, logical(1))
 
-    if (isTRUE(in_plan_mode)) {
+    if (isTRUE(in_plan_mode) && isTRUE(offer_exit)) {
         if (any(has_exit)) {
             return(tools)
         }
@@ -63,36 +70,30 @@ tool_exit_plan_mode <- function(plan) {
     tools
 }
 
-# System-prompt addendum the LLM sees while plan mode is on. Kept
-# short: the policy engine enforces the constraint; the LLM just needs
-# to know what to produce.
-.plan_mode_system_addendum <- function() {
-    paste(
-          "",
-          "# Plan mode",
-          "",
-          paste("You are in plan mode. Research with read-only tools",
-                "(read_file, list_files, grep_files, git_log, git_diff,",
-                "git_status, r_help, web_search, fetch_url). Do not edit",
-                "files, run shell commands, or execute R code -- those",
-                "tools will be denied. When you have a plan, call",
-                "`exit_plan_mode` with a concrete markdown plan describing",
-                "what will change, in which files, and why. The user",
-                "approves the plan, then plan mode lifts and you proceed.",
-                sep = " "),
-          sep = "\n")
-}
-
-# Compose the system prompt for this turn. Outside plan mode this is
-# the session's stored system prompt verbatim. Inside plan mode we
-# append the addendum so the LLM knows the constraints.
-.plan_mode_compose_system <- function(base_system, in_plan_mode) {
-    if (!isTRUE(in_plan_mode)) {
-        return(base_system)
+# The note the next prompt opens with when plan mode starts or ends
+# (R/request-prefix.R). Kept short: the policy engine enforces the
+# constraint; the model just needs to know what to produce. A job's
+# worker cannot leave plan mode: the conversation that gave it the job
+# is in plan mode, and the person ends it.
+.plan_mode_note <- function(on, locked = FALSE) {
+    if (!isTRUE(on)) {
+        return(paste("[Plan mode is off. Editing files, running shell",
+                     "commands and executing R code are allowed again, as",
+                     "the approval rules say.]"))
     }
-    addendum <- .plan_mode_system_addendum()
-    if (is.null(base_system) || !nzchar(base_system)) {
-        return(addendum)
+    if (isTRUE(locked)) {
+        return(paste("[Plan mode is on: the conversation that gave you this",
+                     "job is in plan mode. Research with read-only tools.",
+                     "Editing files, running shell commands and executing R",
+                     "code will be denied. Report what you would change, in",
+                     "which files, and why. Only the person can end plan",
+                     "mode.]"))
     }
-    paste(base_system, addendum, sep = "\n")
+    paste("[Plan mode is on. Research with read-only tools (read_file,",
+          "list_files, grep_files, git_log, git_diff, git_status, r_help,",
+          "web_search, fetch_url). Do not edit files, run shell commands, or",
+          "execute R code -- those tools will be denied. When you have a",
+          "plan, call `exit_plan_mode` with a concrete markdown plan",
+          "describing what will change, in which files, and why. The user",
+          "approves the plan, then plan mode lifts and you proceed.]")
 }

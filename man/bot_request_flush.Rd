@@ -1,7 +1,7 @@
 % tinyrox says don't edit this manually, but it can't stop you!
 \name{bot_request_flush}
 \alias{bot_request_flush}
-\title{Ask the running matrix bot to archive sessions to pensar}
+\title{Ask the running matrix bot to archive its sessions}
 \usage{
 bot_request_flush()
 }
@@ -11,8 +11,9 @@ The signal file path, invisibly.
 \description{
 Drops an \code{archive.signal} file in the corteza state directory.
 The next iteration of the long-poll loop in \code{\link{bot_run}}
-picks it up, runs \code{\link{bot_archive_all}}, and removes the
-file. Safe to call from any process or scheduler — systemd, Task
+picks it up, runs \code{\link{bot_archive_all}} with the host's
+\code{on_archive} hook, and removes the file. Safe to call from any
+process or scheduler — systemd, Task
 Scheduler, launchd, cron, or a separate R session — without needing
 to know the bot's PID or share its memory.
 }

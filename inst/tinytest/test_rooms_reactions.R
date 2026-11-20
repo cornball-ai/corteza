@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # The approve/deny vocabulary is corteza's, and the reaction records it
@@ -523,34 +526,25 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
                              list(id = channel, name = "The Lab",
                                   topic = "~/lab | a place")
                          }, envir = asNamespace("chat.api"))
-        expect_identical(corteza:::bot_room_name(cl, "!r:ex"), "The Lab")
+        expect_identical(info_of(cl, "!r:ex")$name, "The Lab")
         expect_identical(info_of(cl, "!r:ex")$topic, "~/lab | a place")
     })
 
-    # --- bot_room_cwd takes a topic, not a session ---
-    # It used to fetch one itself, which was the third state read for a
-    # single session and the second read of the same topic.
+    # --- bot_room_cwd takes a room, not a session or a topic ---
+    # It used to fetch the topic itself, a third state read for a single
+    # session; since 0.8.1 a topic names no directory (WP12), and the
+    # room's binding is read from its state file (test_room_binding.R).
     local({
         cfg <- list(user_id = "@bot:ex", user = "bot")
         default <- corteza:::bot_default_cwd(cfg)
-        # No topic is the default.
+        # No room is the default, and so is a room no operator bound.
         expect_identical(corteza:::bot_room_cwd(cfg, NULL), default)
-        # A topic with no cwd part is the default too.
-        expect_identical(corteza:::bot_room_cwd(cfg, "just a description"),
+        expect_identical(corteza:::bot_room_cwd(cfg, "!unbound-room:ex"),
                          default)
-        # A cwd that does not exist falls back, and says so.
-        expect_message(
-            got <- corteza:::bot_room_cwd(cfg, "/nonexistent/xyzzy | d"),
-            "does not exist")
-        expect_identical(got, default)
-        # A cwd that does exist is used.
-        d <- tempfile("roomcwd"); dir.create(d)
-        on.exit(unlink(d, recursive = TRUE))
-        expect_identical(corteza:::bot_room_cwd(cfg, paste0(d, " | desc")),
-                         d)
-        # The signature no longer takes a session.
+        # The signature takes neither a session nor a topic.
         expect_false("mx_sess" %in% names(formals(corteza:::bot_room_cwd)))
-        expect_true("topic" %in% names(formals(corteza:::bot_room_cwd)))
+        expect_false("topic" %in% names(formals(corteza:::bot_room_cwd)))
+        expect_true("room_id" %in% names(formals(corteza:::bot_room_cwd)))
     })
 
     # --- The members cache reads chat_members() ---
@@ -609,13 +603,14 @@ if (requireNamespace("chat.api", quietly = TRUE) &&
     expect_identical(lengths(regmatches(ns,
                                         gregexpr("bot_channel_info", ns)))[[1]],
                      1L)
-    # The topic it got is the one the cwd is derived from. Asserted on
-    # the source because reaching bot_new_session() for real runs
-    # session_setup(), which wants a provider API key -- and the wiring
-    # is the whole point: passing NULL here would silently send every
-    # room back to the default directory while the single lookup above
-    # still looked correct.
-    expect_true(grepl("bot_room_cwd(cfg, info$topic)", ns, fixed = TRUE))
+    # The directory comes from the room, not from the topic it got: a
+    # topic names none since 0.8.1 (WP12), and is read for its
+    # description and the notice only. Asserted on the source because
+    # reaching bot_new_session() for real runs session_setup(), which
+    # wants a provider API key.
+    expect_true(grepl("bot_room_cwd(cfg, room_id)", ns, fixed = TRUE))
+    expect_false(grepl("bot_room_cwd(cfg, info$topic)", ns, fixed = TRUE))
     expect_true(grepl("room_name = info$name", ns, fixed = TRUE))
     expect_true(grepl("bot_parse_topic(info$topic)", ns, fixed = TRUE))
+    expect_true(grepl("bot_topic_path(info$topic)", ns, fixed = TRUE))
 }

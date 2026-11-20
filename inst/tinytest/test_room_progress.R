@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 local({
     event <- function(n, outcome = "ran", text = "", index = 1L,
                        command = "printf hello", result = "hello\nworld") {

@@ -77,6 +77,33 @@ req <- list(
 resp <- corteza:::handle_request(req)
 expect_null(resp)
 
+# --- No approval: an MCP client asks its own user ------------------------
+# serve() runs a tool it advertises with no policy() and no prompt, and
+# refuses one it does not advertise. A user policy function that would
+# refuse everything is never consulted.
+local({
+    consulted <- 0L
+    op <- options(corteza.policy = function(call) {
+        consulted <<- consulted + 1L
+        list(model = "cloud", approval = "deny", reason = "nothing runs")
+    }, corteza.tools = c("read_file", "run_r"))
+    on.exit(options(op), add = TRUE)
+    call <- function(id, name, arguments) {
+        corteza:::handle_request(list(jsonrpc = "2.0", id = id,
+                                      method = "tools/call",
+                                      params = list(name = name,
+                                                    arguments = arguments)))
+    }
+    resp <- call(8, "run_r", list(code = "40 + 2"))
+    expect_true(grepl("42", resp$result$content[[1]]$text))
+    target <- tempfile("mcp-unlisted-")
+    resp <- call(9, "write_file", list(path = target, content = "x"))
+    expect_true(isTRUE(resp$result$isError))
+    expect_true(grepl("not available", resp$result$content[[1]]$text))
+    expect_false(file.exists(target))
+    expect_equal(consulted, 0L)
+})
+
 # --- subagent exposure gate + spend cap --------------------------------
 
 corteza:::ensure_skills()

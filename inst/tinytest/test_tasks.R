@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Tests for the persistent task list (R/tasks.R) and its dispatch
 # intercept in .make_tool_handler() (R/turn.R). Covers helpers,
 # intercept routing (CLI executor never reached), policy/approval
@@ -134,23 +137,27 @@ local({
     expect_equal(length(s$tasks), 0L)
 })
 
-# The addendum has an unattended variant with no ask-first or
-# wait-for-approval steps, which would hang an auto run.
-att_add <- corteza:::.task_tool_addendum(auto = FALSE)
-aut_add <- corteza:::.task_tool_addendum(auto = TRUE)
+# The system text describes the attended flow. An /auto run is told at
+# the head of its first prompt that nobody answers (WP14), with no
+# ask-first or wait-for-approval steps, which would hang it.
+att_add <- corteza:::.task_tool_addendum()
+aut_note <- corteza:::.auto_note(TRUE)
 expect_true(grepl("Ask clarifying questions first", att_add, fixed = TRUE))
-expect_false(grepl("Ask clarifying questions first", aut_add, fixed = TRUE))
-expect_true(grepl("unattended run", aut_add, fixed = TRUE))
-expect_true(grepl("accepted automatically", aut_add, fixed = TRUE))
-# task_compose_system threads the flag through to the right variant.
-expect_true(grepl("unattended run",
-                  compose("BASE", list(), on = TRUE, auto = TRUE),
-                  fixed = TRUE))
+expect_false(grepl("Ask clarifying questions first", aut_note, fixed = TRUE))
+expect_true(grepl("unattended /auto run", aut_note, fixed = TRUE))
+expect_true(grepl("accepted automatically", aut_note, fixed = TRUE))
+expect_true(grepl("ask before you assume", corteza:::.auto_note(FALSE), fixed = TRUE))
 expect_true(grepl("Ask clarifying questions first",
-                  compose("BASE", list(), on = TRUE, auto = FALSE),
+                  compose("BASE", list(), on = TRUE),
                   fixed = TRUE))
-# An auto run with the task list off gets neither variant.
-expect_identical(compose("BASE", list(), on = FALSE, auto = TRUE), "BASE")
+# A session with the task list off gets no task text, in an /auto run
+# or out of one.
+expect_identical(compose("BASE", list(), on = FALSE), "BASE")
+# The task list's note: the whole list, or that it is empty.
+expect_identical(corteza:::.task_list_note(list()), "[The task list is empty.]")
+listed <- corteza:::.task_list_note(list(list(text = "a", status = "pending"),
+                                         list(text = "b", status = "completed")))
+expect_true(grepl("^\\[Task list:\n1\\. \\[.\\] a\n2\\. \\[.\\] b\\]$", listed))
 
 # task_create prompts the user via readline. Tests stub that prompt
 # through options(corteza.task_approve = "y" | "n") so the intercept
@@ -431,7 +438,10 @@ local({
 
 # turn() sends neither the tools nor the task text unless the config
 # turns the list on. The provider's call is replaced, so nothing leaves
-# the machine.
+# the machine. The session's tools and system text are fixed (WP14): a
+# terminal's end with exit_plan_mode, and a list held from before
+# reaches the model as a note ahead of the prompt, never in the system
+# text.
 local({
     ns <- asNamespace("llm.api")
     orig <- get("agent", envir = ns, inherits = FALSE)
@@ -460,7 +470,8 @@ local({
         out <- corteza::turn("hi", s, tools = offered)
         expect_identical(out$reply, "ok")
         list(tools = vapply(captured$tools, function(t) t$name, character(1)),
-             system = captured$system)
+             system = captured$system,
+             prompt = paste(unlist(captured$prompt), collapse = " "))
     }
     held <- list(list(text = "kept from before", status = "pending"))
 
@@ -468,22 +479,26 @@ local({
         # No key, an empty config, and the key set to false: off.
         for (cfg in list(NULL, list(), list(task_list_enabled = FALSE))) {
             got <- sent(ch, cfg, held)
-            expect_identical(got$tools, "read_file")
+            expect_identical(got$tools, c("read_file", "exit_plan_mode"))
             expect_false(grepl("Multi-step requests", got$system,
                                fixed = TRUE))
             expect_false(grepl("Active tasks", got$system, fixed = TRUE))
-            expect_false(grepl("kept from before", got$system, fixed = TRUE))
+            expect_false(grepl("kept from before",
+                               paste(got$system, got$prompt), fixed = TRUE))
         }
         got <- sent(ch, list(task_list_enabled = TRUE), held)
-        expect_identical(got$tools,
-                         c("read_file", "task_create", "task_update"))
+        expect_identical(got$tools, c("read_file", "task_create",
+                                      "task_update", "exit_plan_mode"))
         expect_true(grepl("Multi-step requests", got$system, fixed = TRUE))
-        expect_true(grepl("kept from before", got$system, fixed = TRUE))
+        expect_false(grepl("kept from before", got$system, fixed = TRUE))
+        expect_true(grepl("[Task list:", got$prompt, fixed = TRUE))
+        expect_true(grepl("kept from before", got$prompt, fixed = TRUE))
     }
     # A room has no task list whatever its config says.
     got <- sent("matrix", list(task_list_enabled = TRUE), held)
     expect_identical(got$tools, "read_file")
     expect_false(grepl("Multi-step requests", got$system, fixed = TRUE))
+    expect_false(grepl("kept from before", got$prompt, fixed = TRUE))
 })
 
 # /tools lists what a turn would offer.

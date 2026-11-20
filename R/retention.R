@@ -6,19 +6,20 @@
 # journal (R/journal.R) keeps every history a rewrite replaced, and it
 # stayed on disk however long ago the session was last used.
 #
-# What goes: the journal and the tool trace of a session nobody has used
-# for `session_days`. What stays: every transcript, the session stores,
-# workspaces, config, audit records and crypto state. A session whose
-# journal is gone still opens from its transcript. A room that restores
-# its context from its journal starts fresh.
+# What goes: the journal, the tool trace and the kept attachments of a
+# session nobody has used for `session_days`. What stays: every
+# transcript, the session stores, workspaces, config, audit records and
+# crypto state. A session whose journal is gone still opens from its
+# transcript. A room that restores its context from its journal starts
+# fresh.
 #
 # A session's audit records are kept inside its journal folder
 # (`<id>.journal/audit/`, R/audit-stream.R) and have their own expiry,
 # which never runs by itself. So a journal is removed file by file
-# (retention_journal_files()), and its folder goes only once empty.
+# (retention_own()), and its folder goes only once empty.
 #
-# Job records, worker checkpoints and remote-control sessions are not
-# handled here.
+# Job chains, worker folders and remote-control sessions are part 2, in
+# R/retention-state.R. The daily run and sessions_prune() do both.
 #
 # The setting is read from the user's config file alone
 # (retention_config()), like the supervisor's. A project's config sits
@@ -26,6 +27,9 @@
 # user's records are kept.
 
 RETENTION_SESSION_DAYS <- 90
+# A job chain that ended incomplete and was never resumed holds a resume
+# snapshot, so it waits longer (R/retention-state.R).
+RETENTION_INCOMPLETE_DAYS <- 180
 RETENTION_EVERY_SECS <- 24 * 60 * 60
 # A bot calls retention_tick() on every poll. It looks at the stamp file
 # this often and no more.
@@ -33,32 +37,40 @@ RETENTION_LOOK_SECS <- 60 * 60
 
 .retention <- new.env(parent = emptyenv())
 
-# `retention` from the user's config. What corteza cannot read turns
-# retention off: a config file that does not parse, or a `session_days`
-# that is not one non-negative number, must not be taken for a shorter
-# time than the person meant. load_config_file() reads a file it cannot
-# parse as an empty one, which here would mean 90 days, so the file is
+# `retention` from the user's config. What corteza cannot read keeps
+# things: a config file that does not parse turns retention off, and a
+# value that is not one non-negative number is read as 0, which keeps
+# everything it governs. Neither must be taken for a shorter time than
+# the person meant. load_config_file() reads a file it cannot parse as
+# an empty one, which here would mean the defaults, so the file is
 # parsed again.
 retention_config <- function() {
+    defaults <- list(session_days = RETENTION_SESSION_DAYS,
+                     incomplete_days = RETENTION_INCOMPLETE_DAYS)
     path <- corteza_config_path("config.json")
     if (!file.exists(path)) {
-        return(list(session_days = RETENTION_SESSION_DAYS))
+        return(defaults)
     }
     cfg <- tryCatch(jsonlite::fromJSON(path, simplifyVector = TRUE,
                                        simplifyDataFrame = FALSE)$retention,
                     error = function(e) NA)
     if (is.null(cfg)) {
-        return(list(session_days = RETENTION_SESSION_DAYS))
+        return(defaults)
     }
-    days <- NA
-    if (is.list(cfg)) {
-        days <- cfg$session_days %||% RETENTION_SESSION_DAYS
+    out <- list()
+    for (key in names(defaults)) {
+        days <- NA
+        if (is.list(cfg)) {
+            days <- cfg[[key]] %||% defaults[[key]]
+        }
+        if (!is.numeric(days) || length(days) != 1L || is.na(days) ||
+            days < 0) {
+            log_event("retention_config_invalid", key = key, level = "warn")
+            days <- 0
+        }
+        out[[key]] <- as.numeric(days)
     }
-    if (!is.numeric(days) || length(days) != 1L || is.na(days) || days < 0) {
-        log_event("retention_config_invalid", level = "warn")
-        days <- 0
-    }
-    list(session_days = as.numeric(days))
+    out
 }
 
 #' Remove what old sessions no longer need
@@ -67,36 +79,77 @@ retention_config <- function() {
 #' \code{tools::R_user_dir("corteza", "data")}. For every session that
 #' has not been used for \code{days}, this removes its journal (in
 #' \code{<id>.journal/}: the provider-native record of the live history
-#' and of every history a compaction replaced) and its tool trace
-#' (\code{<id>_trace.jsonl}).
+#' and of every history a compaction replaced), its tool trace
+#' (\code{<id>_trace.jsonl}), and the files a chat room's session kept of
+#' what people sent it (\code{<id>.attachments/}).
 #'
-#' Transcripts, session stores, workspaces, config, audit records and
-#' crypto state are never removed. A session whose journal is gone still
+#' It also removes, from corteza's state folder (\code{state/} in the
+#' same place, or \env{CORTEZA_STATE_DIR}) and its remote-control folder
+#' (\code{remote-control/}, or \env{CORTEZA_REMOTE_DIR}):
+#' \itemize{
+#'   \item a delegated job's records, with every job linked to it as a
+#'     resume, a review or a delegation, once all of them have ended and
+#'     none has changed for \code{days}. While one of them is queued or
+#'     running, all stay. A job that ended incomplete and was never
+#'     resumed keeps the snapshot a resume starts from, so its chain
+#'     waits for \code{retention$incomplete_days} in the user's config
+#'     (default 180; never fewer than \code{days}; 0 keeps it);
+#'   \item a worker process's folder that holds no checkpoint, unchanged
+#'     for \code{days}: its journal, less its audit records;
+#'   \item a worker's folder with a checkpoint (the R objects and history
+#'     a delegated job's worker left), once both the folder and the
+#'     session it belongs to have gone unused for \code{days}: at the
+#'     terminal the conversation's session, in a chat room the room's or
+#'     thread's session, judged by its journal. The checkpoint goes first,
+#'     then the rest, less the journal's audit records;
+#'   \item a remote-control session unchanged for \code{days} that was
+#'     closed, or whose process on this machine has ended.
+#' }
+#'
+#' A worker's folder stays, whatever its age, while its worker process
+#' is alive, while its session is open in the process doing the removing,
+#' and while a job is open in its directory.
+#'
+#' Transcripts, session stores, the terminal's saved workspaces, config,
+#' audit records and crypto state are never removed. A session whose journal is gone still
 #' resumes from its transcript. A chat room that restores its context
 #' from its journal starts its next conversation fresh.
 #'
 #' A session's audit records are kept in its journal folder, under
-#' \code{audit/}. They stay, and so does the folder that holds them:
-#' see \code{\link{audit_payload_expire}}.
+#' \code{audit/}, and a job's in its own folder. They stay, and so does
+#' the folder that holds them: see \code{\link{audit_payload_expire}}.
 #'
-#' A session was last used when its journal, its trace or its transcript
-#' last changed, whichever is newest. A symbolic link is never removed.
+#' A session was last used when its journal, its trace, its transcript or
+#' its attachments last changed, whichever is newest. A symbolic link is
+#' never removed, nor anything reached through one. A folder in the state
+#' or remote-control folder whose name and record are not of the form
+#' corteza writes stays whole; once it is \code{days} old it is listed
+#' with kind \code{"unknown"}, so it can be looked at.
 #'
 #' corteza runs this itself at most once a day: when a terminal session
-#' starts, and while a chat bot runs. The session a terminal has open is
-#' left alone. The number of days is \code{retention$session_days} in
+#' starts, and while a chat bot runs. The session a terminal has open, and
+#' the rooms a bot has open, are left alone. The number of days is
+#' \code{retention$session_days} in
 #' the user's config file (default 90; 0 keeps everything). A project's
-#' config cannot change it.
+#' config cannot change either setting.
 #'
 #' @param dry_run If \code{TRUE}, remove nothing and report what would
 #'   go.
 #' @param days Sessions unused for at least this many days lose their
-#'   journal and trace. Default: \code{retention$session_days} from the
-#'   user's config. 0 removes nothing.
+#'   journal, trace and attachments, and job records, worker folders and
+#'   remote-control sessions unchanged for as long go. Default:
+#'   \code{retention$session_days} from the user's config. 0 removes
+#'   nothing.
 #'
-#' @return A data frame with one row per journal or trace, invisibly:
-#'   \code{agent}, \code{session}, \code{kind}, \code{path},
-#'   \code{last_use}, \code{idle_days}, \code{bytes} and \code{removed}.
+#' @return A data frame with one row per journal, trace, attachments
+#'   folder, job folder, worker folder, remote-control session or unknown
+#'   folder, invisibly: \code{agent} (\code{NA} outside a session's
+#'   files), \code{session} (for a job, its chain's newest job),
+#'   \code{kind} (\code{"journal"}, \code{"trace"}, \code{"attachments"},
+#'   \code{"job"}, \code{"worker"}, \code{"checkpoint"}, \code{"remote"} or
+#'   \code{"unknown"}), \code{path}, \code{last_use}, \code{idle_days},
+#'   \code{bytes}, \code{incomplete} (a job chain kept longer for its
+#'   resume snapshot) and \code{removed}.
 #' @export
 #'
 #' @examples
@@ -132,13 +185,15 @@ sessions_prune <- function(dry_run = FALSE, days = NULL) {
     if (!isTRUE(dry_run) && !isFALSE(dry_run)) {
         stop("`dry_run` must be TRUE or FALSE.", call. = FALSE)
     }
+    cfg <- retention_config()
     if (is.null(days)) {
-        days <- retention_config()$session_days
+        days <- cfg$session_days
     } else if (!is.numeric(days) || length(days) != 1L || is.na(days) ||
         days < 0) {
         stop("`days` must be one non-negative number.", call. = FALSE)
     }
-    found <- retention_prune(days, dry_run = dry_run)
+    found <- retention_prune(days, dry_run = dry_run,
+                             incomplete_days = cfg$incomplete_days)
     message(retention_summary(found, days, dry_run))
     invisible(found)
 }
@@ -146,17 +201,48 @@ sessions_prune <- function(dry_run = FALSE, days = NULL) {
 # Find what `days` lets go and, unless `dry_run`, remove it. `keep`
 # names sessions to leave alone whatever their age.
 retention_prune <- function(days, dry_run = FALSE, keep = character(),
-                            now = Sys.time()) {
-    found <- retention_scan(days, now = now)
+                            now = Sys.time(),
+                            incomplete_days = RETENTION_INCOMPLETE_DAYS) {
+    found <- rbind(retention_scan(days, now = now),
+                   retention_state_scan(days, incomplete_days, now = now, keep = keep))
     found <- found[!found$session %in% keep,, drop = FALSE]
     found$removed <- rep(FALSE, nrow(found))
     if (dry_run) {
         return(found)
     }
-    # By session: a journal and its trace go together or not at all.
+    # By session: a journal and its trace go together or not at all. So
+    # do the folders of a job chain.
+    family <- ifelse(found$kind %in% c(RETENTION_STATE_KINDS, "unknown"),
+                     found$kind, "session")
     for (rows in split(seq_len(nrow(found)),
-                       paste(found$agent, found$session, sep = "/"))) {
+                       paste(family, found$agent, found$session, sep = "/"))) {
         first <- rows[[1L]]
+        kind <- found$kind[[first]]
+        if (kind == "unknown") {
+            next
+        }
+        if (kind %in% RETENTION_STATE_KINDS) {
+            # A checkpoint's place is read again with its folder, and a
+            # worker folder that a live worker, an open session or an
+            # open job holds now is left.
+            path <- found$path[[first]]
+            folder <- list(name = basename(path), dir = path,
+                           real = normalizePath(path, winslash = "/", mustWork = FALSE))
+            moved <- if (kind == "checkpoint") {
+                retention_checkpoint_moved(path, found$last_use[[first]], keep)
+            } else {
+                retention_state_moved(found$path[rows], found$last_use[[first]]) ||
+                (kind == "worker" && retention_worker_held(folder, keep = keep))
+            }
+            if (moved) {
+                next
+            }
+            for (i in rows) {
+                found$removed[[i]] <- retention_state_remove(found$path[[i]],
+                    kind)
+            }
+            next
+        }
         if (retention_moved(dirname(found$path[[first]]),
                             found$session[[first]], found$last_use[[first]])) {
             next
@@ -180,28 +266,89 @@ retention_remove <- function(path, kind) {
     if (!retention_removable(path, kind)) {
         return(FALSE)
     }
-    files <- path
-    if (kind == "journal") {
-        files <- retention_journal_files(path)
+    if (!kind %in% c("journal", "attachments")) {
+        # expand = FALSE: a name is a name, never a pattern.
+        unlink(path, expand = FALSE)
+        return(!file.exists(path))
     }
-    # expand = FALSE: a name is a name, never a pattern.
-    unlink(files, recursive = TRUE, expand = FALSE)
-    if (kind == "journal") {
-        retention_rmdir(path)
+    own <- retention_own(path, kind)
+    unlink(own$files, expand = FALSE)
+    # Deepest first, each only once empty: a folder with a link in it
+    # stays, and so does every folder above it.
+    for (dir in own$dirs) {
+        retention_rmdir(dir)
     }
-    !any(file.exists(files))
+    retention_rmdir(path)
+    !any(file.exists(own$files))
+}
+
+# What a room's session keeps of what people sent it (bot_keep_attachment(),
+# R/media.R): each file named by a 12-character digest and a dash, and
+# the partial copy one is written through. Anything else in the folder is
+# someone else's.
+retention_attachment_files <- function(dir) {
+    names <- list.files(dir, all.files = TRUE, no.. = TRUE)
+    own <- grepl("^[0-9a-f]{12}-", names)
+    files <- file.path(dir, names[own])
+    files[!dir.exists(files)]
 }
 
 # What the journal's writer makes in a journal folder (R/journal.R): the
 # live snapshot and the segments, each with the copy a replacement parks
 # and the temp file it is written through, and the folder of shared
-# entries. Anything else there is someone else's, the audit records
-# first of all.
+# entries. And a room's records of its conversations, kept beside them
+# for the room's monitor (R/room-record.R). Anything else there is
+# someone else's, the audit records first of all.
 retention_journal_files <- function(journal) {
     names <- list.files(journal, all.files = TRUE, no.. = TRUE)
     own <- grepl("^(live|segment-[0-9]+)[.]json([.]tmp|[.]prev)?$", names) |
+    grepl("^conversation-[A-Za-z0-9-]+[.]jsonl$", names) |
     names == "entries"
     file.path(journal, names[own])
+}
+
+# What retention may remove from a journal or attachments folder: the
+# files named above and everything in a folder named above, less each
+# link and everything behind one. corteza's writers make files and
+# folders, never links, so a link was put there by someone else, and it
+# stays with every folder it is in. A list of `files`, and of `dirs`
+# deepest first, to remove once empty.
+retention_own <- function(path, kind) {
+    if (!retention_within(path)) {
+        return(list(files = character(), dirs = character()))
+    }
+    if (kind == "journal") {
+        named <- retention_journal_files(path)
+    } else {
+        named <- retention_attachment_files(path)
+    }
+    real <- normalizePath(path, winslash = "/", mustWork = FALSE)
+    retention_tree(path, real, basename(named))
+}
+
+# The files and folders under `dir`, whose real path is `real`, that are
+# no link and lie behind none: of `names` only, or of all it holds. No
+# link is followed.
+retention_tree <- function(dir, real, names = NULL) {
+    if (is.null(names)) {
+        names <- list.files(dir, all.files = TRUE, no.. = TRUE)
+    }
+    out <- list(files = character(), dirs = character())
+    for (name in names) {
+        here <- file.path(dir, name)
+        real_here <- retention_step(here, real, name)
+        if (is.null(real_here)) {
+            next
+        }
+        if (dir.exists(here)) {
+            inside <- retention_tree(here, real_here)
+            out$files <- c(out$files, inside$files)
+            out$dirs <- c(out$dirs, inside$dirs, here)
+        } else {
+            out$files <- c(out$files, here)
+        }
+    }
+    out
 }
 
 # Remove a folder that has nothing in it. file.remove() refuses one
@@ -224,9 +371,31 @@ retention_summary <- function(found, days, dry_run) {
     if (days <= 0) {
         return("Retention is off: nothing is removed.")
     }
+    session <- found$kind %in% c("journal", "trace", "attachments")
+    state <- found$kind %in% RETENTION_STATE_KINDS
+    lines <- c(retention_session_line(found[session,, drop = FALSE], days,
+                                      dry_run),
+               retention_state_line(found[state,, drop = FALSE], days, dry_run))
+    if (!length(lines)) {
+        lines <- sprintf("No session has gone unused for %s.",
+                         retention_days(days))
+    }
+    unknown <- sum(found$kind == "unknown")
+    if (unknown == 1L) {
+        lines <- c(lines, paste("1 folder that does not read as corteza's",
+                                "stays; sessions_prune(dry_run = TRUE) lists it."))
+    } else if (unknown > 1L) {
+        lines <- c(lines, sprintf(paste("%d folders that do not read as",
+                                        "corteza's stay; sessions_prune(dry_run",
+                                        "= TRUE) lists them."), unknown))
+    }
+    paste(lines, collapse = " ")
+}
+
+# What went of sessions' files, or would go. NULL when nothing did.
+retention_session_line <- function(found, days, dry_run) {
     if (!nrow(found)) {
-        return(sprintf("No session has gone unused for %s.",
-                       retention_days(days)))
+        return(NULL)
     }
     gone <- found
     verb <- "Would remove"
@@ -234,11 +403,16 @@ retention_summary <- function(found, days, dry_run) {
         gone <- found[found$removed,, drop = FALSE]
         verb <- "Removed"
     }
-    line <- sprintf("%s %s and %s of sessions unused for %s or more (%.1f MB).",
-                    verb,
-                    retention_count(sum(gone$kind == "journal"), "journal"),
-                    retention_count(sum(gone$kind == "trace"), "trace"),
-                    retention_days(days), sum(gone$bytes) / 1024 ^ 2)
+    what <- c(retention_count(sum(gone$kind == "journal"), "journal"),
+              retention_count(sum(gone$kind == "trace"), "trace"))
+    folders <- sum(gone$kind == "attachments")
+    if (folders > 0L) {
+        what <- c(what, retention_count(folders, "folder of attachments",
+                                        "folders of attachments"))
+    }
+    line <- sprintf("%s %s of sessions unused for %s or more (%.1f MB).",
+                    verb, retention_and(what), retention_days(days),
+                    sum(gone$bytes) / 1024 ^ 2)
     left <- nrow(found) - nrow(gone)
     if (left > 0L) {
         line <- paste(line, sprintf("%d left in place.", left))
@@ -246,11 +420,60 @@ retention_summary <- function(found, days, dry_run) {
     line
 }
 
-retention_count <- function(n, noun) {
+# What went of the state stores (R/retention-state.R), or would go,
+# counting a job chain once however many folders it has, and naming each
+# chain that waited for its resume snapshot. NULL when nothing did.
+retention_state_line <- function(found, days, dry_run) {
+    if (!nrow(found)) {
+        return(NULL)
+    }
+    gone <- found
+    verb <- "Would remove"
+    if (!dry_run) {
+        gone <- found[found$removed,, drop = FALSE]
+        verb <- "Removed"
+    }
+    units <- function(x, kind) length(unique(x$session[x$kind == kind]))
+    nouns <- list(job = c("job chain", "job chains"),
+                  worker = c("worker folder", "worker folders"),
+                  checkpoint = c("worker checkpoint", "worker checkpoints"),
+                  remote = c("remote-control session", "remote-control sessions"))
+    what <- character()
+    left <- 0L
+    for (kind in names(nouns)) {
+        if (any(found$kind == kind)) {
+            what <- c(what, retention_count(units(gone, kind),
+                    nouns[[kind]][[1L]], nouns[[kind]][[2L]]))
+            left <- left + units(found, kind) - units(gone, kind)
+        }
+    }
+    line <- sprintf("%s %s unchanged for %s or more (%.1f MB).", verb,
+                    retention_and(what), retention_days(days),
+                    sum(gone$bytes) / 1024 ^ 2)
+    waiting <- unique(gone$session[gone$kind == "job" & gone$incomplete])
+    if (length(waiting)) {
+        line <- paste(line, sprintf("Incomplete and never resumed: %s.",
+                                    paste(waiting, collapse = ", ")))
+    }
+    if (left > 0L) {
+        line <- paste(line, sprintf("%d left in place.", left))
+    }
+    line
+}
+
+# "a", "a and b", "a, b and c".
+retention_and <- function(x) {
+    if (length(x) < 2L) {
+        return(x)
+    }
+    paste(paste(x[-length(x)], collapse = ", "), x[length(x)], sep = " and ")
+}
+
+retention_count <- function(n, noun, plural = paste0(noun, "s")) {
     if (n == 1L) {
         return(paste(n, noun))
     }
-    sprintf("%d %ss", as.integer(n), noun)
+    sprintf("%d %s", as.integer(n), plural)
 }
 
 retention_days <- function(days) {
@@ -260,14 +483,29 @@ retention_days <- function(days) {
     paste(format(days), "days")
 }
 
+# One row of what a scan found. `incomplete` marks a job chain that
+# waited for its resume snapshot (R/retention-state.R).
+retention_row <- function(agent, session, kind, path, last_use, idle, bytes,
+                          incomplete = FALSE) {
+    data.frame(agent = agent, session = session, kind = kind, path = path,
+               last_use = last_use, idle_days = idle, bytes = bytes,
+               incomplete = incomplete, stringsAsFactors = FALSE)
+}
+
+# Rows bound into one data frame, which has the columns even when empty.
+retention_rows <- function(rows = list()) {
+    if (!length(rows)) {
+        return(retention_row(character(), character(), character(),
+                             character(), as.POSIXct(character()), numeric(),
+                             numeric(), logical()))
+    }
+    do.call(rbind, rows)
+}
+
 # Every journal and trace whose session has gone unused for `days`, in
 # every agent's folder. Reads the directory and removes nothing.
 retention_scan <- function(days, now = Sys.time()) {
-    found <- data.frame(agent = character(), session = character(),
-                        kind = character(), path = character(),
-                        last_use = as.POSIXct(character()),
-                        idle_days = numeric(), bytes = numeric(),
-                        stringsAsFactors = FALSE)
+    found <- retention_rows()
     root <- corteza_data_path("agents")
     if (days <= 0 || !dir.exists(root)) {
         return(found)
@@ -283,13 +521,14 @@ retention_scan <- function(days, now = Sys.time()) {
 }
 
 # One agent's sessions folder. A session is its id: `<id>.journal/`,
-# `<id>_trace.jsonl` and `<id>.jsonl` stand or fall together, so a trace
-# is not removed from under a session whose transcript was written
-# yesterday.
+# `<id>_trace.jsonl`, `<id>.attachments/` and `<id>.jsonl` stand or fall
+# together, so a trace is not removed from under a session whose
+# transcript was written yesterday.
 retention_scan_dir <- function(dir, agent, days, now) {
     names <- list.files(dir, all.files = TRUE, no.. = TRUE)
     ids <- unique(c(retention_ids(names, "[.]journal$"),
-                    retention_ids(names, "_trace[.]jsonl$")))
+                    retention_ids(names, "_trace[.]jsonl$"),
+                    retention_ids(names, "[.]attachments$")))
     rows <- list()
     for (id in ids) {
         used <- retention_last_use(dir, id)
@@ -301,18 +540,16 @@ retention_scan_dir <- function(dir, agent, days, now) {
             next
         }
         paths <- retention_paths(dir, id)
-        for (kind in c("journal", "trace")) {
+        for (kind in c("journal", "trace", "attachments")) {
             path <- paths[[kind]]
             if (!retention_removable(path, kind)) {
                 next
             }
-            rows[[length(rows) + 1L]] <- data.frame(agent = agent,
-                session = id, kind = kind, path = path, last_use = used,
-                idle_days = idle, bytes = retention_bytes(path, kind),
-                stringsAsFactors = FALSE)
+            rows[[length(rows) + 1L]] <- retention_row(agent, id, kind, path,
+                used, idle, retention_bytes(path, kind))
         }
     }
-    do.call(rbind, rows)
+    retention_rows(rows)
 }
 
 # The ids behind the names that end the way `suffix` says.
@@ -323,18 +560,22 @@ retention_ids <- function(names, suffix) {
 retention_paths <- function(dir, id) {
     list(journal = file.path(dir, paste0(id, ".journal")),
          trace = file.path(dir, paste0(id, "_trace.jsonl")),
-         transcript = file.path(dir, paste0(id, ".jsonl")))
+         transcript = file.path(dir, paste0(id, ".jsonl")),
+         attachments = file.path(dir, paste0(id, ".attachments")))
 }
 
 # When a session was last used: the newest change among its journal
-# folder, what lies directly in it, its trace and its transcript. NA
-# when none of them exists.
+# folder and its attachments folder, what lies directly in each, its
+# trace and its transcript. NA when none of them exists.
 retention_last_use <- function(dir, id) {
     p <- retention_paths(dir, id)
     paths <- unlist(p, use.names = FALSE)
-    if (dir.exists(p$journal)) {
-        paths <- c(paths, list.files(p$journal, all.files = TRUE,
-                                     no.. = TRUE, full.names = TRUE))
+    for (folder in c(p$journal, p$attachments)) {
+        if (dir.exists(folder)) {
+            inside <- list.files(folder, all.files = TRUE, no.. = TRUE,
+                                 full.names = TRUE)
+            paths <- c(paths, inside)
+        }
     }
     times <- file.info(paths, extra_cols = FALSE)$mtime
     times <- times[!is.na(times)]
@@ -352,8 +593,9 @@ retention_removable <- function(path, kind) {
     if (!retention_within(path)) {
         return(FALSE)
     }
-    if (kind == "journal") {
-        return(dir.exists(path) && length(retention_journal_files(path)) > 0L)
+    if (kind %in% c("journal", "attachments")) {
+        own <- retention_own(path, kind)
+        return(dir.exists(path) && length(c(own$files, own$dirs)) > 0L)
     }
     file.exists(path) && !dir.exists(path)
 }
@@ -378,16 +620,26 @@ retention_within <- function(path, root = corteza_data_dir()) {
     for (part in strsplit(substring(path, nchar(prefix) + 1L), "/",
                           fixed = TRUE)[[1L]]) {
         here <- file.path(here, part)
-        if (retention_is_link(here)) {
+        real <- retention_step(here, real, part)
+        if (is.null(real)) {
             return(FALSE)
         }
-        real_here <- normalizePath(here, winslash = "/", mustWork = FALSE)
-        if (!retention_same_path(real_here, paste0(real, "/", part))) {
-            return(FALSE)
-        }
-        real <- real_here
     }
     TRUE
+}
+
+# One step down, from a folder whose real path is `real` to its part
+# `part` at `here`: the real path of `here`, or NULL when it is a link
+# or resolves anywhere else.
+retention_step <- function(here, real, part) {
+    if (retention_is_link(here)) {
+        return(NULL)
+    }
+    real_here <- normalizePath(here, winslash = "/", mustWork = FALSE)
+    if (!retention_same_path(real_here, paste0(real, "/", part))) {
+        return(NULL)
+    }
+    real_here
 }
 
 retention_is_link <- function(path) {
@@ -406,11 +658,8 @@ retention_same_path <- function(a, b) {
 
 retention_bytes <- function(path, kind) {
     files <- path
-    if (kind == "journal") {
-        own <- retention_journal_files(path)
-        files <- c(own, list.files(own[dir.exists(own)], all.files = TRUE,
-                                   no.. = TRUE, full.names = TRUE,
-                                   recursive = TRUE))
+    if (kind %in% c("journal", "attachments")) {
+        files <- retention_own(path, kind)$files
     }
     info <- file.info(files, extra_cols = FALSE)
     sum(info$size[!info$isdir], na.rm = TRUE)
@@ -437,7 +686,8 @@ retention_tick <- function(keep = character(), now = Sys.time()) {
         if (!retention_look_due(now)) {
             return(invisible(NULL))
         }
-        days <- retention_config()$session_days
+        cfg <- retention_config()
+        days <- cfg$session_days
         if (days <= 0 || !dir.exists(corteza_data_dir())) {
             return(invisible(NULL))
         }
@@ -446,7 +696,12 @@ retention_tick <- function(keep = character(), now = Sys.time()) {
         }
         writeLines(format(now, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
                    retention_stamp_path())
-        found <- retention_prune(days, keep = keep, now = now)
+        found <- retention_prune(days, keep = keep, now = now,
+                                 incomplete_days = cfg$incomplete_days)
+        unknown <- found$path[found$kind == "unknown"]
+        if (length(unknown)) {
+            log_event("retention_unknown", paths = unknown)
+        }
         if (!any(found$removed)) {
             return(invisible(NULL))
         }

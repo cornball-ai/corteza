@@ -55,6 +55,26 @@ results so no completed tool call runs twice. Fallback replies identify
 their actual model/provider; API-key fallbacks carry a prominent billable
 usage warning. Errors that are not limits are rethrown untouched.
 
+A program that runs turns for someone else can let them stop one. It
+sets \code{session$stop_requested} to a function of no arguments that
+returns \code{TRUE} once a stop is asked for. The turn asks it before
+each request to the model, before each tool call, again just before the
+call runs (a call can wait for an approval or a review in between) and,
+when the turn streams (\code{session$on_delta}), before each piece of
+the reply goes out. A stop ends the turn with status
+\code{cancelled}: a tool call that got no result is given a
+placeholder, and the history ends on a note that the turn was stopped,
+so the next turn can go on from it. A stop cannot cut short a request
+already waiting for its first word, nor the reply of a provider that
+does not stream.
+
+A turn that ends on an error leaves a history the next request can
+use. Before the error leaves \code{turn()}, each tool call the model
+made that has no result gets a placeholder result, and a note says
+the turn stopped on that error. A turn also closes, before its first
+request, any call that an earlier turn or an earlier process left
+without a result.
+
 }
 \examples{
 \dontrun{

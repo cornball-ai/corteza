@@ -13,10 +13,11 @@
 #   3. A person, by reaction in the room, for what steps 1 and 2 sent on.
 #
 # Step 2 runs only where the bot is configured to approve without asking
-# (`auto_approve_asks`). Elsewhere step 3 takes its place, as before.
-# Step 1 runs either way, and on every call: policy() decides "allow"
-# for reads anywhere and for writes outside the configured code paths,
-# and an approval callback is never shown those.
+# (`auto_approve_asks`), and never for a tool with no class. Elsewhere
+# step 3 takes its place, as before. Step 1 runs either way, and on every
+# call: policy() decides "allow" for reads, for a session's work on its
+# own tasks and children, and for whatever the user's config allows, and
+# an approval callback is never shown those.
 #
 # The hall monitor for /auto runs (R/monitor.R) has the same shape and
 # another failure rule. An /auto run that meets something outside its
@@ -57,11 +58,12 @@ supervisor_route <- function(call, decision, cwd = getwd(), mode = "monitor",
     notes <- character()
     # check_safety()'s verdict is "ask", so an approver decides it. That
     # approver is a person.
-    if (startsWith(reason, "safety:")) {
+    if (identical(decision$rule, "credential") ||
+        startsWith(reason, "safety:")) {
         flags <- c(flags,
                    sprintf("is covered by a hard safety rule (%s)", reason))
     }
-    op <- classify_op(tool)
+    op <- call_class(call)
     if (tool %in% .MONITOR_EXEC_TOOLS) {
         found <- exec_scan(tool, call$args, root, cwd, write_roots)
         flags <- c(flags, found$flags)
@@ -93,11 +95,13 @@ supervisor_route <- function(call, decision, cwd = getwd(), mode = "monitor",
         flags <- c(flags, sx$flags)
         notes <- c(notes, sx$notes)
     }
+    # A tool with no class goes to a person, never to the monitor: nothing
+    # says what it does, so there is nothing for the monitor to weigh.
     route <- if (length(flags)) {
         "human"
     } else if (identical(approval, "allow")) {
         "proceed"
-    } else if (identical(mode, "monitor")) {
+    } else if (identical(mode, "monitor") && !identical(op, "unknown")) {
         "monitor"
     } else {
         "human"
@@ -184,9 +188,12 @@ supervisor_gate <- function(ask, cwd = getwd(), mode = "monitor",
         } else {
             decision$reason %||% ""
         }
+        # The policy's rule goes with the ask: no saved "always" answers
+        # the credential rule's (.repl_job_answered()).
+        asked <- list(approval = "ask", reason = reason)
+        asked$rule <- decision$rule
         ans <- tryCatch(
-                        ask(v$route, call, list(approval = "ask", reason = reason),
-                            v$notes),
+                        ask(v$route, call, asked, v$notes),
                         # Nobody answered: that is never a yes.
                         error = function(e) {
             list(approved = FALSE, by = "error", reason = conditionMessage(e))

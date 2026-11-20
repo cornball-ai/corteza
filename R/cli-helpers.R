@@ -324,7 +324,7 @@ format_doctor_report <- function(cwd, session, provider, display_model,
                     "hidden"
                 }),
             sprintf("approval mode: %s", config$approval_mode %||% "ask"),
-            sprintf("project approvals: %s", project_approvals_label(cwd))
+            sprintf("project approvals: %s", approvals_label(cwd))
         ),
           collapse = "\n"
     )

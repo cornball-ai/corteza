@@ -12,7 +12,8 @@ matrix_poll(
   sessions = NULL,
   crypto = NULL,
   hooks = NULL,
-  cwd = NULL
+  cwd = NULL,
+  project_roots = NULL
 )
 }
 \arguments{
@@ -37,11 +38,17 @@ run; the chat transport handles encryption now.}
 \code{\link{bot_run_init}}; see its Hooks section. NULL asks the
 host nothing.}
 
-\item{cwd}{Character or NULL. The directory a room works in when its
-topic names none, for this call. It must exist: corteza does not
-create it. NULL (default) uses the \code{cwd} saved by
-\code{\link{bot_configure}}. With neither, such a room works in a
-scratch folder under the session's temporary directory.}
+\item{cwd}{Character or NULL. The directory a room works in when no
+operator has bound it to one with \code{/cd}, for this call. It must
+exist: corteza does not create it. NULL (default) uses the
+\code{cwd} saved by \code{\link{bot_configure}}. With neither, such
+a room works in a scratch folder under the session's temporary
+directory.}
+
+\item{project_roots}{Character vector or NULL. The directories inside
+which an operator may bind a room with \code{/cd}, for this call.
+Each must exist. NULL (default) uses the ones saved by
+\code{\link{bot_configure}}.}
 }
 \value{
 See \code{\link{bot_poll}}.

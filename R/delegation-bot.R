@@ -1,12 +1,15 @@
 .delegation_tools <- function(tools, session) {
     tools <- Filter(function(t) !identical(t$name, "delegate_to"), tools)
-    if (!is.function(session$delegate_to) || isTRUE(session$plan_mode)) {
+    # Listed in plan mode too, where policy() refuses the call
+    # (`continue`): the list stays the session's (WP14).
+    if (!is.function(session$delegate_to)) {
         return(tools)
     }
     ensure_skills()
     existing <- vapply(tools, function(t) t$name, "")
     tools <- c(tools,
-               skills_as_api_tools(setdiff(c("job_status", "job_cancel"), existing)))
+               skills_as_api_tools(setdiff(c("job_status", "job_cancel"), existing),
+                                   session$tool_table))
     c(tools, list(list(name = "delegate_to",
                        description = paste("Ask a configured bot to run a self-contained task asynchronously.",
                     "The result will return here; do not invent the answer.",

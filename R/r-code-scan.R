@@ -25,15 +25,19 @@ R_TAMPER_CALLS <- c("assignInNamespace", "assignInMyNamespace",
                     "unlockBinding", "fixInNamespace", "reassignInPackage",
                     "trace", "untrace")
 R_TAMPER_SYMBOLS <- c(".subagent_state", ".job_worker_state")
-# What names corteza's list of trusted directories: the functions that
-# add to it, its key in the user's config and the file `/trust yes`
-# writes (R/trust.R). Which directories are trusted is a person's
-# decision, and a worker's R code runs where those functions are loaded,
-# so a name or a string constant that holds one of these goes to a
-# person. A name put together at run time is not seen, like a path is.
+# What names corteza's list of trusted directories or its saved
+# approvals: the functions that add to them, the list's key in the
+# user's config, and the files `/trust yes` and "Allow always for this
+# project" write (R/trust.R, R/approvals.R). Which directories are
+# trusted, and what runs there unasked, are a person's decisions, and a
+# worker's R code runs where those functions are loaded, so a name or a
+# string constant that holds one of these goes to a person. A name put
+# together at run time is not seen, like a path is.
 R_TRUST_NAMES <- paste(c("project_trust_add", "trust_command",
                          "trust_at_start", "trust_file", "trusted_projects",
-                         "trusted-projects\\.json"), collapse = "|")
+                         "trusted-projects\\.json", "approval_save",
+                         "approvals_file", "approvals\\.json"),
+                       collapse = "|")
 R_INSTALL_CALLS <- c("install", "install_github", "install_local",
                      "install_version", "install_git", "install_url",
                      "pkg_install", "local_install", "install.packages")
@@ -188,8 +192,9 @@ r_code_scan <- function(sx, code, depth = 0L) {
     }
     hit <- grep(R_TRUST_NAMES, c(st$symbols, st$strings), value = TRUE)
     if (length(hit)) {
-        scan_flag(sx, "names corteza's list of trusted directories (",
-                  substr(hit[[1L]], 1L, 60L), "), which a person keeps")
+        scan_flag(sx, "names corteza's list of trusted directories or its ",
+                  "saved approvals (", substr(hit[[1L]], 1L, 60L),
+                  "), which a person keeps")
     }
     if (any(calls %in% c("eval", "evalq", "eval.parent")) &&
         any(calls %in% c("parse", "str2lang", "str2expression"))) {

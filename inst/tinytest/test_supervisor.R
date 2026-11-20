@@ -77,8 +77,10 @@ expect_identical(v$route, "human")
 expect_true(any(grepl("names no path", v$flags)))
 # A symlink out of the project is where it points.
 link <- file.path(root, "outlink")
-# (Not on Windows: R resolves no link there, so the scan cannot follow one.)
-if (isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
+# (Not on Windows: R resolves no link there, so the scan cannot follow
+# one, and R there cannot remove the link afterwards.)
+if (.Platform$OS.type == "unix" &&
+    isTRUE(file.symlink(path.expand("~"), link)) && nzchar(Sys.readlink(link))) {
     expect_identical(route("write_file", list(path = file.path(link, "x.txt")))$route,
                      "human")
 }
@@ -101,6 +103,13 @@ expect_identical(route("run_r", list(code = "tinypkgr::submit_cran()"))$route, "
 v <- route("run_r", list(code = "corteza:::project_trust_add(getwd())"))
 expect_identical(v$route, "human")
 expect_true(any(grepl("trusted directories", v$flags)))
+# So is what runs unasked: a worker's code may not save itself an
+# "always", by the function or by the file.
+v <- route("run_r", list(code = "corteza:::approval_save(getwd(), 'bash')"))
+expect_identical(v$route, "human")
+expect_true(any(grepl("saved approvals", v$flags)))
+v <- route("run_r", list(code = "f <- corteza:::approvals_file(); writeLines('{}', f)"))
+expect_identical(v$route, "human")
 # The rules read a call policy would have let through as well.
 expect_identical(route("bash", list(command = "git push"), "allow")$route, "human")
 expect_identical(route("bash", list(command = "ls"), "allow")$route, "proceed")
@@ -109,11 +118,22 @@ expect_identical(route("bash", list(command = "ls"), mode = "human")$route, "hum
 
 # --- Tools the rules do not know ---
 expect_identical(route("delegate", list(task = "x"), "allow")$route, "proceed")
-v <- route("harness_note", list(note = "x"))
-expect_identical(v$route, "monitor")
+# A tool with no class goes to a person, never to the monitor.
+v <- route("my_skill", list(note = "x"))
+expect_identical(v$route, "human")
 expect_true(any(grepl("not a tool whose effect", v$notes)))
+expect_identical(route("my_skill", list(note = "x"), "allow")$route, "proceed")
+# harness_note writes the project's corteza folder through no path
+# argument, so the write rule sends it to a person.
+v <- route("harness_note", list(title = "x", fact = "y"))
+expect_identical(v$route, "human")
+expect_true(any(grepl("names no path", v$flags)))
 # One that names a path is taken to write it.
 expect_identical(route("base::file.remove", list(path = "~/x"))$route, "human")
+# Under any argument name, for a tool corteza did not write.
+v <- route("base::unlink", list(x = "~/elsewhere"), "allow")
+expect_identical(v$route, "human")
+expect_true(any(grepl("outside the project", v$flags)))
 
 # --- The gate ---
 asked <- new.env()
@@ -122,7 +142,8 @@ make_gate <- function(answer, mode = "monitor", cwd = root, on_decision = NULL) 
     corteza:::supervisor_gate(
         ask = function(route, call, decision, notes) {
             asked$calls[[length(asked$calls) + 1L]] <- list(
-                route = route, reason = decision$reason, notes = notes)
+                route = route, reason = decision$reason, rule = decision$rule,
+                notes = notes)
             if (is.function(answer)) answer() else answer
         }, cwd = cwd, mode = mode, on_decision = on_decision)
 }
@@ -173,6 +194,17 @@ g <- make_gate(list(approved = TRUE, by = "@troy:ex"), mode = "human")
 g(bash("ls"), ask_d)
 expect_identical(asked$calls[[1L]]$route, "human")
 expect_identical(asked$calls[[1L]]$reason, ask_d$reason)
+# The policy's rule goes with the ask, so that no saved "always" answers
+# the credential rule's (.repl_job_answered()); a call with none gives
+# the ask none.
+g <- make_gate(list(approved = FALSE, by = "@troy:ex"))
+g(call, d)
+expect_identical(d$rule, "credential")
+expect_identical(asked$calls[[1L]]$route, "human")
+expect_identical(asked$calls[[1L]]$rule, "credential")
+g <- make_gate(list(approved = FALSE, by = "@troy:ex"))
+g(bash("git push origin main"), ask_d)
+expect_null(asked$calls[[1L]]$rule)
 # Nobody answering is never a yes.
 g <- make_gate(function() stop("room unreachable"))
 r <- g(bash("ls"), ask_d)

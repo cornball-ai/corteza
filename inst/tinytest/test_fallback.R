@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Provider fallback on limit errors (turn() -> .agent_with_fallback()).
 
 corteza:::.fallback_reset()

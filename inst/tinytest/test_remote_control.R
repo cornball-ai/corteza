@@ -209,9 +209,9 @@ local({
         grepl("Continue the fixture", x$content, fixed = TRUE), entries)
     expect_identical(length(prompt_entries), 1L)
     expect_true(grepl("@owner:example", prompt_entries[[1L]]$content, fixed = TRUE))
-    archive <- corteza:::bot_session_to_markdown(room_session, "next-room")
-    expect_true(grepl("Continue the fixture", archive, fixed = TRUE))
-    expect_true(grepl("Finished the fixture", archive, fixed = TRUE))
+    archive <- vapply(entries, function(x) x$content, "")
+    expect_true(any(grepl("Continue the fixture", archive, fixed = TRUE)))
+    expect_true(any(grepl("Finished the fixture", archive, fixed = TRUE)))
     prompt_message <- Filter(function(m) identical(m$body, "Continue the fixture"), messages)[[1L]]
     corteza:::.remote_bot_record(room_session, corteza:::bot_msg_record(prompt_message))
     expect_identical(room_session$transcript, entries)

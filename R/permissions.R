@@ -2,6 +2,10 @@
 # Handles per-tool permissions and filesystem sandboxing
 
 #' Default dangerous tools (require approval by default)
+#'
+#' A tool's class decides whether it asks (R/policy.R), and every name
+#' here is a write or exec tool, which asks anyway. A name a user adds
+#' asks whatever its class; taking a name off never silences a prompt.
 #' @noRd
 default_dangerous_tools <- function() {
     c("bash", "run_r", "run_r_script", "write_file", "replace_in_file",
@@ -15,50 +19,28 @@ default_denied_paths <- function() {
         "~/.docker")
 }
 
-#' Get permission for a tool
+#' The verdict the config gives one tool by name
 #'
-#' Checks config for per-tool permission, falls back to approval_mode.
+#' Its `permissions` entry, which replaces the policy table's verdict for
+#' that tool (R/policy.R). A tool with no entry gets NULL: the table
+#' decides, `dangerous_tools` can make it ask, and `approval_mode` says
+#' what an "ask" becomes. Nothing here allows a tool nobody named.
 #'
 #' @param tool_name Name of the tool
 #' @param config Config list from load_config()
-#' @return "allow", "ask", or "deny"
+#' @return "allow", "ask", "deny", or NULL
 #' @noRd
 get_tool_permission <- function(tool_name, config) {
-    # Check per-tool permissions first
     perms <- config$permissions
-    if (!is.null(perms) && !is.null(perms[[tool_name]])) {
-        return(perms[[tool_name]])
+    if (is.null(perms) || !tool_name %in% names(perms)) {
+        return(NULL)
     }
-
-    # Fall back to dangerous_tools + approval_mode
-    dangerous <- config$dangerous_tools %||% default_dangerous_tools()
-    approval_mode <- config$approval_mode %||% "ask"
-
-    if (tool_name %in% dangerous) {
-        approval_mode
+    perm <- perms[[tool_name]]
+    if (is.character(perm) && length(perm) == 1L && !is.na(perm)) {
+        perm
     } else {
-        "allow"
+        NULL
     }
-}
-
-#' Check if a tool requires approval
-#'
-#' @param tool_name Name of the tool
-#' @param config Config list
-#' @return TRUE if tool requires user approval
-#' @noRd
-requires_approval <- function(tool_name, config) {
-    get_tool_permission(tool_name, config) == "ask"
-}
-
-#' Check if a tool is denied
-#'
-#' @param tool_name Name of the tool
-#' @param config Config list
-#' @return TRUE if tool is denied
-#' @noRd
-is_tool_denied <- function(tool_name, config) {
-    get_tool_permission(tool_name, config) == "deny"
 }
 
 #' Normalize a path for comparison
@@ -237,9 +219,10 @@ validate_command <- function(command) {
     list(ok = TRUE, message = NULL)
 }
 
-#' Valid approval modes, in order of increasing restriction.
+#' Valid approval modes, in order of increasing restriction. "review"
+#' sends what would prompt to the reviewer first (R/review.R).
 #' @noRd
-.approval_modes <- c("allow", "ask", "deny")
+.approval_modes <- c("allow", "review", "ask", "deny")
 
 #' Handle the `/permissions` slash command for both surfaces.
 #'
@@ -283,11 +266,17 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
     if (nzchar(arg)) {
         detail <- switch(arg,
                          allow = c(
-                                   "  Dangerous tools run without prompting for this session.",
-                                   "  Credential paths still prompt: safety rules short-circuit",
-                                   "  before config, so this can't waive them."),
-                         ask = "  Dangerous tools prompt before running.",
-                         deny = "  Dangerous tools are refused outright, no prompt.")
+                                   "  Calls that would prompt run without prompting for this session.",
+                                   "  Credential paths still prompt, and plan mode still refuses:",
+                                   "  both come before config, so this can't waive them."),
+                         review = c(
+                                    "  Calls that would prompt go to the reviewer first, a model in a",
+                                    "  process of its own: it approves, refuses (the model is told why),",
+                                    "  or passes the call to you. What the rules flag, tools with no",
+                                    "  class and credential paths still prompt; plan mode still refuses.",
+                                    "  Its model: \"supervisor\" in your config."),
+                         ask = "  Writes, commands and tools with no class prompt before running.",
+                         deny = "  Calls that would prompt are refused outright, no prompt.")
         if (identical(arg, current)) {
             head_line <- sprintf("Approval mode: %s (unchanged)", arg)
         } else {
@@ -307,7 +296,7 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
          changed = FALSE, mode = NULL,
          text = paste(c(
                         format_permissions(config),
-                        sprintf("Project approvals: %s", project_approvals_label(cwd)),
+                        sprintf("Project approvals: %s", approvals_label(cwd)),
                         sprintf("Change for this session: /permissions %s",
                                 paste(.approval_modes, collapse = "|"))
             ), collapse = "\n")

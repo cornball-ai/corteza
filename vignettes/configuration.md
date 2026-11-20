@@ -108,7 +108,6 @@ What trust covers:
 | `.corteza/skills/` | R files are sourced at start; `SKILL.md` files join the instruction catalog |
 | `AGENTS.md` or `CLAUDE.md` | Added to the system prompt |
 | `.corteza/harness.json` | Its lessons are added to the system prompt, and `/refine` and the lesson tool may write it |
-| `.corteza/approvals.json` | The terminal's saved "Allow always for this project" answers apply |
 | `DESCRIPTION` and commit subjects | Summarized in the briefing at the top of the prompt |
 | Files your global `context_files` names by a relative path, or by a path inside the project | Added to the system prompt |
 
@@ -137,8 +136,11 @@ How you are asked:
   not trusted and holds something a session would load. Enter means no.
 - `/trust` shows where the directory stands and what it holds. `/trust yes`
   trusts it.
-- A new answer applies from the next start of corteza. A session's prompt
-  and tools are fixed when it starts.
+- A new answer applies from the next conversation: `/clear` starts one, with
+  the config, the tools and the prompt taken again from the directory. A
+  session's prompt and tools are fixed while a conversation lasts. What a
+  flag or a command set in this process (`--dry-run`, `/permissions`,
+  `/dryrun`, `/context-edit`) carries over.
 - `/status` shows `trusted:` and lists what an untrusted session left alone.
 
 In a Matrix room, `/trust` acts on the room's directory and only an operator
@@ -211,12 +213,38 @@ restarts that goal in the same conversation.
 The startup display names the working-directory scope and whether shell/R
 execution is enabled. `/auto --exec` explicitly permits the monitor to assess
 shell/R calls; a project restriction can still veto it. Without that grant,
-those tools are omitted. Unclassified package tools are also omitted rather
-than offered to the model and then stopping the run when selected. Path,
-credential, policy, and monitor checks still apply to every dispatched call.
+those tools are omitted. Tools with no class, the session's control and
+continue tools, and writes that name no path the monitor can check are
+also omitted rather than offered to the model and then stopping the run
+when selected. Path, credential, policy, and monitor checks still apply to
+every dispatched call.
 
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
+
+The `auto` block of `config.json` sets a run's bounds and its monitor. The
+first of these limits to be reached stops the run.
+
+The iteration limit is the exception. `/auto --loops N` stops after N
+iterations. `/auto` without `--loops` runs with no iteration limit, whatever
+`max_loops` says, and the other limits stop it. `/auto resume` keeps the
+count of the run it resumes. One iteration can run many model turns.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `max_loops` | 10 | Iterations, for a run that sets no count of its own. `/auto` always sets one or runs without, so it does not read this |
+| `max_tool_calls` | 300 | Tool calls, the bound that holds whatever a turn does |
+| `max_minutes` | 30 | Minutes since the run started |
+| `max_cost` | 5 | Dollars spent. Skipped where the provider reports no price, as on a subscription, and `max_tokens` holds instead |
+| `max_tokens` | 2000000 | Tokens used |
+| `stall_loops` | 2 | Iterations in a row that changed nothing on disk |
+| `allow_exec` | `false` | Whether the monitor may rule on shell and R calls. Your config or `--exec` grants it; a project's config can only refuse it |
+| `never_broker` | none | Tools that always stop the run for you. Yours and the project's together |
+| `monitor_model` | the session's model | The model the monitor runs on. The monitor uses the session's provider, so name a model of that provider |
+| `monitor_timeout` | 120 | Seconds the monitor has to rule on a call |
+
+The monitor makes a request for each call it rules on, so a long run makes
+many. A smaller model in `monitor_model` costs less for each ruling.
 
 ## Matrix remote control
 
@@ -407,6 +435,17 @@ With `"memory_flush_enabled": true`, an automatic compaction in the terminal
 runs the memory flush first, which is a request of its own. It is off by
 default, and `/flush` runs it by hand.
 
+The R objects outlive the turns that made them: a compaction leaves every
+object in place, whatever its size. So the summary ends with the names of the
+objects `run_r` made that are still there, up to 30 of them, then the open
+handles. The agent can use an object instead of rebuilding it. Only names are
+listed, since reading an object can run code: a binding made with
+`makeActiveBinding()` or `delayedAssign()` is named and left alone. This is
+for the terminal, `chat()` and a subagent or doer, whose R process is the
+session's own. A bot's rooms share one, so a room's summary has no list, and
+neither does a session whose `run_r` runs in a worker process
+(`run_r_mode: "worker"`).
+
 None of the three applies to a session that manages its own context
 (`context_edit` with `"strategy": "clm"`, under "Conversation context
 editing"). Such a session is never compacted, and `/context` says so.
@@ -460,6 +499,34 @@ Set it for a local model. An Ollama server decides the window when it loads a
 model (`OLLAMA_CONTEXT_LENGTH`, or 4k, 32k or 256k tokens by the memory of
 the GPU), so the table's row for an Ollama model is a guess, and your server
 may give the model less.
+
+## What a session sends
+
+A session's system text and its tool list are fixed for the session. Each
+request carries the earlier requests' messages unchanged, with the new ones
+after them, so the provider's cache holds and so do the model's thinking
+blocks. A change to either would make the provider read the whole history
+again, and a model that signs its thinking (next section) refuses a replay
+after one.
+
+- Plan mode, an `/auto` run and the task list change neither. When one of
+  them changes, the next prompt opens with a note in brackets, such as
+  `[Plan mode is on. ...]`, and the note stays in the history. After a
+  compaction, a context edit or a restore, which may have removed earlier
+  notes, the next prompt states the session again.
+- A tool the mode rules out stays in the list and is refused at the call:
+  `exit_plan_mode` outside plan mode, a write or a command in plan mode, a
+  call outside an `/auto` run's scope, and a call outside a job's tools. The
+  refusal says why.
+- The availability tests (the git tools in a repository, a search key) run
+  once, so a `git init` during a session adds no tool.
+
+These change the system text or the tools on purpose, and the log records
+each (`request_prefix_reset`): a move to another provider, the terminal's
+`/clear`, `/cd` in a room, a job that may not search (which sends the
+provider's tools without its search tool, with the thinking removed before
+and after it), and a worker given other tools. A context-editing session
+edits what it sends on every turn and gives up the cache.
 
 ## Thinking blocks after a rewrite
 
@@ -564,7 +631,8 @@ Matrix account's `talker` block:
 }
 ```
 
-For an unsplit Matrix bot, put `context_edit` and `context_vault` at the
+For an unsplit Matrix bot, one whose rooms are no talkers (see
+[Talker mode](#talker-mode)), put `context_edit` and `context_vault` at the
 account config's top level instead. Its existing model and tools stay in
 place; the combined conversation/work session owns filing. In split mode,
 the `talker` block overrides those account settings. Workers inherit only
@@ -750,11 +818,42 @@ automatic deletion policy. See `vignette("audit-records")` for the record format
 
 ### Safety
 
+Every tool has a class, which decides who approves a call to it:
+`read`, `write`, `exec`, `control` (the session's own subagents, tasks
+and jobs) or `continue` (work that goes on in a child, a worker or
+another room). Reads, control and continue run; writes and commands
+ask. A tool that names no class, such as a skill or a package tool
+whose `skill_packages` entry gives none, asks too.
+
+Plan mode refuses writes, commands, continuations and tools with no
+class, and nothing below lifts that. A path under a credential store
+(`~/.ssh`, `~/.aws/credentials` and others) asks next, each time: a
+saved "always" never answers it, and its prompt offers none. Personal
+paths (`~/Documents`, `~/Downloads`) can be read; a write or a command
+touching them in a room is refused.
+
+At the terminal, "Allow always for this project" saves the answer in
+`approvals.json` in your config directory, by directory, and later
+sessions there skip that prompt. A project's own `.corteza/approvals.json`,
+where earlier versions kept these answers, is not read, trusted or not:
+the terminal says so when it starts. `/permissions` lists what is saved
+for the directory.
+
+The answers cover a talker's delegated jobs as well. A tool you allowed
+always in the directory runs in a job without a question, except where
+the credential rule asks, and a job's question offers "always" beside
+yes and no, kept as the terminal's own prompt keeps it. In `chat()` an
+"always" lasts for the session, from either prompt. A room's jobs take
+none of these answers: a room's approvers answer there.
+
+The keys below apply to what is left. None of them turns a refusal into
+a run.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `approval_mode` | string | `"ask"` | `"ask"`, `"allow"`, or `"deny"` |
-| `dangerous_tools` | string[] | `["bash", "run_r", "run_r_script", "write_file", "replace_in_file", "base::writeLines"]` | Tools requiring approval |
-| `permissions` | object | `{}` | Per-tool overrides, e.g. `{"bash": "deny"}` |
+| `approval_mode` | string | `"ask"` | What "ask" means for a tool with no `permissions` entry: `"ask"`, `"allow"`, `"deny"`, or `"review"` (the reviewer first; see Supervisor). A project's config cannot set `"review"` |
+| `dangerous_tools` | string[] | `["bash", "run_r", "run_r_script", "write_file", "replace_in_file", "base::writeLines"]` | Tools that ask even where their class would run. Leaving a tool off this list does not stop it asking |
+| `permissions` | object | `{"harness_note": "ask"}` | Per-tool verdicts, e.g. `{"bash": "deny"}` or `{"bash": "allow"}`. An entry replaces the verdict for its tool |
 | `denied_paths` | string[] | `["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.kube", "~/.docker"]` | Blocked paths |
 | `allowed_paths` | string[] or null | null | If set, only these paths allowed |
 
@@ -779,6 +878,74 @@ No setting approves a call unseen. The rules read text and are not a
 sandbox: a command can be written so that they miss it, which is what
 the monitor and the tool policy above are also there for.
 
+A room's monitor reads the conversation to judge a call. Each
+conversation keeps a record beside the room's journal, a file per
+conversation: who sent each message, in the words they sent, and the
+bot's own posts. Only the lines of someone who may approve are taken as
+instructions: the room's operators, or the one person in a private room.
+Anyone else's, another bot's or a peer's request included, are shown as
+theirs. A job's calls are judged by the conversation that asked for the
+job, read when the call comes, so a "stop" sent since is in it. A job
+handed over from another room is judged by that room's. The monitor is
+not asked, and a person is, when nobody in the room may approve or the
+record cannot be read whole:
+
+- one past 100,000 characters, or with a line it cannot read;
+- one with a break: a restart whose backfill did not reach back to the
+  last message on record, a line that could not be written, or a thread
+  that went on from its archive;
+- one that does not reach back to the start of the conversation. A
+  conversation under way when a bot first runs 0.8.1 is one of these,
+  and `/clear` starts one the monitor can read.
+
+At the terminal and in `chat()`, `"approval_mode": "review"` gives a
+session the same three steps for each call that would prompt. The
+monitor there is called the reviewer. It rules on reads, writes and
+commands that the rules leave open. It reads the conversation to judge
+them, from the session's transcript: every message you sent, whole,
+each after the whole reply it answers. Only your words are taken as
+instructions. It is not shown these:
+
+- a compaction's summary, which the agent wrote;
+- output you staged with `/r` or `!`;
+- an `/auto` run's prompts, which its driver wrote, and the goal
+  corteza writes for a bare `/auto`. It sees what you typed to start
+  the run, and the run's replies;
+- the agent's task list.
+
+An approval runs the call and prints a dim line saying so. A refusal
+goes back to the agent with its reason. A call it passes on prompts you
+with its reason. These still prompt without it:
+
+- a call the rules flag;
+- a tool with no class;
+- a credential path;
+- any call while the reviewer cannot read the whole conversation: one
+  past 100,000 characters, one with no transcript or with a line it
+  cannot read, or one begun before 0.8.1, whose transcript does not
+  mark what you typed. `/clear` starts a conversation it can read.
+
+A tool you allowed always runs without asking it. Plan mode still
+refuses what it refuses. A reviewer that fails, or has not ruled by
+`supervisor.timeout_sec`, passes the call to you. Interrupting a turn
+while the reviewer works cancels its request, and the next call is
+asked afresh. "review" changes only what would prompt: a call that
+policy allows runs, as under "ask". In a room the rules read every
+call, allowed ones included.
+
+`/permissions review` turns it on for the session and `/permissions ask`
+turns it off. Your config can turn it on for every session. A project's
+config cannot: who reviews the agent is yours to choose. In a Matrix
+room, `auto_approve_asks` is this mode. An `/auto` run keeps its own
+monitor, since nobody is at its prompt.
+
+A talker's delegated jobs are covered too. The doer reads the mode
+before each call, so `/permissions review` typed while a job runs
+reaches its next call. The reviewer judges a job's call by the
+conversation that asked for the job and the task the talker wrote.
+Your "allow always" answers cover a job's calls as they cover the
+session's own, before the reviewer is asked.
+
 These keys are read from the user's config file only. A project's
 `.corteza/config.json` cannot set them.
 
@@ -801,32 +968,72 @@ unused for `retention.session_days`. A session was last used when its
 journal, its trace or its transcript last changed. The terminal says
 what it removed.
 
-Transcripts, session stores, workspaces, config and audit records stay.
+Transcripts, session stores, the terminal's saved workspaces, config and
+audit records stay.
 A session whose journal is gone still resumes from its transcript, and
 says what is gone. A room that restores its context from its journal
-starts its next conversation fresh.
+starts its next conversation fresh. A room's records of its
+conversations go with its journal, and the room's calls then go to a
+person until `/clear`.
 
 A session's audit records are kept in its journal folder, under
 `audit/`. Retention leaves them and the folder in place:
 `audit_payload_expire()` removes audit payloads, and only when called.
 
+The same run clears corteza's state folder (`state/` beside the sessions,
+or `CORTEZA_STATE_DIR`) and its remote-control folder:
+
+- A delegated job's records go with every job linked to it as a resume,
+  a review or a delegation, once all of them have ended and none has
+  changed for `session_days`. While one of them is queued or running,
+  all stay.
+- A job that ended incomplete and was never resumed holds the snapshot a
+  resume starts from. Its chain waits `incomplete_days` instead, and
+  never fewer than `session_days`. The terminal names each such job when
+  it goes.
+- A worker process's folder with no checkpoint loses its journal, less
+  its audit records.
+- A worker's folder with a checkpoint (the R objects and history a
+  delegated job's worker left for the next job) goes once it and the
+  session it belongs to have both gone unused for `session_days`: at the
+  terminal the conversation's session, in a room or a thread the room's
+  session, judged by its journal, which holds the record of its
+  conversations. A room keeps one such folder across `/clear`, so the
+  room's use counts, not one conversation's. Where the session has left
+  nothing, the folder goes by its own age. The checkpoint goes first,
+  then the rest, less the journal's audit records.
+- A remote-control session goes once it was closed, or once its process
+  on this machine has ended. One from another machine stays.
+
+A worker's folder stays, whatever its age, while its worker process is
+alive (a worker on another machine counts as alive), while its session
+is open in the terminal or the bot doing the removal, and while a job is
+open in its directory. Each of these, and the last use of the folder and
+of its session, is read again just before the folder goes.
+
+A folder there whose name and record are not of the form corteza writes
+stays whole. Once it is old enough the terminal counts it, and
+`sessions_prune(dry_run = TRUE)` lists it with kind `"unknown"`.
+
 `sessions_prune(dry_run = TRUE)` reports what a run would remove.
 `sessions_prune()` runs one now.
 
-This key is read from the user's config file only. A project's
-`.corteza/config.json` cannot set it. A config file that does not parse,
-or a value that is not one non-negative number, turns retention off.
+These keys are read from the user's config file only. A project's
+`.corteza/config.json` cannot set them. A config file that does not
+parse turns retention off, and a value that is not one non-negative
+number keeps everything that key governs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed. `0` keeps everything |
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` keeps everything |
+| `retention.incomplete_days` | number | `180` | Days a job chain that ended incomplete, and was never resumed, is kept for its resume snapshot. Never fewer than `session_days`. `0` keeps it |
 
 ### Skills
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `skill_paths` | string[] | `[]` | Legacy executable/file-skill configuration |
-| `skill_packages` | object[] | `[{"package":"base", ...}, {"package":"utils", ...}]` | R packages registered as tools |
+| `skill_packages` | object[] | `[]` | R package functions registered as tools, as in `[{"package": "utils", "functions": ["head"], "class": "read"}]`. An entry's `class` applies to all its functions; an entry without one leaves them asking. Up to 0.8.0 the default registered 8 functions of base and utils |
 | `skill_timeout` | number | `30` | Default skill execution timeout (seconds) |
 | `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
@@ -946,7 +1153,8 @@ corteza::bot_configure(
   room = "#general:example.com",
   model = "llama3.2",
   provider = "ollama",
-  operators = "@you:example.com"
+  operators = "@you:example.com",
+  project_roots = "~/projects"
 )
 ```
 
@@ -958,7 +1166,7 @@ corteza::bot_configure(
 - In a room with one person in it, the bot answers only when that person is
   an operator.
 - Operators answer its approval prompts, and commands such as
-  `/approve-all` are theirs.
+  `/approve-all`, `/cd` and `/ls` are theirs.
 
 A bot with no operators accepts no invites. It works in the room it was
 configured with and in rooms it has already joined. Where such a room has
@@ -975,21 +1183,66 @@ to the bot config.
 
 #### Where a room works
 
-A room works in the first of these that exists:
+A room works in the first of these that applies:
 
-1. The directory at the start of its topic, written `<path> | <description>`,
-   as in `~/project | release notes`. A room reads its topic when its
-   conversation starts, so send `/clear` after changing it.
+1. The directory an operator bound it to with `/cd <dir>`. It must exist and
+   lie inside one of the bot's project roots, links resolved.
 2. The bot's `cwd`. `bot_configure(cwd = )` saves one. `bot_run(cwd = )`,
    `bot_run_init(cwd = )` and `bot_poll(cwd = )` give one for a run, and it
    wins over the saved one.
 3. A scratch folder under the session's temporary directory, deleted when the
-   process ends. The room is told it has no project directory.
+   process ends. The room is told it has no project directory, and it
+   reads, searches and talks only. It writes no files, runs no commands,
+   starts no subagent and hands no work to a doer or another room, and
+   no room hands work to it. A refusal says how to give the room a
+   directory. Room lists show it as having none, and it is named by its
+   id or name, never by the scratch folder. A room an operator bound with
+   `/cd none` works here, as does one whose bound directory is gone or lies
+   outside every root now. So does a room whose state file the bot could
+   not read: the file is copied aside, and the room stays here, across
+   restarts, until an operator runs `/cd`, since what was lost may have
+   been `/cd none`.
 
-corteza creates neither of the first 2. A `cwd` that does not exist is an
-error where it is given, and a run stops at its start when the saved one has
-been removed. Up to 0.8.0 the last step was `~/<bot name>`, created on first
-use. A bot that relied on that directory now needs `cwd`:
+The project roots are `project_roots`, existing directories inside which a
+room may be bound. `bot_configure(project_roots = )` saves them, and
+`bot_run()`, `bot_run_init()` and `bot_poll()` take them for a run. With
+none, `/cd <dir>` is refused.
+
+```r
+corteza::bot_configure(server, user, password, room,
+                       project_roots = c("~/projects", "~/src"))
+```
+
+In a room, for an operator of the bot:
+
+- `/cd` says where the room works, the 3 forms and the roots.
+- `/cd <dir>` binds the room to `<dir>`. A bare name is looked for under each
+  root.
+- `/cd none` binds it to no directory, and `/cd default` returns it to the
+  bot's `cwd`.
+- `/ls` lists the roots, and `/ls <dir>` the directories directly inside one,
+  names only, at most 50.
+
+A move ends every conversation the room holds, the main timeline's and each
+thread's, as `/clear` does: each goes to the host's archive, and the next
+starts in the new directory with a new prompt, tools and doer. A thread first
+seen later starts there too, and a restart seeds no conversation with
+messages from before the move. A move is refused while any of the room's
+conversations has a job open, and the refusal names it. The binding is kept
+in the room's state file and outlives a restart. A room the `on_clear` hook
+files a conversation into takes the binding of the room it came from.
+
+Up to 0.8.0 a room worked in the directory its topic started with, written
+`<path> | <description>`. Anyone with the power level can change a topic, and
+that directory became the checkout where the supervisor let writes through
+without asking a person. A topic names no directory now. A room whose topic
+still starts with a path is told once that the path is not read, and which
+`/cd` would bind it.
+
+corteza creates none of these directories. A `cwd` or root that does not
+exist is an error where it is given, and a run stops at its start when the
+saved `cwd` has been removed. Up to 0.8.0 the last step was `~/<bot name>`,
+created on first use. A bot that relied on that directory now needs `cwd`:
 
 ```r
 corteza::bot_run(cwd = "~/mybot")
@@ -1061,10 +1314,11 @@ uses the last displayed list.
 `/effort` reports the current reasoning setting and `/effort high` changes it
 for the current conversation. `/effort default` removes the session override
 and uses configuration, or the provider default when none is configured.
-The provider validates which levels its model accepts. In a split bot this
-changes the talker, leaving the doer's effort unchanged. These overrides are
-not global configuration changes; use `reasoning_effort` (or
-`talker.reasoning_effort` for a split bot) for a startup default.
+The provider validates which levels its model accepts. In a talker session
+`/model` and `/effort` change the doer's model and effort, which the next job
+runs with ([Talker mode](#talker-mode)). These overrides are not global
+configuration changes; use `reasoning_effort` (or `talker.reasoning_effort`
+for the talker) for a startup default.
 
 GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
 The corresponding llm.api routing update selects Responses with web search
@@ -1249,6 +1503,149 @@ A room or a thread a Matrix bot answers in:
 A room has no transcript. How recently it was used is the modification time
 of `live.json` in its journal folder, a file that is not there before the
 session's first turn.
+
+A bot also records which conversation each of a room's sessions holds, in one
+file for each room, named by the `sessionId` of the room's own entry:
+
+```
+<state>/rooms/<sessionId>.json
+```
+
+`<state>` is the folder `CORTEZA_STATE_DIR` names, else `state` in the data
+directory. Retention leaves the file alone.
+
+| Field | Meaning |
+|-------|---------|
+| `room` | The room id |
+| `main` | The room's own conversation |
+| `threads` | Each thread's conversation, by the thread's root event id |
+
+Each conversation:
+
+| Field | Meaning |
+|-------|---------|
+| `id` | The conversation's id. A job asked in it carries the same id |
+| `since` | The event id of the `/clear` that started it. Absent for a conversation the bot started with the session |
+| `at` | When that `/clear` was sent, in seconds since 1970 |
+| `ack` | The event ids of the bot's answer to that `/clear` |
+
+A restart seeds each conversation with the room's messages after `since`, and
+leaves `ack` out.
+
+## Talker mode
+
+A bot's room answers through a talker: a session with read-only tools that
+hands work needing edits, commands or tests to a doer, a worker process of the
+conversation's own, and goes on answering while the doer works. The result
+arrives as its own message. From 0.8.1 this is the default in a bot's rooms
+and at the terminal, which says so when it starts. `chat()` uses it only where
+the config turns it on, since its R session is yours to share with the agent.
+
+To turn it off, put this in the config, the bot's or your own:
+
+```json
+"talker": {"enabled": false}
+```
+
+A room is no talker by default in 2 cases. Where the bot's tools are
+restricted (`tools_filter`, from `bot_configure()` or the run), since a doer
+gets the work tools whatever that list says. And where the room has no
+directory, since such a room hands no work on. At the terminal the first
+holds as well: `--tools`, or `tools` in the config, leaves talker mode off.
+`"enabled": true` turns it on in any of these.
+
+At the terminal and in `chat()`, a turn that hands work to the doer stays
+with it: the doer's steps, an approval it asks for and its result print as
+they come, and the prompt returns when the job ends. Ctrl+C returns the prompt
+and leaves the job running; `/jobs` lists the jobs and stays with an open one
+again. A terminal driven from a room with `/remote-control` does not stay, so
+the room's next message is read as before.
+
+The talker runs on the bot's own model, as the doer does. Up to 0.8.0 it ran
+on a fast model of its provider's (Claude Haiku 4.5 for `anthropic` and
+`anthropic_claude`, GPT-6 Luna for `openai` and `openai_codex`) and stopped
+with an error on any other provider. To give the talker a faster model, name
+it:
+
+```json
+"talker": {"model": "claude-haiku-4-5-20251001"}
+```
+
+`talker.provider` puts the talker on another provider, on that provider's
+default model unless `talker.model` names one. On a local model the talker
+and the doer share it, and 2 requests can be in flight at once; name another
+model for the talker, or turn talker mode off, where the machine cannot serve
+both.
+
+The bot's reasoning settings (`reasoning_effort`, `thinking_budget_tokens`,
+`thinking`) go to the doer with its model. The talker uses the provider's
+defaults unless the `talker` block names its own (`talker.reasoning_effort`
+and the others), since a model it names may refuse settings made for another.
+
+In a talker session `/model` and `/effort` change the work: the doer's model
+and effort, which the next job runs with. The doer starts on the model and
+provider the config's `jobs` block names, if it names them, with that block's
+reasoning settings; the talker stays on the session's model, and the 2
+commands change the doer's from there. The talker follows `/model` unless
+the `talker` block names a model or a provider of its own, and its reasoning
+settings come from that block alone. `/status` names both models. Up to 0.8.0
+both commands changed the talker's alone. Column `talker` of the command
+table (`corteza:::corteza_commands()`) says what each command acts on: the
+talker's conversation, the doer and its jobs, or both.
+
+At the terminal, `/provider` and `/max-tokens` are the doer's too: the
+provider follows `/model`'s rule, and the output budget is the next job's,
+while the talker's replies keep theirs. A conversation you resume
+(`--resume`) starts its doer as a new conversation does: where the `jobs`
+block names a model, the doer runs on it again, whatever `/model` chose
+before. `/review` reviews with the doer's model, and `/doctor` and
+`/config` name it. `/spent` counts each job with the talker's replies, in
+the conversation that asked for it, and a job's result goes into that
+conversation's transcript, so `--resume` brings it back. `/r` runs R in
+the terminal's own process and sends its output with your next message;
+the doer's R objects stay in the doer. An `/auto` run works with the
+session's own tools, which in a talker session only read and hand work on,
+so there `/auto` says to turn talker mode off and starts nothing.
+
+Without talker mode, `run_r` in a bot runs in the bot's own process, which all
+its rooms share, so one room's R objects are the others'. A talker's work runs
+in its conversation's doer, a process of its own, and a room's objects stay
+its own.
+
+## What a delegated job obeys
+
+A delegated job runs with the model, provider, reasoning settings and limits
+its conversation has when the job starts, in a worker that may have run
+earlier jobs. While it runs it follows the conversation's `/plan`,
+`/permissions` and `/dryrun`: the worker checks them before each call, and
+again just before the call runs, so a `/plan` typed while a call waits for
+your approval stops that call. A worker cannot end plan mode; you do. After
+`/clear`, a job started before it keeps the settings its conversation last
+had, and `/cancel` stops it.
+
+A job stopped mid-run keeps what it wrote to files. The R objects and history
+its worker made since its last checkpoint are gone. The job's report names
+that checkpoint, which the next job starts from.
+
+At the terminal, `/clear` starts a new conversation for the worker too. Its R
+objects stay, as they do in the terminal's own session, and its history does
+not: the next job starts from an empty conversation, with the instructions and
+tools a session started now would have, so a `/trust` before the `/clear`
+reaches it. A job still running at `/clear` finishes, and its result is shown
+and saved to the conversation that asked for it. Each conversation keeps its
+own checkpoint, so `corteza --resume <id>` brings back that conversation's
+worker as its last job left it, and a new conversation's objects are a copy
+taken at the `/clear`.
+
+In a room or a thread, `/clear` does the same for that conversation's worker:
+the R objects stay and the next job starts from an empty conversation. A job
+still running finishes and posts its result, marked as asked before the
+`/clear`. After a restart the bot seeds each conversation, the room's and each
+thread's, with nothing from before its own `/clear`.
+
+A checkpoint saved before 0.8.1 does not say which conversation it belongs to,
+so the first job after upgrading keeps the worker's R objects and starts its
+history over.
 
 ## Incomplete worker jobs
 
@@ -1466,8 +1863,11 @@ and receipt, and explicitly says that image bytes are absent from that text.
 Room conversations offer `send_room_file(path)` to configured bot operators.
 It sends an existing file to the current room using the host's chat identity;
 the model does not load credentials or select another destination. Tool policy
-and supervision still apply. Credential files and runtime configuration files
-are refused, and the file limit is 25 MiB. Workers do not receive this tool.
+and supervision still apply: it is a write, so each send asks, and goes to the
+monitor where `auto_approve_asks` is on. `"permissions": {"send_room_file":
+"allow"}` in your config lets it send unasked. Credential files and runtime
+configuration files are refused, and the file limit is 25 MiB. Workers do not
+receive this tool.
 
 Encrypted Matrix attachments require chat.api 0.1.0.4, mx.client 0.2.1.4,
 and mx.crypto 0.2.2.2. Uploads contain ciphertext; the file metadata travels

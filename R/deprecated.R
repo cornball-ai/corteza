@@ -25,7 +25,8 @@ matrix_configure <- function(server, user, password, room, model = NULL,
                              models = NULL,
                              model_badge = c("never", "non_default", "always"),
                              display_name = NULL, fallback = NULL,
-                             cwd = NULL, operators = NULL) {
+                             cwd = NULL, operators = NULL,
+                             project_roots = NULL) {
     .Deprecated("bot_configure")
     bot_configure(server = server, user = user, password = password,
                   room = room, model = model, provider = provider,
@@ -33,7 +34,8 @@ matrix_configure <- function(server, user, password, room, model = NULL,
                   auto_approve_asks = auto_approve_asks, bots = bots,
                   models = models, model_badge = model_badge,
                   display_name = display_name, fallback = fallback,
-                  cwd = cwd, operators = operators)
+                  cwd = cwd, operators = operators,
+                  project_roots = project_roots)
 }
 
 #' Deprecated: use bot_send()
@@ -65,11 +67,13 @@ matrix_send <- function(text, room_id = NULL, msgtype = "m.text",
 #' @export
 matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
                         tools_filter = NULL, timeout = 0L, sessions = NULL,
-                        crypto = NULL, hooks = NULL, cwd = NULL) {
+                        crypto = NULL, hooks = NULL, cwd = NULL,
+                        project_roots = NULL) {
     .Deprecated("bot_poll")
     bot_poll(system = system, model = model, provider = provider,
              tools_filter = tools_filter, timeout = timeout,
-             sessions = sessions, hooks = hooks, cwd = cwd)
+             sessions = sessions, hooks = hooks, cwd = cwd,
+             project_roots = project_roots)
 }
 
 #' Deprecated: use bot_run()
@@ -82,10 +86,12 @@ matrix_poll <- function(system = NULL, model = NULL, provider = NULL,
 #' }
 #' @export
 matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
-                       provider = NULL, tools_filter = NULL, cwd = NULL) {
+                       provider = NULL, tools_filter = NULL, cwd = NULL,
+                       project_roots = NULL) {
     .Deprecated("bot_run")
     bot_run(timeout = timeout, system = system, model = model,
-            provider = provider, tools_filter = tools_filter, cwd = cwd)
+            provider = provider, tools_filter = tools_filter, cwd = cwd,
+            project_roots = project_roots)
 }
 
 #' Deprecated: use bot_run_init()
@@ -98,10 +104,12 @@ matrix_run <- function(timeout = 30000L, system = NULL, model = NULL,
 #' }
 #' @export
 matrix_run_init <- function(system = NULL, model = NULL, provider = NULL,
-                            tools_filter = NULL, hooks = NULL, cwd = NULL) {
+                            tools_filter = NULL, hooks = NULL, cwd = NULL,
+                            project_roots = NULL) {
     .Deprecated("bot_run_init")
     bot_run_init(system = system, model = model, provider = provider,
-                 tools_filter = tools_filter, hooks = hooks, cwd = cwd)
+                 tools_filter = tools_filter, hooks = hooks, cwd = cwd,
+                 project_roots = project_roots)
 }
 
 #' Deprecated: use bot_run_step()
@@ -121,7 +129,7 @@ matrix_run_step <- function(state, timeout = 30000L) {
 #' Deprecated: use bot_archive_all()
 #' @inheritParams bot_archive_all
 #' @param mx_sess Ignored. Kept so calls written for corteza 0.7.1 still
-#'   run; pass \code{chat} to look up room names.
+#'   run.
 #' @return See \code{\link{bot_archive_all}}.
 #' @seealso \code{\link{bot_archive_all}}
 #' @examples
@@ -129,9 +137,11 @@ matrix_run_step <- function(state, timeout = 30000L) {
 #' matrix_archive_all(sessions)  # use bot_archive_all()
 #' }
 #' @export
-matrix_archive_all <- function(sessions, mx_sess = NULL, chat = NULL) {
+matrix_archive_all <- function(sessions, mx_sess = NULL, chat = NULL,
+                               on_archive = NULL, cfg = NULL) {
     .Deprecated("bot_archive_all")
-    bot_archive_all(sessions = sessions, chat = chat)
+    bot_archive_all(sessions = sessions, chat = chat,
+                    on_archive = on_archive, cfg = cfg)
 }
 
 #' Deprecated: use bot_request_flush()

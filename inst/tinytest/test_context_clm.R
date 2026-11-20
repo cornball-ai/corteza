@@ -412,13 +412,15 @@ local({
             expect_true(grepl("New main-timeline message.", rendered(main), fixed = TRUE))
             expect_true(grepl("Earlier topic, original words.", rendered(thread), fixed = TRUE))
             expect_false(grepl("Current request", rendered(thread), fixed = TRUE))
-            cleared <- f("bot_reset_session")(restarted, room, cfg, "$clear", "Cleared.", system = "Pinned")
+            cleared <- f("bot_reset_session")(restarted, room, cfg, "$clear", "Cleared.",
+                                              f("bot_conversation_new")(), system = "Pinned")
             expect_equal(length(cleared$history), 0L)
             expect_true("$clear" %in% cleared$seen_event_ids)
 
             # An unsplit bot owns its conversation without becoming a
             # talker or changing its model/tools. Its workers never file.
-            cfg$talker <- NULL
+            # A room is a talker unless its config says otherwise (WP20b).
+            cfg$talker <- list(enabled = FALSE)
             cfg$user_id <- "@unsplit:example.invalid"
             cfg$context_edit <- pure
             cfg$context_vault <- vault

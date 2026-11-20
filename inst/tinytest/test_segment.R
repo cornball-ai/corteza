@@ -1,9 +1,8 @@
 library(tinytest)
 
 # /clear-time segmentation, corteza's half: the title derived from the
-# transcript, whether a conversation is worth a room, and the vault
-# pointer form. The room itself is the host's, through the on_clear hook
-# (test_hooks.R).
+# transcript, and whether a conversation is worth a room. The room
+# itself is the host's, through the on_clear hook (test_hooks.R).
 
 fake_session <- function(transcript) {
     s <- new.env(parent = emptyenv())
@@ -84,27 +83,6 @@ expect_false(corteza:::bot_segment_worth_keeping(
 expect_true(corteza:::bot_segment_worth_keeping(
     fake_session(list(list(role = "user", content = "/clear"),
                       list(role = "user", content = "thanks")))))
-
-# ---- Vault pointer ----
-expect_null(corteza:::bot_vault_ref(NULL))
-expect_null(corteza:::bot_vault_ref(""))
-# A path outside any vault passes through unchanged.
-local({
-    p <- file.path(tempdir(), "not-a-vault", "x.md")
-    expect_identical(corteza:::bot_vault_ref(p),
-                     normalizePath(p, mustWork = FALSE))
-})
-# A path under the pensar vault comes back vault-relative, which is the
-# form that survives the vault moving hosts.
-if (requireNamespace("pensar", quietly = TRUE)) {
-    root <- tryCatch(pensar::default_vault(), error = function(e) NULL)
-    if (!is.null(root) && nzchar(root)) {
-        p <- file.path(normalizePath(root, mustWork = FALSE),
-                       "raw", "matrix", "seg.md")
-        expect_identical(corteza:::bot_vault_ref(p),
-                         file.path("raw", "matrix", "seg.md"))
-    }
-}
 
 # ---- What on_clear may hand back ----
 # list(id, name) names the segment in the acknowledgement; anything

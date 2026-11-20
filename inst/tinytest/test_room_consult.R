@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # One bot, two independent conversations. Fake model calls and transport;
 # real durable jobs, child processes, tool policy, snapshots, and polling.
 # At top level: exit_file() ends the file between expressions, so inside
@@ -236,11 +239,28 @@ local({
     expect_true(grepl("Dry run", h("ask_room", list(room = "Beta", question = "dry"))))
     expect_equal(length(jobs()), count + 1L)
     a$dry_run <- FALSE
+    # Listed in plan mode too, so the list stays the session's (WP14);
+    # policy() refuses the call, a continuation, and nothing is queued.
     a$plan_mode <- TRUE
-    expect_length(f(".room_consult_tools")(list(), a), 0L)
+    expect_identical(utils::tail(f(".room_consult_tools")(list(), a), 1)[[1]]$name,
+                     "ask_room")
+    # Without the fixture's gate, which answers "proceed" to everything:
+    # each real gate refuses a call policy() refused, first.
+    count <- length(jobs())
+    gate <- a$auto_gate
+    a$auto_gate <- NULL
+    expect_true(grepl("corteza policy denied: plan mode",
+                      h("ask_room", list(room = "Beta", question = "plan")), fixed = TRUE))
+    a$auto_gate <- gate
+    expect_equal(length(jobs()), count)
     a$plan_mode <- FALSE
+    # A message from someone else keeps the tool bound, so the list stays
+    # the session's (WP14), and the call is refused; nothing is queued.
     f(".room_consult_bind")(a, cfg, chat, "stranger", list(room = "alpha"), factory)
-    expect_null(a$ask_room)
+    expect_true(is.function(a$ask_room))
+    count <- length(jobs())
+    expect_true(a$ask_room("Beta", "from a stranger")$isError)
+    expect_equal(length(jobs()), count)
 
     # Failed sends use the existing durable notice queue. Re-pumping does
     # not call the model again or queue another copy of each notice.

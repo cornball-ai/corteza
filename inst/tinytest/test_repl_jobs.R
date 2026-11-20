@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # Delegated jobs in the REPL: set up only in talker mode, pumped before
@@ -171,6 +174,115 @@ for (answer in c("y", "n")) {
         corteza:::job_worker_close(ctx$session)
     })
 }
+
+# --- A turn that hands off a job stays with it (WP20c) ---
+# Its progress, an approval question and its result print as they come;
+# the next prompt is read once the job has ended.
+with_turn <- function(ctx) {
+    sess <- corteza:::session_new("anthropic", "claude-opus-5-5", ctx$cwd)
+    ctx$disk_session <- list(session = sess, sessionId = sess$sessionId,
+                             resumed = FALSE)
+    ctx$render_reply <- function(txt) cat(txt, "\n")
+    ctx$job_id <- NULL
+    ctx$turn_fn <- function(prompt, session) {
+        ctx$job_id <- corteza:::job_submit(session, prompt)
+        list(reply = "Handed to the doer.", usage = NULL)
+    }
+    reader <- ctx$read_input
+    ctx$status_at_read <- character()
+    ctx$read_input <- function(p) {
+        if (!is.null(ctx$job_id)) {
+            ctx$status_at_read <- c(ctx$status_at_read,
+                                    corteza:::job_read(ctx$job_id)$status)
+        }
+        reader(p)
+    }
+    ctx
+}
+local({
+    progressing <- function(task) {
+        ns <- asNamespace("corteza")
+        say <- get("job_progress_observer", envir = ns)(
+            get(".job_worker_state", envir = ns)$job_id)
+        say(list(outcome = "ran", success = TRUE, result = "ok",
+                 call = list(tool = "read_file", args = list(path = "notes.md"),
+                             model_context = list(call_index = 1L,
+                                                  assistant_text = "Reading the notes"))))
+        Sys.sleep(1)
+        list(reply = "report ready")
+    }
+    ctx <- with_turn(make_ctx(c("write the report"), progressing))
+    setup(ctx)
+    out <- capture.output(corteza:::run_repl_loop(ctx))
+    expect_true(any(grepl("Staying with the job", out, fixed = TRUE)))
+    expect_true(any(grepl(paste0("job ", ctx$job_id, ": Reading the notes"),
+                          out, fixed = TRUE)))
+    expect_true(any(grepl(paste0("job ", ctx$job_id, ": - read_file notes.md"),
+                          out, fixed = TRUE)))
+    expect_true(any(grepl("report ready", out, fixed = TRUE)))
+    # The prompt came back only after the job ended: the EOF read saw it
+    # done.
+    expect_identical(ctx$status_at_read, "done")
+    corteza:::job_worker_close(ctx$session)
+})
+local({
+    seen <- new.env()
+    ctx <- with_turn(make_ctx(c("make check", "y"), asking, seen = seen))
+    setup(ctx)
+    out <- capture.output(corteza:::run_repl_loop(ctx))
+    expect_true(any(grepl("Approval needed: bash", out)))
+    expect_true("Approve? [y/N] " %in% seen$prompts)
+    expect_identical(corteza:::job_read(ctx$job_id)$outcome$result, "approved")
+    # Asked while staying, not at the next prompt: the job had ended by
+    # the next read of a prompt.
+    expect_identical(ctx$status_at_read, c("running", "done"))
+    corteza:::job_worker_close(ctx$session)
+})
+# Ctrl+C returns the prompt and leaves the job running; /jobs stays
+# with it again.
+local({
+    ctx <- with_turn(make_ctx(c("long job"), function(task) {
+        Sys.sleep(3)
+        list(reply = "late result")
+    }))
+    setup(ctx)
+    ns <- asNamespace("corteza")
+    pump <- get(".repl_pump_jobs", envir = ns)
+    calls <- 0L
+    assignInNamespace(".repl_pump_jobs", function(ctx) {
+        calls <<- calls + 1L
+        if (calls == 2L) {
+            signalCondition(structure(class = c("interrupt", "condition"),
+                                      list(message = "", call = NULL)))
+        }
+        pump(ctx)
+    }, "corteza")
+    on.exit(assignInNamespace(".repl_pump_jobs", pump, "corteza"), add = TRUE)
+    ctx$read_input <- scripted_input(c("long job", "/jobs"))
+    out <- capture.output(corteza:::run_repl_loop(ctx), type = "output")
+    expect_true(any(grepl("The job goes on; /jobs", out, fixed = TRUE)))
+    expect_true(any(grepl("late result", out, fixed = TRUE)))
+    expect_identical(corteza:::job_read(ctx$job_id)$status, "done")
+    corteza:::job_worker_close(ctx$session)
+})
+# A terminal driven from a room does not stay: the room's next message
+# is read as before.
+local({
+    ctx <- make_ctx(character(), function(task) list(reply = "x"))
+    setup(ctx)
+    id <- corteza:::job_submit(ctx$session, "quick")
+    ctx$remote_dir <- tempfile("remote")
+    expect_true(corteza:::.repl_jobs_open(ctx))
+    expect_false(corteza:::.repl_attach_jobs(ctx))
+    ctx$remote_dir <- NULL
+    deadline <- Sys.time() + 15
+    while (corteza:::.repl_jobs_open(ctx) && Sys.time() < deadline) {
+        capture.output(corteza:::.repl_pump_jobs(ctx))
+        Sys.sleep(0.1)
+    }
+    expect_identical(corteza:::job_read(id)$status, "done")
+    corteza:::job_worker_close(ctx$session)
+})
 
 # --- /cancel stops a running job; /jobs lists it ---
 local({

@@ -119,7 +119,7 @@ for (p in c("~/proj", "/srv/proj", "./proj", "C:/proj", "c:\\proj")) {
 for (p in c("corteza", "C:", "proj/sub", "!room:ex")) {
     expect_false(corteza:::bot_path_like(p), info = p)
 }
-expect_identical(corteza:::bot_parse_topic("C:\\proj | the project")$cwd, "C:\\proj")
+expect_identical(corteza:::bot_topic_path("C:\\proj | the project"), "C:\\proj")
 expect_true(corteza:::r_path_like("C:/Users/x/.ssh/id_rsa"))
 
 # ---- get_auto_config ----
@@ -147,7 +147,7 @@ allow <- list(approval = "ask", reason = "default: code/write/console")
 env_of <- function(tool, args, decision = allow, config = list()) {
     corteza:::monitor_in_envelope(
         list(tool = tool, args = args, paths = corteza:::resolve_paths(
-            list(args = args))),
+            list(tool = tool, args = args))),
         decision, config, root)
 }
 
@@ -205,15 +205,17 @@ expect_true(env_of("write_file", list(path = "R/new.R"),
 
 # ---- envelope: unknown tools and unresolvable mutations fail closed ----
 
-# A package tool (base::file.remove and friends are registered by the
-# default skill_packages config) is not one of classify_op()'s known
-# read/write/exec tools, so its effect can't be bounded.
-e <- env_of("base::file.remove", list(x = "R/turn.R"))
-expect_false(e$ok)
-expect_true(grepl("not a recognized", e$reason))
-
+# A tool with no class (a skill, a package tool whose entry names none)
+# may do anything, so its effect can't be bounded.
 e <- env_of("some_new_tool", list(thing = "x"))
 expect_false(e$ok)
+expect_true(grepl("not a recognized", e$reason))
+# Nor can a control or continue tool's: it starts or drives other work.
+for (tool in c("spawn_subagent", "query_subagent", "delegate")) {
+    e <- env_of(tool, list(task = "x"))
+    expect_false(e$ok, info = tool)
+    expect_true(grepl("not a recognized", e$reason), info = tool)
+}
 
 # A write tool whose target resolve_paths() cannot see must not pass by
 # having nothing to check.
@@ -442,20 +444,19 @@ expect_equal(length(seen), 2L)
 
 # ---- the gate sees "allow" decisions, not just "ask" ----
 #
-# This is the whole reason the gate is not an approval_cb. The default
-# tensor resolves the `random` data class to "allow" for writes on every
-# channel, and classify_data() only returns "code" under ~/projects or
-# ~/src -- so an ordinary repo elsewhere gets "allow" and would never
-# reach an approval callback. Assert that reading of policy directly, so
-# this test fails if the tensor is ever retuned.
-d <- corteza:::default_policy(list(tool = "write_file", channel = "console",
-                                   paths = "/srv/work/repo/R/x.R"))
+# This is the whole reason the gate is not an approval_cb. A write asks
+# by its class, but the user's config can allow it (approval_mode
+# "allow", or a permissions entry), and an allowed call never reaches an
+# approval callback. Assert that reading of policy directly.
+d <- corteza::policy(list(tool = "write_file", channel = "console",
+                          paths = "/srv/work/repo/R/x.R"),
+                     list(approval_mode = "allow"))
 expect_equal(d$approval, "allow")
 
 # And assert the gate is consulted for exactly that call anyway.
 g <- gate(list(tool = "write_file", args = list(path = "R/new.R"),
                paths = "R/new.R"),
-          list(approval = "allow", reason = "default: random/write/console"))
+          list(approval = "allow", reason = d$reason))
 expect_equal(g$action, "escalate")
 
 # ---- the gate enforces budget per call, not per turn ----
@@ -676,6 +677,48 @@ out <- h("read_file", list(path = "DESCRIPTION"))
 expect_equal(asked, 1L)
 expect_equal(executed, character())
 expect_true(grepl("user declined", out))
+
+# A call policy() denied is refused by the handler, whatever the gate
+# answers: nothing after policy lifts a deny. The gate is still shown
+# the call, with its ids, so its record holds the denial (an /auto
+# run's decision log), and its failure changes nothing.
+for (answer in c("proceed", "refuse", "escalate", "explode")) {
+    executed <- character()
+    shown <- list()
+    s <- corteza::new_session("console")
+    s$config <- list(permissions = list(write_file = "deny"))
+    s$auto_gate <- function(call, decision) {
+        shown[[length(shown) + 1L]] <<- list(call = call, decision = decision)
+        if (identical(answer, "explode")) {
+            stop("gate exploded")
+        }
+        list(action = answer, reason = "fixture gate")
+    }
+    h <- corteza:::.make_tool_handler(s, fake_exec)
+    out <- h("write_file", list(path = "R/x.R", content = "x"))
+    expect_equal(executed, character(), info = answer)
+    expect_true(grepl("corteza policy denied", out, fixed = TRUE), info = answer)
+    expect_equal(length(shown), 1L, info = answer)
+    expect_identical(shown[[1L]]$decision$approval, "deny", info = answer)
+    expect_identical(shown[[1L]]$call$auto_call_id, "c1", info = answer)
+}
+# The /auto gate's record of it: the decision log has the deny, with
+# policy as its authority.
+logged <- list()
+g <- corteza:::monitor_auto_gate("no-such-monitor", config = list(), cwd = root,
+    on_decision = function(d) logged[[length(logged) + 1L]] <<- d)
+s <- corteza::new_session("console")
+s$config <- list(permissions = list(write_file = "deny"))
+s$auto_gate <- g
+executed <- character()
+h <- corteza:::.make_tool_handler(s, fake_exec)
+out <- h("write_file", list(path = "R/x.R", content = "x"))
+expect_equal(executed, character())
+expect_true(grepl("corteza policy denied", out, fixed = TRUE))
+expect_equal(length(logged), 1L)
+expect_identical(logged[[1L]]$action, "deny")
+expect_identical(logged[[1L]]$authority, "policy")
+expect_identical(logged[[1L]]$call_id, "c1")
 
 # ---- escalation condition aborts rather than declining ----
 

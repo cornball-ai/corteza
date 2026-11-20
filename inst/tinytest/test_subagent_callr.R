@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # Subagent transport: spawn / query / kill via callr::r_session.
 # Gated at_home() purely for the per-test budget: the single
 # subagent_spawn() call cold-starts an r_session and loads corteza

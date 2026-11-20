@@ -13,9 +13,15 @@
 #' formals() + saber docs, and registers each exported function as a skill.
 #'
 #' @param pkg Package name (must be installed)
+#' @param class The class every registered function gets (R/policy.R).
+#'   NULL leaves them "unknown": each call asks, and plan mode refuses it.
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return Invisible character vector of registered tool names
 #' @noRd
-package_as_skills <- function(pkg, functions = NULL) {
+package_as_skills <- function(pkg, functions = NULL, class = NULL,
+                              table = NULL) {
+    class <- tool_class_check(class, pkg)
     if (!requireNamespace(pkg, quietly = TRUE)) {
         stop(sprintf("Package '%s' not installed", pkg), call. = FALSE)
     }
@@ -59,10 +65,16 @@ package_as_skills <- function(pkg, functions = NULL) {
 
         tool_name <- paste0(pkg, "::", fn_name)
 
-        register_skill(skill_spec(name = tool_name,
-                                  description = paste0("[", pkg, "] ", desc),
-                                  params = params,
-                                  handler = make_pkg_handler(pkg, fn_name)))
+        spec <- skill_spec(name = tool_name,
+                           description = paste0("[", pkg, "] ", desc),
+                           params = params,
+                           handler = make_pkg_handler(pkg, fn_name),
+                           class = class)
+        if (is.null(table)) {
+            register_skill(spec)
+        } else if (!tool_table_add(table, spec, tool_origin("package"))) {
+            next
+        }
 
         registered <- c(registered, tool_name)
     }
@@ -213,20 +225,24 @@ extract_rd_title <- function(help_md) {
 #' Load skill packages from config
 #'
 #' Processes the skill_packages config entry. Supports two formats:
-#' - String: load all exports from the package
-#' - List with package + functions: selective loading
+#' - String: load all exports from the package, each of class "unknown"
+#' - List with package, and optionally functions and class: selective
+#'   loading, every function of the entry taking its class
 #'
 #' @param config Config list from load_config()
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return Invisible NULL
 #' @noRd
-load_skill_packages <- function(config) {
+load_skill_packages <- function(config, table = NULL) {
     specs <- config$skill_packages %||% list()
     for (spec in specs) {
         tryCatch({
             if (is.character(spec)) {
-                package_as_skills(spec)
+                package_as_skills(spec, table = table)
             } else {
-                package_as_skills(spec$package, functions = spec$functions)
+                package_as_skills(spec$package, functions = spec$functions,
+                                  class = spec$class, table = table)
             }
         }, error = function(e) {
             pkg_name <- if (is.character(spec)) spec else spec$package

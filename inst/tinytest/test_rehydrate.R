@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 library(tinytest)
 
 # Threaded sessions and rehydration: a reply in a folded conversation's
@@ -35,7 +38,7 @@ fold_lookup <- function(chat, room_id, thread_root) {
     if (!is.list(st)) {
         return(NULL)
     }
-    list(segment = st$segment, vault = st$vault)
+    list(segment = st$segment, vault = st$vault, kind = st$kind)
 }
 
 # ---- Session keys ----
@@ -86,25 +89,32 @@ local({
 # ---- Archival files under the room, not the key ----
 # The registry key of a thread is not a room id, and archiving under it
 # would file the transcript against a room no homeserver has heard of.
+# The thread goes to the host as the range's thread.
 local({
     seen <- list()
-    orig <- corteza:::bot_archive_session
-    assignInNamespace("bot_archive_session",
-                      function(session, room_id, chat = NULL) {
-        seen[[length(seen) + 1L]] <<- room_id
-        "ok"
-    }, ns = "corteza")
-    on.exit(assignInNamespace("bot_archive_session", orig, ns = "corteza"),
-            add = TRUE)
+    hook <- function(chat, cfg, room_id, archive) {
+        seen[[length(seen) + 1L]] <<- list(room_id = room_id,
+                                           archive = archive)
+        list(archived = TRUE)
+    }
     reg <- corteza:::bot_new_session_registry()
     cfg <- test_cfg()
-    corteza:::bot_get_or_create_session(reg, "!r:ex", cfg)
-    corteza:::bot_get_or_create_session(
+    room <- corteza:::bot_get_or_create_session(reg, "!r:ex", cfg)
+    corteza:::bot_transcript_add(room, "$m1", "user", "main timeline")
+    thread <- corteza:::bot_get_or_create_session(
         reg, corteza:::bot_session_key("!r:ex", "$a"), cfg,
         room_id = "!r:ex")
-    corteza::bot_archive_all(reg)
-    expect_identical(sort(unique(unlist(seen))), "!r:ex")
-    expect_false(any(grepl("\r", unlist(seen), fixed = TRUE)))
+    corteza:::bot_transcript_add(thread, "$t1", "user", "in thread a")
+    expect_identical(corteza::bot_archive_all(reg, on_archive = hook,
+                                              cfg = cfg), 2L)
+    rooms <- vapply(seen, function(x) x$room_id, "")
+    expect_identical(rooms, c("!r:ex", "!r:ex"))
+    expect_identical(vapply(seen, function(x) x$archive$room_id, ""), rooms)
+    expect_false(any(grepl("\r", rooms, fixed = TRUE)))
+    # The registry lists the room's key before its thread's.
+    expect_null(seen[[1L]]$archive$thread)
+    expect_identical(seen[[2L]]$archive$thread, "$a")
+    expect_identical(seen[[2L]]$archive$entries[[1L]]$content, "in thread a")
 })
 
 # ---- Asking the host which archive a thread stands for ----
@@ -125,7 +135,20 @@ local({
                                   vault = "raw/matrix/seg.md"),
                              state_key = "$root")
     got <- corteza:::bot_thread_context(fold_lookup, lo, "topic", "$root")
-    expect_identical(got, list(segment = "!seg:ex", vault = "raw/matrix/seg.md"))
+    expect_identical(got, list(segment = "!seg:ex", vault = "raw/matrix/seg.md",
+                               kind = "transcript"))
+    # A summary is one only when the host says so; any other kind is a
+    # transcript, the form every archive had before summaries.
+    chat.api::chat_set_state(lo, "topic", "ai.cornball.fold",
+                             list(segment = "!seg:ex", vault = "notes/s.md",
+                                  kind = "summary"),
+                             state_key = "$sum")
+    got <- corteza:::bot_thread_context(fold_lookup, lo, "topic", "$sum")
+    expect_identical(got$kind, "summary")
+    got <- corteza:::bot_thread_context(function(...) {
+        list(segment = "!seg:ex", vault = "notes/s.md", kind = "SUMMARY")
+    }, lo, "topic", "$x")
+    expect_identical(got$kind, "transcript")
 })
 
 # ---- Reading the archive ----
@@ -144,6 +167,14 @@ local({
     expect_true(grepl("zzz", ex, fixed = TRUE))
     expect_false(grepl("aaa", ex, fixed = TRUE))
     expect_true(grepl("earlier turns omitted", ex, fixed = TRUE))
+    # A summary is read from its start, and says where it was cut.
+    ex <- corteza:::bot_archive_excerpt(big, max_chars = 1000L,
+                                        kind = "summary")
+    expect_true(nchar(ex) < 1200L)
+    expect_true(grepl("aaa", ex, fixed = TRUE))
+    expect_false(grepl("zzz", ex, fixed = TRUE))
+    expect_true(grepl("rest of the summary omitted", ex, fixed = TRUE))
+    expect_false(grepl("earlier turns omitted", ex, fixed = TRUE))
 })
 
 # An absolute reference resolves to itself; a relative one needs the
@@ -178,6 +209,30 @@ local({
     # survive.
     expect_identical(s$history[[1L]]$role, "user")
     expect_identical(s$history[[2L]]$role, "assistant")
+    expect_true(grepl("Its transcript follows", s$history[[1L]]$content,
+                      fixed = TRUE))
+
+    # A summary is seeded as one: the model is told it has the
+    # conversation only as someone else put it.
+    sf <- tempfile(fileext = ".md")
+    writeLines(c("Troy and the bot settled on seven days for the fold."), sf)
+    chat.api::chat_set_state(lo, "topic", "ai.cornball.fold",
+                             list(segment = "!seg:ex", vault = sf,
+                                  kind = "summary"),
+                             state_key = "$sum")
+    ss <- new.env(parent = emptyenv())
+    ss$history <- list(list(role = "user", content = "and now?"))
+    expect_message(ok <- corteza:::bot_rehydrate_session(ss, lo, "topic",
+                                                         "$sum", fold_lookup),
+                   "from the summary")
+    expect_true(ok)
+    expect_identical(length(ss$history), 3L)
+    expect_true(grepl("archived as a summary", ss$history[[1L]]$content,
+                      fixed = TRUE))
+    expect_false(grepl("transcript", ss$history[[1L]]$content, fixed = TRUE))
+    expect_true(grepl("seven days for the fold", ss$history[[1L]]$content,
+                      fixed = TRUE))
+    expect_true(grepl("summary", ss$history[[2L]]$content, fixed = TRUE))
 
     # A thread that is not a fold leaves the session alone.
     s2 <- new.env(parent = emptyenv())

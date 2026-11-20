@@ -1,3 +1,6 @@
+# Temporary user folders for this file, however it is run (isolate.R).
+source("isolate.R", local = TRUE)
+
 # run_repl_loop(): drive the shared loop with scripted input and stubbed
 # hooks, exercising dispatch / state mutation / local eval / a full
 # prompt->reply cycle without a live LLM.

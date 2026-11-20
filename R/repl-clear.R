@@ -1,5 +1,11 @@
 # Shared by the local slash dispatcher and the remote input reader.
 .repl_clear <- function(ctx) {
+    # Jobs this conversation queued and has not started keep what it
+    # allows them, taken now, while the session is still this one's
+    # (R/job-conversation.R).
+    if (isTRUE(ctx$session$.repl_jobs_ready)) {
+        job_conversation_hold(ctx$session)
+    }
     # Archive the current session's workspace so it stays
     # resumable, then spin up a fresh on-disk + in-memory
     # session. The old transcript is left on disk.
@@ -16,6 +22,17 @@
     ctx$session$history <- list()
     ctx$session$sessionId <- fresh$sessionId
     ctx$session$disk_session <- fresh
+    # A new conversation is a new session (WP14): its tools and system
+    # text are built again, and nothing told to the last one stands.
+    .repl_session_rebuild(ctx)
+    # The doer follows: its checkpoint moves to the new conversation,
+    # which starts with the R objects and no history (R/job-conversation.R).
+    if (isTRUE(ctx$session$.repl_jobs_ready)) {
+        job_conversation_clear(ctx$session, fresh$sessionId,
+                               checkpoint_key = paste0("repl:", fresh$sessionId))
+    }
+    # The reviewer's earlier calls were the old conversation's.
+    ctx$session$.review_log <- NULL
     # Re-register the tool-buffer observer against the new
     # session so subsequent tool calls land in the fresh
     # buffer.
@@ -58,4 +75,53 @@
                 ctx$palette$dim, killed_note, fresh$sessionId,
                 ctx$palette$reset))
     invisible(NULL)
+}
+
+# When a new answer to /trust takes effect at the terminal and in chat().
+.repl_trust_when <- function() {
+    "the next conversation (/clear starts one)"
+}
+
+# The session a new conversation starts with, as the terminal and chat()
+# start one (WP14): the config, the tool table and the system text taken
+# again from the directory, so a /trust answered since takes effect.
+# What a flag or a command set in this process (`ctx$config_set`: --dry-run,
+# /permissions, /context-edit and the rest) carries over. A system text
+# the caller gave chat() stays as given. The mode, the model and the
+# history are the caller's business, not this function's.
+.repl_session_rebuild <- function(ctx) {
+    s <- ctx$session
+    cwd <- s$cwd %||% ctx$cwd %||% getwd()
+    config <- tryCatch(load_config(cwd), error = function(e) {
+        message("/clear kept the session's config and tools: ",
+                conditionMessage(e))
+        NULL
+    })
+    if (!is.null(config)) {
+        for (key in unique(ctx$config_set %||% character())) {
+            config[key] <- list(s$config[[key]])
+        }
+        s$config <- config
+        ctx$config <- config
+        s$project_trusted <- project_trusted(cwd)
+        s$tool_table <- session_tool_table(cwd, config)
+        load_project_skills(cwd, code = FALSE)
+        if (!is.null(s$context_manifest)) {
+            catalog <- build_instruction_catalog(cwd)
+            bundle <- load_context_bundle(cwd, instruction_catalog = catalog,
+                include_instruction_catalog =
+                instruction_reader_selected(s$tools_filter),
+                prefix_sources = s$context_prefix_sources %||% list())
+            s$system <- bundle$system
+            s$context_manifest <- bundle$manifest
+            s$context_prefix_sources <- bundle$prefix_sources
+            s$instruction_catalog <- catalog
+        }
+        review_apply(s)
+    }
+    # Composed again at the next turn, availability tested again.
+    s$.prefix_base <- NULL
+    s$.request_prefix <- NULL
+    s$.prefix_seen <- NULL
+    invisible(s)
 }
