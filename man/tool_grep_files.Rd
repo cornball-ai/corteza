@@ -16,6 +16,8 @@ tool_grep_files(pattern, path = ".", file_pattern = "*.R")
 An MCP tool-result list.
 }
 \description{
-Search file contents with regex pattern.
+Search the files the glob `file_pattern` matches in `path` (no
+recursion) for a regex. Skips binary files and files over 10 MB;
+stops at 500 matches or 20 s and says so.
 }
 \keyword{internal}
