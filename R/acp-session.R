@@ -139,7 +139,7 @@
     # files are read as load_config() reads them, the project's only
     # where it is trusted; the default fills in nothing here.
     asked <- project_config(cwd)$run_r_mode %||%
-        load_config_file(corteza_config_path("config.json"))$run_r_mode
+    load_config_file(corteza_config_path("config.json"))$run_r_mode
     if (identical(asked, "in_process")) {
         session$acp_notes <- paste("corteza: run_r runs in a worker process",
                                    "of this session's own, not in corteza's",
