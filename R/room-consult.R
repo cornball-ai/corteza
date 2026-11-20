@@ -8,7 +8,8 @@
     }
     ensure_skills()
     names <- vapply(tools, function(t) t$name, "")
-    c(tools, skills_as_api_tools(setdiff(c("job_status", "job_cancel"), names)),
+    c(tools, skills_as_api_tools(setdiff(c("job_status", "job_cancel"), names),
+                                 session$tool_table),
         list(list(name = "ask_room", description = paste(
                     "Ask your own conversation in another room a question using its current text context.",
                     "This queues an answer from that room's conversational model, not its doer.",

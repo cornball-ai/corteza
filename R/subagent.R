@@ -229,6 +229,10 @@ subagent_turn_init <- function(provider = "anthropic", model = NULL,
                                         "subagent_turn_init(thinking=)")
     session$is_subagent <- TRUE
     session$config <- load_config(getwd())
+    # The child's own tools (R/tool-table.R), from the same inputs as its
+    # parent's: built in, the user's skills, the config's package tools,
+    # and the project's skills in a trusted directory.
+    session$tool_table <- session_tool_table(getwd(), session$config)
     session$instruction_catalog <- instruction_catalog
     if (!is.null(model)) {
         session$model_map$cloud <- model
@@ -1386,7 +1390,8 @@ subagent_live_token_count <- function(info) {
         # model name to look up a limit for.
         model <- sess$model_map$cloud %||%
         corteza::default_provider_model(sess$provider)
-        tools <- tryCatch(skills_as_api_tools(sess$tools_filter),
+        tools <- tryCatch(skills_as_api_tools(sess$tools_filter,
+                sess$tool_table),
                           error = function(e) NULL)
         list(
              tokens = corteza::estimate_live_context_tokens(

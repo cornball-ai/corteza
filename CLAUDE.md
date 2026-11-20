@@ -56,9 +56,22 @@ transport. `serve()` (`R/serve.R`) is a separate, spec-compliant MCP
 server for external clients only. Subagents are the one place a child R
 process is still used (`callr::r_session`, initialized via `worker_init()`).
 
-**Tool registry** (`R/registry.R`): `.skill_registry` is the single
-source of truth. `ensure_skills()` / `register_builtin_skills()`
-populate it on first use. `skills_as_api_tools()` converts to the
+**Tool registry** (`R/registry.R`): `.skill_registry` holds corteza's
+own tools and any a host registers by hand. `ensure_skills()` /
+`register_builtin_skills()` populate it on first use.
+
+**A session's tools** (`R/tool-table.R`): a session takes its tools
+once, when it starts, into `session$tool_table`
+(`session_tool_table()`): the registry's, the user's skills, the
+config's package tools and a trusted project's skills. A later source
+never takes a name an earlier one holds; it is skipped with a message.
+`turn()` offers the table, runs the table's handler, and puts the
+entry's `class` and `origin` on each call, which `call_class()` and
+`call_named_by_corteza()` read. Every surface builds one:
+`session_setup()` (`chat()`, rooms), the terminal, a child's
+`subagent_turn_init()` and `serve()`. A session made by `new_session()`
+alone reads the registry. So a bot's rooms, which share a process, each
+see their own project's tools. `skills_as_api_tools()` converts to the
 `llm.api::agent()` format; `sanitize_tool_name()` maps `::` to `__`
 for API compatibility.
 
@@ -125,9 +138,10 @@ Every tool has a class, declared where it is registered: `class =` in
 session's own work: subagents it starts, tasks, `exit_plan_mode`) or
 `continue` (runs work in a child, a worker or a room whose mode was set
 elsewhere: `query_subagent`, `delegate`, `job_resume`). A tool that
-names none is `unknown`. `classify_op()` reads the class from the
-registry; a room host's tools (`send_room_file` and 3 more) are in
-`.session_tool_classes`. A new built-in tool needs a class and a row in
+names none is `unknown`. A call carries the class of the entry it runs
+(`call_class()`); `classify_op()` reads a name's class from the
+session's table, or the registry without one; a room host's tools
+(`send_room_file` and 3 more) are in `.session_tool_classes`. A new built-in tool needs a class and a row in
 `test_tool_classes.R`'s table, or that file fails.
 
 **Order (`policy()`); nothing later lifts an earlier deny:**

@@ -1,4 +1,4 @@
-.auto_filter_tools <- function(tools, config = NULL) {
+.auto_filter_tools <- function(tools, config = NULL, table = NULL) {
     if (is.null(config)) {
         return(tools)
     }
@@ -8,9 +8,9 @@
         if (name %in% auto$never_broker) return(FALSE)
         if (name %in% c("edit_context", "task_create", "task_update",
                         "exit_plan_mode")) return(TRUE)
-        op <- classify_op(name)
+        op <- classify_op(name, table)
         identical(op, "read") ||
-        (identical(op, "write") && .auto_names_target(name, tool)) ||
+        (identical(op, "write") && .auto_names_target(name, tool, table)) ||
         (identical(op, "exec") && isTRUE(auto$allow_exec))
     }, tools)
 }
@@ -19,10 +19,10 @@
 # monitor_in_envelope() refuses a write whose target it cannot resolve,
 # so a write that can name none (harness_note) is not offered to a run
 # only the envelope approves: each call would end the run.
-.auto_names_target <- function(name, tool) {
+.auto_names_target <- function(name, tool, table = NULL) {
     props <- tool$input_schema$properties %||%
-    get_skill(name)$inputSchema$properties %||% list()
-    if (.args_named_by_corteza(name)) {
+    tool_entry(name, table)$inputSchema$properties %||% list()
+    if (.args_named_by_corteza(name, table)) {
         return(any(names(props) %in% .path_arg_keys))
     }
     any(vapply(props, function(p) identical(p$type, "string"), logical(1)))

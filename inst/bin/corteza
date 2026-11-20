@@ -606,16 +606,11 @@ run_agent <- function(opts) {
   # subprocess to spawn or connect for tool execution (CLI/chat
   # unification, Milestone 2).
 
-  # Register built-in skills, user-installed skills from the data
-  # dir + project's .corteza/skills, and any skill packages declared
-  # in config — matching chat()'s session_setup load order so both
-  # surfaces advertise the same tool set to the LLM. Without the
-  # user-skill loads the CLI tool count drifted below chat()'s.
-  corteza::ensure_skills()
-  corteza:::load_skills(corteza:::corteza_data_path("skills"))
-  corteza:::load_project_skills(cwd, docs = FALSE)
-  corteza:::load_skill_packages(config)
-  tools <- corteza::schema_from_registry(opts$tools)
+  # The session's own tools, as session_setup() builds them for chat():
+  # built in, the user's skills from the data dir, the config's skill
+  # packages and, in a trusted directory, the project's .corteza/skills.
+  tool_table <- corteza:::session_tool_table(cwd, config)
+  tools <- corteza:::skills_as_api_tools(opts$tools, tool_table)
 
   cat(sprintf("%s%d tools available.%s\n\n",
               color$dim, length(tools), color$reset))
@@ -649,7 +644,7 @@ run_agent <- function(opts) {
     cat("\n")
   }
 
-  # `tools` already built in-process above via schema_from_registry().
+  # `tools` already built in-process above from the session's table.
 
   # CLI tool-progress observer. Tools now run IN-PROCESS via
   # corteza::turn()'s default call_skill dispatcher (no tool_executor,
@@ -817,6 +812,7 @@ run_agent <- function(opts) {
     web_search = opts$web_search
   )
   turn_session$config <- config
+  turn_session$tool_table <- tool_table
   turn_session$context_edit <- opts$context_edit
   turn_session$cwd <- cwd
   turn_session$project_trusted <- corteza:::project_trusted(cwd)

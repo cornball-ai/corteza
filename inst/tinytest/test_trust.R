@@ -260,9 +260,20 @@ local({
     s <- setup()
     expect_false(ran())
     expect_false(isTRUE(s$project_trusted))
-    # A subagent's child process starts the same way.
-    ns$worker_init(proj)
-    setwd(old_wd)
+    # A subagent's child process starts the same way: worker_init(), then
+    # the session that takes its tools (subagent_turn_init()).
+    child_start <- function() {
+        st <- ns$.subagent_state
+        kept <- mget(c("session", "depth", "subagent_id"), envir = st,
+                     ifnotfound = list(NULL, NULL, NULL))
+        on.exit({
+            for (n in names(kept)) assign(n, kept[[n]], envir = st)
+            setwd(old_wd)
+        }, add = TRUE)
+        ns$worker_init(proj)
+        ns$subagent_turn_init()
+    }
+    child_start()
     expect_false(ran())
     # So does the MCP server, with its transport replaced. Nobody is
     # there to ask, so it says what it left alone, on stderr: stdout
@@ -300,8 +311,7 @@ local({
     expect_true(ran())
     expect_true(isTRUE(s$project_trusted))
     base::options(corteza.trust.ran = NULL)
-    ns$worker_init(proj)
-    setwd(old_wd)
+    child_start()
     expect_true(ran())
     base::options(corteza.trust.ran = NULL)
     got <- serve_once()

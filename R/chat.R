@@ -285,7 +285,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     set_log_enabled(FALSE)
     on.exit(set_log_enabled(TRUE), add = TRUE)
 
-    n_tools <- length(skills_as_api_tools(tools))
+    n_tools <- length(skills_as_api_tools(tools, turn_session$tool_table))
     # Resolve a placeholder NULL model to the provider's default name
     # (from llm.api's table) so the banner shows the actual model the
     # agent is about to call, matching the CLI's display.

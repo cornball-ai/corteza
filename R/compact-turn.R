@@ -509,7 +509,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     # so passing NULL here would undercount the live context for any
     # subagent with an active tool filter.
     tools_for_estimate <- tools %||% tryCatch(
-        skills_as_api_tools(session$tools_filter),
+        skills_as_api_tools(session$tools_filter, session$tool_table),
         error = function(e) NULL
     )
     system_for_estimate <- system %||% session$system

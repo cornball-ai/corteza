@@ -727,7 +727,7 @@ bot_job_approval <- function(chat, cfg, s, ev) {
     job <- ev$job
     req <- ev$request
     local_reason <- req$local_approval %||% .approval_remote_problem(
-        list(tool = req$tool, args = req$args), list(reason = req$reason), .secret_values(cfg))
+        job_request_call(req), list(reason = req$reason), .secret_values(cfg))
     if (!is.null(local_reason)) {
         job_answer(s, job$id, req$id, FALSE,
                    by = "remote approval declined", reason = local_reason)
@@ -834,7 +834,7 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
         approvers <- setdiff(approvers, c(job$origin$delegation$peer,
             bot_known_bots(cfg, self_id)))
     }
-    call <- list(tool = req$tool, args = req$args)
+    call <- job_request_call(req)
     if (!length(approvers)) {
         job_answer(s, job$id, req$id, FALSE, by = "no approver")
         bot_job_send(chat, s, job, bot_no_approver_notice(call))
