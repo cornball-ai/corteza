@@ -1,3 +1,12 @@
+# corteza 0.8.0.33
+
+- A call `policy()` denied is refused before any gate (a room's
+  supervisor, the terminal's reviewer, an `/auto` run's monitor). The
+  rule that nothing after `policy()` lifts a deny lived in each gate,
+  and a gate that answered otherwise would have let a denied call run.
+  A gate is still shown the call, so an `/auto` run's decision log keeps
+  the deny, but its answer is not read.
+
 # corteza 0.8.0.32
 
 - A session's system text and tool list stay fixed for the session. A
