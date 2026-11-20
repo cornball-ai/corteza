@@ -633,6 +633,155 @@ if (.Platform$OS.type != "windows" &&
     })
 }
 
+# A stop asked for leaves the conversation as it was: no summary is
+# asked for, and one asked for before the stop came is not installed.
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    stop_now <- FALSE
+    asked <- 0L
+    llm <- asNamespace("llm.api")
+    old_chat <- get("chat", envir = llm)
+    on.exit(utils::assignInNamespace("chat", old_chat, "llm.api"), add = TRUE)
+    utils::assignInNamespace("chat", function(...) {
+        asked <<- asked + 1L
+        if (identical(stop_now, "during")) {
+            stop_now <<- TRUE
+        }
+        list(content = "A summary.", usage = list(input_tokens = 1L,
+                                                  output_tokens = 1L))
+    }, "llm.api")
+    config <- list(subagents = list(context_compaction = list(
+        keep_recent_turns = 1L, keep_recent_tokens = 0L)))
+    fresh <- function() {
+        s <- corteza::new_session(provider = "anthropic",
+                                  model_map = list(cloud = "claude-test"))
+        s$stop_requested <- function() isTRUE(stop_now)
+        turns <- c("one", "two", "three")
+        s$history <- unlist(lapply(turns, function(t) {
+            list(list(role = "user", content = t),
+                 list(role = "assistant", content = toupper(t)))
+        }), recursive = FALSE)
+        s
+    }
+    compact <- function(s) {
+        ns$maybe_compact_turn_session(s, config, threshold = 0,
+                                      min_messages = 2L, reason = "manual")
+    }
+    # Asked before: no summary is asked for.
+    stop_now <- TRUE
+    s <- fresh()
+    before <- s$history
+    expect_false(isTRUE(compact(s)))
+    expect_identical(asked, 0L)
+    expect_identical(s$history, before)
+    # Asked while the summary was written: it is not installed.
+    stop_now <- "during"
+    s <- fresh()
+    expect_false(isTRUE(compact(s)))
+    expect_identical(asked, 1L)
+    expect_identical(s$history, before)
+    # Not asked: the same conversation compacts.
+    stop_now <- FALSE
+    s <- fresh()
+    expect_true(isTRUE(compact(s)))
+    expect_false(identical(s$history, before))
+})
+
+# A prompt that cannot be written to the transcript runs nothing: the
+# reviewer would judge the turn's calls without the person's latest
+# words, which here take back what the prompt before allowed (Codex's
+# probe on #298).
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    blocked <- "Do not write anything now. Just explain."
+    names <- c("transcript_append", "review_ask")
+    old <- mget(names, envir = ns)
+    on.exit(for (n in names) utils::assignInNamespace(n, old[[n]], "corteza"),
+            add = TRUE)
+    utils::assignInNamespace("transcript_append", function(session, role,
+                                                           content, ...) {
+        if (identical(role, "user") && identical(content, blocked)) {
+            stop("the disk is full")
+        }
+        old$transcript_append(session, role, content, ...)
+    }, "corteza")
+    # A reviewer that follows the conversation it is given.
+    utils::assignInNamespace("review_ask", function(session, q) {
+        if (any(grepl(blocked, q$conversation, fixed = TRUE))) {
+            list(verdict = "refuse", reason = "the latest prompt forbids it")
+        } else {
+            list(verdict = "approve", reason = "an earlier prompt allows it")
+        }
+    }, "corteza")
+    target <- file.path(fx$proj, "notes.txt")
+    model <- fake_model(list(list(text = "Ready."),
+                             list(tool = "write_file",
+                                  args = list(path = target, content = "changed")),
+                             list(text = "Done.")))
+    sid <- NULL
+    msgs <- NULL
+    said <- utils::capture.output(
+        msgs <- with_model(model, acp_run(start(fx$proj), function(msg, client) {
+            if (is_answer(2L)(msg)) {
+                sid <<- msg$result$sessionId
+                client$write(req(3L, "session/set_mode",
+                                 list(sessionId = sid, modeId = "review")))
+            }
+            if (is_answer(3L)(msg)) {
+                client$write(prompt(4L, sid, "You may write notes.txt."))
+            }
+            if (is_answer(4L)(msg)) {
+                client$write(prompt(5L, sid, blocked))
+            }
+            if (is_answer(5L)(msg)) {
+                client$finish()
+            }
+        })), type = "message")
+    expect_identical(answer(msgs, 4L)$result$stopReason, "end_turn")
+    refused <- answer(msgs, 5L)$error
+    expect_identical(refused$code, -32603L)
+    expect_true(grepl("nothing ran", refused$message, fixed = TRUE))
+    expect_true(any(grepl("the disk is full", said, fixed = TRUE)))
+    expect_false(file.exists(target))
+    expect_identical(model$i, 1L)
+})
+
+# A session is built in its own directory: a project skill's R file,
+# sourced as the tool table is made, reads a relative path from there,
+# not from the launcher's directory; and the caller's directory is the
+# working directory again afterwards (Codex's probe on #298).
+local({
+    fx <- acp_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    here <- getwd()
+    on.exit(setwd(here), add = TRUE)
+    launch <- file.path(fx$root, "launch")
+    dir.create(launch)
+    writeLines("the launcher's", file.path(launch, "label.txt"))
+    writeLines("the project's", file.path(fx$proj, "label.txt"))
+    skills <- file.path(fx$proj, ".corteza", "skills")
+    dir.create(skills, recursive = TRUE)
+    writeLines(c('label <- readLines("label.txt", warn = FALSE)',
+                 'register_skill(skill_spec("acp_probe_label", "The label at setup",',
+                 '    handler = function(args, ctx) ok(label), class = "read"))'),
+               file.path(skills, "probe.R"))
+    config <- tools::R_user_dir("corteza", "config")
+    dir.create(config, recursive = TRUE)
+    jsonlite::write_json(list(trusted_projects = list(fx$proj)),
+                         file.path(config, "config.json"), auto_unbox = TRUE)
+    setwd(launch)
+    session <- ns$.acp_session_build(list(tools = NULL), fx$proj,
+                                     list(provider = "anthropic", model = NULL))
+    entry <- ns$tool_entry("acp_probe_label", session$tool_table)
+    expect_false(is.null(entry))
+    read <- entry$handler(list(), list(session = session, cwd = fx$proj))
+    expect_identical(read$content[[1L]]$text, "the project's")
+    expect_identical(normalizePath(getwd()), normalizePath(launch))
+    expect_null(ns$tool_entry("acp_probe_label"))
+})
+
 # ---- Messages while a turn runs ---------------------------------------------
 # During the permission wait: a list is answered at once; a mode change
 # reaches the running session; a session for another directory is made

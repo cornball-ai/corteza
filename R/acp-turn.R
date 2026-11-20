@@ -30,13 +30,23 @@
     setwd(session$cwd)
 
     # The client speaks for the person: its prompt is written whole, as
-    # what was typed, which is what the reviewer reads (R/review.R).
+    # what was typed, which is what the reviewer reads (R/review.R). A
+    # prompt that cannot be written runs nothing: the reviewer would judge
+    # the turn's calls without the person's latest words, which may take
+    # back what an earlier prompt allowed.
     disk <- session$disk_session
-    tryCatch({
+    recorded <- tryCatch({
         transcript_append(disk, "user", text, typed = text)
-        session$disk_session <- session_title_once(disk, text)
-    }, error = function(e) .acp_log("could not write the transcript: ",
-                                    conditionMessage(e)))
+        TRUE
+    }, error = function(e) e)
+    if (!isTRUE(recorded)) {
+        .acp_log("could not write the transcript: ", conditionMessage(recorded))
+        .acp_refuse(paste("The prompt could not be written to the session's",
+                          "transcript, so nothing ran:",
+                          conditionMessage(recorded)), -32603L)
+    }
+    session$disk_session <- tryCatch(session_title_once(disk, text),
+                                     error = function(e) disk)
 
     before <- length(session$history %||% list())
     result <- tryCatch(turn(text, session),
@@ -89,6 +99,11 @@
     }
     .acp_transcript_end(session, reply, result)
     .acp_compact(session)
+    # A cancel read while the conversation was summarized left it as it
+    # was (maybe_compact_turn_session()), and the work stopped there.
+    if (isTRUE(live$cancelled)) {
+        return(list(stopReason = "cancelled"))
+    }
     list(stopReason = .acp_stop_reason(result$termination))
 }
 
