@@ -330,6 +330,15 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     } else {
         paste0(result, "\n\n_Requested from ", from$label %||% from$room, "._")
     }
+    # A job asked before a /clear finishes in the conversation that asked
+    # for it (R/job-conversation.R), and reports to the room as any job
+    # does. The room's timeline is the new conversation's, and a restart
+    # seeds it from there, so the result goes into the new history too,
+    # saying where it came from.
+    asked <- job$origin$conversation
+    if (!is.null(asked) && !identical(asked, session_conversation(s))) {
+        text <- paste0(text, "\n\n_Asked before /clear._")
+    }
     # A result is posted once; if it cannot go out now it is retried
     # (bot_post_or_queue()) rather than lost.
     sent <- bot_post_or_queue(chat, job$owner %||% job_worker_owner(s),

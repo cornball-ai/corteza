@@ -64,9 +64,15 @@ local({
     expect_identical(got$x, 42)
     expect_identical(got$history, 0L)
     expect_false(got$out$history)
-    # A checkpoint from before checkpoints named their conversation.
+    # A checkpoint from before checkpoints named their conversation: a
+    # room's could hold a history a /clear ended, so a conversation takes
+    # its objects only. A session with no conversation of its own takes
+    # its history, as before.
     put_checkpoint(file.path(root, "old"), id, NULL)
     got <- restore(file.path(root, "old"), "conv-b")
+    expect_identical(got$x, 42)
+    expect_identical(got$history, 0L)
+    got <- restore(file.path(root, "old"), NULL)
     expect_identical(got$history, 1L)
 })
 
@@ -237,49 +243,8 @@ local({
     expect_null(s$.job_held[[mine]])
 })
 
-# ---- The terminal's /clear goes through it ---------------------------------
-local({
-    calls <- list()
-    real <- ns$job_conversation_clear
-    assignInNamespace("job_conversation_clear",
-                      function(session, conversation, checkpoint_key = NULL) {
-        calls[[length(calls) + 1L]] <<- list(conversation = conversation,
-                                              key = checkpoint_key)
-        invisible(NULL)
-    }, ns = "corteza")
-    on.exit(assignInNamespace("job_conversation_clear", real, ns = "corteza"),
-            add = TRUE)
-    # The queued jobs are held first, while the session is still the old
-    # conversation's.
-    real_hold <- ns$job_conversation_hold
-    assignInNamespace("job_conversation_hold", function(session) {
-        calls[[length(calls) + 1L]] <<- list(held = session$sessionId)
-        invisible(0L)
-    }, ns = "corteza")
-    on.exit(assignInNamespace("job_conversation_hold", real_hold,
-                              ns = "corteza"), add = TRUE)
-    ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
-    ctx$palette <- list(dim = "", reset = "", cyan = "", yellow = "")
-    ctx$session <- new.env(parent = emptyenv())
-    ctx$session$on_tool <- list()
-    ctx$session$.repl_jobs_ready <- TRUE
-    ctx$session$sessionId <- "old-sess"
-    ctx$disk_session <- list(session = list(sessionId = "old-sess"),
-                             sessionId = "old-sess")
-    ctx$new_session_fn <- function() {
-        list(session = list(sessionId = "new-sess"), sessionId = "new-sess",
-             resumed = FALSE)
-    }
-    invisible(capture.output(ns$.repl_clear(ctx)))
-    expect_identical(calls, list(list(held = "old-sess"),
-                                 list(conversation = "new-sess",
-                                      key = "repl:new-sess")))
-    # A session without jobs is left alone.
-    ctx$session$.repl_jobs_ready <- NULL
-    invisible(capture.output(ns$.repl_clear(ctx)))
-    expect_identical(length(calls), 2L)
-})
+# The terminal's /clear and a room's reach job_conversation_clear(), each
+# once: test_room_conversation.R.
 
 # ---- A result that settles after /clear ------------------------------------
 # It goes to the conversation that asked for it, and the new one's talker

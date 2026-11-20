@@ -2046,28 +2046,48 @@ bot_new_session_registry <- function() {
 # self-echo arriving through sync appends the acknowledgement a second
 # time. And it must ledger it, or backfill reinserts that event later
 # among already archived ones.
-bot_reset_session <- function(registry, key, cfg, sent_id, ack,
+#
+# `conversation` is the new conversation's record, which the handler
+# saved before it answered the /clear (bot_conversation_begin(),
+# R/room-conversation.R): nothing is discarded before the record that
+# replaces it is on disk.
+bot_reset_session <- function(registry, key, cfg, sent_id, ack, conversation,
                               system = NULL, model = NULL, provider = NULL,
                               tools_filter = NULL, room_id = key) {
+    if (!is.list(conversation) || !is.character(conversation$id)) {
+        stop("bot_reset_session() needs the new conversation's saved record",
+             call. = FALSE)
+    }
     old <- NULL
     if (exists(key, envir = registry, inherits = FALSE)) {
         old <- get(key, envir = registry)
+        # Jobs the ending conversation queued keep what it allows them,
+        # taken while the session is still its own (R/job-conversation.R).
+        job_conversation_hold(old)
         .context_room_clear(old)
         rm(list = key, envir = registry)
     }
     s <- bot_get_or_create_session(registry, key, cfg, system = system,
                                    model = model, provider = provider,
                                    tools_filter = tools_filter,
-                                   room_id = room_id)
+                                   room_id = room_id,
+                                   conversation = conversation)
     # The room's jobs outlive its conversation. A job running when the
     # session is replaced is pumped by whichever session holds the
     # registry key, so the worker handles and the job in flight move to
     # the replacement; left on the discarded session, the job would never
-    # be settled and its worker would run on unowned.
+    # be settled and its worker would run on unowned. The job keeps the
+    # conversation it was asked in, and its authority record stays as
+    # that conversation left it: the cache that writes it does not move.
+    # What was held for its queued jobs moves with them.
     if (is.environment(old)) {
         job_state_move(old, s)
         s$context_edit <- old$context_edit
     }
+    # The clear every surface makes (R/job-conversation.R). A room keeps
+    # one checkpoint for each session key, which records the conversation
+    # it was saved in, so nothing is written for it here.
+    job_conversation_clear(s, conversation$id)
     if (!is.null(sent_id) && length(sent_id) && nzchar(sent_id)) {
         s$seen_event_ids <- bot_remember_event(s$seen_event_ids, sent_id)
         bot_transcript_add(s, sent_id, "assistant", ack)
@@ -2078,7 +2098,8 @@ bot_reset_session <- function(registry, key, cfg, sent_id, ack,
 
 bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
                                       model = NULL, provider = NULL,
-                                      tools_filter = NULL, room_id = key) {
+                                      tools_filter = NULL, room_id = key,
+                                      conversation = NULL) {
     if (exists(key, envir = registry, inherits = FALSE)) {
         return(get(key, envir = registry))
     }
@@ -2093,6 +2114,13 @@ bot_get_or_create_session <- function(registry, key, cfg, system = NULL,
     # The session key is the job key: a thread's jobs belong to the
     # thread's session, and their results come back to it.
     s$job_key <- key
+    # The conversation it holds (R/room-conversation.R): the one on
+    # record, so a restart goes on with it, unless /clear hands in a new
+    # one.
+    if (is.null(conversation)) {
+        conversation <- bot_conversation_open(cfg, key, room_id)
+    }
+    bot_conversation_attach(s, conversation)
     # This bot owns the jobs its rooms delegate; other bots sharing the
     # ledger, or the same room, do not touch them.
     s$job_owner <- bot_job_owner(cfg)
@@ -2604,6 +2632,27 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 next
             }
             archived <- filing$answer
+            # The new conversation is on disk before anything says it
+            # began or the session that holds this one goes: a restart
+            # opens the conversation the room's record names, so a
+            # record that could not be written would bring this one
+            # back. Then nothing is cleared, and the room is told.
+            conversation <- bot_conversation_begin(cfg, skey, m$channel, m)
+            if (is.null(conversation)) {
+                ack <- paste("Not cleared: the new conversation could not be",
+                             "recorded, so a restart would bring this one",
+                             "back. This session keeps it. Try /clear again.")
+                sent_id <- tryCatch(
+                                    bot_reply_send(chat, m$channel, ack, thread = m$thread),
+                                    error = function(e) NULL)
+                if (!is.null(sent_id)) {
+                    session$seen_event_ids <- bot_remember_event(
+                        session$seen_event_ids, sent_id)
+                    bot_transcript_add(session, sent_id, "assistant", ack)
+                }
+                replied <- replied + 1L
+                next
+            }
             # Whether the ended conversation becomes a room of its own
             # is the host's call, through the on_clear hook (see
             # bot_run_init()). Only when the host archived it: its
@@ -2628,9 +2677,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                 }
                 )
             }
-            if (exists(skey, envir = sessions, inherits = FALSE)) {
-                rm(list = skey, envir = sessions)
-            }
+            # The session stays in the registry until bot_reset_session()
+            # takes it: the helper clears its context, moves its jobs and
+            # worker to the replacement, and finds nothing to do with a
+            # session already gone.
             # The fresh session starts back on whatever this run was
             # given, so any badge rename is undone with it.
             cfg <- bot_update_displayname(cfg, model = model, chat = chat,
@@ -2644,8 +2694,10 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
                                 bot_reply_send(chat, m$channel, ack, thread = m$thread),
                                 error = function(e) NULL
             )
+            conversation <- bot_conversation_acked(cfg, skey, m$channel,
+                conversation, sent_id)
             bot_reset_session(sessions, skey, cfg, sent_id, ack,
-                              system = system, model = model,
+                              conversation, system = system, model = model,
                               provider = provider,
                               tools_filter = tools_filter,
                               room_id = m$channel)
@@ -2840,7 +2892,10 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
         )
         multi_human <- length(human_senders) > 1L
         added <- 0L
-        for (m in msgs) {
+        ids <- vapply(msgs, function(m) as.character(m$id %||% ""),
+                      character(1))
+        for (i in seq_along(msgs)) {
+            m <- msgs[[i]]
             # Only ordinary messages carry a turn. chat_history() has
             # already dropped the msgtypes the contract has no word for,
             # so this is the notice/emote filter and nothing else.
@@ -2864,6 +2919,11 @@ bot_backfill_sessions <- function(chat, sessions, cfg, system = NULL,
                 room_id = rid
             )
             if (m$id %in% session$seen_event_ids) {
+                next
+            }
+            # From a conversation a /clear ended: its session began after
+            # it (R/room-conversation.R). Each thread by its own record.
+            if (bot_conversation_before(session, ids, i, m$ts)) {
                 next
             }
             # The host's first refusal, as on the live path. It answers

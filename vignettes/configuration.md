@@ -1319,6 +1319,34 @@ A room has no transcript. How recently it was used is the modification time
 of `live.json` in its journal folder, a file that is not there before the
 session's first turn.
 
+A bot also records which conversation each of a room's sessions holds, in one
+file for each room, named by the `sessionId` of the room's own entry:
+
+```
+<state>/rooms/<sessionId>.json
+```
+
+`<state>` is the folder `CORTEZA_STATE_DIR` names, else `state` in the data
+directory. Retention leaves the file alone.
+
+| Field | Meaning |
+|-------|---------|
+| `room` | The room id |
+| `main` | The room's own conversation |
+| `threads` | Each thread's conversation, by the thread's root event id |
+
+Each conversation:
+
+| Field | Meaning |
+|-------|---------|
+| `id` | The conversation's id. A job asked in it carries the same id |
+| `since` | The event id of the `/clear` that started it. Absent for a conversation the bot started with the session |
+| `at` | When that `/clear` was sent, in seconds since 1970 |
+| `ack` | The event ids of the bot's answer to that `/clear` |
+
+A restart seeds each conversation with the room's messages after `since`, and
+leaves `ack` out.
+
 ## What a delegated job obeys
 
 A delegated job runs with the model, provider, reasoning settings and limits
@@ -1339,6 +1367,16 @@ and saved to the conversation that asked for it. Each conversation keeps its
 own checkpoint, so `corteza --resume <id>` brings back that conversation's
 worker as its last job left it, and a new conversation's objects are a copy
 taken at the `/clear`.
+
+In a room or a thread, `/clear` does the same for that conversation's worker:
+the R objects stay and the next job starts from an empty conversation. A job
+still running finishes and posts its result, marked as asked before the
+`/clear`. After a restart the bot seeds each conversation, the room's and each
+thread's, with nothing from before its own `/clear`.
+
+A checkpoint saved before 0.8.1 does not say which conversation it belongs to,
+so the first job after upgrading keeps the worker's R objects and starts its
+history over.
 
 ## Incomplete worker jobs
 
