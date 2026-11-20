@@ -136,8 +136,11 @@ How you are asked:
   not trusted and holds something a session would load. Enter means no.
 - `/trust` shows where the directory stands and what it holds. `/trust yes`
   trusts it.
-- A new answer applies from the next start of corteza. A session's prompt
-  and tools are fixed when it starts.
+- A new answer applies from the next conversation: `/clear` starts one, with
+  the config, the tools and the prompt taken again from the directory. A
+  session's prompt and tools are fixed while a conversation lasts. What a
+  flag or a command set in this process (`--dry-run`, `/permissions`,
+  `/dryrun`, `/context-edit`) carries over.
 - `/status` shows `trusted:` and lists what an untrusted session left alone.
 
 In a Matrix room, `/trust` acts on the room's directory and only an operator
@@ -439,6 +442,34 @@ Set it for a local model. An Ollama server decides the window when it loads a
 model (`OLLAMA_CONTEXT_LENGTH`, or 4k, 32k or 256k tokens by the memory of
 the GPU), so the table's row for an Ollama model is a guess, and your server
 may give the model less.
+
+## What a session sends
+
+A session's system text and its tool list are fixed for the session. Each
+request carries the earlier requests' messages unchanged, with the new ones
+after them, so the provider's cache holds and so do the model's thinking
+blocks. A change to either would make the provider read the whole history
+again, and a model that signs its thinking (next section) refuses a replay
+after one.
+
+- Plan mode, an `/auto` run and the task list change neither. When one of
+  them changes, the next prompt opens with a note in brackets, such as
+  `[Plan mode is on. ...]`, and the note stays in the history. After a
+  compaction, a context edit or a restore, which may have removed earlier
+  notes, the next prompt states the session again.
+- A tool the mode rules out stays in the list and is refused at the call:
+  `exit_plan_mode` outside plan mode, a write or a command in plan mode, a
+  call outside an `/auto` run's scope, and a call outside a job's tools. The
+  refusal says why.
+- The availability tests (the git tools in a repository, a search key) run
+  once, so a `git init` during a session adds no tool.
+
+These change the system text or the tools on purpose, and the log records
+each (`request_prefix_reset`): a move to another provider, the terminal's
+`/clear`, `/cd` in a room, a job that may not search (which sends the
+provider's tools without its search tool, with the thinking removed before
+and after it), and a worker given other tools. A context-editing session
+edits what it sends on every turn and gives up the cache.
 
 ## Thinking blocks after a rewrite
 
