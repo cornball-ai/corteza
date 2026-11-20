@@ -1,3 +1,12 @@
+# corteza 0.8.0.18
+
+- A compaction's summary ends with the names of the R objects `run_r`
+  made that are still in the session, and the handles still open, so
+  the model does not rebuild what it has. Names only, read with `ls()`,
+  so no object's code runs; at most 30 names. The terminal, `chat()`
+  and a child process list them; a room, whose objects are the bot's,
+  and a session whose `run_r` runs in a worker do not.
+
 # corteza 0.8.0.17
 
 - A room's trust messages go out as Markdown, with what a session left
