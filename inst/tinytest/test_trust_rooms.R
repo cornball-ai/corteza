@@ -152,6 +152,30 @@ local({
     if (!ns$trust_in_git(empty)) {
         expect_null(notice(room("!fifth:example", cwd = empty)))
     }
+
+    # ---- Lists, as a room renders them ---------------------------------------
+    # The terminal indents a list by 2 spaces; a room renders a message as
+    # Markdown, where the indent shows as nothing and the items run
+    # together, so a room gets a Markdown list, set off by blank lines.
+    md <- ns$bot_markdown_list
+    expect_identical(md(c("Left alone:", "  its config", "  AGENTS.md",
+                          "/trust yes")),
+                     c("Left alone:", "", "- its config", "- AGENTS.md", "",
+                       "/trust yes"))
+    expect_identical(md(c("a", "  x")), c("a", "", "- x"))
+    expect_identical(md(c("a", "b")), c("a", "b"))
+    expect_identical(md(character()), character())
+    expect_false(grepl("\n  ", note, fixed = TRUE))
+    expect_true(grepl("\n- [^\n]*AGENTS.md", note))
+    expect_true(grepl("\n- [^\n]*AGENTS.md",
+                      command(cfg, room(), "@troy:example", "")))
+    expect_true(any(startsWith(status(room()), "- ")))
+    # Rendered as the Matrix client renders it: a list.
+    if (requireNamespace("mx.client", quietly = TRUE) &&
+        exists("mx_markdown_to_html", envir = asNamespace("mx.client"))) {
+        html <- get("mx_markdown_to_html", envir = asNamespace("mx.client"))(note)
+        expect_true(grepl("<ul><li>", html, fixed = TRUE))
+    }
 })
 
 # ---- Through the poll loop -------------------------------------------------
@@ -217,6 +241,8 @@ local({
         "chat.api")
     patch("bot_should_respond", function(...) TRUE)
     sent <- character()
+    # Whether each was sent as Markdown, which a room renders as such.
+    marked <- logical()
     refuse <- 0L
     patch("bot_reply_send", function(chat, channel, text, ...) {
         if (refuse > 0L) {
@@ -224,6 +250,7 @@ local({
             stop("the homeserver is away")
         }
         sent <<- c(sent, text)
+        marked <<- c(marked, isTRUE(list(...)$markdown))
         paste0("$sent", length(sent))
     })
     turns <- 0L
@@ -259,6 +286,9 @@ local({
     expect_equal(length(sent), 3L)
     expect_true(grepl("Not trusted", sent[[2L]], fixed = TRUE))
     expect_true(grepl("AGENTS.md", sent[[2L]], fixed = TRUE))
+    # What it left alone goes out as a Markdown list.
+    expect_true(grepl("\n- [^\n]*AGENTS.md", sent[[2L]]))
+    expect_true(marked[[2L]])
     expect_equal(sent[[3L]], "A reply.")
     expect_false(in_history("Not trusted"))
     expect_true(any(vapply(s$transcript, function(x) {
@@ -276,6 +306,8 @@ local({
     expect_false(ns$project_trusted(proj))
     expect_equal(say("/trust"), 1L)
     expect_true(grepl("Not trusted", sent[[6L]], fixed = TRUE))
+    expect_true(grepl("\n- [^\n]*AGENTS.md", sent[[6L]]))
+    expect_true(marked[[6L]])
     expect_false(ns$project_trusted(proj))
     expect_equal(say("trust yes"), 1L)
     expect_true(grepl("Trusted", sent[[7L]], fixed = TRUE))
@@ -287,6 +319,8 @@ local({
     expect_equal(say("status"), 1L)
     expect_true(grepl("trusted: no for this session, yes from the next",
                       sent[[8L]], fixed = TRUE))
+    expect_true(grepl("\n- [^\n]*AGENTS.md", sent[[8L]]))
+    expect_true(marked[[8L]])
     expect_equal(turns, 3L)
     # "trust me" is not the command.
     expect_equal(say("trust me"), 1L)

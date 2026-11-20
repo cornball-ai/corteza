@@ -509,7 +509,7 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     # so passing NULL here would undercount the live context for any
     # subagent with an active tool filter.
     tools_for_estimate <- tools %||% tryCatch(
-        skills_as_api_tools(session$tools_filter),
+        skills_as_api_tools(session$tools_filter, session$tool_table),
         error = function(e) NULL
     )
     system_for_estimate <- system %||% session$system
@@ -628,6 +628,12 @@ maybe_compact_turn_session <- function(session, config, kind = NULL,
     }
     summary_usage <- attr(summary, "usage", exact = TRUE)
     summary <- as.character(summary)
+    # The turns that made the session's R objects go, and the objects
+    # stay: the summary ends with a list of them (R/r-objects.R).
+    objects <- tryCatch(r_objects_note(session), error = function(e) "")
+    if (nzchar(objects)) {
+        summary <- paste0(summary, "\n\n", objects)
+    }
     # The kept tail's thinking blocks were signed with the summarized
     # turns in front of them, and a provider that checks refuses them
     # now. They come out here, ahead of the event, so a host's hook sees

@@ -28,13 +28,17 @@ hidden_tools <- function(cwd = getwd()) {
 #' Get tool categories (built-in + package-derived)
 #'
 #' Built-in tools keep named categories. Package tools are auto-categorized
-#' by package name (e.g., base::readLines -> "base" category).
+#' by package name (e.g., base::readLines -> "base" category), from the
+#' same tools the filter selects among: the session's table, or the
+#' registry without one.
 #'
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return Named list of category -> tool name vectors
 #' @noRd
-get_tool_categories <- function() {
+get_tool_categories <- function(table = NULL) {
     cats <- .builtin_categories
-    all_names <- list_skills()
+    all_names <- tool_names(table)
     pkg_tools <- all_names[grepl("::", all_names, fixed = TRUE)]
     for (tool_name in pkg_tools) {
         pkg <- sub("::.*", "", tool_name)
@@ -51,14 +55,15 @@ get_tool_categories <- function() {
 #' @param filter Character vector of tool names or categories to include.
 #'   Categories: file, code, r, search, web, git, subagent.
 #'   Use "core" for file+code+git, "all" for everything.
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return List of tool definitions with names, descriptions, and schemas
 #' @noRd
-get_tools <- function(filter = NULL) {
-    # Get tools from skill registry
-    all_tools <- skills_as_tools()
+get_tools <- function(filter = NULL, table = NULL) {
+    all_tools <- skills_as_tools(table)
 
     # If no skills registered, register built-ins and try again
-    if (length(all_tools) == 0) {
+    if (length(all_tools) == 0 && is.null(table)) {
         register_builtin_skills()
         all_tools <- skills_as_tools()
     }
@@ -82,7 +87,7 @@ get_tools <- function(filter = NULL) {
     }
 
     # Expand categories to tool names
-    cats <- get_tool_categories()
+    cats <- get_tool_categories(table)
     tool_names <- character()
     for (f in filter) {
         if (f %in% names(cats)) {
@@ -120,18 +125,20 @@ ensure_skills <- function() {
 #' expected by llm.api::agent() (input_schema).
 #'
 #' @param filter Character vector of tool names or categories to include.
+#' @param table A session's tool table (R/tool-table.R), or NULL for the
+#'   registry.
 #' @return List of tool definitions for llm.api::agent()
 #' @noRd
-skills_as_api_tools <- function(filter = NULL) {
+skills_as_api_tools <- function(filter = NULL, table = NULL) {
     # Drop tools whose `available()` predicate returns FALSE so chat()
     # and the CLI advertise the same set. Without this, chat() saw
     # tools the CLI (via schema_from_registry) had already filtered
     # out — e.g. git_* when not in a repo — and the /status tool count
     # disagreed between surfaces. Predicates default to TRUE on
     # error so a broken check doesn't hide a tool.
-    mcp_tools <- get_tools(filter)
+    mcp_tools <- get_tools(filter, table)
     mcp_tools <- Filter(function(t) {
-        entry <- get_skill(t$name)
+        entry <- tool_entry(t$name, table)
         if (is.null(entry$available)) return(TRUE)
         isTRUE(tryCatch(entry$available(), error = function(e) TRUE))
     }, mcp_tools)

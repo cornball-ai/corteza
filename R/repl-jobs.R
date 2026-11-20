@@ -110,7 +110,7 @@
 # approves; anything else, including EOF, declines.
 .repl_job_approval <- function(ctx, ev) {
     req <- ev$request
-    call <- list(tool = req$tool, args = req$args)
+    call <- job_request_call(req)
     cat(sprintf("\n%sJob %s asks: %s%s\n", ctx$palette$yellow %||% "",
                 ev$job$id,
                 bot_approval_prompt(call, list(reason = req$reason),

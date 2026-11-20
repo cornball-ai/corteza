@@ -22,8 +22,9 @@ Returns a decision \code{list(model, approval, reason)}. \code{model} is
 \code{"cloud"} or \code{"local"}; nothing routes on it yet.
 \code{approval} is \code{"allow"}, \code{"ask"}, or \code{"deny"}. A
 verdict from the credential rule also carries
-\code{rule = "credential"}, and one from plan mode
-\code{rule = "plan_mode"}.
+\code{rule = "credential"}, one from plan mode
+\code{rule = "plan_mode"}, and one from a room with no directory
+\code{rule = "unbound_room"}.
 }
 \details{
 Every tool has a class, declared where it is registered:
@@ -33,8 +34,10 @@ worker or another room). A tool that declares none is
 \code{"unknown"}. By default \code{read}, \code{control} and
 \code{continue} are allowed, and \code{write}, \code{exec} and
 \code{unknown} ask. Plan mode refuses \code{write}, \code{exec},
-\code{continue} and \code{unknown}, and nothing lifts that refusal.
-A path under a credential store asks next, whatever follows.
+\code{continue} and \code{unknown}. A Matrix room with no directory
+(\code{context$unbound}) refuses everything but \code{read} and a few
+named \code{control} tools. Nothing lifts a mode's refusal. A path
+under a credential store asks next, whatever follows.
 
 When \code{config} is supplied, the user's settings are overlaid on
 the table: a \code{permissions} entry replaces the verdict for its

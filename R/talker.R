@@ -177,6 +177,13 @@ tool_delegate <- function(task, review = NULL, room = NULL,
     if (!is.environment(session)) {
         return(err("delegate needs a live session"))
     }
+    # A room with no directory hands no work on, to its own doer or
+    # another room's (WP10). policy() refuses `delegate` there first;
+    # this holds for any other way in.
+    if (isTRUE(session$unbound)) {
+        return(err(paste("This room has no directory, so it hands no work",
+                         "to a doer.", bot_unbound_how())))
+    }
     if (!is.null(room) && nzchar(trimws(as.character(room)[[1L]]))) {
         # Another room's session, its directory, and its doer belong to
         # the surface that holds the rooms. The surface supplies the

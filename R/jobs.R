@@ -470,6 +470,11 @@ job_approval_request <- function(id, call, decision, extra = list()) {
                showWarnings = FALSE)
     extra$local_approval <- .approval_remote_problem(call, decision,
         .subagent_state$session$secret_values %||% character())
+    # The class and origin the worker's session read for the tool
+    # (R/tool-table.R) go with it, so the process that answers reads
+    # the same entry (job_request_call()).
+    extra$class <- call$class
+    extra$origin <- call$origin
     job_write_file(job_approval_path(id, req, "request"), c(list(
                 id = req,
                 job = id,
@@ -482,6 +487,16 @@ job_approval_request <- function(id, call, decision, extra = list()) {
                 reason = decision$reason %||% "ask"
             ), extra))
     req
+}
+
+# The call an approval request names, with the class and origin its
+# worker read for the tool. A request from before 0.8.1 has neither, and
+# its call is read from the registry, as before.
+job_request_call <- function(req) {
+    call <- list(tool = req$tool, args = req$args)
+    call$class <- req$class
+    call$origin <- req$origin
+    call
 }
 
 # Worker side: wait for the answer. TRUE only for an explicit approval

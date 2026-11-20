@@ -6,7 +6,8 @@
     ensure_skills()
     existing <- vapply(tools, function(t) t$name, "")
     tools <- c(tools,
-               skills_as_api_tools(setdiff(c("job_status", "job_cancel"), existing)))
+               skills_as_api_tools(setdiff(c("job_status", "job_cancel"), existing),
+                                   session$tool_table))
     c(tools, list(list(name = "delegate_to",
                        description = paste("Ask a configured bot to run a self-contained task asynchronously.",
                     "The result will return here; do not invent the answer.",
