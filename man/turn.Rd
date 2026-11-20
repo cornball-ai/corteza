@@ -55,6 +55,13 @@ results so no completed tool call runs twice. Fallback replies identify
 their actual model/provider; API-key fallbacks carry a prominent billable
 usage warning. Errors that are not limits are rethrown untouched.
 
+A turn that ends on an error leaves a history the next request can
+use. Before the error leaves \code{turn()}, each tool call the model
+made that has no result gets a placeholder result, and a note says
+the turn stopped on that error. A turn also closes, before its first
+request, any call that an earlier turn or an earlier process left
+without a result.
+
 }
 \examples{
 \dontrun{
