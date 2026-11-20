@@ -1358,6 +1358,10 @@ your approval stops that call. A worker cannot end plan mode; you do. After
 `/clear`, a job started before it keeps the settings its conversation last
 had, and `/cancel` stops it.
 
+A job stopped mid-run keeps what it wrote to files. The R objects and history
+its worker made since its last checkpoint are gone. The job's report names
+that checkpoint, which the next job starts from.
+
 At the terminal, `/clear` starts a new conversation for the worker too. Its R
 objects stay, as they do in the terminal's own session, and its history does
 not: the next job starts from an empty conversation, with the instructions and

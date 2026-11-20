@@ -303,6 +303,27 @@ seeds nothing from before a conversation's start
 (`bot_conversation_before()`), each thread by its own record. Retention
 never removes the file.
 
+## A turn can be asked to stop (`R/turn-stop.R`)
+
+A session may carry `stop_requested`, a function of no arguments.
+`turn()` asks it before each model request (wrapped around the audit's
+`request_callback`, at phase `start`), before each tool call (in the
+handler, beside `.remote_check_stop()`), again just before the call
+runs, after any wait at the gate or the approval prompt (audited as
+`stopped`), and on each streamed delta
+(`.turn_stop_sink()`). The first three raise `corteza_stop`, classed
+`interrupt` so the `error` handlers around tool dispatch and llm.api's
+notifier let it through; the sink raises `llm_cancelled`, and `agent()`
+returns with the history so far. `turn()` catches both, repairs the
+history with `apply_exit_marker()` and returns status `cancelled`.
+Ctrl+C and remote control's stop keep their own path. Nothing sets the
+function yet; ACP's `session/cancel` will. No turn waits on a doer
+today (`delegate` returns at once), and a loop that does must read the
+same function and call `job_cancel()`. A cancelled job's reason
+(`job_cancel_reason()`) names the checkpoint the next job starts from,
+read through the identity in the job's dispatch record, since the
+session's may have moved with a `/clear`.
+
 ## Voice: the brain and AgentVoice (`R/voice-turn.R`)
 
 `voice_turn()` and `voice_turn_report()` are the voice brain: a turn
