@@ -156,7 +156,10 @@ local({
     ctx$last_assistant_response <- "the talker's words"
     type(ctx, "/copy")
     expect_identical(ctx$copied, "the talker's words")
-    expect_true(any(grepl("No tasks", type(ctx, "/tasks"), fixed = TRUE)))
+    # Its task list is off unless its config turns it on, and /tasks says
+    # so (task_list_enabled).
+    expect_true(any(grepl("The task list is off", type(ctx, "/tasks"),
+                          fixed = TRUE)))
     expect_true(any(grepl("No tool calls recorded", type(ctx, "/trace"),
                           fixed = TRUE)))
     expect_true(any(grepl("No tool outputs yet", type(ctx, "/last"),
