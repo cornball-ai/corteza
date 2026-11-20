@@ -183,8 +183,10 @@ local({
         "00000000-0000-0000-0000-000000000000"
     }, type(ctx, "/spawn look around"))
     expect_identical(parent, s)
-    expect_true(any(grepl("No active subagents", type(ctx, "/agents"),
-                          fixed = TRUE)))
+    # The process's registry, which other files in it may have used.
+    expect_true(grepl(ns$format_subagent_list(ns$subagent_list()),
+                      paste(type(ctx, "/agents"), collapse = "\n"),
+                      fixed = TRUE))
     for (cmd in c("/ask 99 hi", "/queue 99 hi", "/collect 99", "/kill 99")) {
         expect_true(any(grepl("Subagent not found: 99", type(ctx, cmd),
                               fixed = TRUE)), info = cmd)
@@ -342,8 +344,10 @@ local({
     invisible(capture.output(ns$.repl_present_job_event(ctx,
         list(type = "settled", job = ns$job_read(job)))))
     expect_equal(s$spend$segments[[1L]]$input_tokens, 1200)
-    expect_true(any(grepl("(1.2K in / 300 out)", type(ctx, "/spent"),
-                          fixed = TRUE)))
+    # 1,500 tokens in all. Whether /spent prints its short form depends
+    # on the process's subagent spend, which an earlier file in the same
+    # process (R CMD check runs them in one) may have left.
+    expect_true(any(grepl("1.5K tok", type(ctx, "/spent"), fixed = TRUE)))
     last <- s$history[[length(s$history)]]
     expect_true(grepl("There are 3 files.", last$content, fixed = TRUE))
     transcript <- readLines(ns$session_transcript_path(ctx$disk_session$sessionId))
