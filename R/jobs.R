@@ -475,6 +475,10 @@ job_approval_request <- function(id, call, decision, extra = list()) {
     # the same entry (job_request_call()).
     extra$class <- call$class
     extra$origin <- call$origin
+    # The policy rule behind the ask, "" for none. The terminal's "allow
+    # always" answers a job's call as it answers the session's own, and
+    # never the credential rule's ask (.repl_job_answered()); a request
+    # that names no rule, as none did before 0.8.1, is asked.
     job_write_file(job_approval_path(id, req, "request"), c(list(
                 id = req,
                 job = id,
@@ -484,7 +488,8 @@ job_approval_request <- function(id, call, decision, extra = list()) {
                 audit_parent = call$audit,
                 tool = call$tool %||% call$name %||% "",
                 args = job_approval_args(call$args),
-                reason = decision$reason %||% "ask"
+                reason = decision$reason %||% "ask",
+                rule = decision$rule %||% ""
             ), extra))
     req
 }
