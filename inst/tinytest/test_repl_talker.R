@@ -381,6 +381,40 @@ local({
         got <- ask("bash", rule = NA, reply = "y")
         expect_identical(got$asked, plain)
         expect_identical(got$by, "local")
+        # Codex's case on #297: under review, the doer's gate files the
+        # request. The credential rule goes with it, so the saved "always"
+        # for the tool does not answer it there either. A write in the
+        # project, through the same gate, it does answer.
+        ns$approval_save(ctx$cwd, "write_file")
+        worker <- ns$.job_worker_state
+        gate <- ns$.job_worker_child_review_gate(ctx$cwd)
+        filed <- function(path) {
+            call <- list(tool = "write_file", class = "write",
+                         args = list(path = path, content = "x"))
+            job <- ns$job_create("Write it.", workspace = ctx$cwd,
+                                 owner = s$job_owner,
+                                 origin = list(session_key = s$job_key))
+            worker$job_id <- job
+            worker$approval_timeout <- 0.2
+            on.exit({
+                worker$job_id <- NULL
+                worker$approval_timeout <- NULL
+                ns$job_settle(job, "done", result = "ran")
+            })
+            gate(call, corteza::policy(call))
+            files <- list.files(file.path(ns$job_dir(job), "approvals"),
+                                "[.]request[.]json$", full.names = TRUE)
+            ns$job_read_file(files[[1L]])
+        }
+        secret <- filed("~/.ssh/config")
+        expect_identical(secret$rule, "credential")
+        expect_false(ns$.repl_job_answered(s$approval_cb, secret,
+                                           ns$job_request_call(secret)))
+        expect_null(ns$.repl_job_always(s$approval_cb, secret))
+        notes <- filed(file.path(ctx$cwd, "notes.md"))
+        expect_identical(notes$rule, "")
+        expect_true(ns$.repl_job_answered(s$approval_cb, notes,
+                                          ns$job_request_call(notes)))
         # Another tool is asked.
         expect_identical(ask("run_r", reply = "n")$asked, offered)
         # Under review, a call the person allowed always goes by the
