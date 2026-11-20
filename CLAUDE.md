@@ -302,8 +302,10 @@ never removes the file.
 A session may carry `stop_requested`, a function of no arguments.
 `turn()` asks it before each model request (wrapped around the audit's
 `request_callback`, at phase `start`), before each tool call (in the
-handler, beside `.remote_check_stop()`) and on each streamed delta
-(`.turn_stop_sink()`). The first two raise `corteza_stop`, classed
+handler, beside `.remote_check_stop()`), again just before the call
+runs, after any wait at the gate or the approval prompt (audited as
+`stopped`), and on each streamed delta
+(`.turn_stop_sink()`). The first three raise `corteza_stop`, classed
 `interrupt` so the `error` handlers around tool dispatch and llm.api's
 notifier let it through; the sink raises `llm_cancelled`, and `agent()`
 returns with the history so far. `turn()` catches both, repairs the
