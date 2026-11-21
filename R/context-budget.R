@@ -350,9 +350,81 @@ message_text <- function(message) {
                           estimate_text_tokens(visible_json) + ceiling(encrypted_chars / 24)
             ))
     }
-    estimate_text_tokens(sprintf("%s: %s",
-                                 message$role %||% message$type %||% "unknown",
-                                 message_text(message)))
+    label <- message$role %||% message$type %||% "unknown"
+    # A chat-completions call (OpenAI and the providers that copy it)
+    # keeps its arguments beside the content, under tool_calls.
+    calls <- if (is.list(message)) message$tool_calls
+    calls_tok <- if (length(calls)) {
+        estimate_text_tokens(tryCatch(
+                                      jsonlite::toJSON(calls, auto_unbox = TRUE, null = "null"),
+                                      error = function(e) ""))
+    } else {
+        0L
+    }
+    content <- if (is.list(message)) message$content
+    if (is.list(content) && !.text_blocks_only(content)) {
+        return(as.integer(estimate_text_tokens(paste0(label, ": ")) +
+                          .estimate_block_tokens(content) + calls_tok))
+    }
+    as.integer(estimate_text_tokens(sprintf("%s: %s", label,
+                message_text(message))) +
+               calls_tok)
+}
+
+.text_blocks_only <- function(blocks) {
+    all(vapply(blocks, function(b) {
+        is.list(b) && identical(b$type %||% "text", "text")
+    }, logical(1)))
+}
+
+# Anthropic keeps a turn's content as blocks. A tool's result holds its
+# text under `content` (a string, or blocks of its own) and a call its
+# arguments under `input`, so message_text(), which reads `text`, saw
+# them only through str(), which cuts each string to a line: a
+# 37,000-character file a tool read counted as about 100 tokens, and a
+# session that read files compacted far past its cap. Count the blocks'
+# JSON surface at chars/4, as for Codex output, and what is opaque at
+# chars/24: a thinking block's signature, a redacted block's data, an
+# image's or a document's base64 (an OpenAI-style data URL too). Only a
+# "base64" source is opaque: a plain-text document's data is its text.
+.estimate_block_tokens <- function(blocks) {
+    opaque <- 0
+    take <- function(x) {
+        if (is.character(x)) {
+            opaque <<- opaque + sum(nchar(x, type = "chars"))
+        }
+    }
+    visible <- function(b) {
+        if (!is.list(b)) {
+            return(b)
+        }
+        type <- b$type %||% ""
+        if (identical(type, "thinking")) {
+            take(b$signature)
+            b$signature <- NULL
+        } else if (identical(type, "redacted_thinking")) {
+            take(b$data)
+            b$data <- NULL
+        } else if (type %in% c("image", "document") && is.list(b$source) &&
+            identical(b$source$type, "base64")) {
+            take(b$source$data)
+            b$source$data <- NULL
+        } else if (identical(type, "image_url") && is.list(b$image_url) &&
+            is.character(b$image_url$url) && length(b$image_url$url) == 1L &&
+            startsWith(b$image_url$url, "data:")) {
+            take(b$image_url$url)
+            b$image_url$url <- NULL
+        } else if (identical(type, "tool_result") && is.list(b$content)) {
+            b$content <- lapply(b$content, visible)
+        }
+        b
+    }
+    json <- tryCatch(
+                     jsonlite::toJSON(lapply(blocks, visible), auto_unbox = TRUE,
+                                      null = "null"),
+                     error = function(e) ""
+    )
+    as.integer(estimate_text_tokens(json) + ceiling(opaque / 24))
 }
 
 #' Token estimate for a list of messages (history).

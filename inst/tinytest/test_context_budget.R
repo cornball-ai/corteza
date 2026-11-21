@@ -85,6 +85,71 @@ block_msg <- list(list(role = "user",
                        content = list(list(type = "text",
                                            text = "hello world"))))
 expect_true(corteza::estimate_history_tokens(block_msg) > 6L)
+# Text blocks alone count as the same text in a string does.
+expect_equal(corteza::estimate_history_tokens(block_msg),
+             corteza::estimate_history_tokens(list(list(role = "user",
+                                                        content = "hello world"))))
+
+# A tool's result and a call's arguments count in full. Before 0.8.1 a
+# block list was read for `text` alone, and the rest through str(), which
+# cuts each string to a line: a 37,000-character file a tool read counted
+# as about 100 tokens.
+file_text <- strrep("a line of the file a tool read\n", 1000L)
+floor_tok <- nchar(file_text) / 4
+read_turn <- list(
+    list(role = "assistant", content = list(
+        list(type = "tool_use", id = "toolu_1", name = "read_file",
+             input = list(path = "long.txt")))),
+    list(role = "user", content = list(
+        list(type = "tool_result", tool_use_id = "toolu_1",
+             content = file_text))))
+expect_true(corteza::estimate_history_tokens(read_turn) >= floor_tok)
+# A result made of blocks.
+nested <- read_turn
+nested[[2L]]$content[[1L]]$content <- list(list(type = "text", text = file_text))
+expect_true(corteza::estimate_history_tokens(nested) >= floor_tok)
+# A call's arguments, after text in the same turn.
+written <- list(list(role = "assistant", content = list(
+    list(type = "text", text = "Writing it."),
+    list(type = "tool_use", id = "toolu_2", name = "write_file",
+         input = list(path = "out.txt", content = file_text)))))
+expect_true(corteza::estimate_history_tokens(written) >= floor_tok)
+# A chat-completions call keeps its arguments under tool_calls.
+chat_call <- list(list(role = "assistant", content = "", tool_calls = list(list(
+    id = "call_1", type = "function", `function` = list(name = "write_file",
+        arguments = as.character(jsonlite::toJSON(list(path = "out.txt",
+            content = file_text), auto_unbox = TRUE)))))))
+expect_true(corteza::estimate_history_tokens(chat_call) >= floor_tok)
+# What is opaque counts at chars/24: a thinking block's signature and an
+# image's base64.
+thought <- list(list(role = "assistant", content = list(
+    list(type = "thinking", thinking = "", signature = strrep("s", 2400L)),
+    list(type = "text", text = "ok"))))
+n <- corteza::estimate_history_tokens(thought)
+expect_true(n >= 100L && n < 300L)
+pictured <- list(list(role = "user", content = list(
+    list(type = "image", source = list(type = "base64", media_type = "image/png",
+                                       data = strrep("A", 24000L))),
+    list(type = "text", text = "what is this?"))))
+n <- corteza::estimate_history_tokens(pictured)
+expect_true(n >= 1000L && n < 2000L)
+# A PDF's base64 is opaque too; a plain-text document's data is text and
+# counts as the same text in a text block does (Codex's case on #304: it
+# counted at a sixth of that, and a session holding it never compacted).
+filed <- list(list(role = "user", content = list(
+    list(type = "document", source = list(type = "base64",
+                                          media_type = "application/pdf",
+                                          data = strrep("A", 24000L))))))
+n <- corteza::estimate_history_tokens(filed)
+expect_true(n >= 1000L && n < 2000L)
+doc_text <- strrep("ordinary document text. ", 1000L)
+as_text <- corteza::estimate_history_tokens(list(list(role = "user",
+    content = list(list(type = "text", text = doc_text)))))
+as_doc <- corteza::estimate_history_tokens(list(list(role = "user",
+    content = list(list(type = "document", source = list(type = "text",
+        media_type = "text/plain", data = doc_text))))))
+expect_true(as_doc >= 0.95 * as_text && as_doc <= 1.1 * as_text,
+            info = sprintf("document %d, text %d", as_doc, as_text))
 
 # OpenAI Responses/Codex history is role-less: assistant output lives under
 # $output and tool results use function_call_output. Both the call arguments
