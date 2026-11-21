@@ -572,6 +572,24 @@ local({
     expect_equal(s$last_compaction$trigger, "tokens")
 })
 
+# So does one over the cap in a plain-text document, which counts as its
+# text: about 24,000 tokens over a 10,000-token cap (Codex's probe on
+# #304; it counted 4,063 and did not compact).
+local({
+    s <- trigger_session()
+    s$history <- list(
+        list(role = "user", content = list(list(type = "document",
+            source = list(type = "text", media_type = "text/plain",
+                          data = strrep("ordinary document text. ", 4000L))))),
+        list(role = "assistant", content = "Read it."),
+        list(role = "user", content = "What did it say?"),
+        list(role = "assistant", content = "It is ordinary text."))
+    expect_true(corteza::estimate_history_tokens(s$history) > 20000L)
+    got <- compact_once(s, trigger_config(context_compact_tokens = 10000L))
+    expect_true(got$result)
+    expect_equal(got$calls, 1L)
+})
+
 # Exactly at the cap compacts; 1 token under does not.
 local({
     s <- trigger_session()

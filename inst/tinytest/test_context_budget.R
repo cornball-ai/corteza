@@ -133,6 +133,23 @@ pictured <- list(list(role = "user", content = list(
     list(type = "text", text = "what is this?"))))
 n <- corteza::estimate_history_tokens(pictured)
 expect_true(n >= 1000L && n < 2000L)
+# A PDF's base64 is opaque too; a plain-text document's data is text and
+# counts as the same text in a text block does (Codex's case on #304: it
+# counted at a sixth of that, and a session holding it never compacted).
+filed <- list(list(role = "user", content = list(
+    list(type = "document", source = list(type = "base64",
+                                          media_type = "application/pdf",
+                                          data = strrep("A", 24000L))))))
+n <- corteza::estimate_history_tokens(filed)
+expect_true(n >= 1000L && n < 2000L)
+doc_text <- strrep("ordinary document text. ", 1000L)
+as_text <- corteza::estimate_history_tokens(list(list(role = "user",
+    content = list(list(type = "text", text = doc_text)))))
+as_doc <- corteza::estimate_history_tokens(list(list(role = "user",
+    content = list(list(type = "document", source = list(type = "text",
+        media_type = "text/plain", data = doc_text))))))
+expect_true(as_doc >= 0.95 * as_text && as_doc <= 1.1 * as_text,
+            info = sprintf("document %d, text %d", as_doc, as_text))
 
 # OpenAI Responses/Codex history is role-less: assistant output lives under
 # $output and tool results use function_call_output. Both the call arguments
