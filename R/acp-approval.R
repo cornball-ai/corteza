@@ -14,7 +14,7 @@
     for_session <- character()
     answered <- function(call, decision) {
         name <- call$tool %||% ""
-        !identical(decision$rule, "credential") &&
+        !.person_rule(decision) &&
         (name %in% for_session || name %in% approvals_saved(cwd))
     }
     # Saved for the directory; held for the session where it cannot be.
@@ -34,7 +34,7 @@
             return(FALSE)
         }
         shown <- .redact_object(call, live$session$secret_values)
-        once <- identical(decision$rule, "credential")
+        once <- .person_rule(decision)
         id <- .acp_announce(st, live, shown, "pending")
         title <- .acp_tool_title(shown, live$session$cwd)
         why <- .acp_ask_reason(decision)

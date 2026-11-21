@@ -1832,10 +1832,10 @@ register_builtin_skills <- function() {
     register_skill_from_fn("job_cancel", tool_job_cancel, class = "control")
     register_skill_from_fn("job_resume", tool_job_resume, class = "continue")
 
-    # Plan mode: exit_plan_mode is registered always but exposed in the
-    # tool list only when session$plan_mode is TRUE
-    # (see .plan_mode_filter_tools). It asks the person to leave plan
-    # mode, so plan mode lets it through.
+    # Plan mode: exit_plan_mode is in the tool list of every session that
+    # can be in plan mode (.plan_mode_filter_tools()). It asks the person
+    # to leave plan mode (check_plan_exit(), R/policy.R), so plan mode
+    # lets it through; its class alone would run it unasked.
     register_skill_from_fn("exit_plan_mode", tool_exit_plan_mode,
                            class = "control")
 

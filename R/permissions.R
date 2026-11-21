@@ -267,13 +267,15 @@ permissions_command <- function(config, arg = NULL, cwd = getwd()) {
         detail <- switch(arg,
                          allow = c(
                                    "  Calls that would prompt run without prompting for this session.",
-                                   "  Credential paths still prompt, and plan mode still refuses:",
-                                   "  both come before config, so this can't waive them."),
+                                   "  Credential paths and leaving plan mode still prompt, and plan",
+                                   "  mode still refuses: all come before config, so this can't",
+                                   "  waive them."),
                          review = c(
                                     "  Calls that would prompt go to the reviewer first, a model in a",
                                     "  process of its own: it approves, refuses (the model is told why),",
                                     "  or passes the call to you. What the rules flag, tools with no",
-                                    "  class and credential paths still prompt; plan mode still refuses.",
+                                    "  class, credential paths and leaving plan mode still prompt;",
+                                    "  plan mode still refuses.",
                                     "  Its model: \"supervisor\" in your config."),
                          ask = "  Writes, commands and tools with no class prompt before running.",
                          deny = "  Calls that would prompt are refused outright, no prompt.")
