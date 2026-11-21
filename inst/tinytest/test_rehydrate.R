@@ -29,7 +29,7 @@ test_cfg <- function() {
     list(room_id = "!r:ex", model = "qwen3:8b", provider = "ollama")
 }
 
-# A host's lookup, shaped like cerebro's: the fold index is state in the
+# A host's lookup, shaped like a real one: the fold index is state in the
 # topic room, keyed by the thread root.
 fold_lookup <- function(chat, room_id, thread_root) {
     st <- tryCatch(chat.api::chat_get_state(chat, room_id, "ai.cornball.fold",

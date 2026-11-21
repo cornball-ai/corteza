@@ -568,7 +568,7 @@ local({
 
 # corteza no longer computes a store path at all -- that briefly lived
 # here, keyed on user_id alone, which is the right shape for telling
-# cornelius and tiny apart and the wrong one for an Olm account, since an
+# two bots apart and the wrong one for an Olm account, since an
 # account belongs to a device.
 expect_false("bot_crypto_store" %in% ls(asNamespace("corteza"),
                                            all.names = TRUE))
@@ -712,7 +712,7 @@ local({
             expect_equal(seen[[length(seen)]]$msgtype, mt)
         }
         # markdown survives both routes, including pipe tables. This is the
-        # executable guard for the Cornelius table-rendering regression: text
+        # executable guard for a table-rendering regression: text
         # m.room.message goes corteza -> chat.api -> mx.client, while msgtypes
         # outside chat.api's vocabulary still go corteza -> mx.client direct.
         table_md <- paste(c(
