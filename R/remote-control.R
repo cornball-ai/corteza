@@ -1,9 +1,17 @@
 # Local mailboxes join a live REPL to the bot's existing Matrix poll loop.
 # Only the bot holds a transport client; the CLI never runs a second /sync.
+# An empty CORTEZA_REMOTE_DIR counts as unset, as CORTEZA_STATE_DIR does
+# (bot_signal_dir()). Read as a folder, "" made every path start at the
+# root of the file system ("/bots/..."). tinytest leaves a variable a
+# test file set, and was unset before, as "" for the files after it, so
+# the package's own checks wrote there; only a check user who could not
+# write at "/" stopped it.
 .remote_root <- function() {
-    Sys.getenv("CORTEZA_REMOTE_DIR", file.path(tools::R_user_dir("corteza",
-                "data"),
-            "remote-control"))
+    dir <- Sys.getenv("CORTEZA_REMOTE_DIR", "")
+    if (nzchar(dir)) {
+        return(dir)
+    }
+    file.path(tools::R_user_dir("corteza", "data"), "remote-control")
 }
 
 .remote_read_file <- function(path) {

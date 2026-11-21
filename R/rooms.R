@@ -3605,12 +3605,16 @@ bot_signal_dir <- function() {
 #' # Writes a sentinel file under CORTEZA_STATE_DIR (or the package's
 #' # R_user_dir data path). Redirect to a tempdir for the example so
 #' # we don't touch persistent state.
-#' old <- Sys.getenv("CORTEZA_STATE_DIR")
+#' old <- Sys.getenv("CORTEZA_STATE_DIR", unset = NA)
 #' Sys.setenv(CORTEZA_STATE_DIR = file.path(tempdir(), "state"))
 #' sig <- bot_request_flush()
 #' file.exists(sig)
 #' unlink(Sys.getenv("CORTEZA_STATE_DIR"), recursive = TRUE)
-#' Sys.setenv(CORTEZA_STATE_DIR = old)
+#' if (is.na(old)) {
+#'     Sys.unsetenv("CORTEZA_STATE_DIR")
+#' } else {
+#'     Sys.setenv(CORTEZA_STATE_DIR = old)
+#' }
 #' @export
 bot_request_flush <- function() {
     dir <- bot_signal_dir()

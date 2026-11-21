@@ -1,3 +1,10 @@
+# corteza 0.8.0.44
+
+- An empty `CORTEZA_REMOTE_DIR` counts as unset, as `CORTEZA_STATE_DIR`
+  does. Read as a folder, it put remote control's records at the root
+  of the file system, and the package's own tests tried to write there
+  after tinytest had left the variable empty.
+
 # corteza 0.8.0.43
 
 - A history's token estimate counts tool calls and their results in
