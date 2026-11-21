@@ -50,3 +50,11 @@ numbers said aloud), because the reply is synthesized verbatim.
 text; typed room chat is unaffected either way.
 
 }
+\examples{
+\dontrun{
+# Needs rgrpc and RProtoBuf, a bot config naming voice.allocator and
+# voice.allocator_token, and a running allocator. Blocks until
+# interrupted.
+voice_serve(address = "127.0.0.1:7851")
+}
+}

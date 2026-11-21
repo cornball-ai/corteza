@@ -137,10 +137,26 @@ expect_true(grepl("notes.txt", result$content[[1]]$text))
 
 unlink(tmp_dir, recursive = TRUE)
 
-# Test installed_packages
-result <- corteza:::tool_installed_packages(pattern = "jsonlite", limit = 20L)
+# Test installed_packages. It lists every installed package, which reads
+# each one's description: slow on a machine with thousands, so not on
+# CRAN's. CI sets NOT_CRAN.
+if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
+    result <- corteza:::tool_installed_packages(pattern = "jsonlite", limit = 20L)
+    expect_false(isTRUE(result$isError))
+    expect_true(grepl("jsonlite", result$content[[1]]$text, ignore.case = TRUE))
+}
+
+# r_help: a bare package name gives the package's exports, and finds the
+# package without reading every installed one (installed.packages()).
+result <- corteza:::tool_r_help("jsonlite")
 expect_false(isTRUE(result$isError))
-expect_true(grepl("jsonlite", result$content[[1]]$text, ignore.case = TRUE))
+expect_true(grepl("toJSON", result$content[[1]]$text, fixed = TRUE))
+expect_false(any(grepl("installed.packages", deparse(body(corteza:::tool_r_help)),
+                       fixed = TRUE)))
+# A name no package has is looked up as a function, and is not found.
+result <- corteza:::tool_r_help("no.such.package.or.function")
+expect_true(isTRUE(result$isError))
+expect_true(grepl("Could not find package", result$content[[1]]$text, fixed = TRUE))
 
 # Test git tools
 tmp_repo <- tempfile("git_tools")

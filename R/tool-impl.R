@@ -1182,8 +1182,11 @@ tool_r_help <- function(topic, package = NULL) {
     }
 
     tryCatch({
-        # Bare package name: return the exports table
-        if (is.null(pkg) && topic %in% rownames(installed.packages())) {
+        # Bare package name: return the exports table. system.file()
+        # finds the one package; installed.packages() would read every
+        # package installed, which is slow where thousands are.
+        if (is.null(pkg) && is.character(topic) && length(topic) == 1L &&
+             nzchar(topic) && nzchar(system.file(package = topic))) {
             out <- capture.output(print(saber::pkg_exports(topic)))
             return(ok(paste(out, collapse = "\n")))
         }

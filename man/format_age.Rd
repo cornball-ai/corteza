@@ -5,6 +5,12 @@
 \usage{
 format_age(seconds)
 }
+\arguments{
+\item{seconds}{Age in seconds.}
+}
+\value{
+A character string.
+}
 \description{
 Format an age in seconds as a compact string (e.g. "12s", "3m", "2h").
 }

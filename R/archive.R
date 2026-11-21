@@ -4,7 +4,7 @@
 # (session$transcript: the Matrix event, the role, the text; see
 # bot_transcript_add()). Filing it is the host's. The on_archive hook
 # (R/hooks.R) gets each new range of the ledger and decides what to keep
-# (cerebro writes a summary and a pointer to the room's events). With
+# (a host might write a summary and a pointer to the room's events). With
 # no hook nothing is filed.
 #
 # corteza owns the bookkeeping. A range the host took is recorded by its

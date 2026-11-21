@@ -28,6 +28,7 @@ fire.
 }
 \examples{
 \dontrun{
+# Requires LLM credentials in the child's environment.
 id <- subagent_spawn("background research")
 subagent_query(id, "what's in DESCRIPTION?", wait = FALSE)
 # ... do other work ...

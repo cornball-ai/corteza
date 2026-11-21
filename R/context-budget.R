@@ -238,6 +238,8 @@ format_tokens <- function(n) {
 }
 
 #' Format an age in seconds as a compact string (e.g. "12s", "3m", "2h").
+#' @param seconds Age in seconds.
+#' @return A character string.
 #' @keywords internal
 #' @export
 format_age <- function(seconds) {
@@ -257,7 +259,10 @@ format_age <- function(seconds) {
 #' Format a live-context display like "4.2K/200K" or "?".
 #'
 #' Used by /agents to summarize live tokens versus model limit.
-#' Returns "?" when either value is NA.
+#' @param tokens Live context, in tokens.
+#' @param limit The model's context window, in tokens.
+#' @return A character string: "tokens/limit", or "?" when either value
+#'   is NA.
 #' @keywords internal
 #' @export
 format_live_ctx <- function(tokens, limit) {

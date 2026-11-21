@@ -477,7 +477,7 @@ bot_event_id <- function(id) {
 # (user_id, device_id) off this very config -- and records that identity
 # in the store so another device cannot open it. corteza briefly passed
 # its own, keyed on user_id alone, which is the right shape for telling
-# cornelius and tiny apart and the wrong one for an Olm account: an
+# two bots apart and the wrong one for an Olm account: an
 # account belongs to a device, so a re-provisioned device_id would have
 # reused the old account, and the sanitization was not injective either.
 # Naming the store here would only be a second place to get that wrong.
@@ -715,7 +715,7 @@ bot_archive_state_write <- function(room_id, keys, cap = 512L) {
 
 # Matrix clients such as Element intercept single-slash commands before
 # they reach the bot. Accept normal chat forms too: "clear", "new chat",
-# "@tiny clear", and the legacy escaped "//clear".
+# "@helper clear", and the legacy escaped "//clear".
 bot_command_text <- function(body) {
     if (is.null(body) || !nzchar(body)) {
         return("")
@@ -2073,7 +2073,7 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
 }
 
 # Registry of per-room sessions. env keyed by room_id so each room
-# (including new ones cornelius is invited into mid-run) gets its own
+# (including new ones the bot is invited into mid-run) gets its own
 # conversation history. Used by bot_run; bot_poll in cron mode
 # builds a fresh env per call.
 bot_new_session_registry <- function() {
@@ -2423,7 +2423,7 @@ bot_poll <- function(system = NULL, model = NULL, provider = NULL,
 
         # Self events: either an echo of our own reply (already in
         # $history via turn() — skip) or an out-of-band send from a
-        # sibling process like cornelius's briefing (append as assistant
+        # sibling process like a scheduled briefing (append as assistant
         # turn so the next user message has the right context).
         if (isTRUE(m$is_self)) {
             if (!(m$id %in% session$seen_event_ids)) {
@@ -3277,7 +3277,7 @@ bot_cwd_unavailable <- function(dir) {
 #' corteza runs a conversation. What becomes of one once it ends, where
 #' a thread's earlier context comes from, and which rooms' messages the
 #' host answers itself, belong to the host that runs the bot over time
-#' (cerebro files segments and folds them into topic rooms). Four
+#' (a host might file segments and fold them into topic rooms). Four
 #' slots, all optional:
 #'
 #' \describe{
@@ -3506,7 +3506,7 @@ bot_run_step <- function(state, timeout = 30000L) {
     # bounded. After the pump, so a worker whose job just ended is
     # counted as idle from now. Needs no client.
     bot_retire_workers(state$sessions)
-    # Out-of-band archive trigger: another process (e.g. a cornelius
+    # Out-of-band archive trigger: another process (e.g. the host's
     # systemd timer) drops `archive.signal` to ask the bot to hand all
     # in-memory room sessions to the host's on_archive hook. The bot
     # owns the registry; the schedule lives outside the package.

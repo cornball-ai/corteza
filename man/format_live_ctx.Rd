@@ -5,8 +5,16 @@
 \usage{
 format_live_ctx(tokens, limit)
 }
+\arguments{
+\item{tokens}{Live context, in tokens.}
+
+\item{limit}{The model's context window, in tokens.}
+}
+\value{
+A character string: "tokens/limit", or "?" when either value
+  is NA.
+}
 \description{
 Used by /agents to summarize live tokens versus model limit.
-Returns "?" when either value is NA.
 }
 \keyword{internal}

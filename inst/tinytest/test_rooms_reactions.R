@@ -101,7 +101,7 @@ local({
 
 # --- Who the approvers are ---
 approvers <- corteza:::bot_approvers
-bots <- c("@bot:ex", "@cornelius:ex")
+bots <- c("@bot:ex", "@helper:ex")
 # Configured operators win, whatever the room looks like.
 expect_identical(approvers(list(operators = "@troy:ex"),
                            c("@bot:ex", "@troy:ex", "@guest:ex"), bots),
@@ -111,7 +111,7 @@ expect_identical(approvers(list(), c("@bot:ex", "@troy:ex"), bots),
                  "@troy:ex")
 # Listed bots are not humans, so a bot sharing the room does not close it.
 expect_identical(approvers(list(),
-                           c("@bot:ex", "@cornelius:ex", "@troy:ex"), bots),
+                           c("@bot:ex", "@helper:ex", "@troy:ex"), bots),
                  "@troy:ex")
 # An unlisted bot reads as a second human and closes the room.
 expect_identical(approvers(list(),
