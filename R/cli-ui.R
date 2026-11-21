@@ -754,6 +754,13 @@ cli_user_replied_line <- function(call, choice,
     call$paths <- call$paths %||% resolve_paths(call)
     call$urls <- call$urls %||% resolve_urls(call)
     tool <- .sanitize_inline(call$tool %||% "")
+    # The plan's approval, which offers no "always" (check_plan_exit()).
+    if (identical(tool, "exit_plan_mode")) {
+        return(switch(choice,
+                      "1" = , "2" = "Approve the plan and leave plan mode",
+                      "3" = "Deny the plan; plan mode stays on",
+                      sprintf("Choice %s on the plan", choice)))
+    }
     op <- call_class(call)
     paths <- unique(call$paths %||% character())
     urls <- unique(call$urls %||% character())
