@@ -1,3 +1,13 @@
+# corteza 0.8.0.45
+
+- `r_help` finds a requested package without scanning every installed
+  package. An unsupported provider leaves an attached `llm.api` alone
+  and asks for an R restart.
+- The offline flush example runs for the deprecated alias too. Help
+  pages describe return values and live-service requirements, and the
+  sample systemd unit calls `bot_run()`.
+- Examples and tests use generic host, account and project names.
+
 # corteza 0.8.0.44
 
 - An empty `CORTEZA_REMOTE_DIR` counts as unset, as `CORTEZA_STATE_DIR`
