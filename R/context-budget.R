@@ -390,7 +390,8 @@ message_text <- function(message) {
 # session that read files compacted far past its cap. Count the blocks'
 # JSON surface at chars/4, as for Codex output, and what is opaque at
 # chars/24: a thinking block's signature, a redacted block's data, an
-# image's or a document's base64 (an OpenAI-style data URL too).
+# image's or a document's base64 (an OpenAI-style data URL too). Only a
+# "base64" source is opaque: a plain-text document's data is its text.
 .estimate_block_tokens <- function(blocks) {
     opaque <- 0
     take <- function(x) {
@@ -409,7 +410,8 @@ message_text <- function(message) {
         } else if (identical(type, "redacted_thinking")) {
             take(b$data)
             b$data <- NULL
-        } else if (type %in% c("image", "document") && is.list(b$source)) {
+        } else if (type %in% c("image", "document") && is.list(b$source) &&
+            identical(b$source$type, "base64")) {
             take(b$source$data)
             b$source$data <- NULL
         } else if (identical(type, "image_url") && is.list(b$image_url) &&
