@@ -4,7 +4,8 @@
   full. It read a block list for its text alone, so an Anthropic tool
   result counted as one line: a session whose tools returned long text
   compacted far past `context_compact_tokens`, and `/context`
-  understated it. A chat-completions call's `tool_calls` count too.
+  understated it. A chat-completions call's `tool_calls` count too, and
+  so does a plain-text document's text.
 
 # corteza 0.8.0.42
 
