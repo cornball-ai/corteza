@@ -70,7 +70,7 @@ call \code{\link{bot_run}}, which wraps both.
 corteza runs a conversation. What becomes of one once it ends, where
 a thread's earlier context comes from, and which rooms' messages the
 host answers itself, belong to the host that runs the bot over time
-(cerebro files segments and folds them into topic rooms). Four
+(a host might file segments and fold them into topic rooms). Four
 slots, all optional:
 
 \describe{

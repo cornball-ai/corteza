@@ -2,8 +2,8 @@ library(tinytest)
 
 # The matrix_* exports are wrappers now. corteza reaches every transport
 # through chat.api and makes no Matrix call of its own, so the prefix
-# named a coupling that no longer exists -- but cerebro drives these by
-# name across two dozen call sites, and a CRAN release carries them.
+# named a coupling that no longer exists -- but hosts call these by name,
+# and a CRAN release carries them.
 
 deprecated <- c("matrix_configure", "matrix_send", "matrix_poll",
                 "matrix_run", "matrix_run_init", "matrix_run_step",

@@ -515,9 +515,9 @@ run_commit_boundary_tests()
 
 # Room journals are owned by the bot as well as the room --------
 
-cfg_a <- list(user_id = "@cornelius:cornball.ai")
-cfg_b <- list(user_id = "@padre:cornball.ai")
-room <- "!abc:cornball.ai"
+cfg_a <- list(user_id = "@helper:example.org")
+cfg_b <- list(user_id = "@other:example.org")
+room <- "!abc:example.org"
 expect_false(identical(corteza:::bot_journal_dir(cfg_a, room),
                        corteza:::bot_journal_dir(cfg_b, room)))
 expect_identical(corteza:::bot_journal_dir(cfg_a, room),

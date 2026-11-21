@@ -589,8 +589,8 @@ expect_true(corteza:::bot_is_clear_command("/clear"))
 expect_true(corteza:::bot_is_clear_command("  /clear  "))
 expect_true(corteza:::bot_is_clear_command("/reset"))
 expect_true(corteza:::bot_is_clear_command("/new"))
-expect_true(corteza:::bot_is_clear_command("@cornelius /clear"))
-expect_true(corteza:::bot_is_clear_command("@cornelius:s.c /reset"))
+expect_true(corteza:::bot_is_clear_command("@helper /clear"))
+expect_true(corteza:::bot_is_clear_command("@helper:example.org /reset"))
 expect_false(corteza:::bot_is_clear_command("/clear the room please"))
 expect_false(corteza:::bot_is_clear_command("don't /clear yet"))
 expect_false(corteza:::bot_is_clear_command("hello"))
@@ -1083,35 +1083,35 @@ local({
 # <model>" while switched; NULL in "never" mode so the profile is
 # untouched. session = NULL means "on defaults" (startup, /clear).
 local({
-    cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
+    cfg <- list(user_id = "@helper:example.org", model = "qwen3:8b",
                 provider = "ollama", model_badge = "non_default")
-    expect_equal(corteza:::bot_badge_displayname(cfg), "r2j2")
+    expect_equal(corteza:::bot_badge_displayname(cfg), "helper")
 
     s <- new.env()
     s$model_map <- list(cloud = "qwen3:8b")
     s$provider <- "ollama"
     s$default_model <- "qwen3:8b"
     s$default_provider <- "ollama"
-    expect_equal(corteza:::bot_badge_displayname(cfg, s), "r2j2")
+    expect_equal(corteza:::bot_badge_displayname(cfg, s), "helper")
 
     s$model_map <- list(cloud = "claude-sonnet-4-6")
     s$provider <- "anthropic_claude"
     expect_equal(corteza:::bot_badge_displayname(cfg, s),
-                 "r2j2 ⚡ claude-sonnet-4-6")
+                 "helper ⚡ claude-sonnet-4-6")
 
     cfg$model_badge <- "always"
     expect_equal(corteza:::bot_badge_displayname(cfg),
-                 "r2j2 ⚡ qwen3:8b")
+                 "helper ⚡ qwen3:8b")
 
     cfg$model_badge <- "never"
     expect_null(corteza:::bot_badge_displayname(cfg, s))
 
     # display_name override beats the localpart.
-    cfg2 <- list(user_id = "@r2j2:cornball.ai", display_name = "R2J2",
+    cfg2 <- list(user_id = "@helper:example.org", display_name = "Helper",
                  model = "qwen3:8b", provider = "ollama",
                  model_badge = "always")
     expect_equal(corteza:::bot_badge_displayname(cfg2),
-                 "R2J2 ⚡ qwen3:8b")
+                 "Helper ⚡ qwen3:8b")
 })
 
 # Sessions stamp their creation-time model/provider so the badge can
@@ -1141,7 +1141,7 @@ local({
 # -- and chat_send() does no relogin of its own, so the next reply
 # vanishes into a best-effort tryCatch.
 local({
-    cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
+    cfg <- list(user_id = "@helper:example.org", model = "qwen3:8b",
                 provider = "ollama", model_badge = "always")
 
     orig_load <- corteza:::bot_load_config
@@ -1158,7 +1158,7 @@ local({
         seen <- NULL
         chat <- chat.api::chat_matrix(
             mx = list(server = "https://ex.invalid", user = "bot",
-                      token = "tok", user_id = "@r2j2:cornball.ai",
+                      token = "tok", user_id = "@helper:example.org",
                       device_id = "DEV1"),
             .sync = function(...) NULL, .extract = function(...) list(),
             .send = function(...) "$1", .media = function(...) NULL,
@@ -1182,14 +1182,14 @@ local({
 # cfg advertises the configured model while every reply is badged with
 # the override.
 local({
-    cfg <- list(user_id = "@r2j2:cornball.ai", model = "qwen3:8b",
+    cfg <- list(user_id = "@helper:example.org", model = "qwen3:8b",
                 provider = "ollama", model_badge = "always")
     expect_equal(corteza:::bot_badge_displayname(cfg),
-                 "r2j2 ⚡ qwen3:8b")
+                 "helper ⚡ qwen3:8b")
     expect_equal(
         corteza:::bot_badge_displayname(cfg, model = "claude-sonnet-4-6",
                                            provider = "anthropic_claude"),
-        "r2j2 ⚡ claude-sonnet-4-6")
+        "helper ⚡ claude-sonnet-4-6")
 })
 
 # The chat.api floor is enforced at runtime, not merely declared in

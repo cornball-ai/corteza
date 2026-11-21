@@ -860,7 +860,7 @@ CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.
   made that decision and read that index here, are gone: a bare bot
   (`bot_run()`, or no `hooks`) archives and resets at `/clear` and never
   rehydrates. The `segment_rooms` config gate moves with the segment code
-  into the host (cerebro).
+  into the host.
 
 # corteza 0.7.1.76
 
@@ -1361,10 +1361,10 @@ CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.
 
 - **The default room workspace uses the bot's localpart as written.**
   `bot_default_cwd()` capitalised the Matrix localpart, so a bot logged in
-  as `@cornelius:cornball.ai` fell back to an empty `~/Cornelius` beside the
-  `~/cornelius` instance directory cerebro runs it from, and created it.
-  The fallback is now `~/cornelius`. An instance directory with other
-  capitalisation, such as `~/LilCasey`, was mismatched before and still is.
+  as `@helper:example.org` fell back to an empty `~/Helper` beside the
+  `~/helper` instance directory its host runs it from, and created it.
+  The fallback is now `~/helper`. An instance directory with other
+  capitalisation, such as `~/MyHelper`, was mismatched before and still is.
 
 # corteza 0.7.1.47
 
@@ -2821,7 +2821,7 @@ Alt+Enter) to the two corteza addins. Override the built-in
 * The tool-approval prompt is much tighter. The `Reason` section
   (gate text + `Policy:` + `Model route:`) is gone; `Access` collapses
   to a single line that names the path or command (e.g. `Write to
-  CLAUDE.md`, `Run command in /home/troy/corteza`); the redundant
+  CLAUDE.md`, `Run command in /srv/work/repo`); the redundant
   `Path:` detail line above `Access` is suppressed when it would just
   repeat the same path. Choices 1 and 3 carry key hints: `(Enter)` and
   `(Esc)`.
