@@ -1,10 +1,8 @@
 # Model and effort controls shared by the REPL and Matrix rooms.
 #
 # /model and /effort act on the session's own model, the one that does
-# the work. In a talker session that is the doer's (talker_enable()):
-# the talker follows /model only where its config names no model or
-# provider of its own, and takes its reasoning settings from the
-# `talker` block alone.
+# the work. In a talker session that is the doer's (talker_enable()).
+# Selecting a provider moves both roles to that provider's pair.
 
 # The model /model shows and sets.
 .session_work_model <- function(session) {
@@ -17,28 +15,17 @@
 
 # Set it, and the provider when one is given.
 .set_work_model <- function(session, model, provider = NULL) {
+    provider <- .model_provider(provider %||% .session_work_model(session)$provider)
     if (!isTRUE(session$talker)) {
-        bot_set_session_model(session, model)
-        if (!is.null(provider)) {
-            session$provider <- provider
-        }
+        bot_set_session_model(session, model %||% default_provider_model(provider))
+        session$provider <- provider
+        session$context_active_request <- NULL
         return(invisible(session))
     }
-    if (!identical(session$doer_model, model)) {
-        # A thinking type belongs to one model (.session_thinking()), as
-        # bot_set_session_model() has it for a session's own.
-        session$doer_thinking <- NULL
-    }
-    session$doer_model <- model
-    if (!is.null(provider)) {
-        session$doer_provider <- provider
-    }
-    if (isTRUE(session$talker_follows)) {
-        bot_set_session_model(session, model)
-        if (!is.null(provider)) {
-            session$provider <- provider
-        }
-    }
+    .remember_model_pair(session)
+    pair <- .model_pair(session, provider, model)
+    .apply_model_pair(session, pair)
+    .remember_model_pair(session)
     invisible(session)
 }
 
@@ -49,15 +36,17 @@
                    .sanitize_inline(work$model %||% "", max_chars = 80L),
                    .sanitize_inline(work$provider %||% "(unchanged)", max_chars = 40L))
     if (!isTRUE(session$talker)) {
-        return(paste(set, "Effective on the next reply."))
+        return(paste(c(paste(set, "Effective on the next reply."),
+                       .context_management_notice(session)), collapse = "\n"))
     }
     if (isTRUE(session$talker_follows)) {
-        return(paste(set, "Effective on the next reply and the next job."))
+        return(paste(c(paste(set, "Effective on the next reply and the next job."),
+                       .context_management_notice(session)), collapse = "\n"))
     }
-    paste(set, sprintf(paste("Effective on the next job; replies stay on %s,",
-                             "the config's talker model."),
-                       .sanitize_inline(bot_session_model(session) %||% "",
-                                        max_chars = 80L)))
+    paste(c(set, sprintf("Replies: %s. Next job: %s. Both use %s.",
+        .sanitize_inline(bot_session_model(session) %||% "", max_chars = 80L),
+        .sanitize_inline(work$model %||% "", max_chars = 80L), work$provider),
+        .context_management_notice(session)), collapse = "\n")
 }
 
 .model_menu_entries <- function(session, cfg = NULL) {
@@ -82,6 +71,10 @@
     add(model, provider)
     for (entry in bot_available_models(cfg, ollama_models = character())) {
         add(entry$model, entry$provider)
+    }
+    for (p in names(cfg$model_pairs)) {
+        pair <- tryCatch(.model_pair(session, p), error = function(e) NULL)
+        if (!is.null(pair)) add(pair$doer$model, pair$provider)
     }
     note <- NULL
     catalog <- tryCatch(.model_discover(provider,
@@ -113,8 +106,8 @@
 }
 
 # /provider at the terminal sets the work's provider, as /model sets
-# its model: in a talker session the doer's, and the talker's where it
-# follows /model (talker_follows). The model stays as it is.
+# its model. A talker session restores that provider's pair; an unseen
+# provider starts from its default model.
 .repl_provider_command <- function(ctx, parts) {
     s <- ctx$session
     work <- .session_work_model(s)
@@ -122,29 +115,19 @@
         return(sprintf("Current provider: %s\nUsage: /provider <name>\n",
                        work$provider %||% "(default)"))
     }
-    provider <- parts[2]
-    if (isTRUE(s$talker)) {
-        s$doer_provider <- provider
-        if (isTRUE(s$talker_follows)) {
-            s$provider <- provider
-        }
-    } else {
-        s$provider <- provider
-    }
+    failure <- tryCatch({.set_work_model(s, NULL, parts[2]); NULL},
+                        error = function(e) conditionMessage(e))
+    if (!is.null(failure)) return(paste("Provider unchanged:", failure, "\n"))
+    work <- .session_work_model(s)
+    provider <- work$provider
     # The session's own provider, which --resume starts from.
     ctx$provider <- provider
+    ctx$model <- work$model
     if (!is.null(ctx$disk_session)) {
         ctx$disk_session$session$provider <- provider
+        ctx$disk_session$session$model <- work$model
     }
-    if (!isTRUE(s$talker)) {
-        return(sprintf("Provider set to %s\n", provider))
-    }
-    if (isTRUE(s$talker_follows)) {
-        return(sprintf("Provider set to %s, for the next reply and the next job.\n",
-                       provider))
-    }
-    sprintf("Provider set to %s, for the next job; replies stay on %s.\n",
-            provider, s$provider %||% "(default)")
+    paste0(.work_model_ack(s), "\n")
 }
 
 # The model and provider /review, /doctor and /config use and show: the

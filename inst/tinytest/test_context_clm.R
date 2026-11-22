@@ -70,8 +70,11 @@ local({
     expect_false(any(startsWith(names(f(".context_edit_state")(s)$messages), "u")))
     expect_null(f(".context_archive_write")(s, before, list()))
     s$provider <- "openai_codex"
-    expect_error(f(".context_edit_require")(s), "supported provider")
+    f(".context_edit_prepare")(s)
+    expect_false(f(".context_edit_pure")(s))
+    expect_identical(f(".context_management")(s), "compaction")
     s$provider <- "anthropic"
+    s$context_active_request <- NULL
     s$journal_enabled <- FALSE
     expect_error(f(".context_edit_require")(s), "enabled journal")
 
@@ -150,7 +153,8 @@ local({
     expect_null(lifecycle$vault)
     expect_true(any(vapply(lifecycle$history, function(m) identical(m$content, "First job."), logical(1))))
 
-    # Unsupported fallbacks never silently turn pure CLM off.
+    # An unsupported route uses ordinary compaction without losing the
+    # configured CLM preference. The reply explains the selected strategy.
     s <- make()
     s$fallback <- c("fixture openai_codex", "fixture openai")
     old_limits <- as.list(f(".fallback_state"))
@@ -167,7 +171,10 @@ local({
             if (args$provider == "anthropic") stop("HTTP 429 rate limit")
             list(content = "done", history = args$history)
         })
-    expect_identical(calls, c("anthropic", "openai"))
+    expect_identical(calls, c("anthropic", "openai_codex"))
+    expect_identical(result$corteza_route$context_management, "compaction")
+    expect_true(grepl("standard compaction", result$corteza_route$context_notice))
+    expect_identical(s$context_edit$strategy, "clm")
     f(".fallback_reset")()
 
     if (requireNamespace("pensar", quietly = TRUE)) {

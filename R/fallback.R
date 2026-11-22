@@ -48,18 +48,23 @@
 # Deterministic output notice: modest for a subscription-to-subscription hop,
 # deliberately loud before any reply whose provider consumes an API key.
 .fallback_notice <- function(route) {
-    if (!is.list(route) || !isTRUE(route$fallback)) {
+    if (!is.list(route)) {
         return(NULL)
+    }
+    if (!isTRUE(route$fallback)) {
+        return(route$context_notice)
     }
     model <- .fallback_route_label(route$model, 80L)
     provider <- .fallback_route_label(route$provider, 40L)
     if (isTRUE(route$api_key)) {
-        return(paste0(
+        notice <- paste0(
                       "\U{1F6A8}\U{1F6A8}\U{1F6A8} PAID API KEY FALLBACK \u2014 BILLABLE USAGE \U{1F6A8}\U{1F6A8}\U{1F6A8}\n",
                       "Subscriptions are limited; using ", model, " via ", provider, "."
-            ))
+            )
+    } else {
+        notice <- sprintf("\u26a1 Automatic subscription failover: %s via %s.", model, provider)
     }
-    sprintf("\u26a1 Automatic subscription failover: %s via %s.", model, provider)
+    paste(c(notice, route$context_notice), collapse = "\n")
 }
 
 .fallback_reply <- function(response) {
@@ -340,7 +345,8 @@
 # Run llm.api::agent with agent_args, walking the session's fallback
 # chain on limit errors. `.call` is the seam tests replace; production
 # leaves it at the real agent.
-.agent_with_fallback <- function(agent_args, session, .call = .agent_call) {
+.agent_with_fallback <- function(agent_args, session, .call = .agent_call,
+                                 .prepare = NULL) {
     previous_edit_provider <- session$context_edit_provider
     previous_edit_request <- session$context_edit_request
     on.exit({
@@ -349,6 +355,7 @@
     }, add = TRUE)
     primary <- list(model = agent_args$model, provider = agent_args$provider)
     chain <- c(list(primary), .session_fallback(session))
+    .remember_model_pair(session)
     resume <- FALSE
     last_error <- NULL
     recovered_usage <- list()
@@ -356,14 +363,26 @@
 
     for (i in seq_along(chain)) {
         cand <- chain[[i]]
-        if (.context_edit_pure(session) &&
-            !.context_edit_provider_supported(cand$provider)) {
-            next
-        }
         if (.fallback_limited(cand$provider)) {
             next
         }
         args <- agent_args
+        pair <- NULL
+        if (isTRUE(session$talker)) {
+            pair <- .model_pair(session, cand$provider,
+                if (i == 1L) session$.model_pairs[[cand$provider]]$doer$model %||%
+                    session$doer_model %||% cand$model else cand$model)
+            if (i == 1L) pair$talker$model <- cand$model
+            cand$model <- pair$talker$model
+            # A delegate can be submitted inside .call(), and dispatched
+            # after it returns. Keep the selected doer route for both.
+            .apply_model_pair(session, pair, replies = FALSE)
+            session$.model_pairs[[cand$provider]] <- pair
+            args$reasoning_effort <- pair$talker$reasoning_effort
+            args$output_config <- NULL
+            args$thinking_budget_tokens <- pair$talker$thinking_budget_tokens
+            args[["thinking"]] <- pair$talker[["thinking"]]
+        }
         if (resume) {
             history <- session$history
         } else {
@@ -375,11 +394,6 @@
             } else {
                 FALSE
             })
-        if (.context_edit_pure(session) &&
-            .context_edit_responses(cand$provider, cand$model,
-                                    request$web_search, history)) {
-            next
-        }
         shape <- .history_shape(history)
         if (resume) {
             args <- .fallback_resume_args(args, history)
@@ -393,7 +407,10 @@
         args$model <- cand$model
         args$provider <- cand$provider
         session$context_edit_provider <- cand$provider
+        request$configured_provider <- session$provider
+        request$configured_model <- .resolve_model(session)
         session$context_edit_request <- request
+        session$context_active_request <- request
         if ("tools" %in% names(args)) {
             args$tools <- .context_edit_tools(args$tools, session)
         }
@@ -415,7 +432,7 @@
         # "between_tools" that turns thinking off on Claude Sonnet 5.5 is
         # a 400 on Claude Haiku 4.5. Another model answers on its own
         # default.
-        if (!identical(cand$model, primary$model)) {
+        if (is.null(pair) && !identical(cand$model, primary$model)) {
             args[["thinking"]] <- NULL
         }
 
@@ -424,6 +441,9 @@
         if (!identical(history, args$history)) {
             args$history <- history_replace(session, args$history,
                 "provider_bridge", before = history)
+        }
+        if (is.function(.prepare)) {
+            args <- .prepare(args)
         }
 
         checkpoint_usage <- list()
@@ -448,7 +468,7 @@
                 checkpoint(history, context)
             }
         }
-        before <- length(session$history %||% list())
+        before <- session$history %||% list()
         result <- tryCatch(.call(args), error = function(e) e)
         if (!inherits(result, "error")) {
             # Before another candidate's usage is added to it.
@@ -458,6 +478,10 @@
                 result$turns <- recovered_turns + as.integer(result$turns %||% 0L)
             }
             route <- .fallback_route(cand, i)
+            route$context_management <- .context_management(session)
+            if (!identical(route$context_management, session$last_route$context_management)) {
+                route$context_notice <- .context_management_notice(session)
+            }
             result$corteza_route <- route
             session$last_route <- route
             if (i > 1L) {
@@ -488,7 +512,7 @@
                         substr(conditionMessage(result), 1L, 120L),
                         cand$provider,
                         format(deadline, "%a %Y-%m-%d %H:%M %Z")))
-        progressed <- length(session$history %||% list()) > before
+        progressed <- !identical(session$history %||% list(), before)
         if (progressed) {
             resume <- TRUE
         }

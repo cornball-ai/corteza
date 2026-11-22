@@ -894,7 +894,7 @@ bot_ollama_models <- function() {
 }
 
 # Assemble the /model menu: the configured default first, then the live
-# local Ollama inventory, then the config's `models` extras ("model
+# local Ollama inventory, then the config's `models` and `fallback` extras ("model
 # provider" strings; hosted providers can't be enumerated remotely, so
 # they are declared). Deduped by (model, provider), order preserved.
 # `ollama_models` is injectable for tests; NULL fetches live.
@@ -925,7 +925,7 @@ bot_available_models <- function(cfg = NULL, ollama_models = NULL) {
     for (m in ollama_models) {
         add(m, "ollama")
     }
-    for (extra in cfg$models %||% character()) {
+    for (extra in c(cfg$models %||% character(), cfg$fallback %||% character())) {
         parts <- strsplit(trimws(extra), "\\s+")[[1]]
         add(parts[1], if (length(parts) >= 2L) parts[2] else default_provider)
     }
@@ -994,6 +994,12 @@ bot_render_model_menu <- function(entries, session) {
 # injectable for tests; NULL assembles the menu from cfg + live Ollama.
 bot_apply_model_command <- function(session, cmd, cfg = NULL,
                                     available = NULL) {
+    apply <- function(model, provider = NULL) {
+        tryCatch({
+            .set_work_model(session, model, provider)
+            .work_model_ack(session)
+        }, error = function(e) paste("Model unchanged:", conditionMessage(e)))
+    }
     # The stored model/provider drive dispatch and stay raw; only the room
     # echo of these user-supplied values is sanitized so it can't forge a line.
     if (isTRUE(cmd$query_only)) {
@@ -1014,15 +1020,13 @@ bot_apply_model_command <- function(session, cmd, cfg = NULL,
                           .model_menu_text(available, session)))
         }
         entry <- available[[idx]]
-        .set_work_model(session, entry$model, entry$provider)
-        return(.work_model_ack(session))
+        return(apply(entry$model, entry$provider))
     }
     provider <- NULL
     if (!is.na(cmd$provider)) {
         provider <- cmd$provider
     }
-    .set_work_model(session, cmd$model, provider)
-    .work_model_ack(session)
+    apply(cmd$model, provider)
 }
 
 # Badge mode from config: "never" (default), "non_default", "always".

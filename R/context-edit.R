@@ -44,8 +44,19 @@
                     "openai_compatible", "moonshot", "ollama")
 }
 
-.context_edit_supported <- function(session) {
+.context_edit_request_for <- function(session) {
     request <- session$context_edit_request
+    active <- session$context_active_request
+    if (is.null(request) &&
+        identical(active$configured_provider, session$provider) &&
+        identical(active$configured_model, .resolve_model(session))) {
+        request <- active
+    }
+    request
+}
+
+.context_edit_supported <- function(session) {
+    request <- .context_edit_request_for(session)
     provider <- request$provider %||% session$context_edit_provider %||% session$provider
     .context_edit_provider_supported(provider) &&
     !identical(.history_shape(session$history), "responses") &&
@@ -299,6 +310,9 @@
 }
 
 .context_edit_prepare <- function(session) {
+    session$context_active_request <- list(provider = session$provider,
+        model = .resolve_model(session), web_search = .session_web_search(session),
+        configured_provider = session$provider, configured_model = .resolve_model(session))
     .context_edit_require(session)
     session$pending_context_edits <- list()
     session$context_edit_events <- list()
@@ -722,8 +736,12 @@
     } else if (cfg$enabled && !journal_enabled(session)) {
         status <- "unavailable: journal_enabled is false"
     }
-    sprintf("Context editing: %s (cadence: %s)%s.", status, cfg$cadence,
-            if (identical(cfg$strategy, "clm")) "; pure CLM, automatic summaries off" else "")
+    strategy <- if (.context_edit_pure(session)) {
+        "; pure CLM, automatic summaries off"
+    } else if (.context_edit_pure_requested(session)) {
+        "; standard compaction for this route"
+    } else ""
+    sprintf("Context editing: %s (cadence: %s)%s.", status, cfg$cadence, strategy)
 }
 
 .context_edit_command <- function(session, arg = "status") {

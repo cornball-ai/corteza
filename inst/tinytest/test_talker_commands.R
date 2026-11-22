@@ -118,7 +118,7 @@ local({
     expect_identical(ns$job_worker_spec(s)$model, "fixture-big")
     # A thinking type belongs to the model it was set for.
     expect_null(s$doer_thinking)
-    expect_true(grepl("replies stay on fixture-fast", ack, fixed = TRUE))
+    expect_true(grepl("Replies: fixture-fast", ack, fixed = TRUE))
     # /status names both.
     st <- ns$bot_status_text(s)
     expect_true(grepl("model: fixture-big\nprovider: ollama\n", st, fixed = TRUE))

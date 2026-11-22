@@ -351,7 +351,11 @@ moves the session's model, provider and reasoning settings to the doer
 own model; `talker_follows` says it has no model or provider of its
 own. `/model` and `/effort` act on the doer (`.session_work_model()`,
 `.set_work_model()`, `.effort_command()` in `R/model-controls.R`), the
-talker following `/model` where `talker_follows`. Column `talker` of
+talker following same-provider model changes where `talker_follows`.
+A provider switch moves both roles together (`R/model-pairs.R`), restores
+the provider's remembered pair or `model_pairs` entry, and otherwise uses
+the selected model for both. Automatic fallback uses the same pairs.
+Column `talker` of
 `corteza_commands()` says what each room command acts on, and
 `test_talker_commands.R` holds the room's to it.
 

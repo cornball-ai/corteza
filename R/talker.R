@@ -127,7 +127,8 @@ bot_talker_config <- function(cfg, tools_filter = NULL, unbound = FALSE) {
 # `talker.model`, else on the session's own model, or on its provider's
 # default model where `talker.provider` names another provider. Without
 # a model or provider of its own, the talker follows the session's
-# model through /model (bot_apply_model_command()).
+# model through /model (bot_apply_model_command()). Provider switches
+# move both roles, remembering the old pair (R/model-pairs.R).
 #
 # The doer's settings are read from the config here, once: /model and
 # /effort change them, /status shows them and job_worker_spec() runs a
@@ -201,6 +202,10 @@ talker_enable <- function(session, talker = list()) {
         !identical(x$id, "talker_guidance")
     }, session$context_prefix_sources %||% list()), list(guidance))
     session$talker <- TRUE
+    if (!is.null(session$config$model_pairs[[session$doer_provider]])) {
+        .apply_model_pair(session, .model_pair(session, session$doer_provider))
+    }
+    .remember_model_pair(session)
     invisible(session)
 }
 
