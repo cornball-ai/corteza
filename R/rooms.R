@@ -2062,6 +2062,7 @@ bot_new_session <- function(cfg, system = NULL, model = NULL,
         cfg$reasoning_effort, "Matrix config reasoning_effort"
     )
     s$fallback <- cfg$fallback
+    s$config$model_pairs <- cfg$model_pairs %||% s$config$model_pairs
     s$fallback_cooldown <- cfg$fallback_cooldown_minutes
     s$fallback_primary_retry_at <- cfg$fallback_primary_retry_at
     .fallback_primary_retry_at(s)

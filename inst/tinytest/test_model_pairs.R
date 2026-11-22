@@ -106,7 +106,8 @@ local({
                     "test_compaction")
                 stop("HTTP 429 rate limit")
             }
-            expect_null(args$prompt)
+            expect_false(identical(args$prompt, "Write the fixture file"))
+            expect_true(grepl("Do not repeat any completed tool call", args$prompt, fixed = TRUE))
             expect_true(any(vapply(args$history, function(m) {
                 grepl("already written", ns$message_text(m), fixed = TRUE)
             }, logical(1))))

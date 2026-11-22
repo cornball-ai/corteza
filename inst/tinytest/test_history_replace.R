@@ -1342,6 +1342,7 @@ local({
         ".turn_impl :: response$history" = 1L,
         ".recover_output :: retry$history" = 1L,
         ".agent_with_fallback :: args$history" = 2L,
+        ".prepare_route_context :: args$history" = 1L,
         ".fallback_resume_args :: args$history" = 1L,
         ".journal_write_segment :: envelope$history" = 1L,
         "journal_load :: seg$history" = 1L)

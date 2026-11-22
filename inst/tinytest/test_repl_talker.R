@@ -563,8 +563,8 @@ local({
     main <- tbl[tbl$terminal & !nzchar(tbl$same_as), ]
     shown <- c(quit = "both", clear = "both", help = "talker", jobs = "doer",
                job = "doer", cancel = "doer", copy = "talker", tasks = "talker",
-               tools = "talker", model = "doer", effort = "doer",
-               provider = "doer", spawn = "talker", agents = "talker",
+               tools = "talker", model = "both", effort = "doer",
+               provider = "both", spawn = "talker", agents = "talker",
                ask = "talker", queue = "talker", collect = "talker",
                kill = "talker", sessions = "talker", trace = "talker",
                permissions = "both", trust = "both", auto = "talker",

@@ -52,7 +52,13 @@
     provider <- tolower(trimws(provider))
     pair <- session$.model_pairs[[provider]] %||% session$config$model_pairs[[provider]]
     if (is.null(pair)) {
-        pair <- list()
+        selected <- model %||% default_provider_model(provider)
+        pair <- list(follows = TRUE,
+            talker = list(model = selected, reasoning_effort = session$reasoning_effort,
+                          thinking_budget_tokens = session$thinking_budget_tokens),
+            doer = list(model = selected, reasoning_effort = session$doer_reasoning_effort,
+                        thinking_budget_tokens = session$doer_thinking_budget))
+        pair$doer["reasoning_default"] <- list(session$doer_reasoning_default)
     }
     if (!is.list(pair)) {
         stop("model_pairs entries must be objects", call. = FALSE)
@@ -65,12 +71,11 @@
         work$thinking <- NULL
     }
     previous_talker <- .model_pair_role(pair$talker, work$model)
-    talk <- if (isTRUE(follows)) {
-        .model_pair_role(if (identical(work$model, previous_talker$model)) previous_talker, work$model)
-    } else {
-        previous_talker
+    if (isTRUE(follows) && !identical(work$model, previous_talker$model)) {
+        previous_talker$model <- work$model
+        previous_talker$thinking <- NULL
     }
-    list(provider = provider, follows = isTRUE(follows), talker = talk, doer = work)
+    list(provider = provider, follows = isTRUE(follows), talker = previous_talker, doer = work)
 }
 
 .apply_model_pair <- function(session, pair, replies = TRUE) {

@@ -15,7 +15,8 @@
 
 # Set it, and the provider when one is given.
 .set_work_model <- function(session, model, provider = NULL) {
-    provider <- .model_provider(provider %||% .session_work_model(session)$provider)
+    provider <- provider %||% .session_work_model(session)$provider
+    if (!is.null(provider)) provider <- .model_provider(provider)
     if (!isTRUE(session$talker)) {
         bot_set_session_model(session, model %||% default_provider_model(provider))
         session$provider <- provider
