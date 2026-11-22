@@ -347,9 +347,8 @@ doer, a worker process of the conversation's own (`R/job-worker.R`).
 decides without it. `bot_talker_config()` gives a bot's rooms TRUE
 unless the bot's tools are restricted (`tools_filter`: a doer gets
 `SUBAGENT_PRESETS$work` whatever the list says) or the room has no
-directory. The terminal's default is TRUE as well (`.repl_talker_default()`:
-the CLI sets `ctx$talker_default`, and restricted tools leave it off) and
-`chat()`'s FALSE. `talker_enable()`
+directory. The CLI and `chat()` both default to FALSE: their sessions run
+tools directly unless `talker.enabled` is TRUE. `talker_enable()`
 moves the session's model, provider and reasoning settings to the doer
 (`doer_*`) and runs the talker on `talker.model`, else the session's
 own model; `talker_follows` says it has no model or provider of its

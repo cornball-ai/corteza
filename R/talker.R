@@ -10,10 +10,8 @@
 #
 # A bot's rooms are talkers unless the config says `"talker":
 # {"enabled": false}` (WP20b), the bot's tools are restricted, or the
-# room has no directory (bot_talker_config()). So is the terminal
-# (WP20c), unless the config says so or its tools are restricted
-# (.repl_talker_default()); chat() is one only where the config turns
-# it on.
+# room has no directory (bot_talker_config()). The CLI and chat() use
+# direct execution unless the config enables talker mode.
 #
 # The pattern is LiveKit's talker/reasoner split
 # (https://livekit.com/blog/talker-reasoner-pattern-voice-agents). The
@@ -92,8 +90,8 @@ TALKER_GUIDANCE <- paste(
 
 # Resolve talker settings from a config's `talker` entry, or NULL when
 # talker mode is off. `talker.enabled` decides; without it, `default`
-# does: on for a bot's rooms (bot_talker_config()) and the terminal
-# (.repl_talker_default()), off in chat().
+# does: on for a bot's rooms (bot_talker_config()), off in the CLI
+# and chat() (.repl_talker_default()).
 talker_config <- function(cfg, default = FALSE) {
     t <- cfg$talker
     if (!is.null(t) && !is.list(t)) {

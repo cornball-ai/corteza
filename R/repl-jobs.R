@@ -8,9 +8,9 @@
 # and an approval request is asked right there. The cost is that a job
 # waiting on approval waits until the next Enter; /jobs pumps on demand.
 
-# Whether a session here is a talker when its config does not say
-# (WP20c). The CLI's is, as a bot's room is (bot_talker_config()), and
-# chat()'s is not (open item 1). A session whose tools are restricted
+# Whether a session here is a talker when its config does not say.
+# The CLI and chat() both default to direct execution. A surface can
+# explicitly request a talker default. A session whose tools are restricted
 # (--tools, the config's `tools`) is no talker by default, as in a room,
 # since a doer gets the work tools whatever that list says.
 .repl_talker_default <- function(ctx) {

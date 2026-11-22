@@ -14,11 +14,10 @@
 #
 # `talker` says what the command acts on in a talker session (R/talker.R):
 # the talker's conversation, the doer and its jobs, or both. /model,
-# /provider, /effort and /max-tokens are the doer's (R/model-controls.R):
-# the talker follows /model and /provider only where its config names no
-# model or provider of its own. Every row a surface takes has one, since
-# a room and the terminal are talkers by default (WP20b, WP20c), and
-# test_repl_talker.R holds the terminal's to what each command does.
+# /provider switch the provider's pair; /effort and /max-tokens act on
+# the doer (R/model-controls.R). Every row a surface takes declares its
+# target when talker mode is enabled. test_repl_talker.R holds the
+# terminal's to what each command does.
 #
 # Nothing dispatches from the table: each surface matches its names as
 # before. test_commands.R holds each surface's names, and both help
