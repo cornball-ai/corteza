@@ -1,3 +1,12 @@
+# corteza 0.8.0.47
+
+- Provider switches and quota fallbacks keep a talker and its doer on
+  the same provider, using remembered or configured model pairs. The
+  model menu includes configured fallback routes.
+- Routes that cannot edit their native history, including Codex's
+  Responses format, use standard compaction when CLM is requested.
+  Compaction uses the selected route's model and context limits.
+
 # corteza 0.8.0.46
 
 - Leaving plan mode requires the person's approval. Saved approvals,

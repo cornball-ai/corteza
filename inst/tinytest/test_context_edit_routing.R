@@ -64,13 +64,24 @@ local({
     for (case in cases) {
         cc <- responses <- list()
         s <- make(case$model, case$search)
-        history <- s$history
         for (prompt in c("First task", "Second task")) {
-            expect_error(corteza::turn(prompt, s, tools = read_tool), "Pure CLM requires")
-            expect_identical(s$history, history)
+            reply <- corteza::turn(prompt, s, tools = read_tool)$reply
+            expected <- if (identical(prompt, "First task")) {
+                paste0("Context management: standard compaction; this route cannot use CLM.\n\n",
+                       "Completed turn")
+            } else "Completed turn"
+            expect_equal(reply, expected)
+            expect_false(corteza:::.context_edit_enabled(s))
+            expect_equal(corteza:::.context_management(s), "compaction")
         }
-        expect_equal(length(cc) + length(responses), 0L)
+        expect_equal(length(responses), 2L)
+        expect_equal(length(cc), 0L)
+        for (body in responses) {
+            expect_false(any(vapply(body$tools, function(tool) identical(tool$name, "edit_context"), logical(1))))
+            expect_false(grepl("Conversation context management", body$instructions, fixed = TRUE))
+        }
 
+        cc <- responses <- list()
         s <- make(case$model, case$search, strategy = "hybrid")
         for (prompt in c("First task", "Second task")) {
             expect_equal(corteza::turn(prompt, s, tools = read_tool)$reply, "Completed turn")
@@ -94,10 +105,10 @@ local({
             .call = function(args) {
                 called <<- c(called, args$model)
                 if (args$model == "fixture-primary") stop("HTTP 429 rate limit")
-                expect_true(corteza:::.context_edit_enabled(s))
+                expect_false(corteza:::.context_edit_enabled(s))
                 list(content = "Fallback completed", history = args$history)
             })
-        expect_equal(called, c("fixture-primary", "fixture"))
+        expect_equal(called, c("fixture-primary", "gpt-6-astra"))
         expect_equal(result$content, "Fallback completed")
         expect_null(s$context_edit_request)
         corteza:::.fallback_reset()

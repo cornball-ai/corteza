@@ -602,7 +602,10 @@ summary recovery on context overflow, and holder archival. The model must
 manage the window before it fills; exhaustion reports an error and retains
 the journal. In a room, later messages can also overflow the same full window.
 Use `/clear` to start a fresh working window; the journal retains the previous
-record. Unsupported providers are skipped in a pure CLM fallback chain.
+record. A provider or history format that cannot support CLM uses standard
+compaction instead, including Codex's Responses format. The configured CLM
+preference stays intact, so a compatible route can use it again. Model-switch
+acknowledgments and fallback replies explain the effective context strategy.
 The package default remains the existing threshold-compaction behavior.
 
 Doers can select this policy independently of their conversation session:
@@ -1638,15 +1641,38 @@ In a talker session `/model` and `/effort` change the work: the doer's model
 and effort, which the next job runs with. The doer starts on the model and
 provider the config's `jobs` block names, if it names them, with that block's
 reasoning settings; the talker stays on the session's model, and the 2
-commands change the doer's from there. The talker follows `/model` unless
-the `talker` block names a model or a provider of its own, and its reasoning
-settings come from that block alone. `/status` names both models. Up to 0.8.0
+commands change the doer's from there. Within a provider, a separately
+configured talker keeps its model. Switching provider moves both roles to
+that provider's pair, and returning restores the previous pair. An unseen
+provider uses the selected model for both roles unless `model_pairs` names
+a pair. `/status` names both models. Up to 0.8.0
 both commands changed the talker's alone. Column `talker` of the command
 table (`corteza:::corteza_commands()`) says what each command acts on: the
 talker's conversation, the doer and its jobs, or both.
 
-At the terminal, `/provider` and `/max-tokens` are the doer's too: the
-provider follows `/model`'s rule, and the output budget is the next job's,
+Optional provider pairs use model names or objects with `model` and the
+role's reasoning settings. For example:
+
+```json
+"model_pairs": {
+  "anthropic_claude": {
+    "talker": "claude-sonnet-4-6",
+    "doer": "claude-opus-4-7"
+  },
+  "openai_codex": {
+    "talker": {"model": "gpt-5.6-sol", "reasoning_effort": "low"},
+    "doer": {"model": "gpt-5.6-sol", "reasoning_effort": "high"}
+  }
+}
+```
+
+The `/model` menu includes configured fallback routes and pairs. Automatic
+quota fallback selects the pair too: a job delegated by a fallback talker
+uses that provider's doer. The preferred provider remains unchanged for its
+next retry after cooldown. Already running jobs keep their own model.
+
+At the terminal, `/provider` switches the pair. `/max-tokens` is the doer's:
+the output budget is the next job's,
 while the talker's replies keep theirs. A conversation you resume
 (`--resume`) starts its doer as a new conversation does: where the `jobs`
 block names a model, the doer runs on it again, whatever `/model` chose

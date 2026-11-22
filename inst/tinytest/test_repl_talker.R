@@ -219,8 +219,8 @@ local({
 
 # ---- What acts on the doer ------------------------------------------------------
 # /provider and /max-tokens set the doer's, as /model and /effort do
-# (test_talker_commands.R). The talker follows /provider where its
-# config names no model or provider of its own.
+# (test_talker_commands.R). A provider switch moves both roles to that
+# provider's pair, including a talker with a configured model.
 local({
     ctx <- talker_ctx()
     type(ctx)
@@ -229,7 +229,7 @@ local({
     expect_identical(ns$job_worker_spec(s)$provider, "openai")
     expect_identical(s$provider, "openai")
     expect_identical(ctx$disk_session$session$provider, "openai")
-    expect_true(any(grepl("for the next reply and the next job", out,
+    expect_true(any(grepl("on the next reply and the next job", out,
                           fixed = TRUE)))
 
     out <- type(ctx, "/max-tokens 4000")
@@ -459,8 +459,9 @@ local({
     s <- ctx$session
     out <- type(ctx, "/provider openai")
     expect_identical(ns$job_worker_spec(s)$provider, "openai")
-    expect_identical(s$provider, "anthropic")
-    expect_true(any(grepl("replies stay on anthropic", out, fixed = TRUE)))
+    expect_identical(s$provider, "openai")
+    expect_identical(s$model_map$cloud, ns$job_worker_spec(s)$model)
+    expect_true(any(grepl("on the next reply and the next job", out, fixed = TRUE)))
 })
 # /review reviews with the work's model, and /doctor and /config speak
 # of it, where the talker runs on another provider.
@@ -562,8 +563,8 @@ local({
     main <- tbl[tbl$terminal & !nzchar(tbl$same_as), ]
     shown <- c(quit = "both", clear = "both", help = "talker", jobs = "doer",
                job = "doer", cancel = "doer", copy = "talker", tasks = "talker",
-               tools = "talker", model = "doer", effort = "doer",
-               provider = "doer", spawn = "talker", agents = "talker",
+               tools = "talker", model = "both", effort = "doer",
+               provider = "both", spawn = "talker", agents = "talker",
                ask = "talker", queue = "talker", collect = "talker",
                kill = "talker", sessions = "talker", trace = "talker",
                permissions = "both", trust = "both", auto = "talker",

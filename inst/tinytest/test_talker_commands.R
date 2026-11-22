@@ -80,6 +80,19 @@ local({
 
 # ---- /model: the doer's, and the talker's where it follows -------------------
 local({
+    cfg <- base_cfg(model_pairs = list(
+        ollama = list(talker = "reply-local", doer = "work-local"),
+        openai_codex = list(talker = "reply-codex", doer = "work-codex")))
+    s <- in_project(cfg)
+    expect_identical(s$model_map$cloud, "reply-local")
+    expect_identical(s$doer_model, "work-local")
+    model_cmd(s, "/model work-codex openai_codex", cfg)
+    expect_identical(s$model_map$cloud, "reply-codex")
+    expect_identical(s$doer_model, "work-codex")
+    expect_identical(s$doer_provider, "openai_codex")
+})
+
+local({
     s <- in_project(base_cfg())
     ack <- model_cmd(s, "/model claude-opus-5-5 anthropic")
     expect_identical(s$doer_model, "claude-opus-5-5")
@@ -118,7 +131,7 @@ local({
     expect_identical(ns$job_worker_spec(s)$model, "fixture-big")
     # A thinking type belongs to the model it was set for.
     expect_null(s$doer_thinking)
-    expect_true(grepl("replies stay on fixture-fast", ack, fixed = TRUE))
+    expect_true(grepl("Replies: fixture-fast", ack, fixed = TRUE))
     # /status names both.
     st <- ns$bot_status_text(s)
     expect_true(grepl("model: fixture-big\nprovider: ollama\n", st, fixed = TRUE))
@@ -234,6 +247,6 @@ local({
 local({
     tbl <- ns$corteza_commands()
     said <- stats::setNames(tbl$talker, tbl$name)
-    expect_identical(unname(said[c("model", "effort")]), c("doer", "doer"))
+    expect_identical(unname(said[c("model", "effort")]), c("both", "doer"))
     expect_identical(unname(said[c("status", "context-edit")]), c("both", "both"))
 })

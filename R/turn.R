@@ -1425,7 +1425,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
             args$threshold <- 0
             args$min_messages <- 2L
         }
-        isTRUE(do.call(maybe_compact_turn_session, args))
+        isTRUE(.with_context_route(session, function() {
+            do.call(maybe_compact_turn_session, args)
+        }))
     }
     # A call left without its result (a turn that ended on an error, a
     # process stopped mid-call, a history restored from either) fails the
@@ -1433,7 +1435,6 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     # reads the history; compaction will not touch one that has it.
     .turn_close_open_calls(session, .open_calls_marker(), "open_calls")
     .context_edit_prepare(session)
-    compact_session_history(session$history %||% list(), reason = "preflight")
 
     # A stop asked for ends the run (R/turn-stop.R). The repair after it
     # is scoped to what the run adds to the history.
@@ -1623,7 +1624,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     call_agent <- function(args) {
         attempt_checkpoint_usage <<- list()
         attempt_checkpoint_turns <<- 0L
-        tryCatch(.agent_with_fallback(args, session), error = function(e) e)
+        tryCatch(.agent_with_fallback(args, session,
+            .prepare = function(args) .prepare_route_context(args, session, compact_config)),
+            error = function(e) e)
     }
     # A provider that enforces preserved thinking refuses a request that
     # replays a thinking block after the system text, the tool set or an

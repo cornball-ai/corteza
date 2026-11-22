@@ -1,8 +1,24 @@
 # Pure CLM is a session policy, independent of where retired content goes.
 # Only a conversation owner with an explicit vault can retire human turns.
-.context_edit_pure <- function(session) {
+.context_edit_pure_requested <- function(session) {
     cfg <- .context_edit_config(session$config, session$context_edit)
     isTRUE(cfg$enabled) && identical(cfg$strategy, "clm")
+}
+
+# CLM is a preference for routes that can edit their native history.
+# Other routes retain the journal and use ordinary compaction.
+.context_edit_pure <- function(session) {
+    .context_edit_pure_requested(session) && .context_edit_supported(session)
+}
+
+.context_management <- function(session) {
+    if (.context_edit_pure(session)) "clm" else "compaction"
+}
+
+.context_management_notice <- function(session) {
+    if (.context_edit_pure_requested(session) && !.context_edit_supported(session)) {
+        "Context management: standard compaction; this route cannot use CLM."
+    }
 }
 
 .context_edit_archives <- function(session) {
