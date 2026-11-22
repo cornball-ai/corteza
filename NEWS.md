@@ -1,3 +1,9 @@
+# corteza 0.8.0.46
+
+- Leaving plan mode requires the person's approval. Saved approvals,
+  permissive settings, and model reviewers cannot answer for them.
+  Refusing a plan keeps plan mode on.
+
 # corteza 0.8.0.45
 
 - `r_help` finds a requested package without scanning every installed
