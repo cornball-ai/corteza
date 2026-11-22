@@ -458,8 +458,10 @@ monitor_in_envelope <- function(call, decision, config = list(),
     #    Un-overridable by user config today; stays un-overridable by a
     #    supervisor.
     reason <- decision$reason %||% ""
-    if (identical(decision$rule, "credential") ||
-        startsWith(reason, "safety:")) {
+    if (identical(decision$rule, "plan_exit")) {
+        return(outside("ending plan mode is a person's decision"))
+    }
+    if (.person_rule(decision) || startsWith(reason, "safety:")) {
         return(outside(sprintf("hard safety rule (%s)", reason)))
     }
 

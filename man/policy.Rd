@@ -22,9 +22,11 @@ Returns a decision \code{list(model, approval, reason)}. \code{model} is
 \code{"cloud"} or \code{"local"}; nothing routes on it yet.
 \code{approval} is \code{"allow"}, \code{"ask"}, or \code{"deny"}. A
 verdict from the credential rule also carries
-\code{rule = "credential"}, one from plan mode
+\code{rule = "credential"}, one that asks before leaving plan mode
+\code{rule = "plan_exit"}, one from plan mode
 \code{rule = "plan_mode"}, and one from a room with no directory
-\code{rule = "unbound_room"}.
+\code{rule = "unbound_room"}. A person answers the first two each
+time: a saved "always" does not, and a prompt offers none.
 }
 \details{
 Every tool has a class, declared where it is registered:

@@ -510,6 +510,25 @@ local({
     st$live$call <- NULL
     choice <- "allow_once"
     expect_true(cb(call, credential))
+    # Leaving plan mode is asked the same way: a saved "always" for the
+    # tool does not answer it, and the request offers none.
+    expect_true(ns$approval_save(fx$proj, "exit_plan_mode"))
+    leave <- list(tool = "exit_plan_mode", args = list(plan = "1. Edit a.R"))
+    plan_exit <- ns$check_plan_exit(list(tool = "exit_plan_mode",
+                                         context = list(plan_mode = TRUE)))
+    expect_true(cb(leave, list(approval = "ask", reason = "default")))
+    before <- length(sent)
+    st$live$call <- NULL
+    choice <- "allow_always"
+    expect_false(cb(leave, plan_exit))
+    ask <- Filter(function(m) identical(m$method, "session/request_permission"),
+                  sent[-seq_len(before)])[[1L]]
+    expect_identical(vapply(ask$params$options, function(o) o$kind, ""),
+                     c("allow_once", "reject_once"))
+    expect_true(grepl("yours to approve", ask$params$toolCall$title, fixed = TRUE))
+    st$live$call <- NULL
+    choice <- "allow_once"
+    expect_true(cb(leave, plan_exit))
     close(p[[2L]])
 })
 

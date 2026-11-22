@@ -74,6 +74,11 @@ local({
             if (mode == "unbound" && name %in% unbound_control) {
                 want <- "allow"
             }
+            # Leaving plan mode asks a person, whatever its class says
+            # (check_plan_exit()).
+            if (mode == "plan" && name == "exit_plan_mode") {
+                want <- "ask"
+            }
             expect_identical(d$approval, want, info = paste(name, mode))
         }
     }

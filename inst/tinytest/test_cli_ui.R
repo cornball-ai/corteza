@@ -102,6 +102,14 @@ ur2 <- corteza:::cli_user_replied_line(
 expect_true(grepl("Always allow running `git status`", ur2, fixed = TRUE))
 expect_true(grepl("for this project", ur2, fixed = TRUE))
 
+# The plan's approval reads as one, not as a tool used on itself.
+leave <- list(tool = "exit_plan_mode", args = list(plan = "1. Edit a.R"),
+              channel = "cli")
+expect_identical(corteza:::cli_user_replied_line(leave, "1", persistent_label = NULL),
+                 "Approve the plan and leave plan mode")
+expect_identical(corteza:::cli_user_replied_line(leave, "3", persistent_label = NULL),
+                 "Deny the plan; plan mode stays on")
+
 ur3 <- corteza:::cli_user_replied_line(
                                        list(tool = "run_r",
                                             args = list(code = "1 + 1"),

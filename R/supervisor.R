@@ -57,9 +57,11 @@ supervisor_route <- function(call, decision, cwd = getwd(), mode = "monitor",
     flags <- character()
     notes <- character()
     # check_safety()'s verdict is "ask", so an approver decides it. That
-    # approver is a person.
-    if (identical(decision$rule, "credential") ||
-        startsWith(reason, "safety:")) {
+    # approver is a person. So is the one who ends plan mode: the person
+    # set it, and the plan is theirs (check_plan_exit()).
+    if (identical(decision$rule, "plan_exit")) {
+        flags <- c(flags, "would end plan mode, which a person set")
+    } else if (.person_rule(decision) || startsWith(reason, "safety:")) {
         flags <- c(flags,
                    sprintf("is covered by a hard safety rule (%s)", reason))
     }

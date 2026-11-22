@@ -826,9 +826,11 @@ ask. A tool that names no class, such as a skill or a package tool
 whose `skill_packages` entry gives none, asks too.
 
 Plan mode refuses writes, commands, continuations and tools with no
-class, and nothing below lifts that. A path under a credential store
-(`~/.ssh`, `~/.aws/credentials` and others) asks next, each time: a
-saved "always" never answers it, and its prompt offers none. Personal
+class, and nothing below lifts that. The agent ends plan mode with
+`exit_plan_mode`, whose prompt shows you its plan; a no keeps plan mode.
+That prompt comes each time, as does the one for a path under a
+credential store (`~/.ssh`, `~/.aws/credentials` and others): a saved
+"always" never answers either, and neither prompt offers one. Personal
 paths (`~/Documents`, `~/Downloads`) can be read; a write or a command
 touching them in a room is refused.
 
@@ -921,6 +923,7 @@ with its reason. These still prompt without it:
 - a call the rules flag;
 - a tool with no class;
 - a credential path;
+- leaving plan mode;
 - any call while the reviewer cannot read the whole conversation: one
   past 100,000 characters, one with no transcript or with a line it
   cannot read, one where a reply to your message is missing (its write
