@@ -21,7 +21,7 @@ expect_true(res$changed)
 expect_equal(res$mode, "allow")
 expect_true(grepl("was ask", res$text))
 # Relaxing approvals must say what it did not relax.
-expect_true(grepl("Credential paths still prompt", res$text))
+expect_true(grepl("Credential paths and leaving plan mode still prompt", res$text))
 # And where to make it stick.
 expect_true(grepl("Permanent", res$text))
 

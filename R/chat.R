@@ -353,18 +353,19 @@ chat_approval_cb <- function(cwd = getwd()) {
     approved <- new.env(parent = emptyenv())
     color <- ansi_colors()
     # Has the person answered this call for good, "allow always" for its
-    # tool in this session? The credential rule's ask is answered each
-    # time: an "always" given for the tool, for any file, does not
-    # answer it, and its prompt offers none. The reviewer (R/review.R)
-    # asks this first, so it never rules on an answer the person gave.
+    # tool in this session? The credential rule's ask, and leaving plan
+    # mode, are answered each time: an "always" given for the tool does
+    # not answer them, and their prompt offers none. The reviewer
+    # (R/review.R) asks this first, so it never rules on an answer the
+    # person gave.
     answered <- function(call, decision) {
-        !identical(decision$rule, "credential") &&
+        !.person_rule(decision) &&
         isTRUE(approved[[call$tool %||% ""]])
     }
 
     cb <- function(call, decision) {
         key <- call$tool %||% ""
-        once_only <- identical(decision$rule, "credential")
+        once_only <- .person_rule(decision)
         if (answered(call, decision)) {
             return(TRUE)
         }

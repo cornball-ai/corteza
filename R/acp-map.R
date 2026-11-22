@@ -83,12 +83,13 @@
 }
 
 # Why a call asks, for a person: what the reviewer or the rules said, or
-# the credential rule. The policy's own reason ("default: ...") is
-# corteza's bookkeeping and says nothing to the person.
+# the rule a person answers (the credential rule, leaving plan mode).
+# The policy's own reason ("default: ...") is corteza's bookkeeping and
+# says nothing to the person.
 .acp_ask_reason <- function(decision) {
     why <- decision$gate_reason %||% ""
     reason <- decision$reason %||% ""
-    if (!nzchar(why) && (identical(decision$rule, "credential") ||
+    if (!nzchar(why) && (.person_rule(decision) ||
             startsWith(reason, "safety:"))) {
         why <- reason
     }

@@ -9,7 +9,11 @@
 #      and the tool list stay as they are (WP14).
 #   3. `exit_plan_mode` is in the tool list of every session that can be
 #      in plan mode, and refused at the call outside it.
-#   4. A successful `exit_plan_mode` call (handled in
+#   4. `policy()` asks a person before `exit_plan_mode` runs
+#      (`check_plan_exit()`, rule "plan_exit"): the approval shows the
+#      plan, and no saved "always", user policy or config answers it. A
+#      no keeps plan mode, and the model is told so.
+#   5. A successful `exit_plan_mode` call (handled in
 #      `.make_tool_handler`) flips `session$plan_mode` back to FALSE.
 #
 # Subagents inherit plan_mode from their parent via `subagent_spawn()`.

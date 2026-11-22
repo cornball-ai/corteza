@@ -790,6 +790,33 @@ local({
         expect_equal(key(cli$cli_approval_cb(proj), "1")$asked, 1L)
         expect_equal(ask(cb, "bash")$asked, 0L)
         expect_equal(readLines(saved), before)
+        # Leaving plan mode is asked the same way, each time: the prompt
+        # shows the plan and offers no "always", a "2" counts as once,
+        # and an "always" the tool has does not answer it.
+        plan <- "1. Edit a.R\n2. Run the tests"
+        leave <- function(cb, reply) {
+            replies <<- reply
+            before_n <- prompts
+            said <- utils::capture.output(ok <- cb(
+                list(tool = "exit_plan_mode", args = list(plan = plan)),
+                ns$check_plan_exit(list(tool = "exit_plan_mode",
+                                        context = list(plan_mode = TRUE)))))
+            list(ok = ok, asked = prompts - before_n, said = said)
+        }
+        got <- leave(cb, "1")
+        expect_true(got$ok)
+        expect_equal(got$asked, 1L)
+        expect_true(any(grepl("Run the tests", got$said, fixed = TRUE)))
+        expect_false(any(grepl("Allow always", got$said, fixed = TRUE)))
+        got <- leave(cb, "2")
+        expect_true(got$ok)
+        # A "3" denies as for any call: it stops the turn, and plan mode
+        # stays, since the tool did not run.
+        denied <- tryCatch(leave(cb, "3"), corteza_user_deny = function(e) e)
+        expect_true(inherits(denied, "corteza_user_deny"))
+        expect_equal(ns$approvals_saved(proj), "bash")
+        expect_false(isTRUE(attr(cb, "answered")(list(tool = "bash"),
+            list(approval = "ask", rule = "plan_exit"))))
         # Where the project has no folder, "always" makes none.
         cb <- cli$cli_approval_cb(other)
         expect_equal(ask(cb, "run_r", "2")$asked, 1L)

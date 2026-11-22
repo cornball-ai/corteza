@@ -409,14 +409,14 @@ print_context_indicator <- function(used, limit, warn_pct = 75, high_pct = 90, c
 cli_approval_cb <- function(cwd) {
   for_session <- character()
   # Has the person answered this call for good? "Allow always" for its
-  # tool, saved or held for the session. The credential rule's ask is
-  # answered each time: an "always" given for the tool, for any file,
-  # does not answer it, and its prompt offers none. The reviewer
-  # (R/review.R) asks this first, so it never rules on an answer the
-  # person already gave.
+  # tool, saved or held for the session. The credential rule's ask, and
+  # leaving plan mode, are answered each time: an "always" given for the
+  # tool does not answer them, and their prompt offers none. The
+  # reviewer (R/review.R) asks this first, so it never rules on an
+  # answer the person already gave.
   answered <- function(call, decision) {
     name <- call$tool %||% ""
-    !identical(decision$rule, "credential") &&
+    !corteza:::.person_rule(decision) &&
       (name %in% for_session || name %in% corteza:::approvals_saved(cwd))
   }
   # "Allow always for this project": saved for the directory so that
@@ -431,7 +431,7 @@ cli_approval_cb <- function(cwd) {
   }
   cb <- function(call, decision) {
     name <- call$tool %||% ""
-    once_only <- identical(decision$rule, "credential")
+    once_only <- corteza:::.person_rule(decision)
     if (answered(call, decision)) {
       return(TRUE)
     }

@@ -328,12 +328,12 @@
 
 # How a job's prompt keeps "always": the callback's own (its `always`
 # attribute), which keeps it as its own prompt does. NULL where it has
-# none, and for the credential rule's ask, which no "always" answers.
+# none, and for a rule a person answers each time (.person_rule()).
 .repl_job_always <- function(cb, req) {
     always <- attr(cb, "always")
     rule <- req$rule
     if (!is.function(always) || !is.character(rule) || length(rule) != 1L ||
-        identical(rule, "credential")) {
+        .person_rule(list(rule = rule))) {
         return(NULL)
     }
     always

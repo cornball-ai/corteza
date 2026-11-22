@@ -11,9 +11,11 @@
 #      but reads and the control tools it names; plan mode refuses
 #      write, exec, continue and unknown. Nothing after this lifts a
 #      mode's deny.
-#   2. The credential rule. A path under a credential store asks, and the
-#      verdict carries rule = "credential", so no saved "always" answers
-#      it. Neither the user's policy function nor the config can lift it.
+#   2. The rules a person answers. A path under a credential store asks
+#      (rule = "credential"), and so does leaving plan mode, the call to
+#      exit_plan_mode (rule = "plan_exit"): the person set the mode, and
+#      the plan is theirs to approve. No saved "always" answers either,
+#      and neither the user's policy function nor the config lifts them.
 #   3. The user's policy function, if options(corteza.policy = ...) is
 #      set. Its verdict is final.
 #   4. The table: the tool's class, and personal data refused for a write
@@ -328,9 +330,33 @@ check_plan_mode <- function(call) {
     )
 }
 
+# Leaving plan mode asks a person: the person set the mode, and the plan
+# is theirs to approve. Before 0.8.1 nothing asked. exit_plan_mode is a
+# control tool, which runs, and the tool answers "Plan approved", so the
+# model left plan mode on its own word. The decision carries
+# rule = "plan_exit", which .person_rule() names. turn()'s handler
+# refuses the call by name first where the session may not end plan
+# mode (a job's worker) and outside plan mode, so neither gets here.
+check_plan_exit <- function(call) {
+    if (!identical(call$tool %||% "", "exit_plan_mode") ||
+        !isTRUE(call$context$plan_mode)) {
+        return(NULL)
+    }
+    list(model = "cloud", approval = "ask",
+         reason = "plan mode: ending it is yours to approve; the plan is above",
+         rule = "plan_exit")
+}
+
+# The rules only a person answers, each time: a saved "always" does not,
+# a prompt offers none, and a gate for unattended calls passes the call
+# to a person (supervisor_route(), the hall monitor).
+.person_rule <- function(decision) {
+    isTRUE(decision$rule %in% c("credential", "plan_exit"))
+}
+
 # Run hard safety checks. Returns a decision list to short-circuit, or NULL.
 # The decision carries rule = "credential": an approval callback asks for
-# it whatever was saved, and offers no "always".
+# it whatever was saved, and offers no "always" (.person_rule()).
 check_safety <- function(call) {
     paths <- path.expand(call$paths %||% character())
     if (!length(paths)) {
@@ -394,9 +420,11 @@ default_policy <- function(call) {
 #' \code{"cloud"} or \code{"local"}; nothing routes on it yet.
 #' \code{approval} is \code{"allow"}, \code{"ask"}, or \code{"deny"}. A
 #' verdict from the credential rule also carries
-#' \code{rule = "credential"}, one from plan mode
+#' \code{rule = "credential"}, one that asks before leaving plan mode
+#' \code{rule = "plan_exit"}, one from plan mode
 #' \code{rule = "plan_mode"}, and one from a room with no directory
-#' \code{rule = "unbound_room"}.
+#' \code{rule = "unbound_room"}. A person answers the first two each
+#' time: a saved "always" does not, and a prompt offers none.
 #'
 #' Every tool has a class, declared where it is registered:
 #' \code{"read"}, \code{"write"}, \code{"exec"}, \code{"control"} (acts on
@@ -454,6 +482,10 @@ policy <- function(call, config = NULL) {
     plan <- check_plan_mode(call)
     if (!is.null(plan)) {
         return(plan)
+    }
+    leave <- check_plan_exit(call)
+    if (!is.null(leave)) {
+        return(leave)
     }
 
     safety <- check_safety(call)

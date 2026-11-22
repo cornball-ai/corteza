@@ -229,10 +229,18 @@ local({
     expect_equal(count_notes(last_prompt(restated)), 2L)
     expect_identical(prefix_of(restated), prefix_of(first))
 
-    # exit_plan_mode's result tells the model, so no note follows it.
+    # exit_plan_mode's result tells the model, so no note follows it. A
+    # person approves the plan (check_plan_exit()).
+    asked <- NULL
+    s$approval_cb <- function(call, decision) {
+        asked <<- decision$rule
+        TRUE
+    }
     handler <- ns$.make_tool_handler(s, function(name, args) ns$ok("Plan approved."))
     handler("exit_plan_mode", list(plan = "the plan"))
+    expect_identical(asked, "plan_exit")
     expect_false(isTRUE(s$plan_mode))
+    s$approval_cb <- NULL
     s$tasks <- list(list(text = "only step", status = "pending"))
     quiet <- ask("proceed")
     expect_equal(count_notes(last_prompt(quiet)), 0L)

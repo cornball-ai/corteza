@@ -210,9 +210,13 @@ session's table, or the registry without one; a room host's tools
    control tool is refused there until it is named.
    `tool_delegate()` and `bot_job_handoff()` refuse such a room as well,
    asking or asked.
-2. The credential rule. A path under `~/.ssh`, `~/.aws/credentials`
-   and the rest asks, marked `rule = "credential"`. No saved "always"
-   answers it: both approval callbacks ask each time and offer none.
+2. The rules a person answers. A path under `~/.ssh`,
+   `~/.aws/credentials` and the rest asks, marked `rule = "credential"`,
+   and so does leaving plan mode: `exit_plan_mode`, a control tool,
+   would run unasked by its class, so `check_plan_exit()` asks, marked
+   `rule = "plan_exit"`. No saved "always" answers either
+   (`.person_rule()`): the approval callbacks ask each time and offer
+   none, and the supervisor and the hall monitor send them to a person.
 3. User policy function via `options(corteza.policy = function(call) ...)`.
    Final when it answers.
 4. The table: `read`, `control`, `continue` allow; `write`, `exec`,
