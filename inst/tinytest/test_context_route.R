@@ -58,3 +58,32 @@ local({
     })
     expect_identical(s$provider, "anthropic_claude")
 })
+
+# Returning from Responses restores both the CLM tool and its guidance
+# before the first supported-provider request, after its history bridge.
+local({
+    ns <- asNamespace("corteza")
+    ns$.fallback_reset()
+    root <- tempfile("return-clm-")
+    on.exit({ns$.fallback_reset(); unlink(root, recursive = TRUE)}, add = TRUE)
+    s <- corteza::new_session(provider = "anthropic_claude", system = "Fixture instructions",
+        model_map = list(cloud = "fixture"), web_search = FALSE,
+        context_edit = list(enabled = TRUE, strategy = "clm"))
+    ns$journal_install(s, root)
+    s$history <- list(list(role = "user", content = "Earlier task"),
+        list(type = ".openai_codex_output", output = list(list(type = "message",
+            role = "assistant", content = list(list(type = "output_text", text = "Earlier answer"))))))
+    s$context_edit_base_system <- "Fixture instructions"
+    s$context_edit_system <- ns$.context_edit_system(s$context_edit_base_system, s)
+    called <- FALSE
+    ns$.agent_with_fallback(list(provider = s$provider, model = "fixture", history = s$history,
+        tools = list(), system = s$context_edit_system), s, .call = function(args) {
+            called <<- TRUE
+            expect_true(ns$.context_edit_pure(s))
+            expect_true(any(vapply(args$tools, function(x) identical(x$name, "edit_context"), logical(1))))
+            expect_true(grepl("Conversation context management", args$system, fixed = TRUE))
+            expect_identical(ns$.history_shape(args$history), "portable")
+            list(content = "Done", history = args$history)
+        })
+    expect_true(called)
+})

@@ -411,12 +411,6 @@
         request$configured_model <- .resolve_model(session)
         session$context_edit_request <- request
         session$context_active_request <- request
-        if ("tools" %in% names(args)) {
-            args$tools <- .context_edit_tools(args$tools, session)
-        }
-        if (identical(agent_args$system, session$context_edit_system)) {
-            args$system <- .context_edit_system(session$context_edit_base_system, session)
-        }
         if (!is.null(args$web_search) &&
             !.web_search_supported(cand$provider)) {
             args$web_search <- NULL
@@ -441,6 +435,15 @@
         if (!identical(history, args$history)) {
             args$history <- history_replace(session, args$history,
                 "provider_bridge", before = history)
+        }
+        # A bridge back from Responses makes CLM available again. Decide
+        # from the history this candidate will receive, not the old wire.
+        .context_edit_require(session)
+        if ("tools" %in% names(args)) {
+            args$tools <- .context_edit_tools(args$tools, session)
+        }
+        if (identical(agent_args$system, session$context_edit_system)) {
+            args$system <- .context_edit_system(session$context_edit_base_system, session)
         }
         if (is.function(.prepare)) {
             args <- .prepare(args)
