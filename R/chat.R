@@ -9,31 +9,12 @@ llm_api_supported_providers <- function() {
     unique(as.character(providers %||% character()))
 }
 
-# Reload llm.api from disk so chat() can pick up newly installed providers
-# without requiring a full R restart.
-# @noRd
-reload_llm_api_namespace <- function() {
-    if ("package:llm.api" %in% search()) {
-        try(detach("package:llm.api", unload = TRUE, character.only = TRUE),
-            silent = TRUE)
-    }
-
-    if ("llm.api" %in% loadedNamespaces()) {
-        try(unloadNamespace("llm.api"), silent = TRUE)
-    }
-
-    requireNamespace("llm.api", quietly = TRUE)
-}
-
-# Ensure the active llm.api namespace supports the requested provider.
+# Ensure the loaded llm.api supports the requested provider. An llm.api
+# installed during the session cannot replace it: corteza imports
+# llm.api, so R will not unload it while corteza is loaded. The message
+# says to restart R.
 # @noRd
 ensure_llm_api_provider <- function(provider) {
-    supported <- llm_api_supported_providers()
-    if (provider %in% supported) {
-        return(invisible(supported))
-    }
-
-    reload_llm_api_namespace()
     supported <- llm_api_supported_providers()
     if (provider %in% supported) {
         return(invisible(supported))

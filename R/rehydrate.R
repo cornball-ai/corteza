@@ -6,8 +6,8 @@
 # rather than start a blank one in a room full of unrelated topics, so
 # the first message in such a thread seeds its session from the archive.
 #
-# Which archive a thread stands for is the host's knowledge (cerebro
-# keeps an index in the topic room's state), asked through the
+# Which archive a thread stands for is the host's knowledge (a host
+# might keep an index in the topic room's state), asked through the
 # thread_context hook given to bot_run_init(). This file owns what
 # corteza knows: resolving the archive path, bounding the transcript,
 # and seeding the session with it.

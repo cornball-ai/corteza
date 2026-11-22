@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/Rscript -e 'corteza::matrix_run()'
+ExecStart=/usr/bin/Rscript -e 'corteza::bot_run()'
 Restart=always
 RestartSec=5
 StandardOutput=append:%h/.local/state/corteza/matrix.log

@@ -361,15 +361,15 @@ expect_error(corteza:::voice_validate_grant(bad), "tls.*insecure")
 # text; a session with no room system still gets the register.
 # ---------------------------------------------------------------
 
-sys <- corteza:::voice_speech_system("You are cornelius.")
-expect_true(startsWith(sys, "You are cornelius.\n\n"))
+sys <- corteza:::voice_speech_system("You are helper.")
+expect_true(startsWith(sys, "You are helper.\n\n"))
 expect_true(grepl("read aloud", sys, fixed = TRUE))
 expect_true(grepl("No markdown", sys, fixed = TRUE))
 # a configured override replaces the default instruction, not the room
 # system
-sys <- corteza:::voice_speech_system("You are cornelius.",
+sys <- corteza:::voice_speech_system("You are helper.",
                                      style = "Speak like a pirate.")
-expect_identical(sys, "You are cornelius.\n\nSpeak like a pirate.")
+expect_identical(sys, "You are helper.\n\nSpeak like a pirate.")
 expect_false(grepl("No markdown", sys, fixed = TRUE))
 # degenerate styles (empty, NA, non-string) fall back to the default
 expect_true(grepl("No markdown",

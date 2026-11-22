@@ -62,7 +62,7 @@ expect_true(corteza:::.bot_is_command_line("/clear"))
 # A path is not, and neither is arithmetic or a bare slash. Listed
 # because a rule that ate these would silently drop real content: the
 # title falls back and the segment stops being worth keeping.
-expect_false(corteza:::.bot_is_command_line("/home/troy/cerebro"))
+expect_false(corteza:::.bot_is_command_line("/srv/work/repo"))
 expect_false(corteza:::.bot_is_command_line("/ hello"))
 expect_false(corteza:::.bot_is_command_line("and/or"))
 expect_false(corteza:::.bot_is_command_line("/"))

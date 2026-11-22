@@ -1,3 +1,13 @@
+# corteza 0.8.0.45
+
+- `r_help` finds a requested package without scanning every installed
+  package. An unsupported provider leaves an attached `llm.api` alone
+  and asks for an R restart.
+- The offline flush example runs for the deprecated alias too. Help
+  pages describe return values and live-service requirements, and the
+  sample systemd unit calls `bot_run()`.
+- Examples and tests use generic host, account and project names.
+
 # corteza 0.8.0.44
 
 - An empty `CORTEZA_REMOTE_DIR` counts as unset, as `CORTEZA_STATE_DIR`
@@ -11,7 +21,8 @@
   full. It read a block list for its text alone, so an Anthropic tool
   result counted as one line: a session whose tools returned long text
   compacted far past `context_compact_tokens`, and `/context`
-  understated it. A chat-completions call's `tool_calls` count too.
+  understated it. A chat-completions call's `tool_calls` count too, and
+  so does a plain-text document's text.
 
 # corteza 0.8.0.42
 
@@ -860,7 +871,7 @@ CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.
   made that decision and read that index here, are gone: a bare bot
   (`bot_run()`, or no `hooks`) archives and resets at `/clear` and never
   rehydrates. The `segment_rooms` config gate moves with the segment code
-  into the host (cerebro).
+  into the host.
 
 # corteza 0.7.1.76
 
@@ -1361,10 +1372,10 @@ CRAN release, batching the 0.7.1.1 to 0.7.1.94 development cycles below.
 
 - **The default room workspace uses the bot's localpart as written.**
   `bot_default_cwd()` capitalised the Matrix localpart, so a bot logged in
-  as `@cornelius:cornball.ai` fell back to an empty `~/Cornelius` beside the
-  `~/cornelius` instance directory cerebro runs it from, and created it.
-  The fallback is now `~/cornelius`. An instance directory with other
-  capitalisation, such as `~/LilCasey`, was mismatched before and still is.
+  as `@helper:example.org` fell back to an empty `~/Helper` beside the
+  `~/helper` instance directory its host runs it from, and created it.
+  The fallback is now `~/helper`. An instance directory with other
+  capitalisation, such as `~/MyHelper`, was mismatched before and still is.
 
 # corteza 0.7.1.47
 
@@ -2821,7 +2832,7 @@ Alt+Enter) to the two corteza addins. Override the built-in
 * The tool-approval prompt is much tighter. The `Reason` section
   (gate text + `Policy:` + `Model route:`) is gone; `Access` collapses
   to a single line that names the path or command (e.g. `Write to
-  CLAUDE.md`, `Run command in /home/troy/corteza`); the redundant
+  CLAUDE.md`, `Run command in /srv/work/repo`); the redundant
   `Path:` detail line above `Access` is suppressed when it would just
   repeat the same path. Choices 1 and 3 carry key hints: `(Enter)` and
   `(Esc)`.

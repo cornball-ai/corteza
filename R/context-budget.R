@@ -238,6 +238,8 @@ format_tokens <- function(n) {
 }
 
 #' Format an age in seconds as a compact string (e.g. "12s", "3m", "2h").
+#' @param seconds Age in seconds.
+#' @return A character string.
 #' @keywords internal
 #' @export
 format_age <- function(seconds) {
@@ -257,7 +259,10 @@ format_age <- function(seconds) {
 #' Format a live-context display like "4.2K/200K" or "?".
 #'
 #' Used by /agents to summarize live tokens versus model limit.
-#' Returns "?" when either value is NA.
+#' @param tokens Live context, in tokens.
+#' @param limit The model's context window, in tokens.
+#' @return A character string: "tokens/limit", or "?" when either value
+#'   is NA.
 #' @keywords internal
 #' @export
 format_live_ctx <- function(tokens, limit) {
@@ -385,7 +390,8 @@ message_text <- function(message) {
 # session that read files compacted far past its cap. Count the blocks'
 # JSON surface at chars/4, as for Codex output, and what is opaque at
 # chars/24: a thinking block's signature, a redacted block's data, an
-# image's or a document's base64 (an OpenAI-style data URL too).
+# image's or a document's base64 (an OpenAI-style data URL too). Only a
+# "base64" source is opaque: a plain-text document's data is its text.
 .estimate_block_tokens <- function(blocks) {
     opaque <- 0
     take <- function(x) {
@@ -404,7 +410,8 @@ message_text <- function(message) {
         } else if (identical(type, "redacted_thinking")) {
             take(b$data)
             b$data <- NULL
-        } else if (type %in% c("image", "document") && is.list(b$source)) {
+        } else if (type %in% c("image", "document") && is.list(b$source) &&
+            identical(b$source$type, "base64")) {
             take(b$source$data)
             b$source$data <- NULL
         } else if (identical(type, "image_url") && is.list(b$image_url) &&

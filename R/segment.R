@@ -2,7 +2,7 @@
 #
 # When a conversation ends at /clear, the host may give it a room of its
 # own: a "segment" the user can reopen from the room list while it is
-# fresh (cerebro does this, through the on_clear hook given to
+# fresh (a host can do this, through the on_clear hook given to
 # bot_run_init(), for the rooms its config names). Creating that room is
 # the host's; what this file owns is read from the session transcript,
 # which is corteza's data: the segment's title and whether the
@@ -20,7 +20,7 @@
 #
 # The first token must be a slash followed by a word and then a space or
 # the end of the line. The trailing condition is the whole rule: without
-# it "/home/troy/cerebro" is a command, and a user whose opening line is
+# it "/srv/work/repo" is a command, and a user whose opening line is
 # a bare path loses it -- the title falls back to "Conversation" and the
 # segment stops being worth keeping. A false positive here deletes
 # content; a false negative just leaves an ugly title.

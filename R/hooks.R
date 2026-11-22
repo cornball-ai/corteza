@@ -2,9 +2,9 @@
 #
 # corteza runs a conversation. What happens to a conversation once it
 # ends, where a thread's earlier context comes from, and which rooms'
-# messages the host answers itself, are the host's decisions (cerebro
-# files segments and folds them into topic rooms; a host can run agent
-# sessions in rooms of their own). The loop calls out through named
+# messages the host answers itself, are the host's decisions (a host can
+# file segments and fold them into topic rooms, or run agent sessions in
+# rooms of their own). The loop calls out through named
 # hooks and carries on without them: with none supplied, /clear resets
 # and nothing is filed, a thread reply starts from the thread's own
 # history, and every message is the bot's to answer.

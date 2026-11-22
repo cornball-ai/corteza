@@ -222,6 +222,13 @@ voice_id <- function(state) {
 #' @param max_events Stop after handling this many events (tests only;
 #'     the default never stops).
 #' @return Invisibly, the number of events handled.
+#' @examples
+#' \dontrun{
+#' # Needs rgrpc and RProtoBuf, a bot config naming voice.allocator and
+#' # voice.allocator_token, and a running allocator. Blocks until
+#' # interrupted.
+#' voice_serve(address = "127.0.0.1:7851")
+#' }
 #' @export
 voice_serve <- function(config = NULL, address = NULL, hooks = list(),
                         poll_ms = 200L, max_events = Inf) {
