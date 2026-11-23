@@ -132,6 +132,8 @@ local({
 # --- auto_approve_asks: the monitor rules, and nothing is approved unseen ---
 # The monitor's model is a function that answers from the command.
 fake_monitor <- function(task) {
+    s <- get(".subagent_state", asNamespace("corteza"))$session
+    s$history <- c(s$history, list(list(role = "user", content = task)))
     id <- sub(".*REQUEST-ID: ([A-Za-z0-9_-]+).*", "\\1", task)
     verdict <- if (grepl("refuse-me", task)) {
         "refuse"
@@ -155,8 +157,10 @@ monitored <- function(key) {
     corteza:::bot_transcript_add(s, "$asked", "user", "tidy the package",
                                  event = list(sender = "@troy:ex",
                                               body = "tidy the package"))
-    s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
-                              run_fn = fake_monitor)
+    s$job_worker_spec <- list(init_fn = function(spec) {
+        state <- get(".subagent_state", asNamespace("corteza"))
+        state$session <- corteza::new_session()
+    }, run_fn = fake_monitor)
     s
 }
 # Who may approve, as the room's members would say; the returned
