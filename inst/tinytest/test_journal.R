@@ -645,10 +645,12 @@ run_monitor_scope_journal_test <- function() {
     worker_state <- corteza:::.job_worker_state
     old_session <- sub_state$session
     old_scope <- worker_state$monitor_scope
+    old_record <- worker_state$review_record
     old_run <- worker_state$monitor_run_fn
     on.exit({
         assign("session", old_session, envir = sub_state)
         assign("monitor_scope", old_scope, envir = worker_state)
+        assign("review_record", old_record, envir = worker_state)
         assign("monitor_run_fn", old_run, envir = worker_state)
     }, add = TRUE)
     cwd <- tempfile("corteza_monitor_cwd_")
@@ -678,13 +680,19 @@ run_monitor_scope_journal_test <- function() {
     corteza:::.job_worker_child_init(cwd, spec, state_dir)
     jdir <- file.path(state_dir, "journal")
 
-    a1 <- corteza:::.job_monitor_child_ask("q1", "job-1")
+    question <- function(id, job) {
+        list(request_id = id, record = job, conversation = "Person: review the file.")
+    }
+    ask <- function(id, job) {
+        corteza:::.job_monitor_child_ask(question(id, job), paste(job, id))
+    }
+    a1 <- ask("q1", "job-1")
     expect_equal(a1$reply, "approve")
-    a2 <- corteza:::.job_monitor_child_ask("q2", "job-1")
+    a2 <- ask("q2", "job-1")
     expect_equal(length(sub_state$session$history), 4L)
     expect_equal(length(corteza:::journal_load(jdir)$segments), 0L)
 
-    a3 <- corteza:::.job_monitor_child_ask("q3", "job-2")
+    a3 <- ask("q3", "job-2")
     expect_equal(a3$reply, "approve")
     expect_equal(length(sub_state$session$history), 2L)
     j <- corteza:::journal_load(jdir)
@@ -694,8 +702,8 @@ run_monitor_scope_journal_test <- function() {
     expect_equal(j$segments[[1]]$kept, 0L)
     record <- corteza:::journal_history(jdir)
     expect_equal(length(record), 6L)
-    expect_equal(record[[1]]$content, "q1")
-    expect_equal(record[[5]]$content, "q3")
+    expect_equal(record[[1]]$content, corteza:::job_monitor_question(question("q1", "job-1")))
+    expect_equal(record[[5]]$content, corteza:::job_monitor_question(question("q3", "job-2")))
 
     # A journal that cannot record the change keeps the old scope and
     # its history, and the answer is an error for the parent to act on.
@@ -703,10 +711,10 @@ run_monitor_scope_journal_test <- function() {
         !identical(Sys.info()[["effective_user"]], "root")) {
         Sys.chmod(jdir, mode = "0500")
         on.exit(Sys.chmod(jdir, mode = "0700"), add = TRUE)
-        a4 <- corteza:::.job_monitor_child_ask("q4", "job-3")
+        a4 <- ask("q4", "job-3")
         Sys.chmod(jdir, mode = "0700")
         expect_true(grepl("journal", a4$error %||% ""))
-        expect_equal(worker_state$monitor_scope, "job-2")
+        expect_equal(worker_state$monitor_scope, "job-2 q3")
         expect_equal(length(sub_state$session$history), 2L)
     }
 }

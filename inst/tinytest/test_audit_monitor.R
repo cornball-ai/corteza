@@ -34,7 +34,9 @@ local({
     state$subagent_id <- NULL
     worker_state$monitor_scope <- "job-fixture"
     worker_state$monitor_run_fn <- NULL
-    answer <- corteza:::.job_monitor_child_ask("fixture", "job-fixture",
+    question <- list(request_id = "request123", record = "job-fixture",
+                     conversation = "Person: review the file.", tool = "read_file")
+    answer <- corteza:::.job_monitor_child_ask(question, "job-fixture",
         list(kind = "approval", role = "monitor", job_id = "job-fixture",
             approval_request_id = "request123"))
     expect_equal(count, 1L)
