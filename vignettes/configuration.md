@@ -1066,6 +1066,14 @@ number keeps everything that key governs.
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
 | `run_r_worker_options` | object | `{}` | Named arguments for `callr::r_session_options()` when `run_r_mode` is `"worker"`: `env`, `libpath`, `cmdargs`, `arch`, ... |
 
+Job workers, supervised `run_r` workers and spawned subagents skip the
+working directory's `.Rprofile` by default. A project that activates `renv`
+in that file can give the worker its library through `job_worker_options.libpath`
+or `run_r_worker_options.libpath`. For a worker that should run the profile
+at startup, set `user_profile` to `"project"` in its worker options. Spawned
+subagents have no profile override. The initial R process running `corteza`
+or `chat()` follows R's own startup rules.
+
 `skill_timeout` is the default for ordinary skills and for self-bounded tools
 such as `bash`, `cmd`, and `run_r_script`. An explicit tool argument still wins.
 Those self-bounded tools enforce the deadline in processx/callr rather than via
@@ -1148,7 +1156,7 @@ late interrupt in unrelated host code.
 | `subagents.max_concurrent` | integer | `3` | Max parallel subagents |
 | `subagents.timeout_minutes` | integer | `30` | Subagent kill timeout |
 | `subagents.allow_nested` | boolean | `false` | Allow nested subagents |
-| `subagents.default_tools` | string[] | `["read_file", "grep_files", "r_help", "web_search", "fetch_url"]` | Tools available to subagents when no preset is given |
+| `subagents.default_tools` | string[] | `["read_file", "skill_instructions", "grep_files", "r_help", "web_search", "fetch_url"]` | Tools available to subagents when no preset is given |
 | `subagents.base_port` | integer | `7851` | Starting port for subagent MCP servers |
 
 **Presets.** `/spawn --preset <name>` picks a fixed tool list at spawn time:

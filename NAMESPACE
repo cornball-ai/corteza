@@ -97,7 +97,6 @@ export(voice_serve)
 export(worker_init)
 
 importFrom(callr,r_session)
-importFrom(codetools,findGlobals)
 importFrom(llm.api,mcp_call)
 importFrom(llm.api,mcp_close)
 importFrom(llm.api,mcp_connect)

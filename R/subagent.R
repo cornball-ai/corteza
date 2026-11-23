@@ -819,7 +819,8 @@ subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
 
     # Spin up the child session and initialize corteza inside it.
     session <- tryCatch(
-                        callr::r_session$new(wait = TRUE),
+                        callr::r_session$new(options = callr::r_session_options(user_profile = FALSE),
+                                             wait = TRUE),
                         error = function(e) {
         store_update(session_key, list(status = "failed"))
         stop("Failed to start subagent session: ", conditionMessage(e),

@@ -1,3 +1,13 @@
+# Unreleased
+
+- Subagents spawned without a preset use the read-only tools, including
+  `read_file`, `web_search` and `fetch_url`. An explicit tool list still applies.
+- Tool calls no longer copy their results or new R bindings into the shared
+  workspace. R bindings still persist between calls in the same evaluator.
+- Job workers, supervised `run_r` workers and spawned subagents skip the
+  working directory's `.Rprofile` by default. Job and `run_r` workers accept
+  an explicit library path for projects that use `renv`.
+
 # corteza 0.8.0.50
 
 - An approval reviewer reads the full transcript afresh when journaling is off.

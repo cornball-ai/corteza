@@ -563,7 +563,7 @@ summary reads 120,000 (`.compact_summary_budget()`).
 `run_r` is **stateful**. `tool_run_r` calls
 `eval(parse(text = code), envir = handle_eval_env(parent = globalenv()))`,
 so `<-` and `=` assignments land in `globalenv()` and persist across
-calls. The workspace auto-capture explicitly depends on this. Use
+calls. Use
 `run_r` for incremental exploration where intermediate results need to
 carry forward.
 

@@ -551,9 +551,10 @@ local({
     queued <- ns$job_create("Never started.", workspace = ctx$cwd,
                             owner = s$job_owner,
                             origin = list(session_key = s$job_key))
-    out <- type(ctx, "/quit")
+    out <- with_stub("job_dispatch_next", function(session) list(), type(ctx, "/quit"))
     expect_true(any(grepl("Bye.", out, fixed = TRUE)))
     expect_identical(ns$job_read(queued)$status, "cancelled")
+    expect_null(ns$job_read(queued)$dispatch)
 })
 
 # ---- The table says what this file shows ------------------------------------------

@@ -292,10 +292,6 @@ load_config <- function(cwd = getwd()) {
     if (is.null(sub$mcp_spend_cap_tokens)) {
         sub$mcp_spend_cap_tokens <- NA_integer_
     }
-    if (is.null(sub$default_tools)) {
-        sub$default_tools <- c("base::readLines", "base::writeLines",
-                               "bash", "skill_instructions", "grep_files")
-    }
     if (is.null(sub$base_port)) {
         sub$base_port <- 7851L
     }

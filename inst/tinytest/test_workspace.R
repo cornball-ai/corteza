@@ -271,3 +271,33 @@ expect_false("test_scan_vec" %in% registered2)
 # Clean up globalenv
 rm("test_scan_df", "test_scan_vec", envir = globalenv())
 corteza:::ws_clear()
+
+# Two sessions share this R process. Reading a file and creating a real R
+# binding must leave the process-wide saved workspace alone.
+local({
+    corteza::ensure_skills()
+    reader <- corteza::new_session("matrix", model_map = list(cloud = "test-model"))
+    evaluator <- corteza::new_session("matrix", model_map = list(cloud = "test-model"))
+    evaluator$config$run_r_mode <- "in_process"
+    path <- tempfile()
+    binding <- basename(tempfile("workspaceTest"))
+    on.exit({
+        unlink(path)
+        if (exists(binding, globalenv(), inherits = FALSE)) {
+            rm(list = binding, envir = globalenv())
+        }
+        corteza:::ws_clear()
+    }, add = TRUE)
+    writeLines("workspace fixture", path)
+    opts <- options(corteza.allowed_paths = dirname(path))
+    on.exit(options(opts), add = TRUE)
+    read <- corteza:::call_skill("read_file", list(path = path), ctx = list(session = reader))
+    expect_true(grepl("workspace fixture", read$content[[1L]]$text, fixed = TRUE))
+    expect_identical(corteza:::ws_names(), character())
+
+    assigned <- corteza:::call_skill("run_r", list(code = paste(binding, "<- 42L")),
+                                     ctx = list(session = evaluator))
+    expect_identical(assigned$r_error, FALSE)
+    expect_identical(get(binding, globalenv()), 42L)
+    expect_false(corteza:::ws_exists(binding))
+})

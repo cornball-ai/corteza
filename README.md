@@ -242,7 +242,7 @@ corteza is a standalone agent runtime. `chat()` runs inside your R session. The 
 
 ## Design Philosophy
 
-- **Small enough to understand**: a handful of imports (curl, jsonlite, processx, codetools, llm.api, saber), readable source
+- **Small enough to understand**: a handful of imports (curl, jsonlite, processx, llm.api, saber), readable source
 - **Model-agnostic**: Anthropic, OpenAI, Moonshot, Ollama
 - **R-native**: packages are skills, `install.packages()` is the marketplace
 - **Hackable**: add tools by writing R functions

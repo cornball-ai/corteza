@@ -763,9 +763,8 @@ tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
 #'
 #' By default, code runs in the host's global environment, preserving the
 #' original \code{run_r} contract. Pass a private persistent environment to
-#' give an agent or capability its own R scope. Scoped evaluation retains
-#' assignments and handles but does not copy bindings into the host workspace
-#' cache.
+#' give an agent or capability its own R scope. Assignments and handles
+#' persist in the selected scope.
 #'
 #' @param code (character) R code to execute.
 #' @param envir (environment) Persistent environment in which assignments
@@ -775,12 +774,6 @@ tool_grep_files <- function(pattern, path = ".", file_pattern = "*.R") {
 #' @export
 tool_run_r <- function(code, envir = globalenv()) {
     stopifnot(is.environment(envir))
-    capture_workspace <- identical(envir, globalenv())
-    if (isTRUE(capture_workspace)) {
-        before <- ls(envir)
-    } else {
-        before <- character()
-    }
     handle_store <- handle_store_for(envir)
     # Active handles are visible in `code` as regular R names.
     eval_env <- handle_eval_env(parent = envir, store = handle_store)
@@ -866,24 +859,6 @@ tool_run_r <- function(code, envir = globalenv()) {
     text <- paste(c(streams, text), collapse = "\n")
     .audit_safe(.audit_tool_payload(.audit_runtime$active,
         paste(c(streams, outcome$printed), collapse = "\n"), text, "run_r", stage = "render"))
-
-    if (isTRUE(capture_workspace)) {
-        # Auto-capture new bindings into the workspace. Hidden names
-        # (`.foo`, `.h_NNN`) are excluded by default ls() rules.
-        new_names <- setdiff(ls(envir), before)
-        origin <- list(tool = "run_r", args = list(code = code))
-        for (nm in new_names) {
-            val <- get(nm, envir = envir)
-            if (object.size(val) < 10e6) {
-                deps <- tryCatch({
-                    fn <- eval(parse(text = paste0("function() {", code, "}")))
-                    referenced <- codetools::findGlobals(fn)
-                    intersect(referenced, ws_names())
-                }, error = function(e) character())
-                ws_put(nm, val, origin = origin, deps = deps)
-            }
-        }
-    }
 
     # The outer tool handler applies the same universal cap, but it does not
     # know which private evaluator produced this result. Admit it here first

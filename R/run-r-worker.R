@@ -314,6 +314,8 @@
         stop("config$", field, " must be a named list of ",
              "callr::r_session_options() arguments", call. = FALSE)
     }
+    # Worker startup precedes tool approval, even in an untrusted directory.
+    extra$user_profile <- extra$user_profile %||% FALSE
     opts <- do.call(callr::r_session_options, extra)
     # A bare callr worker starts R with only `base` plus callr's own tools on
     # the search path, so common helpers from utils/stats/methods (str, tail,

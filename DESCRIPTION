@@ -28,7 +28,6 @@ Depends:
     R (>= 4.4.0)
 Imports:
     callr,
-    codetools,
     curl,
     digest,
     jsonlite,
