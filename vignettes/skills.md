@@ -69,6 +69,9 @@ The project folder is read in a trusted directory only: send `/trust yes`
 there, or see "Trusted projects" in `vignette("configuration")`.
 
 Discovery is recursive and includes only files named exactly `SKILL.md`.
+It skips dot-prefixed subdirectories such as `.archive/`, including inside
+linked directories. You can still name a hidden directory as a root. A
+discovered skill can also have resources in hidden subdirectories.
 Names do not override each other: lookup uses the stable id derived from the
 configured root id plus the skill directory's relative path. Additional
 roots are configured explicitly through `instruction_roots`; corteza does

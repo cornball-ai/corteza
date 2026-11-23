@@ -427,3 +427,15 @@ expect_identical(corteza:::classify_op("skill_instructions"), "read")
 file_tool_names <- vapply(corteza::schema_from_registry("file"),
                           function(x) x$name, character(1L))
 expect_true("skill_instructions" %in% file_tool_names)
+local({
+    root <- tempfile("instruction-discovery-")
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    for (dir in c(".archive/old", "synced/current", "normal/.backup/old")) {
+        dir.create(file.path(root, dir), recursive = TRUE)
+        writeLines("fixture", file.path(root, dir, "SKILL.md"))
+    }
+    walk <- function(path) corteza:::instruction_walk_root(path, aliases = TRUE)$skills
+    expect_identical(walk(root), normalizePath(file.path(root, "synced/current/SKILL.md"),
+                                               winslash = "/"))
+    expect_equal(length(walk(file.path(root, ".archive"))), 1L)
+})

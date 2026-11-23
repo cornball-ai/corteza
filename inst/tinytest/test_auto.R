@@ -238,6 +238,8 @@ expect_true(grepl("no iteration cap", pc))
 
 ip <- corteza:::auto_initial_prompt("make the tests pass")
 expect_true(grepl("make the tests pass", ip))
+expect_true(grepl("2,000 characters as JSON", ip, fixed = TRUE))
+expect_true(grepl("continue with a smaller call", ip, fixed = TRUE))
 expect_true(grepl("autonomously", ip))
 # The escalation criterion and the evidence-based stopping condition.
 expect_true(grepl("materially change the intended outcome", ip))

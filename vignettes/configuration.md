@@ -219,6 +219,12 @@ also omitted rather than offered to the model and then stopping the run
 when selected. Path, credential, policy, and monitor checks still apply to
 every dispatched call.
 
+The monitor reads each tool argument in full. If any one argument exceeds
+2,000 characters in JSON, `/auto` refuses that call before asking the monitor.
+The worker receives the reason and can continue with a smaller call.
+This includes the content of a file write, even when your config allows the
+tool. JSON quotes and escapes count toward the limit.
+
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
 
@@ -931,10 +937,20 @@ with its reason. These still prompt without it:
   transcript does not mark what you typed. `/clear` starts a
   conversation it can read; in an editor, a new session does.
 
-The reviewer uses CLM for its own notes and tool results. A fresh reviewer
+Room and terminal reviewers send a call to a person when any JSON argument
+exceeds 2,000 characters, the worker's explanation exceeds 1,500 characters,
+or the delegated task exceeds 4,000 characters. The reviewer reads the
+delegated task in full whenever it rules on a job's call. The next eligible
+call can use the same verified conversation. In `/auto`, an oversized
+argument is refused and the run can continue.
+
+The reviewer uses CLM for its own notes and tool results. With
+`journal_enabled: false`, it reads the complete record afresh for each call.
+A fresh reviewer
 reads up to 100,000 characters. A warm reviewer can take another batch of
 that size if its earlier inputs are intact and its model has room for the
-request. A changed record starts a fresh review.
+request. The size check counts serialized bytes against the model's input
+budget and reserves room for the reply. A changed record starts a fresh review.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by
@@ -1347,8 +1363,10 @@ standard compaction when it selects Responses.
 
 ## Instruction skills
 
-Instruction skills are exact `SKILL.md` files discovered recursively at
-session startup. Built-in roots are:
+At session startup, corteza looks for files named exactly `SKILL.md` under
+each instruction root. It skips subdirectories whose names start with a dot,
+such as `.archive/`. An explicitly configured root can itself be hidden.
+The built-in roots are listed below.
 
 | Scope | Path |
 |-------|------|

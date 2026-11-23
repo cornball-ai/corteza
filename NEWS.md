@@ -1,3 +1,15 @@
+# Unreleased
+
+- An approval reviewer reads the full transcript afresh when journaling is off.
+  A call too large to review goes to a person, and the next eligible call
+  can reuse the verified conversation.
+- In `/auto`, a tool argument over 2,000 characters as JSON is refused before
+  the monitor is asked. The worker can continue with a smaller call.
+- When switching providers, corteza keeps tool output distinct from the
+  person's words and assigns fresh context IDs to the converted history.
+- Skill discovery skips dot-prefixed subdirectories such as `.archive/`.
+  An explicitly configured hidden directory can still serve as a skill root.
+
 # corteza 0.8.0.49
 
 - Codex subscription sessions can edit their native Responses history with CLM.

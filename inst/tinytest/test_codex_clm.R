@@ -20,10 +20,13 @@ local({
         context_edit = list(enabled = TRUE, strategy = "clm", cadence = "always"))
     ns$journal_install(s, tempfile("codex-journal-"))
     tool <- function(id, name, args) {
-        list(type = "function_call", call_id = id, name = name, arguments = args)
+        list(type = "function_call", id = paste0("fc_", id), call_id = id,
+             name = name, arguments = args)
     }
+    message_number <- 0L
     answer <- function(text) {
-        list(type = "message", role = "assistant", phase = "final_answer",
+        message_number <<- message_number + 1L
+        list(type = "message", id = paste0("msg_", message_number), role = "assistant", phase = "final_answer",
              content = list(list(type = "output_text", text = text)))
     }
     s$history <- list(list(role = "user", content = "Keep both files."),
@@ -71,7 +74,7 @@ local({
     child <- ns$.subagent_state
     worker <- ns$.job_worker_state
     old_session <- child$session
-    keys <- c("review_record", "monitor_run_fn", "monitor_scope")
+    keys <- c("review_record", "monitor_run_fn", "monitor_scope", "conversation", "approval_timeout")
     old_worker <- mget(keys, worker, ifnotfound = rep(list(NULL), length(keys)))
     on.exit({
         child$session <- old_session
@@ -107,6 +110,34 @@ local({
     expect_true(grepl("VERDICT: refuse", second$reply, fixed = TRUE))
     body <- as.character(ns$.history_json(requests[[3L]]$input))
     for (needle in c(lines, "[context note]")) {
+        expect_identical(lengths(regmatches(body, gregexpr(needle, body, fixed = TRUE))), 1L)
+    }
+
+    # The child reads its own journal setting. Each call uses a fresh
+    # complete transcript when that setting is off.
+    spec$init_fn <- function(spec) {
+        child$session <- corteza::new_session(provider = "openai_codex",
+            model_map = list(cloud = "fixture"), system = spec$system,
+            web_search = FALSE, tools_filter = spec$tools, context_edit = spec$context_edit)
+        child$session$config <- list(journal_enabled = FALSE)
+    }
+    ns$.job_worker_child_session(tempdir(), spec)
+    requests <- list()
+    assignInNamespace(".openai_codex_post_sse", function(url, body, headers, on_delta = NULL) {
+        requests[[length(requests) + 1L]] <<- body
+        list(status = "completed", output = list(answer("REQUEST: r2\nVERDICT: refuse\nREASON: stopped")),
+             usage = list(input_tokens = 25L, output_tokens = 5L))
+    }, "llm.api")
+    for (i in 1:2) {
+        result <- ns$.job_monitor_child_ask(q, "review:r2")
+        expect_null(result$error)
+        expect_null(result$window)
+        expect_true(grepl("VERDICT: refuse", result$reply, fixed = TRUE))
+    }
+    expect_equal(length(requests), 2L)
+    expect_false("edit_context" %in% vapply(requests[[2L]]$tools, function(t) t$name, ""))
+    body <- as.character(ns$.history_json(requests[[2L]]$input))
+    for (needle in lines) {
         expect_identical(lengths(regmatches(body, gregexpr(needle, body, fixed = TRUE))), 1L)
     }
 })

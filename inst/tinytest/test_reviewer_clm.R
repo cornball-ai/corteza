@@ -23,9 +23,9 @@ local({
     }
     first <- paste("Person: edit only a.R", strrep("a", 58000))
     last <- paste("Person: stop editing a.R", strrep("b", 58000))
-    ask <- function(lines, record = "conversation-A") {
+    ask <- function(lines, record = "conversation-A", args = list(path = "a.R")) {
         q <- list(request_id = "r000001", tool = "write_file",
-                  args = list(path = "a.R"), record = record, conversation = lines)
+                  args = args, record = record, conversation = lines)
         ns$.job_monitor_child_ask(q, record)
     }
     expect_null(ask(first)$error)
@@ -33,14 +33,42 @@ local({
     expect_true(grepl("stop editing a.R", calls[[2L]], fixed = TRUE))
     expect_false(grepl("edit only a.R", calls[[2L]], fixed = TRUE))
     expect_equal(length(ns$.review_inputs(s$history)), 2L)
+    expect_true(grepl("NEW LINES", calls[[2L]], fixed = TRUE))
+    original <- worker$review_record
+    oversized <- list(content = strrep("a", 2100L))
+    parent <- corteza::new_session()
+    parent$.review_window <- list(id = "conversation-A", chars = 116100L)
+    expect_error(ns$job_monitor_ask(parent, list(args = oversized)), "evidence limit")
+    expect_identical(parent$.review_window$id, "conversation-A")
+    expect_null(parent$.job_monitor)
+    expect_true(grepl("100,000 new characters", ns$.review_record_limit_reason(216100)))
+    expect_error(ask(c(first, last), args = oversized), "evidence limit")
+    expect_identical(worker$review_record, original)
+    expect_null(ask(c(first, last))$error)
+    expect_equal(length(calls), 3L)
     expect_error(ns$history_replace(s, s$history[-1L], "compaction"), "instructions")
     expect_true(nzchar(ask(c(first, last), record = "conversation-B")$error))
     expect_true(nzchar(ask(c(first, paste0(last, " changed")))$error))
     s$history <- s$history[-1L]
     expect_true(nzchar(ask(c(first, last))$error))
-    expect_equal(length(calls), 2L)
+    expect_equal(length(calls), 3L)
     expect_error(ns$job_monitor_question(list(args = list(command = strrep("a", 2100L)))),
                  "evidence limit")
+    explanation <- strrep("a", 1500L)
+    goal <- strrep("b", 4000L)
+    evidence <- ns$.review_evidence(list(narration = explanation, goal = goal))
+    expect_identical(evidence$narration, explanation)
+    expect_identical(evidence$goal, goal)
+    expect_true(grepl(goal, ns$job_monitor_question(list(goal = goal)), fixed = TRUE))
+    expect_error(ns$.review_evidence(list(narration = paste0(explanation, "x"))),
+                 "explanation exceeds 1,500 characters")
+    expect_error(ns$.review_evidence(list(goal = paste0(goal, "x"))),
+                 "delegated task exceeds 4,000 characters")
+    question <- list(goal = paste0(goal, "x"), args = list(path = "a.R"))
+    response <- ns$job_monitor_ask_wait(parent, question)
+    expect_identical(response$verdict, "escalate")
+    expect_true(grepl("delegated task exceeds 4,000", response$reason, fixed = TRUE))
+    expect_null(parent$.job_monitor)
     s$.review_limit <- 10000L
     s$.review_prefix <- list(system = strrep("a", 2000L))
     expect_error(ns$.review_check_size(s, list(), strrep("b", 5000L)), "budget")

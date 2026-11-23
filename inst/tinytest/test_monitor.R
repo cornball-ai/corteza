@@ -341,9 +341,8 @@ expect_equal(corteza:::.monitor_truncate("abc", 10L), "abc")
 expect_true(grepl("truncated",
                   corteza:::.monitor_truncate(strrep("x", 50L), 10L)))
 
-expect_equal(corteza:::.monitor_render_args(list()), "  (none)")
-expect_true(grepl("path: R/x.R",
-                  corteza:::.monitor_render_args(list(path = "R/x.R"))))
+expect_equal(corteza:::.monitor_argument_json(list()), "{}")
+expect_equal(corteza:::.monitor_argument_json(list(path = "R/x.R")), '{"path":"R/x.R"}')
 
 # ---- .monitor_query against subagent_query's real return type ----
 #
@@ -382,6 +381,63 @@ v <- with_query_stub(
         list(approval = "ask", reason = "r"), request_id = "a1"))
 expect_equal(v$verdict, "approve")
 expect_equal(v$reason, "fine")
+
+# Nested arguments reach the monitor in full. Only the oversized call is refused.
+local({
+    sent <- character()
+    ask <- function(args) {
+        with_query_stub(function(id, prompt, ...) {
+            sent <<- c(sent, prompt)
+            "REQUEST: a1\nVERDICT: approve\nREASON: fine"
+        }, corteza:::monitor_ask_approval("mon", list(tool = "write_file", args = args),
+                                          list(approval = "ask"), request_id = "a1"))
+    }
+    payload <- list(path = "example.txt", content = list(values = as.list(1:60), end = "last"))
+    expect_equal(ask(payload)$verdict, "approve")
+    expect_true(grepl(corteza:::.history_json(payload), sent[[1L]], fixed = TRUE))
+    payload$content <- strrep("a", 1998L)
+    expect_equal(ask(payload)$verdict, "approve")
+    payload$content <- paste0(payload$content, "b")
+    expect_equal(ask(payload)$verdict, "refuse")
+    expect_identical(env_of("write_file", payload)$action, "refuse")
+    expect_equal(ask(list(content = new.env()))$verdict, "escalate")
+    expect_equal(length(sent), 2L)
+})
+
+# The same handler can retry a refused call. The first call spends no
+# monitor request or execution, even with an explicit allow.
+local({
+    s <- corteza::new_session("console")
+    s$config <- list(permissions = list(write_file = "allow"))
+    records <- executed <- list()
+    s$auto_gate <- corteza:::monitor_auto_gate("mon", cwd = tempdir(),
+        on_decision = function(d) records <<- c(records, list(d)))
+    handle <- corteza:::.make_tool_handler(s, function(name, args) {
+        executed <<- c(executed, list(args))
+        list(content = list(list(type = "text", text = "saved")))
+    })
+    path <- tempfile()
+    large <- list(path = path, content = strrep("a", 1999L))
+    small <- list(path = path, content = "updated title")
+    sent <- character()
+    with_query_stub(function(id, prompt, ...) {
+        sent <<- c(sent, prompt)
+        "REQUEST: a1\nVERDICT: approve\nREASON: in scope"
+    }, {
+        reply <- handle("write_file", large)
+        expect_true(grepl("monitor refused", reply, fixed = TRUE))
+        expect_true(grepl("smaller call", reply, fixed = TRUE))
+        expect_equal(length(sent), 0L)
+        expect_equal(length(executed), 0L)
+        expect_true(grepl("saved", handle("write_file", small), fixed = TRUE))
+    })
+    expect_identical(executed, list(small))
+    expect_equal(length(sent), 1L)
+    expect_true(grepl(corteza:::.history_json(small), sent[[1L]], fixed = TRUE))
+    expect_identical(records[[1L]]$authority, "envelope")
+    expect_null(records[[1L]]$request_id)
+    expect_identical(records[[2L]]$action, "proceed")
+})
 
 # The progress question too, in its own vocabulary.
 v <- with_query_stub(

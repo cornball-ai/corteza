@@ -446,7 +446,8 @@ get_auto_config <- function(config = list()) {
 #' @param decision The decision \code{policy()} returned for it.
 #' @param config Config list from \code{load_config()}.
 #' @param cwd Session working directory; the containment root.
-#' @return List with \code{ok} (logical) and \code{reason} (character).
+#' @return List with \code{ok} and \code{reason}. A failed check can
+#'   also specify \code{action = "refuse"} to let the worker continue.
 #' @noRd
 monitor_in_envelope <- function(call, decision, config = list(),
                                 cwd = getwd()) {
@@ -524,6 +525,13 @@ monitor_in_envelope <- function(call, decision, config = list(),
         }
     }
 
+    problem <- tryCatch({
+        .monitor_argument_json(call$args)
+        NULL
+    }, error = .auto_argument_verdict)
+    if (!is.null(problem)) {
+        return(list(ok = FALSE, action = problem$verdict, reason = problem$reason))
+    }
     list(ok = TRUE, reason = "")
 }
 
@@ -596,13 +604,15 @@ monitor_spawn <- function(goal, session = NULL, config = list()) {
 #' @noRd
 monitor_ask_approval <- function(id, call, decision, request_id = NULL,
                                  timeout = 120L) {
+    arguments <- tryCatch(.monitor_argument_json(call$args), error = .auto_argument_verdict)
+    if (is.list(arguments)) return(arguments)
     prompt <- paste0(
                      "The worker wants to make this tool call. Rule on it.\n\n",
                      "REQUEST-ID: ", request_id %||% "(none)", "\n",
                      "TOOL: ", call$tool %||% "?", "\n",
                      "POLICY SAID: ", decision$approval %||% "?", " -- ",
                      decision$reason %||% "", "\n",
-                     "ARGUMENTS:\n", .monitor_render_args(call$args), "\n\n",
+                     "ARGUMENTS:\n", arguments, "\n\n",
                      "Answer with exactly these three lines:\n\n",
                      "REQUEST: ", request_id %||% "(none)", "\n",
                      "VERDICT: approve\n",
@@ -704,21 +714,21 @@ monitor_ask_progress <- function(id, goal, reply, diff, loop = 1L,
 
 #' Render tool arguments for the monitor prompt.
 #' @noRd
-.monitor_render_args <- function(args) {
-    args <- as.list(args %||% list())
-    if (length(args) == 0L) {
-        return("  (none)")
+.monitor_argument_json <- function(args) {
+    if (!length(args)) return("{}")
+    sizes <- vapply(args, function(x) nchar(.history_json(x)), integer(1L))
+    if (any(sizes > 2000L)) {
+        stop(errorCondition("A tool argument exceeds the reviewer's 2,000-character evidence limit.",
+                            class = "corteza_argument_too_large", call = NULL))
     }
-    parts <- vapply(names(args), function(nm) {
-        v <- args[[nm]]
-        txt <- if (is.character(v) || is.numeric(v) || is.logical(v)) {
-            paste(as.character(v), collapse = " ")
-        } else {
-            paste(utils::capture.output(utils::str(v)), collapse = " ")
-        }
-        sprintf("  %s: %s", nm, .monitor_truncate(txt, 2000L))
-    }, character(1), USE.NAMES = FALSE)
-    paste(parts, collapse = "\n")
+    as.character(.history_json(args))
+}
+
+.auto_argument_verdict <- function(e) {
+    if (inherits(e, "corteza_argument_too_large")) {
+        return(list(verdict = "refuse", reason = paste(conditionMessage(e), "Try a smaller call.")))
+    }
+    list(verdict = "escalate", reason = conditionMessage(e))
 }
 
 #' Truncate with an explicit marker so the monitor knows it saw a slice.
@@ -853,7 +863,7 @@ monitor_auto_gate <- function(monitor_id, config = list(), cwd = getwd(),
                 # Outside the envelope the monitor is not consulted at
                 # all. No model judgment decides what a model is allowed
                 # to judge.
-                result <- list(action = "escalate", reason = env$reason)
+                result <- list(action = env$action %||% "escalate", reason = env$reason)
                 authority <- "envelope"
             } else {
                 counter <<- counter + 1L

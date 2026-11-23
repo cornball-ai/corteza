@@ -328,8 +328,7 @@ review_conversation <- function(session_id, budget = 100000L) {
         return(unread("the transcript holds no message of yours"))
     }
     if (sum(nchar(lines)) > budget) {
-        return(unread(sprintf("the conversation runs past the %s characters it reads",
-                              format(budget, big.mark = ","))))
+        return(unread(.review_record_limit_reason(budget)))
     }
     list(lines = lines, why = NULL)
 }

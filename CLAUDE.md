@@ -532,8 +532,8 @@ and it also needs a channel with an approval prompt) and the memory
 flush ahead of an automatic compaction (`memory_flush_enabled`).
 **The prompt cache** has no default in `load_config()`:
 `.session_cache()` (`R/turn.R`) answers `"5m"` for a session on an
-Anthropic provider that sets none, and nothing for one that edits its
-own context, since such a session rewrites entries it has already sent.
+Anthropic provider that sets none, including a session using CLM. The
+user's explicit cache setting takes precedence.
 Anthropic counts cached input beside `input_tokens`, so a usage's
 `total_tokens` gets it added where the provider is known
 (`.usage_count_cached()`, `R/spend.R`): `/spent` and both token caps

@@ -198,6 +198,9 @@ instruction_walk_root <- function(root, aliases = FALSE) {
         children <- sort(list.files(dir, all.files = TRUE, no.. = TRUE,
                                     full.names = TRUE))
         for (child in children) {
+            # Catalog discovery skips hidden subdirectories. A skill's resource
+            # snapshot includes them, and an explicitly named root can be hidden.
+            if (aliases && startsWith(basename(child), ".") && dir.exists(child)) next
             real <- tryCatch(
                              normalizePath(child, winslash = "/", mustWork = TRUE),
                              error = function(e) NULL
