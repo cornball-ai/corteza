@@ -1,4 +1,4 @@
-# Unreleased
+# corteza 0.8.0.51
 
 - Subagents spawned without a preset use the read-only tools, including
   `read_file`, `web_search` and `fetch_url`. An explicit tool list still applies.
