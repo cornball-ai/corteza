@@ -388,12 +388,9 @@ counts as 1 there, whatever it cost.
 The setting reaches Anthropic providers only. corteza sends it to no other,
 whatever the config says.
 
-A session that edits its own context (`context_edit`, under "Conversation
-context editing") has no cache unless one is set. A cache entry holds the
-exact text sent up to its marker. Such a session writes ids into entries it
-has already sent, so a request there can find no entry to read and pay the
-write on its whole history. Set `cache` on such a session to try it, and read
-`usage` for the result.
+Anthropic sessions with context editing also default to `"5m"`. Editing an
+earlier entry changes the reusable prefix. Choose `"1h"` for longer pauses
+or `"none"` to disable caching.
 
 ## When a conversation is compacted
 
@@ -525,8 +522,8 @@ These change the system text or the tools on purpose, and the log records
 each (`request_prefix_reset`): a move to another provider, the terminal's
 `/clear`, `/cd` in a room, a job that may not search (which sends the
 provider's tools without its search tool, with the thinking removed before
-and after it), and a worker given other tools. A context-editing session
-edits what it sends on every turn and gives up the cache.
+and after it), and a worker given other tools. Context edits can reduce cache
+reuse from the first changed entry.
 
 ## Thinking blocks after a rewrite
 
@@ -579,7 +576,7 @@ inherit the parent's effective setting. `/status` reports the effective mode,
 including when an enabled setting is unavailable on an unsupported provider
 or because the journal is disabled.
 
-On Anthropic and OpenAI chat-completions history shapes, the model receives
+On Anthropic, Codex Responses, and OpenAI chat-completions routes, the model receives
 an `edit_context` tool and visible IDs on completed tool outputs (`[rN]`) and
 earlier assistant text (`[mN]`). The tool supports:
 
@@ -603,7 +600,7 @@ manage the window before it fills; exhaustion reports an error and retains
 the journal. In a room, later messages can also overflow the same full window.
 Use `/clear` to start a fresh working window; the journal retains the previous
 record. A provider or history format that cannot support CLM uses standard
-compaction instead, including Codex's Responses format. The configured CLM
+compaction instead, including the API-key OpenAI Responses route. The configured CLM
 preference stays intact, so a compatible route can use it again. Model-switch
 acknowledgments and fallback replies explain the effective context strategy.
 The package default remains the existing threshold-compaction behavior.
@@ -750,7 +747,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `provider` | string | `"anthropic"` | LLM provider: `anthropic`, `openai`, `moonshot`, `openai_codex`, `ollama`, `openai_compatible` |
 | `model` | string or null | null | Model name (null = provider default; required for `openai_compatible`) |
 | `base_url` | string or null | null | Endpoint for `openai_compatible` (see below) |
-| `cache` | string or null | null | Prompt cache on an Anthropic provider: `"5m"`, `"1h"` or `"none"`. null means `"5m"` there, and no cache for a session that edits its own context (see "The prompt cache") |
+| `cache` | string or null | null | Anthropic prompt cache, `"5m"` by default, including CLM. `"1h"` and `"none"` override it. |
 | `task_list_enabled` | boolean | `false` | The task list in the terminal and in `chat()`: the `task_create` and `task_update` tools, and the instructions to ask first and propose a plan that go with them |
 | `port` | integer | `7850` | MCP server port |
 
@@ -895,7 +892,7 @@ handed over from another room is judged by that room's. The monitor is
 not asked, and a person is, when nobody in the room may approve or the
 record cannot be read whole:
 
-- one past 100,000 characters, or with a line it cannot read;
+- one with an unreadable line or over 100,000 new characters;
 - one with a break: a restart whose backfill did not reach back to the
   last message on record, a line that could not be written, or a thread
   that went on from its archive;
@@ -928,11 +925,16 @@ with its reason. These still prompt without it:
 - a credential path;
 - leaving plan mode;
 - any call while the reviewer cannot read the whole conversation: one
-  past 100,000 characters, one with no transcript or with a line it
+  with over 100,000 new characters, one with no transcript or with a line it
   cannot read, one where a reply to your message is missing (its write
   failed, or corteza stopped mid-turn), or one begun before 0.8.1, whose
   transcript does not mark what you typed. `/clear` starts a
   conversation it can read; in an editor, a new session does.
+
+The reviewer uses CLM for its own notes and tool results. A fresh reviewer
+reads up to 100,000 characters. A warm reviewer can take another batch of
+that size if its earlier inputs are intact and its model has room for the
+request. A changed record starts a fresh review.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by
@@ -1339,14 +1341,9 @@ for the talker) for a startup default.
 GPT-6 tool calls (including Astra and Sol) require OpenAI's Responses API.
 The corresponding llm.api routing update selects Responses with web search
 off as well as on. Older OpenAI models keep their Chat Completions route
-when search is off, and `openai_codex` always uses Responses. Corteza's
-context-editing tool currently excludes Responses histories, so CLM edits
-remain unavailable on that wire. With llm.api's `agent_uses_responses()`
-export, Corteza checks the selected model and search setting before the first
-request, including fallback candidates. Pure CLM rejects unsupported routes
-before generation; hybrid mode keeps automatic compaction and omits the
-editing tool. With older llm.api versions, the preflight follows their
-search-only OpenAI routing rule.
+when search is off. `openai_codex` uses Responses and supports CLM on native
+tool batches and text replies. The separate API-key `openai` route uses
+standard compaction when it selects Responses.
 
 ## Instruction skills
 

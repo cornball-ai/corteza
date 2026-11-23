@@ -1172,8 +1172,8 @@ expect_equal(corteza:::.cache_minutes(
 expect_equal(corteza:::.cache_minutes(trigger_session(cache = "none")), 0)
 expect_equal(corteza:::.cache_minutes(trigger_session(cache = "5m")), 5)
 expect_equal(corteza:::.cache_minutes(trigger_session(cache = "1h")), 60)
-# A session that edits its own context has no cache unless it sets one.
-expect_equal(corteza:::.cache_minutes(trigger_session(context_edit = TRUE)), 0)
+# A session that edits its own context gets the Anthropic cache default.
+expect_equal(corteza:::.cache_minutes(trigger_session(context_edit = TRUE)), 5)
 expect_equal(corteza:::.cache_minutes(
     trigger_session(context_edit = TRUE, cache = "1h")), 60)
 

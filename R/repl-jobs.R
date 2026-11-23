@@ -348,7 +348,8 @@
 .repl_job_review <- function(ctx, job, req) {
     session <- ctx$session
     p <- ctx$palette
-    conv <- review_conversation(job$origin$conversation %||% session$sessionId)
+    conv <- review_conversation(job$origin$conversation %||% session$sessionId,
+                                .review_record_budget(session, paste0("job:", job$id)))
     if (!is.null(conv$why)) {
         return(list(reason = paste("The reviewer was not asked:", conv$why)))
     }

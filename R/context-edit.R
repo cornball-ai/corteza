@@ -58,6 +58,7 @@
 .context_edit_supported <- function(session) {
     request <- .context_edit_request_for(session)
     provider <- request$provider %||% session$context_edit_provider %||% session$provider
+    if (identical(provider, "openai_codex")) return(TRUE)
     .context_edit_provider_supported(provider) &&
     !identical(.history_shape(session$history), "responses") &&
     !.context_edit_responses(provider, request$model %||% .resolve_model(session),
@@ -181,7 +182,7 @@
 
 .context_edit_boundary <- function(history) {
     which_assistant <- which(vapply(history, function(m) {
-        identical(m$role, "assistant")
+        identical(m$role, "assistant") || identical(m$type, ".openai_codex_output")
     }, logical(1)))
     if (length(which_assistant)) {
         tail(which_assistant, 1L)
@@ -200,7 +201,23 @@
     }, logical(1))))
 }
 
+.responses_text_message <- function(message) {
+    if (!identical(message$type, ".openai_codex_output")) return(NULL)
+    items <- message$output
+    positions <- which(!vapply(items, function(x) identical(x$type, "reasoning"), logical(1)))
+    if (length(positions) != 1L) return(NULL)
+    item <- items[[positions]]
+    if (identical(item$type, "message") && identical(item$role, "assistant") &&
+        length(item$content) && all(vapply(item$content, function(b) {
+            identical(b$type, "output_text") && is.character(b$text) && length(b$text) == 1L
+        }, logical(1)))) {
+        return(positions)
+    }
+    NULL
+}
+
 .context_edit_plain <- function(message) {
+    if (!is.null(.responses_text_message(message))) return(TRUE)
     identical(message$role, "assistant") && !length(message$tool_calls) &&
     (is.character(message$content) ||
         (is.list(message$content) && length(message$content) > 0L &&
@@ -215,7 +232,9 @@
     for (call in llm.api::history_tool_calls(history)) {
         if (!isTRUE(call$completed) || call$call_message_index >= boundary ||
             call$result_message_index >= boundary ||
-            .context_edit_human(history[[call$result_message_index]])) {
+            .context_edit_human(history[[call$result_message_index]]) ||
+            (identical(call$provider_shape, "responses") &&
+             !is.character(history[[call$result_message_index]]$output))) {
             next
         }
         id <- .context_edit_call_id(state, call)
@@ -237,7 +256,9 @@
 
 .context_edit_result_content <- function(history, call, content) {
     i <- call$result_message_index
-    if (identical(call$provider_shape, "openai")) {
+    if (identical(call$provider_shape, "responses")) {
+        history[[i]]$output <- content
+    } else if (identical(call$provider_shape, "openai")) {
         history[[i]]$content <- content
     } else {
         for (j in seq_along(history[[i]]$content)) {
@@ -278,6 +299,9 @@
         if (!startsWith(call$result, paste0("[", id, "]\n"))) {
             # Keep non-text output blocks intact when adding a label.
             i <- call$result_message_index
+            if (identical(call$provider_shape, "responses") && !is.character(history[[i]]$output)) {
+                next
+            }
             if (identical(call$provider_shape, "anthropic")) {
                 block <- Filter(function(b) identical(b$tool_use_id, call$id),
                                 history[[i]]$content)[[1L]]
@@ -301,7 +325,13 @@
         id <- .context_edit_label(.compact_entry_body(m), prefix)
         if (is.null(id) || id %in% names(state$messages)) {
             id <- .context_edit_id(state, prefix)
-            m$content <- .context_edit_prefix(m$content, id)
+            pos <- .responses_text_message(m)
+            if (is.null(pos)) {
+                m$content <- .context_edit_prefix(m$content, id)
+            } else {
+                block <- list(type = "output_text", text = paste0("[", id, "]\n"))
+                m$output[[pos]]$content <- c(list(block), m$output[[pos]]$content)
+            }
         }
         history[[i]] <- m
         state$messages[[id]] <- m
@@ -519,7 +549,13 @@
             if (target$kind == "call") {
                 history <- .context_edit_result_content(history, target$call, text)
             } else {
-                history[[target$index]]$content <- text
+                pos <- .responses_text_message(history[[target$index]])
+                if (is.null(pos)) {
+                    history[[target$index]]$content <- text
+                } else {
+                    history[[target$index]]$output[[pos]]$content <- list(
+                        list(type = "output_text", text = text))
+                }
                 messages[[id]] <- history[[target$index]]
             }
             remove <- remove[-1L]
@@ -566,6 +602,14 @@
         }
         if (i %in% drop_messages) {
             next
+        }
+        if (i < boundary && identical(m$type, "function_call_output") &&
+            m$call_id %in% drop_calls) next
+        if (i < boundary && identical(m$type, ".openai_codex_output")) {
+            m$output <- Filter(function(item) {
+                !(identical(item$type, "function_call") && item$call_id %in% drop_calls)
+            }, m$output)
+            if (!length(m$output)) next
         }
         if (i < boundary && identical(m$role, "tool") &&
             m$tool_call_id %in% drop_calls) {

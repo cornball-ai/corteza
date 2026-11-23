@@ -285,10 +285,10 @@ not reach back far enough, as for a quiet thread.
 room's approvers (`bot_approvers()`, membership read fresh), `Other
 (<id>):` for anyone else and `Worker:` for posts, or a reason to ask a
 person instead: nobody may approve, a partial start, a gap, an
-unreadable line, no person's line, or past 100,000 characters. A job is
+unreadable line, no person's line, or over 100,000 new characters. A job is
 judged by `origin$conversation` (a hand-off by `origin$from`), read
-when its request comes. Each request is a scope of its own
-(`review:<id>`), with `earlier` for what came of the calls before it.
+when its request comes. A warm reviewer accepts verified additions for the
+same conversation while its complete request fits the model budget.
 
 `R/monitor.R` is the older hall monitor for `/auto` runs in the CLI and
 `chat()`. Same idea, another failure rule: it ends the run where this
@@ -315,8 +315,8 @@ goal), and the reviewer reads the file with `transcript_load_strict()`,
 which counts a line it cannot read. A conversation it cannot read whole
 goes to the person: too long, no transcript, a line or message it
 cannot read, or a prompt that does not say how it was sent, as none
-before 0.8.1 does. Each request is its own scope, so the reviewer keeps
-nothing between calls. A wait cut short (an interrupt, an error) cancels the request
+before 0.8.1 does. CLM manages the reviewer’s working history. Recorded inputs
+stay protected and a changed record starts a fresh review. An interrupt cancels the request
 (`review_cancel()`), which a room's monitor never does. `review_apply()`
 installs it when a loop starts and after `/permissions`, and leaves
 another gate (an `/auto` run's) alone. A project's config cannot set

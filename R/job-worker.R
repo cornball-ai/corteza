@@ -193,7 +193,9 @@ job_worker_spec <- function(session, role = "doer") {
                  max_tokens = if (identical(role, "doer")) session$doer_max_tokens,
                  # Conversation settings follow the doer only. A reviewer
                  # or monitor retains its own cwd configuration and role.
-                 context_edit = if (!read_only) {
+                 context_edit = if (monitor) {
+            list(enabled = TRUE, strategy = "clm", cadence = "always")
+        } else if (!read_only) {
             utils::modifyList(.context_edit_config(session$config, session$context_edit),
                               cfg$doer$context_edit %||% list())
         },

@@ -759,7 +759,7 @@ bot_job_approval <- function(chat, cfg, s, ev) {
         # The conversation that asked for the job, read now
         # (R/room-record.R). One the monitor cannot judge by goes to a
         # person.
-        review <- bot_job_conversation(cfg, job)
+        review <- bot_job_conversation(cfg, job, .review_record_budget(s, paste0("job:", job$id)))
         if (is.null(review$why)) {
             asked <- tryCatch({
                 job_monitor_ask(s, bot_monitor_question(job, req, review$lines))
@@ -779,12 +779,12 @@ bot_job_approval <- function(chat, cfg, s, ev) {
 }
 
 # What the monitor is asked about a job's request: the conversation that
-# asked for the job, and the task the talker wrote from it. Each request
-# is a scope of its own, so the monitor starts each ruling from the
-# request alone; `earlier` says how the job's earlier calls went.
+# asked for the job, and the task the talker wrote from it. Each job
+# has a distinct record and each request has its own verdict id.
 bot_monitor_question <- function(job, req, conversation = character()) {
     list(scope = paste0("review:", job$id, ":", req$id), request_id = req$id,
-         job = job$id, req = req, conversation = conversation, room = TRUE,
+         record = paste0("job:", job$id), job = job$id, req = req,
+         conversation = conversation, room = TRUE,
          goal = job$task %||% "", tool = req$tool, args = req$args,
          reason = req$reason, notes = req$notes,
          earlier = tryCatch(job_monitor_earlier(job$id),

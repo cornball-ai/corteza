@@ -143,8 +143,7 @@ default_local_model <- function() {
 #'   dropped for other providers so they never see a field their wire
 #'   rejects. NULL falls back to \code{config$cache}. Where neither
 #'   sets one, a session on an Anthropic provider caches for 5 minutes
-#'   (\code{"5m"}), except a session that edits its own context
-#'   (\code{context_edit}), which has no cache unless one is set.
+#'   (\code{"5m"}), including sessions that edit their own context.
 #'   \code{"none"} turns the cache off. A 5-minute write is billed at
 #'   1.25 times an uncached input token and a read at a tenth or less:
 #'   a request with none before it in the last 5 minutes costs a quarter
@@ -415,20 +414,13 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 # config ("none" turns the cache off). Where neither sets one, a
 # session on an Anthropic provider gets .cache_default and any other
 # gets NULL, which leaves llm.api's default ("none") in place.
-#
-# A session that edits its own context sets none either way. A cache
-# entry holds the exact text sent up to its marker, and such a session
-# writes ids into entries it has already sent (.context_edit_index()),
-# so a request there may find no entry to read and pay the write price
-# for the whole history. Its operator can set a cache and measure.
 .session_cache <- function(session) {
     set <- .check_cache(session$cache %||% session$config$cache,
                         "session/config cache")
     if (!is.null(set)) {
         return(set)
     }
-    if (!(session$provider %||% "") %in% .anthropic_providers ||
-        .context_edit_enabled(session)) {
+    if (!(session$provider %||% "") %in% .anthropic_providers) {
         return(NULL)
     }
     .cache_default
@@ -1523,6 +1515,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
                 as.integer(context$agent_turn %||% 0L))
             compacted <- compact_session_history(history, reason = "checkpoint")
             edited <- .context_edit_checkpoint(session)
+            if (isTRUE(session$.protect_review_inputs)) {
+                .review_check_size(session, session$history)
+            }
             if (compacted || edited) {
                 return(list(history = session$history))
             }

@@ -801,6 +801,8 @@ if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) local({
     writeLines('{"supervisor": {"timeout_sec": 4}}',
                ns$corteza_config_path("config.json"))
     fake <- function(task) {
+        s <- get(".subagent_state", asNamespace("corteza"))$session
+        s$history <- c(s$history, list(list(role = "user", content = task)))
         id <- sub(".*REQUEST-ID: ([A-Za-z0-9_-]+).*", "\\1", task)
         answer <- function(verdict, reason) {
             list(reply = sprintf("REQUEST: %s\nVERDICT: %s\nREASON: %s", id,
@@ -819,8 +821,10 @@ if (tinytest::at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) local({
     s$cwd <- proj
     s$sessionId <- new_id()
     s$config <- list(approval_mode = "review")
-    s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
-                              run_fn = fake)
+    s$job_worker_spec <- list(init_fn = function(spec) {
+        state <- get(".subagent_state", asNamespace("corteza"))
+        state$session <- corteza::new_session()
+    }, run_fn = fake)
     asked <- 0L
     s$approval_cb <- function(call, decision) {
         asked <<- asked + 1L

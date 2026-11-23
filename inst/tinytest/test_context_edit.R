@@ -81,8 +81,8 @@ run_context_edit_tests <- function() {
     expect_identical(corteza:::.context_edit_result(off, "unchanged", "x", NULL), "unchanged")
     off$context_edit <- TRUE
     off$provider <- "openai_codex"
-    expect_false(corteza:::.context_edit_enabled(off))
-    expect_true(grepl("unavailable", corteza:::.context_edit_status(off)))
+    expect_true(corteza:::.context_edit_enabled(off))
+    expect_true(grepl("on", corteza:::.context_edit_status(off)))
     off$provider <- "anthropic"
     off$config <- list(journal_enabled = FALSE)
     expect_false(corteza:::.context_edit_enabled(off))

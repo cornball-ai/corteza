@@ -25,5 +25,24 @@
     if (isTRUE(compacted)) {
         args$history <- session$history
     }
+    if (isTRUE(session$.protect_review_inputs)) {
+        limit <- context_limit_for_model(args$model, args$provider)
+        session$.review_limit <- min(limit, .window_value(session$context_window) %||% limit,
+                                     .window_value(config$context_window) %||% limit)
+        session$.review_prefix <- args[c("system", "tools", "max_tokens")]
+        .review_check_size(session, args$history, args$prompt)
+    }
     args
+}
+
+.review_check_size <- function(session, history, prompt = NULL) {
+    # Use encoded bytes as a conservative bound for text and tool JSON.
+    # Leave space for framing and the reviewer's answer.
+    payload <- c(session$.review_prefix, list(history = history, prompt = prompt))
+    bytes <- nchar(.history_json(payload), type = "bytes")
+    reserve <- max(4096, session$.review_prefix$max_tokens %||% 0)
+    if (bytes + reserve > session$.review_limit) {
+        stop("The review exceeds the reviewer model's input budget; a person must decide.",
+             call. = FALSE)
+    }
 }
