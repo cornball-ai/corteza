@@ -1,3 +1,9 @@
+# corteza 0.8.0.48
+
+- The CLI runs tools directly by default, matching `chat()`. Talker/doer
+  mode remains available with `"talker": {"enabled": true}`. Bot-room
+  defaults are unchanged.
+
 # corteza 0.8.0.47
 
 - Provider switches and quota fallbacks keep a talker and its doer on

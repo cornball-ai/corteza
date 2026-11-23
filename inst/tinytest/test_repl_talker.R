@@ -78,12 +78,11 @@ with_stub <- function(name, fn, code) {
 }
 
 # ---- The default ---------------------------------------------------------------
-# The CLI is a talker unless its config says otherwise, and says so once
-# it starts; chat() is not. A session whose tools are restricted is no
-# talker by default, as a room's is not: a doer gets the work tools
-# whatever the list says.
+# The CLI and chat() run tools directly unless the config enables a
+# talker. A surface can still request a talker default, except where
+# tools are restricted: a doer gets the work tools whatever the list says.
 local({
-    start <- function(config = list(), default = TRUE, tools = NULL) {
+    start <- function(config = list(), default = FALSE, tools = NULL) {
         ctx <- talker_ctx()
         ctx$session$config <- config
         ctx$config <- config
@@ -94,25 +93,25 @@ local({
              said = any(grepl("Talker mode: this session answers", out,
                               fixed = TRUE)))
     }
-    expect_identical(start(), list(talker = TRUE, said = TRUE))
-    expect_identical(start(default = FALSE), list(talker = FALSE, said = FALSE))
+    expect_identical(start(), list(talker = FALSE, said = FALSE))
+    expect_identical(start(default = TRUE), list(talker = TRUE, said = TRUE))
     expect_identical(start(list(talker = list(enabled = FALSE))),
                      list(talker = FALSE, said = FALSE))
     expect_identical(start(tools = c("read_file", "bash")),
                      list(talker = FALSE, said = FALSE))
     # A talker block that says nothing of `enabled` leaves the default.
     expect_identical(start(list(talker = list(model = "talker-model"))),
-                     list(talker = TRUE, said = TRUE))
+                     list(talker = FALSE, said = FALSE))
     # Where the config turns it on, it is on everywhere, and nothing is
     # said.
     on <- list(talker = list(enabled = TRUE))
     expect_identical(start(on, default = FALSE), list(talker = TRUE, said = FALSE))
     expect_identical(start(on, tools = "read_file"),
                      list(talker = TRUE, said = FALSE))
-    # The installed command takes the default, and chat() does not.
+    # The installed command and chat() both default to direct execution.
     bin <- system.file("bin", "corteza", package = "corteza")
     if (nzchar(bin)) {
-        expect_true(any(grepl("ctx$talker_default <- TRUE", readLines(bin),
+        expect_true(any(grepl("ctx$talker_default <- FALSE", readLines(bin),
                               fixed = TRUE)))
     }
     expect_false("talker_default" %in% all.names(body(corteza::chat)))

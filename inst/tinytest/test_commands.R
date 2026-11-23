@@ -11,8 +11,7 @@ tbl <- ns$corteza_commands()
 # ---- The table ---------------------------------------------------------------
 expect_identical(names(tbl), c("name", "same_as", "argument", "description",
                                "terminal", "room", "remote", "talker", "acp"))
-# What a command acts on in a talker session. A room and the terminal
-# are talkers by default (WP20b, WP20c), so each name either takes says;
+# What a command acts on when talker mode is enabled. Each row states its target;
 # test_talker_commands.R holds the room's commands to it, and
 # test_repl_talker.R the terminal's.
 expect_true(all(tbl$talker %in% c("", "talker", "doer", "both")))

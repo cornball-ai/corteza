@@ -1592,9 +1592,13 @@ leaves `ack` out.
 A bot's room answers through a talker: a session with read-only tools that
 hands work needing edits, commands or tests to a doer, a worker process of the
 conversation's own, and goes on answering while the doer works. The result
-arrives as its own message. From 0.8.1 this is the default in a bot's rooms
-and at the terminal, which says so when it starts. `chat()` uses it only where
-the config turns it on, since its R session is yours to share with the agent.
+arrives as its own message. From 0.8.1 this is the default in a bot's rooms.
+The CLI and `chat()` run tools directly by default, in the session's own R
+process. To enable talker/doer mode there, set:
+
+```json
+"talker": {"enabled": true}
+```
 
 To turn it off, put this in the config, the bot's or your own:
 
@@ -1605,9 +1609,9 @@ To turn it off, put this in the config, the bot's or your own:
 A room is no talker by default in 2 cases. Where the bot's tools are
 restricted (`tools_filter`, from `bot_configure()` or the run), since a doer
 gets the work tools whatever that list says. And where the room has no
-directory, since such a room hands no work on. At the terminal the first
-holds as well: `--tools`, or `tools` in the config, leaves talker mode off.
-`"enabled": true` turns it on in any of these.
+directory, since such a room hands no work on. `"enabled": true` explicitly
+turns it on in any of these; the doer receives its work tools even when the
+talker's own tool list is restricted.
 
 At the terminal and in `chat()`, a turn that hands work to the doer stays
 with it: the doer's steps, an approval it asks for and its result print as
