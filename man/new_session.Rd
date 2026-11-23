@@ -105,8 +105,7 @@ providers only. Must be at least 1024 and below
 dropped for other providers so they never see a field their wire
 rejects. NULL falls back to \code{config$cache}. Where neither
 sets one, a session on an Anthropic provider caches for 5 minutes
-(\code{"5m"}), except a session that edits its own context
-(\code{context_edit}), which has no cache unless one is set.
+(\code{"5m"}), including sessions that edit their own context.
 \code{"none"} turns the cache off. A 5-minute write is billed at
 1.25 times an uncached input token and a read at a tenth or less:
 a request with none before it in the last 5 minutes costs a quarter

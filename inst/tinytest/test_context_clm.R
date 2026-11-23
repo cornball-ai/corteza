@@ -71,8 +71,8 @@ local({
     expect_null(f(".context_archive_write")(s, before, list()))
     s$provider <- "openai_codex"
     f(".context_edit_prepare")(s)
-    expect_false(f(".context_edit_pure")(s))
-    expect_identical(f(".context_management")(s), "compaction")
+    expect_true(f(".context_edit_pure")(s))
+    expect_identical(f(".context_management")(s), "clm")
     s$provider <- "anthropic"
     s$context_active_request <- NULL
     s$journal_enabled <- FALSE
@@ -89,7 +89,7 @@ local({
     expect_identical(spec$context_edit, pure)
     expect_false(f(".context_edit_config")(parent$config, parent$context_edit)$enabled)
     expect_null(f("job_worker_spec")(parent, "reviewer")$context_edit)
-    expect_null(f("job_worker_spec")(parent, "monitor")$context_edit)
+    expect_identical(f("job_worker_spec")(parent, "monitor")$context_edit$strategy, "clm")
     expect_warning(f("talker_enable")(parent, list(context_edit = pure)), "explicit context_vault")
     expect_false(f(".context_edit_enabled")(parent))
     expect_false(f(".context_edit_pure")(parent))
@@ -172,8 +172,8 @@ local({
             list(content = "done", history = args$history)
         })
     expect_identical(calls, c("anthropic", "openai_codex"))
-    expect_identical(result$corteza_route$context_management, "compaction")
-    expect_true(grepl("standard compaction", result$corteza_route$context_notice))
+    expect_identical(result$corteza_route$context_management, "clm")
+    expect_null(result$corteza_route$context_notice)
     expect_identical(s$context_edit$strategy, "clm")
     f(".fallback_reset")()
 
@@ -455,7 +455,7 @@ local({
             expect_identical(f("job_worker_spec")(unified)$context_edit, pure)
             expect_null(f("job_worker_spec")(unified)$context_vault)
             expect_null(f("job_worker_spec")(unified, "reviewer")$context_edit)
-            expect_null(f("job_worker_spec")(unified, "monitor")$context_edit)
+            expect_identical(f("job_worker_spec")(unified, "monitor")$context_edit$strategy, "clm")
 
             # Invalid conversation configuration must not escape the real
             # room factory and terminate the bot's poll loop.

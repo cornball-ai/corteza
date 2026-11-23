@@ -34,6 +34,15 @@
 # and the reviewer rules on it with the conversation that asked for the
 # job and the task the talker wrote (.repl_job_review()).
 
+# CLM can insert this fixed header before its first working note.
+.review_inputs_intact <- function(original, inputs) {
+    if (length(inputs) == length(original) + 1L &&
+        identical(inputs[[1L]]$content, "Context workspace: task facts and next actions.")) {
+        inputs <- inputs[-1L]
+    }
+    identical(inputs, original)
+}
+
 # Is the session's approval mode "review"?
 review_mode <- function(session) {
     identical(session$config$approval_mode, "review")
@@ -122,7 +131,7 @@ review_gate <- function(session, reviewer = review_ask) {
             }
             # A reviewer that cannot read the whole conversation does not
             # judge the call: the person does.
-            conv <- review_conversation(session$sessionId)
+            conv <- review_conversation(session$sessionId, .review_record_budget(session, session$sessionId))
             if (is.null(conv$why)) {
                 q <- review_question(session, call, decision, v$notes,
                                      conv$lines)
@@ -193,14 +202,12 @@ review_cancel <- function(session) {
 
 # The request the reviewer is sent (job_monitor_question() renders it):
 # the conversation (review_conversation()), what the worker said with
-# this call, and the call. Each request is a scope of its own, so the
-# reviewer starts each ruling from the request alone: the conversation
-# comes whole with every call, and kept, it would pile up a copy per
-# call. `earlier` says how the session's earlier calls were settled.
+# this call, and the call. Each ruling gets a request id. The monitor
+# verifies its retained record before accepting additional lines.
 review_question <- function(session, call, decision, notes, conversation) {
     session$.review_seq <- (session$.review_seq %||% 0L) + 1L
     id <- sprintf("r%06d", session$.review_seq)
-    list(scope = paste0("review:", id), request_id = id,
+    list(scope = paste0("review:", id), record = session$sessionId, request_id = id,
          conversation = conversation,
          narration = call$model_context$assistant_text, tool = call$tool,
          args = job_approval_args(call$args), reason = decision$reason,

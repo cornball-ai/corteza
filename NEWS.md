@@ -1,3 +1,13 @@
+# corteza 0.8.0.49
+
+- Codex subscription sessions can edit their native Responses history with CLM.
+  A tool call and its result stay together when a session retires them.
+- Approval reviewers can keep working notes between decisions in a conversation.
+  A warm reviewer accepts up to 100,000 new characters after verifying its
+  earlier inputs. An incomplete record or a request over budget goes to a person.
+- Anthropic sessions using CLM now use the same 5-minute prompt cache as other
+  Anthropic sessions. The 1-hour and off settings still apply.
+
 # corteza 0.8.0.48
 
 - The CLI runs tools directly by default, matching `chat()`. Talker/doer

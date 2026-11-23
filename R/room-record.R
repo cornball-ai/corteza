@@ -403,7 +403,7 @@ bot_room_approvers <- function(cfg, room_id) {
 # it, read when the request comes, so what was said since is in it. A
 # hand-off is judged by the asking room's. A job from before 0.8.1 names
 # none.
-bot_job_conversation <- function(cfg, job) {
+bot_job_conversation <- function(cfg, job, budget = 100000L) {
     origin <- job$origin %||% list()
     from <- origin$from
     if (is.list(from)) {
@@ -420,7 +420,7 @@ bot_job_conversation <- function(cfg, job) {
         return(list(lines = character(),
                     why = "the job does not say which conversation asked for it"))
     }
-    bot_record_conversation(path, bot_room_approvers(cfg, room))
+    bot_record_conversation(path, bot_room_approvers(cfg, room), budget)
 }
 
 # Earlier supervised calls in a room session's own turns, one line each,

@@ -155,6 +155,8 @@ local({
   proj <- file.path(tmp_home, "project")
   dir.create(file.path(proj, ".git"), recursive = TRUE)
   fake <- function(task) {
+    s <- get(".subagent_state", asNamespace("corteza"))$session
+    s$history <- c(s$history, list(list(role = "user", content = task)))
     id <- sub(".*REQUEST-ID: ([A-Za-z0-9_-]+).*", "\\1", task)
     # The call's own arguments: the request also lists the earlier calls.
     args <- sub("(?s).*ARGUMENTS:\n(.*?)\n\n.*", "\\1", task, perl = TRUE)
@@ -187,8 +189,10 @@ local({
     corteza:::bot_transcript_add(s, "$m1", "user", "tidy the package",
                                  event = list(sender = "@troy:ex",
                                               body = "tidy the package"))
-    s$job_worker_spec <- list(init_fn = function(spec) invisible(TRUE),
-                              run_fn = fake)
+    s$job_worker_spec <- list(init_fn = function(spec) {
+      state <- get(".subagent_state", asNamespace("corteza"))
+      state$session <- corteza::new_session()
+    }, run_fn = fake)
     corteza:::bot_supervise_session(s, c(cfg, list(auto_approve_asks = auto)),
                                     "!r:ex")
     s

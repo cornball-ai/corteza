@@ -124,12 +124,42 @@ history_normalize <- function(session, history) {
 history_replace <- function(session, after, reason, before = NULL,
                             summary = NULL, edits = NULL) {
     stripped <- history_normalize(session, after)
+    after <- stripped$history
     if (is.null(before)) {
         before <- session$history %||% list()
     }
-    journal_rewrite(session, before, stripped$history, reason,
+    if (isTRUE(session$.protect_review_inputs) && !identical(reason, "scope")) {
+        original <- .review_inputs(before)
+        inputs <- .review_inputs(after)
+        if (!.review_inputs_intact(original, inputs)) {
+            stop("The reviewer's recorded instructions would change; a person must decide.",
+                 call. = FALSE)
+        }
+    }
+    # Responses reasoning belongs to the input that produced it. An edit can
+    # keep the unchanged prefix, including its reasoning and tool-call ids.
+    indexed <- list()
+    if (reason %in% c("context_index", "context_edit", "context_edit_rejected")) {
+        changed <- FALSE
+        for (i in seq_along(after)) {
+            entry <- after[[i]]
+            changed <- changed || i > length(before) || !identical(entry, before[[i]])
+            if (!changed || !identical(entry$type, ".openai_codex_output")) next
+            after[[i]]$output <- Filter(function(item) {
+                !identical(item$type, "reasoning")
+            }, entry$output)
+            if (!identical(entry, after[[i]]) && !is.null(.responses_text_message(entry))) {
+                label <- .context_edit_label(.compact_entry_body(entry), "m")
+                if (!is.null(label) && identical(session$.context_edit$messages[[label]], entry)) {
+                    indexed[[label]] <- after[[i]]
+                }
+            }
+        }
+    }
+    journal_rewrite(session, before, after, reason,
                     summary = summary, edits = edits)
-    session$history <- stripped$history
+    for (label in names(indexed)) session$.context_edit$messages[[label]] <- indexed[[label]]
+    session$history <- after
     # A rewrite that may have taken the notes of mode and task changes
     # with it: the next prompt states the session again
     # (R/request-prefix.R).
@@ -138,7 +168,7 @@ history_replace <- function(session, after, reason, before = NULL,
         log_event("thinking_removed", reason = reason,
                   blocks = stripped$removed)
     }
-    invisible(stripped$history)
+    invisible(after)
 }
 
 # Is this the provider refusing a replayed thinking block? llm.api

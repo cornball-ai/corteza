@@ -38,18 +38,18 @@ local({
             stop("HTTP 429 rate limit")
         }
         expect_identical(args$provider, "openai_codex")
-        expect_true(corteza::estimate_history_tokens(args$history) < 2000L)
-        expect_false(ns$.context_edit_pure(s))
-        expect_false(any(vapply(args$tools, function(t) identical(t$name, "edit_context"), logical(1))))
+        expect_true(corteza::estimate_history_tokens(args$history) >= 2000L)
+        expect_true(ns$.context_edit_pure(s))
+        expect_true(any(vapply(args$tools, function(t) identical(t$name, "edit_context"), logical(1))))
         list(content = "Finished", history = args$history, turns = 1L,
              usage = list(input_tokens = 1L, output_tokens = 1L))
     }, "corteza")
     out <- corteza::turn("Continue", s)
     expect_identical(calls, c("anthropic_claude", "openai_codex"))
-    expect_identical(summaries, "openai_codex")
+    expect_length(summaries, 0L)
     expect_identical(s$provider, "anthropic_claude")
     expect_identical(s$context_edit$strategy, "clm")
-    expect_true(grepl("standard compaction", ns$.context_edit_status(s)))
+    expect_true(grepl("pure CLM", ns$.context_edit_status(s)))
     # Overflow recovery after the fallback returns must still use its
     # provider, even though the preferred provider remains unchanged.
     ns$.with_context_route(s, function() {

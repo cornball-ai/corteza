@@ -255,10 +255,7 @@ local({
     expect_null(corteza:::.session_cache(s))
 })
 
-# A session that edits its own context gets no default: it writes ids
-# into entries it has already sent, so an entry cached at one request
-# may not be there to read at the next, and the write is the dearer
-# price. One it sets is still used.
+# Context editing uses the same Anthropic default and explicit overrides.
 local({
     editing <- function(...) {
         s <- corteza::new_session(channel = "console", provider = "anthropic",
@@ -266,7 +263,7 @@ local({
         expect_true(corteza:::.context_edit_enabled(s))
         s
     }
-    expect_null(corteza:::.session_cache(editing()))
+    expect_identical(corteza:::.session_cache(editing()), "5m")
     expect_identical(corteza:::.session_cache(editing(cache = "5m")), "5m")
     s <- editing()
     s$config <- list(cache = "1h")
@@ -277,7 +274,7 @@ local({
         s$config <- list(context_edit = list(enabled = TRUE,
                                              strategy = strategy))
         expect_true(corteza:::.context_edit_enabled(s))
-        expect_null(corteza:::.session_cache(s))
+        expect_identical(corteza:::.session_cache(s), "5m")
     }
     # Editing turned off again: the default is back.
     s <- editing()

@@ -1638,7 +1638,7 @@ bot_supervise_session <- function(s, cfg, room_id) {
 # monitor passes the call on or cannot be asked, for a reaction.
 #
 # The monitor reads the conversation (R/room-record.R), whole, as the
-# terminal's reviewer does, and each request is a scope of its own. A
+# terminal's reviewer does, accounting for earlier verified inputs. A
 # conversation it cannot judge by goes to a person, with the reason.
 bot_supervisor_ask <- function(s, cfg, room_id) {
     force(room_id)
@@ -1648,13 +1648,13 @@ bot_supervisor_ask <- function(s, cfg, room_id) {
         live <- tryCatch(bot_load_config(), error = function(e) cfg)
         if (identical(route, "monitor")) {
             review <- bot_record_conversation(s$review_record$path,
-                bot_room_approvers(live, room_id))
+                bot_room_approvers(live, room_id), .review_record_budget(s, s$review_record$path))
             if (is.null(review$why)) {
                 s$.review_seq <- (s$.review_seq %||% 0L) + 1L
                 id <- sprintf("t%06d", s$.review_seq)
                 v <- job_monitor_ask_wait(s, list(
                         scope = paste0("review:", id), request_id = id,
-                        conversation = review$lines, room = TRUE,
+                        record = s$review_record$path, conversation = review$lines, room = TRUE,
                         narration = call$model_context$assistant_text,
                         tool = call$tool, args = job_approval_args(call$args),
                         reason = decision$reason, notes = notes,
