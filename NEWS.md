@@ -1,4 +1,4 @@
-# Unreleased
+# corteza 0.8.0.50
 
 - An approval reviewer reads the full transcript afresh when journaling is off.
   A call too large to review goes to a person, and the next eligible call
