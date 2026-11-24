@@ -29,11 +29,11 @@ local({
 # So these need no chat.api and reach no server.
 local({
     expect_error(
-        corteza::bot_configure("https://example", "bot", "pw", "!r:ex",
+        corteza::bot_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                operators = "troy"),
         "operators must be full Matrix IDs")
     expect_error(suppressWarnings(
-        corteza::matrix_configure("https://example", "bot", "pw", "!r:ex",
+        corteza::matrix_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                   operators = "troy")),
         "operators must be full Matrix IDs")
 
@@ -62,7 +62,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
     }, "chat.api")
     configure <- function(...) {
         said <- capture.output(
-            cfg <- corteza::bot_configure("https://example", "bot", "pw",
+            cfg <- corteza::bot_configure("https://ex.invalid", "bot", "pw",
                                           "!r:example.org", ...),
             type = "message")
         list(cfg = cfg, said = said, extra = calls[[length(calls)]]$extra)
@@ -89,7 +89,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
     # The deprecated name forwards it.
     before <- length(calls)
     suppressMessages(suppressWarnings(
-        corteza::matrix_configure("https://example", "bot", "pw",
+        corteza::matrix_configure("https://ex.invalid", "bot", "pw",
                                   "!r:example.org",
                                   operators = "@troy:example.org")))
     expect_equal(length(calls), before + 1L)

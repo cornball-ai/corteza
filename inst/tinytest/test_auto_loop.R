@@ -40,7 +40,6 @@ empty_palette <- list(dim = "", reset = "", cyan = "", bold = "",
 # A ctx shaped like chat()'s, with the turn function stubbed.
 auto_ctx <- function(turn_fn) {
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- empty_palette
     ctx$help_text <- function() "HELP"
     ctx$handle_copy <- function(x) invisible(NULL)

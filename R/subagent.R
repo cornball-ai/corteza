@@ -771,7 +771,6 @@ subagent_session_key <- function(parent_key) {
 #'     subagent_kill(id)
 #' }
 #' }
-#' @importFrom callr r_session
 #' @export
 subagent_spawn <- function(task, model = NULL, tools = NULL, preset = NULL,
                            parent_session = NULL, config = NULL) {
@@ -1378,8 +1377,7 @@ subagent_live_token_count <- function(info) {
     result <- tryCatch(
                        info$session$run(function() {
         subagent_state <- utils::getFromNamespace(".subagent_state", "corteza")
-        skills_as_api_tools <- utils::getFromNamespace("skills_as_api_tools",
-            "corteza")
+        request_parts <- utils::getFromNamespace("session_request_parts", "corteza")
         sess <- subagent_state$session
         if (is.null(sess)) {
             return(list(tokens = NA_integer_, limit = NA_integer_,
@@ -1390,19 +1388,18 @@ subagent_live_token_count <- function(info) {
         # Without this fallback, child sessions spawned with the
         # default model report `ctx ?` because there's no explicit
         # model name to look up a limit for.
-        model <- sess$model_map$cloud %||%
-        corteza::default_provider_model(sess$provider)
+        model <- sess$model_map$cloud
+        if (is.null(model)) model <- corteza::default_provider_model(sess$provider)
         # What the child's next request carries (R/request-prefix.R).
-        parts <- tryCatch(session_request_parts(sess),
-                          error = function(e) list(system = sess$system, tools = NULL))
+        parts <- request_parts(sess)
         list(
              tokens = corteza::estimate_live_context_tokens(
-                list(history = sess$history %||% list()),
+                list(history = sess$history),
                 system_prompt = parts$system, tools = parts$tools),
              limit = if (is.null(model)) NA_integer_ else
              corteza::context_limit_for_model(
                 model,
-                provider = .subagent_state$session$provider
+                provider = sess$provider
             ),
              model = model)
     }),
@@ -1465,22 +1462,6 @@ subagent_list <- function() {
     # Sort by seq ascending so the user-visible numbering is stable.
     seqs <- vapply(out, function(a) a$seq %||% 0L, integer(1))
     out[order(seqs)]
-}
-
-#' Clean up expired subagents.
-#' @return Number of subagents cleaned up.
-#' @noRd
-subagent_cleanup <- function() {
-    ids <- ls(.subagent_registry)
-    cleaned <- 0L
-    for (id in ids) {
-        info <- .subagent_registry[[id]]
-        if (Sys.time() > info$timeout) {
-            subagent_kill(id)
-            cleaned <- cleaned + 1L
-        }
-    }
-    cleaned
 }
 
 #' Format subagent list for display.

@@ -193,11 +193,6 @@
         grepl("exceeded request buffer", msg, ignore.case = TRUE))
 }
 
-.fallback_mark <- function(provider, minutes, now = Sys.time()) {
-    assign(provider, now + minutes * 60, envir = .fallback_state)
-    invisible(NULL)
-}
-
 .fallback_mark_until <- function(provider, until) {
     assign(provider, until, envir = .fallback_state)
     invisible(NULL)
@@ -523,6 +518,7 @@
         if (!inherits(result, "error")) {
             # Before another candidate's usage is added to it.
             result$usage <- .usage_count_cached(result$usage, cand$provider)
+            .review_measure_request(session, args, result$usage)
             if (length(recovered_usage) || recovered_turns > 0L) {
                 result$usage <- .turn_add_usage(recovered_usage, result$usage)
                 result$turns <- recovered_turns + as.integer(result$turns %||% 0L)

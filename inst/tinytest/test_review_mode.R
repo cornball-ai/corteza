@@ -540,7 +540,6 @@ local({
     loop <- function(lines, run_id = NULL, typed = NULL) {
         disk <- ns$session_new("ollama", "llama3.2", proj)
         ctx <- new.env(parent = emptyenv())
-        ctx$ws_enabled <- FALSE
         ctx$palette <- list(dim = "", reset = "", cyan = "", bold = "",
                             yellow = "", green = "", bright_magenta = "",
                             red = "", magenta = "")

@@ -152,30 +152,6 @@ bot_image_max_bytes <- function(cfg = list(), provider = NULL) {
 # a voice note -- are left alone: this understands pictures, and
 # silently handing a model a spreadsheet as an image would be worse
 # than not handing it anything.
-bot_image_attachments <- function(m, max_bytes = .BOT_IMAGE_MAX_DEFAULT) {
-    atts <- m$attachments
-    if (!length(atts)) {
-        return(list())
-    }
-    Filter(Negate(is.null), lapply(atts, function(a) {
-        mime <- a$mime
-        if (!is.character(mime) || length(mime) != 1L || is.na(mime) ||
-                                   !grepl("^image/", mime)) {
-            return(NULL)
-        }
-        # The declared size, when there is one. A picture too big to
-        # send is worth saying so about before spending the download.
-        size <- suppressWarnings(as.numeric(a$bytes %||% NA))
-        if (!is.na(size) && size > max_bytes) {
-            message("corteza: skipping ", a$name %||% a$id, " (",
-                    format(size, big.mark = ","), " bytes, over the ",
-                    format(max_bytes, big.mark = ","), " byte limit)")
-            return(NULL)
-        }
-        a
-    }))
-}
-
 # Fetch one attachment and encode it. NULL when it cannot be had, with
 # the reason on stderr rather than an error: one unreadable picture
 # must not cost the room its message. chat.api owns encrypted downloads.

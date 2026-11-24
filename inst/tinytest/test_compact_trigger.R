@@ -409,7 +409,6 @@ expect_true(grepl("(compact at 20%)", corteza:::.repl_context_indicator(
 repl_ctx <- function(lines, config) {
     i <- 0L
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- stats::setNames(as.list(rep("", 9L)),
                                    c("dim", "reset", "cyan", "bold",
                                      "yellow", "green", "bright_magenta",

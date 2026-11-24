@@ -50,27 +50,6 @@ tool_buffer_add <- function(session, name, args, result) {
     .tool_buffer_state[[sid]] <- rec
     invisible(NULL)
 }
-
-#' Fetch the Nth most-recent tool output (1 = most recent).
-#'
-#' Returns NULL when the index is past the end of the buffer.
-#' @noRd
-tool_buffer_get <- function(session, n = 1L) {
-    sid <- session$sessionId
-    if (is.null(sid) || !nzchar(sid)) {
-        return(NULL)
-    }
-    rec <- .tool_buffer_state[[sid]]
-    if (is.null(rec) || length(rec$outputs) == 0L) {
-        return(NULL)
-    }
-    n <- as.integer(n)
-    if (is.na(n) || n < 1L || n > length(rec$outputs)) {
-        return(NULL)
-    }
-    rec$outputs[[n]]
-}
-
 #' Full buffer for `session`, newest first.
 #' @noRd
 tool_buffer_list <- function(session) {

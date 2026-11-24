@@ -73,3 +73,24 @@ local({
     s$.review_prefix <- list(system = strrep("a", 2000L))
     expect_error(ns$.review_check_size(s, list(), strrep("b", 5000L)), "budget")
 })
+
+# A real provider count applies only to the unchanged request prefix that it covered.
+local({
+    ns <- asNamespace("corteza")
+    s <- new.env(parent = emptyenv())
+    s$.protect_review_inputs <- TRUE
+    s$.review_limit <- 15000
+    s$.review_prefix <- list(system = "review")
+    args <- list(provider = "openai_codex", model = "m", prompt = strrep("word ", 3500))
+    s$.review_route <- args[c("provider", "model")]
+    history <- list(list(role = "user", content = args$prompt))
+    expect_error(ns$.review_check_size(s, history), "budget")
+    ns$.review_measure_request(s, args, list(total_tokens = 3700, input_tokens = 3580))
+    expect_silent(ns$.review_check_size(s, history, "Person: stop"))
+    expect_error(ns$.review_check_size(s, history, strrep("x", 15000)), "budget")
+    s$.review_route$model <- "other"
+    expect_error(ns$.review_check_size(s, history), "budget")
+    s$.review_route$model <- "m"
+    history[[1]]$content <- paste0(history[[1]]$content, " changed")
+    expect_error(ns$.review_check_size(s, history), "budget")
+})

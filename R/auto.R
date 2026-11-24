@@ -156,7 +156,6 @@ auto_spend_since <- function(session, baseline) {
     main_cost <- sum(vapply(segs, function(s) s$cost %||% 0, numeric(1)))
     seg_tok <- vapply(segs, function(s) as.numeric(s$total_tokens %||% 0),
                       numeric(1))
-    seg_missing <- vapply(segs, function(s) isTRUE(s$cost_missing), logical(1))
     main_tok <- sum(seg_tok)
     sub <- tryCatch(subagent_spend_total(), error = function(e) list())
 

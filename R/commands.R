@@ -33,6 +33,7 @@ corteza_commands <- function() {
                  .command("reset", same_as = "clear", room = TRUE, remote = TRUE),
                  .command("new", same_as = "clear", room = TRUE, remote = TRUE),
                  .command("help", "List the commands", talker = "talker", acp = TRUE),
+                 .command("guide", "Explore settings and alternatives", "[topic]", talker = "both"),
                  .command("jobs", "List the conversation's delegated jobs, or show one",
                           "[id]", talker = "doer"),
                  .command("job", "Continue an incomplete job as a new attempt",

@@ -70,16 +70,6 @@ run_bang_shell <- function(cmd, cwd = getwd()) {
     list(text = text, staged = staged)
 }
 
-#' setwd() inside a function and restore on exit. Tiny base-R
-#' equivalent of withr::with_dir to avoid a Suggests entry just for
-#' `! <cmd>`.
-#' @noRd
-withr_local_dir <- function(dir, expr) {
-    old <- setwd(dir)
-    on.exit(setwd(old), add = TRUE)
-    force(expr)
-}
-
 #' Is `code` a syntactically complete R expression?
 #'
 #' Returns TRUE when `parse(text = code)` succeeds, or when it
@@ -278,6 +268,7 @@ chat_help_text <- function() {
           "  /quit, /exit, /q              Exit chat",
           "  /clear, /reset, /new          Clear conversation, keep transcript",
           "  /help                         Show this help",
+          "  /guide [topic]                Explore settings and alternatives",
           "  /tools                        List active tools",
           "  /model [name [provider] | N]  List models or switch by name/number",
           "  /effort [level | default]    Show or set reasoning effort",

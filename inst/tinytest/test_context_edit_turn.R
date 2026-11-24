@@ -241,7 +241,6 @@ local({
     ctx <- new.env(parent = emptyenv())
     ctx$session <- s
     ctx$config <- cfg
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "")
     lines <- c("/context-edit off", "/context-edit status", "/context-edit on")
     n <- 0L

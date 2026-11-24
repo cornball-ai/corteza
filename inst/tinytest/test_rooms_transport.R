@@ -94,7 +94,7 @@ restore_config <- function(iso) {
 # varies with the per-test HOME.
 base_cfg <- function(sync_token = "s1", e2ee = FALSE,
                      user_id = "@bot:example") {
-    cfg <- list(server = "https://example", user = "bot", password = "pw",
+    cfg <- list(server = "https://ex.invalid", user = "bot", password = "pw",
                 token = "tok", user_id = user_id, device_id = "DEV",
                 room_id = "!room:example")
     if (!is.null(sync_token)) {

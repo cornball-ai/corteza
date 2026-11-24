@@ -23,7 +23,6 @@ local({
     ctx$session$config <- ctx$config
     ctx$session$thinking <- "between_tools"
     ctx$disk_session <- list(session = list(model = "gpt-existing", provider = "openai"))
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "")
     input <- c("/model", "/model 2", "/effort high", "/effort")
     index <- 0L

@@ -35,7 +35,7 @@ expect_false("timeout" %in% names(no_config))
 
 # --- behavioral: skill_run skips the R limit for an exempt tool, keeps
 # it for everyone else. A real timing test, so local-only. ---
-if (at_home()) {
+if (at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
     # CPU-bound loop: reliably interruptible by setTimeLimit (Sys.sleep
     # is not). Base-only so it runs under littler too.
     busy_until <- function(secs) {
@@ -76,7 +76,7 @@ expect_true(all(c("fetch_url", "web_search") %in%
 # --- #142 item 2: the pending-interrupt flush must run before the validation
 # and dry-run early returns, and only an armed path leaves the flag set.
 # These exercise skill_run's side effects + timing, so local-only like above.
-if (at_home()) {
+if (at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
     busy_until <- function(secs) {
         t0 <- Sys.time()
         repeat {

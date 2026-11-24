@@ -815,8 +815,7 @@ both help texts, and its surface's match.
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`
 implementation (`R/chat-slash.R`) across both surfaces via
-`run_repl_loop()`. The legacy `memory_store` / `memory_search` tools are
-off by default behind `config$legacy_memory_tools_enabled`.
+`run_repl_loop()`.
 
 ## Project context loading
 
@@ -905,10 +904,9 @@ R/
 ├── tasks.R            # Task-tracker intercept in turn()
 ├── permissions.R      # /permissions surface helpers
 ├── plan-mode.R        # Plan-mode gate helpers
-├── workspace.R        # Workspace dir management
 ├── voice.R            # AgentVoice gRPC service (1:1 voice; voice-alloc.R, voice-auth.R)
 ├── voice-turn.R       # The voice brain: voice_turn(), voice_turn_report()
-└── (many more helpers: chunk.R, handles.R, retrieval.R, etc.)
+└── (many more helpers: chunk.R, handles.R, etc.)
 
 inst/
 ├── bin/corteza        # CLI binary (Rscript shebang)

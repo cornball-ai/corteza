@@ -19,10 +19,6 @@ base_cfg <- function(...) {
                            model = "fixture-model"),
                       list(...))
 }
-same_dir <- function(a, b) {
-    identical(normalizePath(a, winslash = "/", mustWork = FALSE),
-              normalizePath(b, winslash = "/", mustWork = FALSE))
-}
 # Each block keeps the room states and jobs in a state folder of its
 # own, and leaves no run roots or cwd set.
 with_state <- function() {
@@ -75,7 +71,7 @@ local({
     expect_error(corteza::bot_poll(project_roots = absent), "does not create them")
     expect_error(corteza::bot_run_init(project_roots = absent),
                  "does not create them")
-    expect_error(corteza::bot_configure("https://example", "bot", "pw", "!r:ex",
+    expect_error(corteza::bot_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                         project_roots = absent),
                  "does not create them")
     expect_false(file.exists(absent))

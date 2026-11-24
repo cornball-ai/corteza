@@ -44,7 +44,7 @@ local({
   }, add = TRUE)
 
   cfg <- list(
-    server = "https://example",
+    server = "https://ex.invalid",
     user = "bot",
     password = "pw",
     token = "tok",
@@ -66,11 +66,28 @@ local({
   }
 })
 
-# bot_new_session wires config into a turn session.
-# Runs at home with MOONSHOT_API_KEY set: new_session() needs the key.
-if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
+# Exercise the real room registry with offline metadata and model discovery.
+with_room_services <- function(code) {
+    ns <- asNamespace("corteza")
+    old_chat <- ns$bot_channel_info
+    old_local <- ns$default_local_model
+    key <- Sys.getenv("MOONSHOT_API_KEY", unset = NA_character_)
+    on.exit({
+        assignInNamespace("bot_channel_info", old_chat, ns)
+        assignInNamespace("default_local_model", old_local, ns)
+        if (is.na(key)) Sys.unsetenv("MOONSHOT_API_KEY") else Sys.setenv(MOONSHOT_API_KEY = key)
+    }, add = TRUE)
+    assignInNamespace("bot_channel_info", function(chat, room_id) {
+        list(id = room_id, name = "Fixture room", topic = NULL)
+    }, ns)
+    assignInNamespace("default_local_model", function() NULL, ns)
+    Sys.setenv(MOONSHOT_API_KEY = "fixture")
+    force(code)
+}
+run_room_sessions <- at_home() || identical(Sys.getenv("NOT_CRAN"), "true")
+if (run_room_sessions) with_room_services({
   cfg <- list(
-    server = "https://example",
+    server = "https://ex.invalid",
     user = "bot",
     user_id = "@bot:example",
     token = "tok",
@@ -314,9 +331,8 @@ local({
 })
 
 # The session registry hands out the same session for the same room.
-# Runs at home with MOONSHOT_API_KEY set: its sessions need the key.
-if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
-  cfg <- list(server = "https://example", user = "bot",
+if (run_room_sessions) with_room_services({
+  cfg <- list(server = "https://ex.invalid", user = "bot",
               user_id = "@bot:ex", room_id = "!dm:ex",
               model = "kimi-k2.5", provider = "moonshot",
               tools_filter = NULL, auto_approve_asks = TRUE)
@@ -520,7 +536,7 @@ local({
 
 # bot_configure validates bots before any network call.
 expect_error(
-  corteza::bot_configure("https://example", "bot", "pw", "!r:ex",
+  corteza::bot_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                             bots = "not-an-mxid"),
   pattern = "Matrix ID"
 )
@@ -977,9 +993,8 @@ local({
 })
 
 # /clear replaces the session. Three obligations, all regressions.
-# Runs at home with MOONSHOT_API_KEY set: its sessions need the key.
-if (at_home() && nzchar(Sys.getenv("MOONSHOT_API_KEY"))) local({
-    cfg <- list(server = "https://example", user = "bot",
+if (run_room_sessions) with_room_services({
+    cfg <- list(server = "https://ex.invalid", user = "bot",
                 user_id = "@bot:ex", room_id = "!c:ex", token = "tok",
                 device_id = "DEV", model = "kimi-k2.5",
                 provider = "moonshot", tools_filter = NULL,

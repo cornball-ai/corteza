@@ -18,7 +18,8 @@ audit_payload_expire(store, days = 30, now = Sys.time(), dry_run = TRUE)
 Character vector of eligible (or deleted) hashes.
 }
 \description{
-Never runs automatically. Only files in the named writer's payload store are
+Automatic expiry requires a positive \code{retention.audit_payload_days}
+in the user's configuration. Only files in the named writer's payload store are
 eligible; event metadata and other writers' stores are left intact. Expiry
 decisions append to a separate maintenance stream before deletion. Event
 retention is a planning value until an explicit event-retention tool is used.

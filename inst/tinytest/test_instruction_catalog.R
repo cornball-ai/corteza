@@ -208,19 +208,9 @@ local({
             catalog, "project:only-b"
         ), pattern = "not in this session catalog")
 
-    # Building the new catalog must not mutate the old process-global docs
-    # registry or the executable tool registry.
-    corteza:::clear_skill_docs()
-    legacy <- file.path(root, "legacy")
-    dir.create(legacy)
-    writeLines(c("---", "name: legacy", "description: old", "---",
-                 "LEGACY-BODY-SENTINEL"), file.path(legacy, "legacy.md"))
-    corteza:::load_skill_docs(legacy)
-    before_docs <- corteza:::format_skill_docs()
+    # Building a catalog leaves the executable registry intact.
     before_tools <- corteza:::list_skills()
     invisible(corteza:::build_instruction_catalog(project))
-    expect_identical(corteza:::format_skill_docs(), before_docs)
-    expect_true(grepl("LEGACY-BODY-SENTINEL", before_docs, fixed = TRUE))
     expect_identical(corteza:::list_skills(), before_tools)
 
     cache_home <- file.path(root, "cache-home")

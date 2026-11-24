@@ -47,7 +47,7 @@
 # direct turn() callers with their own persistence see no change.
 
 JOURNAL_LIVE <- "live.json"
-JOURNAL_SEGMENT_PATTERN <- "^segment-[0-9]{4}[.]json$"
+JOURNAL_SEGMENT_PATTERN <- "^segment-[0-9]{4,}[.]json$"
 
 #' Install a journal on a session.
 #'
@@ -261,12 +261,11 @@ journal_entries_since <- function(session, mark) {
         return(.journal_tail(history, mark$live_len %||% 0L))
     }
     out <- list()
-    seqs <- seq_len(state$seq)
-    seqs <- seqs[seqs > .journal_mark_seq(mark, state)]
+    since <- .journal_mark_seq(mark, state)
     first <- TRUE
-    segments <- if (length(seqs)) journal_load(state$dir)$segments else list()
-    for (s in seqs) {
-        seg <- segments[[s]]
+    segments <- if (state$seq > since) .journal_load_after(state$dir, since)$segments else list()
+    for (seg in segments) {
+        if (is.null(seg$seq) || seg$seq <= since) next
         skip <- if (first) {
             as.integer(mark$live_len)
         } else {
@@ -299,6 +298,10 @@ journal_turn_slice <- function(session, mark, pre_len) {
 #' left out. Missing pieces are NULL / empty.
 #' @noRd
 journal_load <- function(dir) {
+    .journal_load_after(dir, 0L)
+}
+
+.journal_load_after <- function(dir, since) {
     live <- .journal_read_live(dir)
     if (is.null(live)) {
         committed <- 0L
@@ -306,7 +309,7 @@ journal_load <- function(dir) {
         committed <- as.integer(live$seq %||% 0L)
     }
     seqs <- .journal_segment_seqs(dir)
-    seqs <- seqs[seqs <= committed]
+    seqs <- seqs[seqs > since & seqs <= committed]
     segments <- lapply(seqs, function(s) {
         .journal_read_json(.journal_segment_path(dir, s))
     })
@@ -319,7 +322,11 @@ journal_load <- function(dir) {
         if (!is.null(seg$reverse_delta)) {
             seg$after <- lapply(seg$after_refs, function(id) {
                 if (!exists(id, entries, inherits = FALSE)) {
-                    assign(id, .journal_read_json(file.path(dir, "entries", paste0(id, ".json"))), entries)
+                    from <- file.path(dir, "entries")
+                    if (!is.null(seg$entry_group)) {
+                        from <- file.path(from, .journal_group_name(seg$entry_group))
+                    }
+                    assign(id, .journal_read_json(file.path(from, paste0(id, ".json"))), entries)
                 }
                 get(id, entries, inherits = FALSE)
             })
@@ -370,6 +377,7 @@ journal_history <- function(dir) {
     state <- new.env(parent = emptyenv())
     state$dir <- dir
     state$session <- session
+    state$group_entries <- retention_config()$journal_segment_days > 0
     if (!dir.exists(dir)) {
         dir.create(dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     }
@@ -438,7 +446,13 @@ journal_history <- function(dir) {
         return(integer())
     }
     files <- list.files(dir, pattern = JOURNAL_SEGMENT_PATTERN)
-    sort(as.integer(sub("^segment-([0-9]{4})[.]json$", "\\1", files)))
+    sort(as.integer(sub("^segment-([0-9]+)[.]json$", "\\1", files)))
+}
+
+.journal_group_name <- function(seq) {
+    if (!is.numeric(seq) || length(seq) != 1L || !is.finite(seq) ||
+        seq < 1 || seq != as.integer(seq)) stop("Invalid journal entry group")
+    paste0("from-", as.integer(seq))
 }
 
 .journal_write_segment <- function(state, seq, before, after, reason,
@@ -456,6 +470,17 @@ journal_history <- function(dir) {
     if (!is.null(edits)) {
         hashes <- vapply(after, digest::digest, character(1))
         entry_dir <- file.path(state$dir, "entries")
+        # Once a writer moves on, it never adds to the previous group.
+        # The starting sequence distinguishes restarts and clock changes.
+        if (isTRUE(state$group_entries)) {
+            day <- as.character(Sys.Date())
+            if (!identical(state$entry_day, day)) {
+                state$entry_day <- day
+                state$entry_group <- seq
+            }
+            envelope$entry_group <- state$entry_group
+            entry_dir <- file.path(entry_dir, .journal_group_name(state$entry_group))
+        }
         dir.create(entry_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
         envelope$after_refs <- lapply(after, function(entry) {
             # Half a SHA-256 names an entry: 128 bits is ample within one

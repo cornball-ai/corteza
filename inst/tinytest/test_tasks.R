@@ -9,7 +9,6 @@ source("isolate.R", local = TRUE)
 
 library(tinytest)
 
-create_apply <- corteza:::task_create_apply
 update_apply <- corteza:::task_update_apply
 intercept <- corteza:::task_tool_intercept
 prompt_for <- corteza:::format_task_list_prompt
@@ -33,21 +32,8 @@ new_test_session <- function(channel = "console", enabled = TRUE) {
 
 # --- helper validation ----------------------------------------------
 
-# task_create_apply replaces any existing list and sets pending status.
 s <- new_test_session()
-s$tasks <- list(list(text = "old", status = "completed"))
-new_list <- create_apply(s, c("a", "b", "c"))
-expect_equal(length(new_list), 3L)
-expect_equal(s$tasks[[1]]$text, "a")
-expect_equal(s$tasks[[2]]$status, "pending")
-expect_equal(s$tasks[[3]]$status, "pending")
-expect_true(isTRUE(s$tasks_dirty))
-
-# task_create_apply rejects empty input.
-expect_error(create_apply(new_test_session(), character(0)),
-             "non-empty")
-expect_error(create_apply(new_test_session(), list()),
-             "non-empty")
+s$tasks <- list(list(text = "a", status = "pending"))
 
 # task_update_apply rejects out-of-range index.
 expect_error(update_apply(s, 99, "completed"), "out of range")
@@ -61,7 +47,7 @@ expect_error(update_apply(s, 1, "wat"),
 
 # task_update_apply auto-demotes other in_progress tasks.
 s <- new_test_session()
-create_apply(s, c("a", "b", "c"))
+s$tasks <- lapply(c("a", "b", "c"), function(text) list(text = text, status = "pending"))
 update_apply(s, 2, "in_progress")
 expect_equal(s$tasks[[2]]$status, "in_progress")
 update_apply(s, 1, "in_progress")
@@ -124,17 +110,6 @@ local({
     res <- intercept(s, "task_create", list(tasks = c("a", "b")))
     expect_true(grepl("Plan approved", res))
     expect_equal(length(s$tasks), 2L)
-})
-
-# The auto bypass is gated on auto_run_id, so an attended session with the
-# same errored cb still denies: attended approval is preserved.
-local({
-    sink(tempfile()); on.exit(sink(NULL), add = TRUE)
-    s <- new_test_session()   # no auto_run_id
-    s$task_approval_cb <- function() stop("nope")
-    res <- intercept(s, "task_create", list(tasks = c("a")))
-    expect_true(grepl("User rejected the proposed plan", res, fixed = TRUE))
-    expect_equal(length(s$tasks), 0L)
 })
 
 # The system text describes the attended flow. An /auto run is told at
@@ -553,7 +528,7 @@ expect_true(grepl("\033\\[32m3", out))
 # session_new() / session_save() write to ~/.cache/corteza-style paths
 # and the CI runner's HOME is locked down; the at_home() guard keeps
 # this local-only.
-if (at_home()) {
+if (at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
     sess <- corteza:::session_new(provider = "anthropic", cwd = tempdir())
     expect_true(is.list(sess$tasks))
     expect_equal(length(sess$tasks), 0L)

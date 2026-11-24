@@ -46,7 +46,9 @@
     if (!already &&
         (audit$payload_bytes %||% 0) + size > limits$turn_bytes) return(omit("per_turn"))
     path <- .audit_payload_path(ref)
-    tryCatch({
+    mask <- Sys.umask("0077")
+    on.exit(Sys.umask(mask), add = TRUE)
+    tryCatch(harness_with_lock(path, {
         if (!file.exists(path)) {
             # Stores belong to one writer incarnation; no cross-process quota
             # race or shared mutable index is needed. Pins count toward quota.
@@ -59,8 +61,6 @@
             # quota boundary, rather than stat every prior blob on each write.
             if (used + size > limits$quota_bytes) used <- usage()
             if (used + size > limits$quota_bytes) return(omit("quota"))
-            mask <- Sys.umask("0077")
-            on.exit(Sys.umask(mask), add = TRUE)
             dir.create(store, recursive = TRUE, showWarnings = FALSE, mode = "0700")
             tmp <- paste0(path, ".tmp")
             on.exit(unlink(tmp), add = TRUE)
@@ -77,7 +77,7 @@
             audit$payload_bytes <- (audit$payload_bytes %||% 0) + size
         }
         ref
-    }, error = function(e) {
+    }), error = function(e) {
         .audit_notice()
         omit("capture_failure")
     })
@@ -127,18 +127,24 @@ audit_payload_read <- function(ref, redact = TRUE, secrets = character()) {
 #' }
 audit_payload_pin <- function(ref, pin = TRUE) {
     path <- .audit_payload_path(ref)
-    if (!identical(ref$status, "stored") ||
-        !file.exists(path)) stop("Cannot pin a missing payload", call. = FALSE)
-    if (isTRUE(pin)) {
-        .private_record_write(paste0(path, ".pin"), .audit_now(),
-                              append = FALSE)
-    } else unlink(paste0(path, ".pin"))
+    if (!dir.exists(ref$store)) stop("Cannot pin a missing payload", call. = FALSE)
+    harness_with_lock(path, {
+        if (!identical(ref$status, "stored") || !file.exists(path)) {
+            stop("Cannot pin a missing payload", call. = FALSE)
+        }
+        if (isTRUE(pin)) {
+            .private_record_write(paste0(path, ".pin"), .audit_now(), append = FALSE)
+        } else {
+            unlink(paste0(path, ".pin"))
+        }
+    })
     invisible(ref)
 }
 
 #' Expire unpinned audit payloads explicitly
 #'
-#' Never runs automatically. Only files in the named writer's payload store are
+#' Automatic expiry requires a positive \code{retention.audit_payload_days}
+#' in the user's configuration. Only files in the named writer's payload store are
 #' eligible; event metadata and other writers' stores are left intact. Expiry
 #' decisions append to a separate maintenance stream before deletion. Event
 #' retention is a planning value until an explicit event-retention tool is used.
@@ -157,25 +163,38 @@ audit_payload_expire <- function(store, days = 30, now = Sys.time(),
     stopifnot(is.character(store), length(store) == 1L, dir.exists(store),
               identical(basename(dirname(store)), "payloads"),
               is.numeric(days), length(days) == 1L, !is.na(days), days >= 0)
-    paths <- list.files(store, "^[a-f0-9]{64}$", full.names = TRUE)
-    age <- as.numeric(difftime(now, file.info(paths)$mtime, units = "days"))
-    paths <- paths[!is.na(age) & age > days &
-        !file.exists(paste0(paths, ".pin"))]
+    if (!isTRUE(dry_run) && !isFALSE(dry_run)) stop("dry_run must be TRUE or FALSE")
+    root <- dirname(dirname(store))
+    if (!retention_within(store, root)) return(character())
+    eligible <- function(path) {
+        pin <- paste0(path, ".pin")
+        link <- Sys.readlink(pin)
+        utils::file_test("-f", path) && retention_within(path, root) &&
+            !file.exists(pin) && (is.na(link) || !nzchar(link)) &&
+            isTRUE(retention_idle(now, file.mtime(path)) > days)
+    }
+    paths <- Filter(eligible, list.files(store, "^[a-f0-9]{64}$", full.names = TRUE))
     if (isTRUE(dry_run) || !length(paths)) return(basename(paths))
     session <- new.env(parent = emptyenv())
     session$audit_dir <- file.path(dirname(dirname(store)), "maintenance")
+    if ("maintenance" %in% list.files(root, all.files = TRUE) &&
+        (!dir.exists(session$audit_dir) || !retention_within(session$audit_dir, root))) return(character())
     state <- .audit_state(session)
     removed <- character()
     for (path in paths) {
-        if (!.audit_append(state, "payload_expiry", store = store,
-                           hash = basename(path), reason = "expiry", status = "intent")) break
-        success <- unlink(path) == 0L
-        .audit_append(state, "payload_expiry", store = store,
-                      hash = basename(path), reason = "expiry", status = if (success) {
-                "removed"
-            } else {
-                "failed"
-            })
+        lock <- paste0(path, ".lock")
+        link <- Sys.readlink(lock)
+        if ((!is.na(link) && nzchar(link)) ||
+            (file.exists(lock) && !retention_within(lock, root))) next
+        success <- tryCatch(harness_with_lock(path, {
+            if (eligible(path) && .audit_append(state, "payload_expiry", store = store,
+                    hash = basename(path), reason = "expiry", status = "intent")) {
+                ok <- retention_unlink(path)
+                .audit_append(state, "payload_expiry", store = store, hash = basename(path),
+                              reason = "expiry", status = if (ok) "removed" else "failed")
+                ok
+            } else FALSE
+        }, timeout = 0, stale = Inf), error = function(e) FALSE)
         if (success) removed <- c(removed, basename(path))
     }
     removed

@@ -199,23 +199,30 @@ corteza:::.run_r_worker_close(s)
 expect_null(s$.run_r_worker)
 
 # config$skill_timeout now reaches the shared wrapper for ordinary skills.
-slow_skill <- corteza:::skill_spec(
-    "slow_test_skill", "test", list(),
-    function(args, ctx) {
-        started <- Sys.time()
-        repeat {
-            for (i in 1:5000) value <- i * i
-            if (as.numeric(difftime(Sys.time(), started,
-                                    units = "secs")) >= 0.2) break
+local({
+    registry <- corteza:::.skill_registry
+    previous <- registry[["slow_test_skill"]]
+    on.exit({
+        if (is.null(previous)) rm("slow_test_skill", envir = registry) else registry[["slow_test_skill"]] <- previous
+    }, add = TRUE)
+    slow_skill <- corteza:::skill_spec(
+        "slow_test_skill", "test", list(),
+        function(args, ctx) {
+            started <- Sys.time()
+            repeat {
+                for (i in 1:5000) value <- i * i
+                if (as.numeric(difftime(Sys.time(), started,
+                                        units = "secs")) >= 0.2) break
+            }
+            corteza:::ok("finished")
         }
-        corteza:::ok("finished")
-    }
-)
-corteza:::register_skill(slow_skill)
-cfg_session <- corteza::new_session("cli")
-cfg_session$config <- list(skill_timeout = 0.02)
-limited <- corteza:::call_skill(
-    "slow_test_skill", list(), ctx = list(session = cfg_session)
-)
-expect_true(limited$isError)
-expect_true(grepl("timed out", limited$content[[1L]]$text, fixed = TRUE))
+    )
+    corteza:::register_skill(slow_skill)
+    cfg_session <- corteza::new_session("cli")
+    cfg_session$config <- list(skill_timeout = 0.02)
+    limited <- corteza:::call_skill(
+        "slow_test_skill", list(), ctx = list(session = cfg_session)
+    )
+    expect_true(limited$isError)
+    expect_true(grepl("timed out", limited$content[[1L]]$text, fixed = TRUE))
+})

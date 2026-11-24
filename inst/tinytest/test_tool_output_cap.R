@@ -291,7 +291,7 @@ local({
 # Real bash path: a command that prints thousands of lines is capped,
 # and the full output is recoverable from the handle. Needs a shell and
 # the builtin skill registry, so gate behind at_home().
-if (at_home()) {
+if (at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
     op_bash <- options(corteza.policy = function(call) {
         list(model = "cloud", approval = "allow", reason = "test allow")
     })

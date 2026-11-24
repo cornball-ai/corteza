@@ -132,7 +132,7 @@ local({
     expect_error(corteza::bot_run_init(cwd = absent), "does not create it")
     expect_error(corteza::bot_run(cwd = absent), "does not create it")
     expect_error(
-        corteza::bot_configure("https://example", "bot", "pw", "!r:ex",
+        corteza::bot_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                cwd = absent),
         "does not create it")
     expect_false(file.exists(absent))
@@ -159,7 +159,7 @@ local({
     expect_error(suppressWarnings(corteza::matrix_run(cwd = absent)),
                  "does not create it")
     expect_error(suppressWarnings(
-        corteza::matrix_configure("https://example", "bot", "pw", "!r:ex",
+        corteza::matrix_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                   cwd = absent)),
         "does not create it")
     expect_false(file.exists(absent))

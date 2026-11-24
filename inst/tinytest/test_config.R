@@ -26,7 +26,6 @@ expect_false(isTRUE(config$context_include_memory_logs))
 expect_identical(config$memory_flush_enabled, FALSE)
 expect_identical(config$task_list_enabled, FALSE)
 expect_null(config$cache)
-expect_false(isTRUE(config$legacy_memory_tools_enabled))
 expect_true("write_file" %in% config$dangerous_tools)
 expect_equal(config$port, 7850L)
 expect_equal(config$context_compact_bytes, 900000L)
@@ -79,10 +78,6 @@ writeLines('{"context_files": ["README.md", "CUSTOM.md"]}',
 
 config <- corteza:::load_config(testdir)
 expect_equal(config$context_files, c("README.md", "CUSTOM.md"))
-
-# Test get_context_files uses config
-files <- corteza:::get_context_files(testdir)
-expect_equal(files, c("README.md", "CUSTOM.md"))
 
 # Test invalid JSON is handled gracefully (falls back to empty)
 writeLines('not valid json', file.path(testdir, ".corteza", "config.json"))

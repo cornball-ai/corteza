@@ -26,11 +26,6 @@ expect_equal(render("# Heading\n\nbody", palette = off),
 
 # --- options(corteza.markdown = FALSE) opt-out ---
 
-withr_local_options <- function(opts, code) {
-    old <- options(opts)
-    on.exit(options(old), add = TRUE)
-    force(code)
-}
 old <- options(corteza.markdown = FALSE)
 expect_equal(render("**bold**", palette = ansi), "**bold**")
 options(old)

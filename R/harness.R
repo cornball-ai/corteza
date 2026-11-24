@@ -123,7 +123,7 @@ harness_save <- function(store, path) {
     # processes saving at once write the same file and one reads the
     # other's half-written bytes.
     tmp <- tempfile(paste0(basename(path), "."), tmpdir = dirname(path))
-    ok <- tryCatch({
+    tryCatch({
         writeLines(jsonlite::toJSON(store, auto_unbox = TRUE, null = "null",
                                     pretty = TRUE), tmp)
         Sys.chmod(tmp, "600")

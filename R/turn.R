@@ -1002,8 +1002,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 # Silent-streak narration guard -------------------------------------
-# corteza-owned and session-scoped (never the package-global .heartbeat,
-# which can't serve concurrent console/Matrix/subagent sessions). Uses
+# Each session counts its own silent turns, using
 # the llm.api per-call context snapshot (call$model_context): a model
 # turn is "silent" when it made tool calls with no assistant narration.
 # Keyed on call_index == 1 so a multi-call batch counts once; the nudge

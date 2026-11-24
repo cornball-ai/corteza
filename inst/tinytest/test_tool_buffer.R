@@ -1,12 +1,11 @@
 library(tinytest)
 
-# Basic add/get/list on a single session.
+# Adding and listing outputs in a single session.
 local({
     s <- list(sessionId = "test-buf-1")
     on.exit(corteza:::tool_buffer_reset(s), add = TRUE)
 
     expect_identical(corteza:::tool_buffer_list(s), list())
-    expect_null(corteza:::tool_buffer_get(s, 1L))
 
     corteza:::tool_buffer_add(s, "read_file",
                               list(path = "/tmp/a"),
@@ -21,16 +20,7 @@ local({
     expect_identical(outputs[[1L]]$name, "bash")
     expect_identical(outputs[[2L]]$name, "read_file")
 
-    first <- corteza:::tool_buffer_get(s, 1L)
-    expect_identical(first$name, "bash")
-    expect_identical(first$result, "a\nb\nc")
-
-    second <- corteza:::tool_buffer_get(s, 2L)
-    expect_identical(second$name, "read_file")
-
-    # Past-the-end returns NULL, not an error.
-    expect_null(corteza:::tool_buffer_get(s, 3L))
-    expect_null(corteza:::tool_buffer_get(s, 0L))
+    expect_identical(outputs[[1L]]$result, "a\nb\nc")
 })
 
 # Two sessions don't see each other's buffers. Subagents and parents
@@ -87,13 +77,11 @@ local({
     expect_equal(length(corteza:::tool_buffer_list(b)), 1L)
 })
 
-# Missing/empty sessionId: defensive — add silently no-ops, get/list
-# return NULL / empty.
+# Buffers require a session id.
 local({
     no_id <- list()
     corteza:::tool_buffer_add(no_id, "x", list(), "y")
     expect_identical(corteza:::tool_buffer_list(no_id), list())
-    expect_null(corteza:::tool_buffer_get(no_id, 1L))
 
     empty_id <- list(sessionId = "")
     corteza:::tool_buffer_add(empty_id, "x", list(), "y")

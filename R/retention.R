@@ -15,7 +15,7 @@
 #
 # A session's audit records are kept inside its journal folder
 # (`<id>.journal/audit/`, R/audit-stream.R) and have their own expiry,
-# which never runs by itself. So a journal is removed file by file
+# controlled separately from idle-session retention. A journal is removed file by file
 # (retention_own()), and its folder goes only once empty.
 #
 # Job chains, worker folders and remote-control sessions are part 2, in
@@ -46,7 +46,9 @@ RETENTION_LOOK_SECS <- 60 * 60
 # parsed again.
 retention_config <- function() {
     defaults <- list(session_days = RETENTION_SESSION_DAYS,
-                     incomplete_days = RETENTION_INCOMPLETE_DAYS)
+                     incomplete_days = RETENTION_INCOMPLETE_DAYS,
+                     audit_payload_days = 0, journal_segment_days = 0,
+                     workspace_snapshot_days = 0)
     path <- corteza_config_path("config.json")
     if (!file.exists(path)) {
         return(defaults)
@@ -63,7 +65,7 @@ retention_config <- function() {
         if (is.list(cfg)) {
             days <- cfg[[key]] %||% defaults[[key]]
         }
-        if (!is.numeric(days) || length(days) != 1L || is.na(days) ||
+        if (!is.numeric(days) || length(days) != 1L || !is.finite(days) ||
             days < 0) {
             log_event("retention_config_invalid", key = key, level = "warn")
             days <- 0
@@ -110,14 +112,17 @@ retention_config <- function() {
 #' is alive, while its session is open in the process doing the removing,
 #' and while a job is open in its directory.
 #'
-#' Transcripts, session stores, the terminal's saved workspaces, config,
-#' audit records and crypto state are never removed. A session whose journal is gone still
+#' Transcripts, session stores, configuration, audit events and crypto state
+#' are kept. A session whose journal is gone still
 #' resumes from its transcript. A chat room that restores its context
 #' from its journal starts its next conversation fresh.
 #'
 #' A session's audit records are kept in its journal folder, under
-#' \code{audit/}, and a job's in its own folder. They stay, and so does
-#' the folder that holds them: see \code{\link{audit_payload_expire}}.
+#' \code{audit/}, and a job's in its own folder. Separate personal retention
+#' settings opt into expiring unpinned payloads (\code{audit_payload_days}),
+#' old journal segments (\code{journal_segment_days}) and legacy R workspace
+#' snapshots beside a transcript (\code{workspace_snapshot_days}). Each
+#' defaults to zero. The latest committed segment and live history stay.
 #'
 #' A session was last used when its journal, its trace, its transcript or
 #' its attachments last changed, whichever is newest. A symbolic link is
@@ -138,16 +143,19 @@ retention_config <- function() {
 #' @param days Sessions unused for at least this many days lose their
 #'   journal, trace and attachments, and job records, worker folders and
 #'   remote-control sessions unchanged for as long go. Default:
-#'   \code{retention$session_days} from the user's config. 0 removes
-#'   nothing.
+#'   \code{retention$session_days} from the user's config. Zero disables
+#'   idle-session cleanup. Separately configured payload, segment and
+#'   workspace lifetimes still apply.
 #'
 #' @return A data frame with one row per journal, trace, attachments
 #'   folder, job folder, worker folder, remote-control session or unknown
-#'   folder, invisibly: \code{agent} (\code{NA} outside a session's
+#'   folder, or file eligible under a separate lifetime, invisibly:
+#'   \code{agent} (\code{NA} outside a session's
 #'   files), \code{session} (for a job, its chain's newest job),
 #'   \code{kind} (\code{"journal"}, \code{"trace"}, \code{"attachments"},
-#'   \code{"job"}, \code{"worker"}, \code{"checkpoint"}, \code{"remote"} or
-#'   \code{"unknown"}), \code{path}, \code{last_use}, \code{idle_days},
+#'   \code{"job"}, \code{"worker"}, \code{"checkpoint"}, \code{"remote"},
+#'   \code{"segment"}, \code{"entry"}, \code{"payload"}, \code{"workspace snapshot"}
+#'   or \code{"unknown"}), \code{path}, \code{last_use}, \code{idle_days},
 #'   \code{bytes}, \code{incomplete} (a job chain kept longer for its
 #'   resume snapshot) and \code{removed}.
 #' @export
@@ -192,8 +200,9 @@ sessions_prune <- function(dry_run = FALSE, days = NULL) {
         days < 0) {
         stop("`days` must be one non-negative number.", call. = FALSE)
     }
-    found <- retention_prune(days, dry_run = dry_run,
-                             incomplete_days = cfg$incomplete_days)
+    found <- rbind(retention_prune(days, dry_run = dry_run,
+                                  incomplete_days = cfg$incomplete_days),
+                   retention_history(cfg, dry_run = dry_run))
     message(retention_summary(found, days, dry_run))
     invisible(found)
 }
@@ -368,7 +377,7 @@ retention_rmdir <- function(dir) {
 
 # One line for a person: what went, or would go.
 retention_summary <- function(found, days, dry_run) {
-    if (days <= 0) {
+    if (days <= 0 && !nrow(found)) {
         return("Retention is off: nothing is removed.")
     }
     session <- found$kind %in% c("journal", "trace", "attachments")
@@ -376,6 +385,13 @@ retention_summary <- function(found, days, dry_run) {
     lines <- c(retention_session_line(found[session,, drop = FALSE], days,
                                       dry_run),
                retention_state_line(found[state,, drop = FALSE], days, dry_run))
+    for (kind in c("segment", "entry", "payload", "workspace snapshot")) {
+        count <- sum(found$kind == kind & (dry_run | found$removed))
+        if (count > 0L) {
+            lines <- c(lines, sprintf("%s %s.", if (dry_run) "Would expire" else "Expired",
+                                      retention_count(count, kind, if (kind == "entry") "entries" else paste0(kind, "s"))))
+        }
+    }
     if (!length(lines)) {
         lines <- sprintf("No session has gone unused for %s.",
                          retention_days(days))
@@ -703,7 +719,7 @@ retention_tick <- function(keep = character(), now = Sys.time()) {
         }
         cfg <- retention_config()
         days <- cfg$session_days
-        if (days <= 0 || !dir.exists(corteza_data_dir())) {
+        if (all(unlist(cfg[names(cfg) != "incomplete_days"]) == 0) || !dir.exists(corteza_data_dir())) {
             return(invisible(NULL))
         }
         if (!retention_run_due(now)) {
@@ -711,8 +727,9 @@ retention_tick <- function(keep = character(), now = Sys.time()) {
         }
         writeLines(format(now, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
                    retention_stamp_path())
-        found <- retention_prune(days, keep = keep, now = now,
-                                 incomplete_days = cfg$incomplete_days)
+        found <- rbind(retention_prune(days, keep = keep, now = now,
+                                       incomplete_days = cfg$incomplete_days),
+                       retention_history(cfg, dry_run = FALSE, now = now))
         unknown <- found$path[found$kind == "unknown"]
         if (length(unknown)) {
             log_event("retention_unknown", paths = unknown)

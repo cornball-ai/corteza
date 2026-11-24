@@ -674,21 +674,6 @@ session_elsewhere_note <- function(session, cwd) {
     sprintf("This session was started in %s.", session_dir_show(started))
 }
 
-#' Add a message to a session (in memory only)
-#' @param session Session object
-#' @param role Message role
-#' @param content Message content (string)
-#' @return Updated session object
-#' @noRd
-session_add_message <- function(session, role, content) {
-    # Store in pi-coding-agent compatible format
-    msg <- list(role = role,
-                content = list(list(type = "text", text = content)))
-
-    session$messages <- c(session$messages, list(msg))
-    session
-}
-
 # Transcript operations ----
 
 #' Write session header to transcript file
@@ -1142,11 +1127,3 @@ format_trace <- function(trace, show_args = FALSE) {
 
 # Backward compatibility - project-local sessions ----
 # These functions allow using project-local .corteza/sessions/ if needed
-
-#' Get project-local sessions directory
-#' @param cwd Working directory
-#' @return Path to sessions directory
-#' @noRd
-sessions_dir_local <- function(cwd = getwd()) {
-    file.path(cwd, ".corteza", "sessions")
-}

@@ -5,16 +5,23 @@
 # refusal comes back as its intended status -- none of which an
 # in-process call can show.
 
-if (!at_home()) {
-    exit_file("wire test runs at home only")
+if (!at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("wire test runs at home and in CI")
 }
 if (!requireNamespace("rgrpc", quietly = TRUE) ||
     !requireNamespace("RProtoBuf", quietly = TRUE)) {
     exit_file("needs rgrpc and RProtoBuf")
 }
 
+local({
 dir <- tempfile("voice-wire-")
 dir.create(dir)
+on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+# Keep the loopback client and server connected when CI blocks outside HTTP.
+old_proxy <- Sys.getenv("no_grpc_proxy", unset = NA_character_)
+Sys.setenv(no_grpc_proxy = paste(c("127.0.0.1", old_proxy[!is.na(old_proxy)]), collapse = ","))
+on.exit(if (is.na(old_proxy)) Sys.unsetenv("no_grpc_proxy") else
+    Sys.setenv(no_grpc_proxy = old_proxy), add = TRUE)
 port_file <- file.path(dir, "port")
 
 rscript <- file.path(R.home("bin"), "Rscript")
@@ -22,6 +29,7 @@ proc <- processx::process$new(rscript,
                               c("--vanilla", "voice-harness.R", port_file,
                                 dir),
                               stderr = file.path(dir, "harness.log"))
+on.exit(if (proc$is_alive()) proc$kill(), add = TRUE, after = FALSE)
 
 port <- NULL
 for (i in 1:100) {
@@ -36,13 +44,13 @@ for (i in 1:100) {
 }
 if (is.null(port)) {
     log <- file.path(dir, "harness.log")
-    exit_file(paste("harness never bound:",
-                    paste(if (file.exists(log)) readLines(log, warn = FALSE),
-                          collapse = " | ")))
+    stop("Local voice server failed to start: ",
+         paste(if (file.exists(log)) readLines(log, warn = FALSE), collapse = " | "))
 }
 
 corteza:::voice_load_protos()
 client <- rgrpc::grpc_client(sprintf("127.0.0.1:%s", port))
+on.exit(rgrpc::grpc_close(client), add = TRUE, after = FALSE)
 svc <- rgrpc::grpc_service(corteza:::.voice_type("AllocateVoiceRequest"),
                           "cornball.agent.v1.AgentVoice")
 
@@ -199,6 +207,4 @@ ev <- unary("AllocateVoice", req, metadata = MD)
 expect_equal(ev$status_name, "OK")
 expect_false(identical(ev$response_message$session_id, sid))
 
-rgrpc::grpc_close(client)
-proc$kill()
-unlink(dir, recursive = TRUE)
+})

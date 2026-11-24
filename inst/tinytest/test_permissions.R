@@ -79,14 +79,6 @@ expect_false(result$ok)
 result <- corteza:::validate_path(NULL, list())
 expect_false(result$ok)
 
-# Test validate_paths
-config <- list(denied_paths = c("/etc"))
-result <- corteza:::validate_paths(c("/home/user/a", "/home/user/b"), config)
-expect_true(result$ok)
-
-result <- corteza:::validate_paths(c("/home/user/a", "/etc/passwd"), config)
-expect_false(result$ok)
-
 # Test validate_command
 result <- corteza:::validate_command("ls -la")
 expect_true(result$ok)

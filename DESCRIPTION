@@ -14,10 +14,8 @@ Authors@R: c(
 Description: An agent runtime that gives Large Language Models (LLMs)
     from 'Anthropic' <https://www.anthropic.com/>, 'OpenAI'
     <https://openai.com/>, 'Moonshot' <https://www.moonshot.ai/>, and
-    'Ollama' <https://ollama.com/> direct access to a live R session with
-    managed workspace state. Tools execute as R function calls with
-    provenance tracking, and a deterministic retrieval system keeps
-    relevant objects in context across turns. Three entry points: a
+    'Ollama' <https://ollama.com/> direct access to a live R session.
+    Tools execute as R function calls and record their results. Interfaces include a
     shell command-line interface (CLI), a console read-eval-print-loop
     via chat(), and a Model Context Protocol (MCP) server via serve()
     for external clients.

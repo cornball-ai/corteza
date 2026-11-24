@@ -9,10 +9,7 @@
 # guard at that chokepoint: it caps the model-facing text and stashes
 # the full output as a handle so nothing is lost.
 #
-# compact_message_text() is the sibling for /compact: do_compact()
-# pastes message bodies into one summarization prompt, so a giant result
-# already in history would blow that prompt too. Eliding oversized
-# bodies lets /compact recover an already-wedged session.
+# compact_message_text() bounds message bodies in a compaction prompt.
 
 # Caps. Constants for now; promote to config if tuning is needed.
 # Preview is intentionally a bit under the cap so the marker header
@@ -308,10 +305,7 @@ compact_message_text <- function(text,
 #' OpenAI chat messages carry a `role`; OpenAI Responses (codex)
 #' entries carry only a `type` (".openai_codex_output" holding the raw
 #' output items, "function_call_output" for tool results) and no role
-#' at all. sprintf() with a NULL argument returns character(0), so a
-#' role-less entry used to kill do_compact()'s vapply -- exactly when
-#' /compact was needed to recover a wedged session. This renderer
-#' guarantees a length-1 string for any shape.
+#' at all. The renderer returns one string for either shape.
 #'
 #' @param m One history entry (any provider-native shape).
 #' @return A length-1 character string.

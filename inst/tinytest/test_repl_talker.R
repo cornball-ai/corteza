@@ -49,7 +49,6 @@ talker_ctx <- function(talker = list(enabled = TRUE)) {
     ctx$provider <- "anthropic"
     ctx$disk_session <- list(session = disk, sessionId = disk$sessionId,
                              resumed = FALSE)
-    ctx$ws_enabled <- FALSE
     ctx$palette <- palette
     ctx$help_text <- function() "HELP TEXT"
     ctx$handle_copy <- function(x) ctx$copied <- x
@@ -147,6 +146,8 @@ local({
     before <- ns$job_worker_spec(s)
 
     expect_true(any(grepl("HELP TEXT", type(ctx, "/help"), fixed = TRUE)))
+    expect_true(any(grepl("Getting to know corteza", type(ctx, "/guide"), fixed = TRUE)))
+    expect_true(any(grepl("workspace_snapshot_days", type(ctx, "/guide storage"), fixed = TRUE)))
     # The talker's tools: it reads and hands work on.
     tools <- paste(type(ctx, "/tools"), collapse = "\n")
     expect_true(grepl("delegate", tools, fixed = TRUE))
@@ -572,7 +573,7 @@ local({
                dryrun = "both", paste = "talker", plan = "both",
                spent = "both", `context-edit` = "both", status = "both",
                compact = "talker", refine = "talker", flush = "talker",
-               doctor = "both", config = "both", last = "talker",
+               doctor = "both", config = "both", guide = "both", last = "talker",
                outputs = "talker", diff = "both", review = "doer",
                skill = "both", r = "talker")
     expect_true(setequal(names(shown), main$name),

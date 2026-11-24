@@ -150,11 +150,6 @@ load_config <- function(cwd = getwd()) {
     }
     # Note: allowed_paths is NULL by default (no restriction)
 
-    # Skill paths (additional directories to load skills from)
-    if (is.null(config$skill_paths)) {
-        config$skill_paths <- character()
-    }
-
     # R package functions registered as tools: none unless the config
     # lists them. Each entry names the class of its functions, which
     # decides who approves a call (R/policy.R).
@@ -196,10 +191,6 @@ load_config <- function(cwd = getwd()) {
         .context_edit_config()
     })
 
-    # Legacy memory tools (slash commands /remember /recall /flush)
-    if (is.null(config$legacy_memory_tools_enabled)) {
-        config$legacy_memory_tools_enabled <- FALSE
-    }
     # Flush memories ahead of an automatic compaction. Off unless a
     # config turns it on: the flush is a model request of its own that
     # writes memory/YYYY-MM-DD.md, and nothing reads those notes by
@@ -254,12 +245,6 @@ load_config <- function(cwd = getwd()) {
         }
     }
 
-    # Rate limits per provider
-    # Example: { "anthropic": { "tokens_per_hour": 100000, "requests_per_minute": 60 } }
-    if (is.null(config$rate_limits)) {
-        config$rate_limits <- list()
-    }
-
     # Subagent configuration
     if (is.null(config$subagents)) {
         config$subagents <- list()
@@ -291,9 +276,6 @@ load_config <- function(cwd = getwd()) {
     }
     if (is.null(sub$mcp_spend_cap_tokens)) {
         sub$mcp_spend_cap_tokens <- NA_integer_
-    }
-    if (is.null(sub$base_port)) {
-        sub$base_port <- 7851L
     }
     # Child context compaction. Working subagents (not archive holders)
     # may compact their own in-memory history when it grows past the
@@ -379,43 +361,5 @@ load_config <- function(cwd = getwd()) {
              call. = FALSE)
     }
 
-    # Workspace config (managed runtime state)
-    if (is.null(config$workspace)) {
-        config$workspace <- list()
-    }
-    ws <- config$workspace
-    if (is.null(ws$enabled)) {
-        ws$enabled <- TRUE
-    }
-    if (is.null(ws$budget_chars)) {
-        ws$budget_chars <- 32000L
-    }
-    if (is.null(ws$capture_results)) {
-        ws$capture_results <- TRUE
-    }
-    if (is.null(ws$max_result_size)) {
-        ws$max_result_size <- 50000L
-    }
-    if (is.null(ws$scan_globalenv)) {
-        ws$scan_globalenv <- TRUE
-    }
-    if (is.null(ws$scan_max_bytes)) {
-        ws$scan_max_bytes <- 52428800L # 50MB
-    }
-    if (is.null(ws$max_object_summary_chars)) {
-        ws$max_object_summary_chars <- 2000L
-    }
-    config$workspace <- ws
-
     config
-}
-
-#' Get context files from config
-#'
-#' @param cwd Working directory
-#' @return Character vector of context file names to look for
-#' @noRd
-get_context_files <- function(cwd = getwd()) {
-    config <- load_config(cwd)
-    config$context_files
 }

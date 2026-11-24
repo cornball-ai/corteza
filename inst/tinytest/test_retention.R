@@ -916,7 +916,6 @@ local({
     expect_true(dated || .Platform$OS.type == "windows")
     if (dated) {
         ctx <- new.env(parent = emptyenv())
-        ctx$ws_enabled <- FALSE
         ctx$palette <- list(dim = "<", reset = ">", cyan = "", bold = "",
                             yellow = "", green = "", bright_magenta = "",
                             red = "", magenta = "")
@@ -932,4 +931,64 @@ local({
         expect_true(file.exists(file.path(mine$journal, "live.json")))
         expect_true(file.exists(mine$trace))
     }
+})
+
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    ns <- asNamespace("corteza")
+    limits <- '{"retention":{"session_days":0,"audit_payload_days":7,"journal_segment_days":7,"workspace_snapshot_days":7}}'
+    set_config(fx, limits)
+    dir <- file.path(fx$data, "agents", "main", "sessions")
+    dir.create(dir, recursive = TRUE)
+    writeLines("{}", file.path(dir, "fixture.jsonl"))
+    snap <- file.path(dir, "fixture_workspace.rds")
+    saveRDS(list(x = 1), snap)
+    metadata <- file.path(dir, "fixture_workspace.json")
+    writeLines('{"turn":1,"objects":{}}', metadata)
+    unrelated <- file.path(dir, "other_workspace.rds")
+    file.copy(snap, unrelated)
+    j <- file.path(dir, "fixture.journal")
+    s <- corteza::new_session()
+    ns$journal_install(s, j)
+    old <- Sys.time() - 10 * DAY
+    for (i in 1:3) {
+        # Simulate a fresh bucket on each day.
+        s$.journal$entry_day <- NULL
+        after <- list(list(role = "user", content = paste("day", i)))
+        ns$journal_rewrite(s, s$history, after, "context_edit", edits = list())
+        s$history <- after
+    }
+    a <- ns$.audit_turn_begin(s)
+    one <- ns$.audit_payload_put(a, "first", "tool_full")
+    pinned <- ns$.audit_payload_put(a, "second", "tool_full")
+    fresh <- ns$.audit_payload_put(a, "third", "tool_full")
+    corteza::audit_payload_pin(pinned)
+    for (path in c(ns$.journal_segment_path(j, 1), snap, metadata, unrelated,
+                   ns$.audit_payload_path(one), ns$.audit_payload_path(pinned))) {
+        Sys.setFileTime(path, old)
+    }
+    set_config(fx, '{"retention":{"session_days":0}}')
+    expect_equal(nrow(suppressMessages(corteza::sessions_prune())), 0L)
+    expect_true(all(file.exists(c(ns$.audit_payload_path(one), snap, ns$.journal_segment_path(j, 1)))))
+    set_config(fx, limits)
+    preview <- suppressMessages(corteza::sessions_prune(dry_run = TRUE))
+    expect_identical(sort(preview$kind),
+                     sort(c("segment", "entry", "payload", rep("workspace snapshot", 2))))
+    expect_false(any(preview$removed))
+    done <- suppressMessages(corteza::sessions_prune())
+    expect_true(all(done$removed))
+    expect_identical(sort(done$path), sort(preview$path))
+    expect_false(any(file.exists(done$path)))
+    expect_true(file.exists(unrelated))
+    expect_identical(corteza::audit_payload_read(pinned), "second")
+    expect_identical(corteza::audit_payload_read(fresh), "third")
+    expect_identical(ns$journal_load(j)$live$history, s$history)
+    mark <- ns$journal_mark(s)
+    ns$journal_rewrite(s, s$history, list(), "test")
+    s$history <- list()
+    expect_identical(ns$journal_entries_since(s, mark), list())
+    restarted <- corteza::new_session()
+    ns$journal_install(restarted, j)
+    expect_identical(vapply(ns$journal_load(j)$segments, function(seg) seg$seq, 1L), 2:5)
 })

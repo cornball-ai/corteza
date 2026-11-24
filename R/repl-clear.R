@@ -6,13 +6,6 @@
     if (isTRUE(ctx$session$.repl_jobs_ready)) {
         job_conversation_hold(ctx$session)
     }
-    # Archive the current session's workspace so it stays
-    # resumable, then spin up a fresh on-disk + in-memory
-    # session. The old transcript is left on disk.
-    if (ctx$ws_enabled) {
-        tryCatch(ws_save(ctx$disk_session$sessionId),
-                 error = function(e) NULL)
-    }
     # Drop the tool-output buffer for the outgoing session
     # so a /clear actually clears (otherwise /last would
     # still surface results from the old conversation).

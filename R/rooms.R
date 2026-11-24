@@ -125,10 +125,6 @@ bot_config_path <- function() {
                                       env_var = "CORTEZA_MATRIX_CONFIG")
 }
 
-bot_legacy_config_path <- function() {
-    chat.api::chat_matrix_config_path("corteza", legacy = TRUE)
-}
-
 # Strip the chat_config class and its bookkeeping attributes. Callers
 # that only read fields do not need it, and the loop reassigns cfg in
 # places where a class would have to be maintained by hand.
@@ -1406,11 +1402,6 @@ bot_room_context_bundle <- function(cfg, cwd, description = NULL,
                         cwd, prefix_sources = prefix_sources,
                         include_instruction_catalog = instruction_reader_selected(tools_filter)
     )
-}
-
-bot_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
-    bot_room_context_bundle(cfg, cwd, description = description,
-                            room_name = room_name)$system
 }
 
 # A bot's directory is given to it, never made for it. Up to 0.8.0 a room
