@@ -1,4 +1,4 @@
-# Unreleased
+# corteza 0.8.0.52
 
 - Foreground and background archive summaries and room consultation workers
   skip the working directory's `.Rprofile` at startup.
