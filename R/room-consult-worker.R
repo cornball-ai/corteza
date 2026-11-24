@@ -37,7 +37,7 @@
     callr::r_bg(function(id) {
         get(".room_consult_child", envir = asNamespace("corteza"),
             inherits = FALSE)(id)
-    }, args = list(id = id), libpath = .libPaths(), supervise = TRUE,
+    }, args = list(id = id), libpath = .libPaths(), supervise = TRUE, user_profile = FALSE,
                 stdout = file.path(job_dir(id), "consultation.stdout"),
                 stderr = file.path(job_dir(id), "consultation.stderr"))
 }

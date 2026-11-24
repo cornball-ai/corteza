@@ -380,7 +380,7 @@ archival_summarize <- function(history_slice, style = "structured",
                                  args = list(prompt = user, system = sys, model = model,
                 provider = provider,
                 context = audit_context),
-                                 timeout = timeout_seconds
+                                 timeout = timeout_seconds, user_profile = FALSE
         ),
                         error = function(e) {
         log_event("archival_summary_failed",
@@ -453,7 +453,7 @@ archival_summarize_bg <- function(subagent_id, history_slice, style,
                             history_slice = history_slice,
                             style = style, provider = provider, model = model,
                             cwd = cwd, timeout_seconds = timeout_seconds, audit_context = audit_context),
-                supervise = FALSE
+                supervise = FALSE, user_profile = FALSE
     )
     invisible(NULL)
 }

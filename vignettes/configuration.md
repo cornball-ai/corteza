@@ -1075,7 +1075,8 @@ Job workers, supervised `run_r` workers and spawned subagents skip the
 working directory's `.Rprofile` by default. This includes any options that
 file sets, such as `options(corteza.policy = ...)`. To load the profile for
 a job or supervised `run_r` worker, set `user_profile` to `"project"` in
-that worker's options. Spawned subagents have no profile override.
+that worker's options. Spawned subagents, archive summaries (foreground
+and background) and room consultations always skip the project profile.
 
 A project using `renv` can instead supply `job_worker_options.libpath` or
 `run_r_worker_options.libpath`. This list replaces the worker's library
