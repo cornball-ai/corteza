@@ -665,7 +665,9 @@ retention_step <- function(here, real, part) {
     if (retention_is_link(here)) {
         return(NULL)
     }
-    real_here <- normalizePath(here, winslash = "/", mustWork = FALSE)
+    real_here <- tryCatch(normalizePath(here, winslash = "/", mustWork = TRUE),
+                          error = function(e) NULL)
+    if (is.null(real_here)) return(NULL)
     if (!retention_same_path(real_here, paste0(real, "/", part))) {
         return(NULL)
     }
@@ -680,7 +682,9 @@ retention_is_link <- function(path) {
 # A path with forward slashes alone on Windows, and as it is elsewhere.
 retention_slashes <- function(path) {
     if (.Platform$OS.type == "windows") {
-        return(gsub("\\", "/", path, fixed = TRUE))
+        path <- chartr("\\", "/", path)
+        path <- sub("^//[?]/([A-Za-z]:/)", "\\1", path)
+        return(sub("^//[?]/UNC/", "//", path, ignore.case = TRUE))
     }
     path
 }
@@ -689,7 +693,7 @@ retention_slashes <- function(path) {
 # the expected one in case alone.
 retention_same_path <- function(a, b) {
     if (.Platform$OS.type == "windows") {
-        return(identical(tolower(a), tolower(b)))
+        return(identical(tolower(retention_slashes(a)), tolower(retention_slashes(b))))
     }
     identical(a, b)
 }
