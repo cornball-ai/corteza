@@ -963,6 +963,12 @@ local({
     one <- ns$.audit_payload_put(a, "first", "tool_full")
     pinned <- ns$.audit_payload_put(a, "second", "tool_full")
     fresh <- ns$.audit_payload_put(a, "third", "tool_full")
+    # These records intentionally survive the prune. On Windows their long
+    # names must be removed before the fixture's ordinary recursive cleanup.
+    on.exit({
+        kept <- vapply(list(one, pinned, fresh), ns$.audit_payload_path, "")
+        unlink(c(kept, paste0(kept, ".pin")), expand = FALSE)
+    }, add = TRUE, after = FALSE)
     corteza::audit_payload_pin(pinned)
     for (path in c(ns$.journal_segment_path(j, 1), snap, metadata, unrelated,
                    ns$.audit_payload_path(one), ns$.audit_payload_path(pinned))) {
