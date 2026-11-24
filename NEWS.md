@@ -4,9 +4,12 @@
   `read_file`, `web_search` and `fetch_url`. An explicit tool list still applies.
 - Tool calls no longer copy their results or new R bindings into the shared
   workspace. R bindings still persist between calls in the same evaluator.
+  This removes the package's `codetools` import.
 - Job workers, supervised `run_r` workers and spawned subagents skip the
-  working directory's `.Rprofile` by default. Job and `run_r` workers accept
-  an explicit library path for projects that use `renv`.
+  working directory's `.Rprofile` by default, including any `corteza.policy`
+  option it sets. Job and `run_r` workers can opt in with `user_profile = "project"`.
+  For `renv`, their `libpath` must include the project library followed by the
+  libraries containing corteza and its dependencies.
 
 # corteza 0.8.0.50
 

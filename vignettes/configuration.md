@@ -156,6 +156,10 @@ session and writes no file. The lessons tool refuses the project's store and
 keeps a lesson only under scope `global`, and `/refine` lists the global
 store and runs no review pass.
 
+R can read the working directory's `.Rprofile` before the terminal or
+`chat()` can ask about trust. The worker startup settings are described
+under **Skills** below.
+
 Trust decides what corteza loads by itself. It does not confine the agent:
 a tool can still read a file in an untrusted directory when asked, and what
 it reads comes back as a tool result under the approval settings below.
@@ -1065,14 +1069,19 @@ number keeps everything that key governs.
 | `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
 | `run_r_worker_options` | object | `{}` | Named arguments for `callr::r_session_options()` when `run_r_mode` is `"worker"`: `env`, `libpath`, `cmdargs`, `arch`, ... |
+| `job_worker_options` | object | `{}` | Named arguments for `callr::r_session_options()` for doers, reviewers and monitors |
 
 Job workers, supervised `run_r` workers and spawned subagents skip the
-working directory's `.Rprofile` by default. A project that activates `renv`
-in that file can give the worker its library through `job_worker_options.libpath`
-or `run_r_worker_options.libpath`. For a worker that should run the profile
-at startup, set `user_profile` to `"project"` in its worker options. Spawned
-subagents have no profile override. The initial R process running `corteza`
-or `chat()` follows R's own startup rules.
+working directory's `.Rprofile` by default. This includes any options that
+file sets, such as `options(corteza.policy = ...)`. To load the profile for
+a job or supervised `run_r` worker, set `user_profile` to `"project"` in
+that worker's options. Spawned subagents have no profile override.
+
+A project using `renv` can instead supply `job_worker_options.libpath` or
+`run_r_worker_options.libpath`. This list replaces the worker's library
+search path. Put the project library first, followed by the libraries
+containing corteza and its dependencies. The initial R process and the
+approved `run_r_script` tool follow their ordinary startup rules.
 
 `skill_timeout` is the default for ordinary skills and for self-bounded tools
 such as `bash`, `cmd`, and `run_r_script`. An explicit tool argument still wins.
