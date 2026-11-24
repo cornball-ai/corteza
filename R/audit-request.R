@@ -1,19 +1,21 @@
 .audit_usage <- function(raw, provider, model) {
-    if (!length(raw)) return(NULL)
+    if (!length(raw)) {
+        return(NULL)
+    }
     input <- raw[["input_tokens"]] %||% raw[["prompt_tokens"]]
     output <- raw[["output_tokens"]] %||% raw[["completion_tokens"]]
     usage <- list(input_tokens = input, output_tokens = output,
-         total_tokens = if (!is.null(input) && !is.null(output)) {
+                  total_tokens = if (!is.null(input) && !is.null(output)) {
             input + output
         } else {
             raw[["total_tokens"]]
         },
-         cache_read_input_tokens = raw$cache_read_input_tokens %||%
-         raw$prompt_tokens_details$cached_tokens %||% raw$input_tokens_details$cached_tokens,
-         cache_creation_input_tokens = raw$cache_creation_input_tokens,
-         cache_creation = raw$cache_creation,
-         cost = tryCatch(llm.api::usage_cost(model, provider, raw),
-                         error = function(e) NA_real_))
+                  cache_read_input_tokens = raw$cache_read_input_tokens %||%
+                  raw$prompt_tokens_details$cached_tokens %||% raw$input_tokens_details$cached_tokens,
+                  cache_creation_input_tokens = raw$cache_creation_input_tokens,
+                  cache_creation = raw$cache_creation,
+                  cost = tryCatch(llm.api::usage_cost(model, provider, raw),
+                                  error = function(e) NA_real_))
     # An Anthropic provider counts cached input beside `input_tokens`.
     .usage_count_cached(usage, provider)
 }
@@ -27,7 +29,9 @@
     system <- body$system %||% body$instructions
     if (is.null(system) && length(body$messages)) {
         instructions <- Filter(function(x) x$role %in% c("system", "developer"), body$messages)
-        if (length(instructions)) system <- instructions
+        if (length(instructions)) {
+            system <- instructions
+        }
     }
     list(request = request, system = part(system),
          tools = part(body$tools), messages = lapply(messages, part),
@@ -35,7 +39,9 @@
 }
 
 .audit_request_callback <- function(session, audit) {
-    if (is.null(audit)) return(NULL)
+    if (is.null(audit)) {
+        return(NULL)
+    }
     function(event) {
         audit$request_seen <- TRUE
         recorded <- .audit_safe({
@@ -72,22 +78,33 @@
             }
             written
         })
-        if (!isTRUE(recorded)) audit$request_partial <- TRUE
+        if (!isTRUE(recorded)) {
+            audit$request_partial <- TRUE
+        }
         invisible(NULL)
     }
 }
 
 .audit_request_coverage <- function(audit) {
-    if (!isTRUE(audit$request_supported)) return("unavailable")
-    if (isTRUE(audit$request_partial)) return("partial")
-    if (!length(audit$request_starts)) return("unobserved")
-    if (!setequal(audit$request_starts, audit$request_ends)) return("partial")
+    if (!isTRUE(audit$request_supported)) {
+        return("unavailable")
+    }
+    if (isTRUE(audit$request_partial)) {
+        return("partial")
+    }
+    if (!length(audit$request_starts)) {
+        return("unobserved")
+    }
+    if (!setequal(audit$request_starts, audit$request_ends)) {
+        return("partial")
+    }
     "complete"
 }
 
 .audit_tool_payload <- function(audit, full, admitted, tool, stage = "cap") {
-    if (is.null(audit) || !is.character(full) ||
-        length(full) != 1L) return(invisible(NULL))
+    if (is.null(audit) || !is.character(full) || length(full) != 1L) {
+        return(invisible(NULL))
+    }
     .audit_append(audit$state, "tool_payload", turn_id = audit$id,
                   call_id = audit$current_call, turn = audit$ref, tool = tool, stage = stage,
                   full = .audit_payload_put(audit, full, "tool_full"),

@@ -14,5 +14,9 @@
 #' audit_read(tempfile())
 audit_read <- function(path, redact = TRUE, secrets = character()) {
     result <- auto_log_read(path)
-    if (isTRUE(redact)) .redact_object(result, secrets) else result
+    if (isTRUE(redact)) {
+        .redact_object(result, secrets)
+    } else {
+        result
+    }
 }

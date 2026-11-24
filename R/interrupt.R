@@ -65,7 +65,7 @@ repair_interrupted_tool_history <- function(history, provider, marker,
         identical(r$provider_shape, "responses")
     }, logical(1))
     history <- .append_responses_tool_results(history, unfinished[responses],
-                                              placeholder)
+        placeholder)
     unfinished <- unfinished[!responses]
 
     if (length(unfinished) > 0L) {

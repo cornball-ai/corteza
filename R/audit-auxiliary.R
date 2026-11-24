@@ -14,8 +14,8 @@
         },
          enabled = if (is.environment(session)) session$audit_enabled else NULL,
          writer = if (isTRUE(share_writer)) .audit_safe({
-            if (is.environment(session)) .audit_state(session) else active$state
-        }),
+        if (is.environment(session)) .audit_state(session) else active$state
+    }),
          identity = if (is.environment(session)) {
             list(owner = session$job_owner,
                  session_key = job_worker_key(session),
@@ -58,8 +58,12 @@
         .audit_runtime$active <- parent
     }, add = TRUE)
     supported <- "request_callback" %in% names(formals(fn))
-    if (!is.null(audit)) audit$request_supported <- supported
-    if (supported) args$request_callback <- .audit_request_callback(s, audit)
+    if (!is.null(audit)) {
+        audit$request_supported <- supported
+    }
+    if (supported) {
+        args$request_callback <- .audit_request_callback(s, audit)
+    }
     .audit_safe({
         if (!is.null(parent) &&
                 !is.null(audit)) .audit_append(parent$state, "auxiliary_turn",
@@ -87,7 +91,9 @@
                 route = list(provider = args$provider, model = args$model))))
     if (!is.null(audit)) {
         result$usage_coverage <- .audit_request_coverage(audit)
-        if (identical(result$usage_coverage, "complete")) result$usage <- audit$request_usage
+        if (identical(result$usage_coverage, "complete")) {
+            result$usage <- audit$request_usage
+        }
         result$audit <- audit$ref
         result$usage_source <- "derived"
     }

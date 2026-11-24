@@ -360,7 +360,7 @@ archival_summarize <- function(history_slice, style = "structured",
         state <- .audit_state(s)
         id <- .audit_id()
         .audit_append(state, "auxiliary_dispatch", dispatch_id = id,
-            origin = audit_context$origin, timeout_seconds = timeout_seconds)
+                      origin = audit_context$origin, timeout_seconds = timeout_seconds)
         list(state = state, id = id)
     })
     audit_context$origin$dispatch_id <- dispatch$id
@@ -368,32 +368,34 @@ archival_summarize <- function(history_slice, style = "structured",
     # writer; only serializable settings and causal references cross here.
     audit_context$writer <- NULL
     answer <- tryCatch(
-                        callr::r(
-                                 function(prompt, system, model, provider, context) {
+                       callr::r(
+                                function(prompt, system, model, provider, context) {
         resp <- get(".audit_model_call", asNamespace("corteza"))(llm.api::agent, list(
-                               prompt = prompt, system = system, tools = list(),
-                               model = model, provider = provider,
-                               max_turns = 1L, history = list(), verbose = FALSE
-        ), "archival", context = context)
+                prompt = prompt, system = system, tools = list(),
+                model = model, provider = provider,
+                max_turns = 1L, history = list(), verbose = FALSE
+            ), "archival", context = context)
         list(text = as.character(resp$content %||% ""), audit = resp$audit, usage = resp$usage)
     },
-                                 args = list(prompt = user, system = sys, model = model,
+                                args = list(prompt = user, system = sys, model = model,
                 provider = provider,
                 context = audit_context),
                                  timeout = timeout_seconds, user_profile = FALSE
         ),
-                        error = function(e) {
+                       error = function(e) {
         log_event("archival_summary_failed",
                   error = conditionMessage(e), level = "warn")
         .audit_safe(.audit_append(dispatch$state, "auxiliary_exit", dispatch_id = dispatch$id,
-            status = "error", condition_classes = as.list(class(e)), condition_message = conditionMessage(e)))
+                                  status = "error", condition_classes = as.list(class(e)), condition_message = conditionMessage(e)))
         NULL
     }
     )
-    if (is.null(answer)) return("[summary unavailable]")
+    if (is.null(answer)) {
+        return("[summary unavailable]")
+    }
     .audit_safe(.audit_append(dispatch$state, "auxiliary_exit", dispatch_id = dispatch$id,
-        status = "complete", child = answer$audit, usage = answer$usage,
-        usage_source = "derived", usage_turns = .audit_derived(answer$audit)$usage_turns))
+                              status = "complete", child = answer$audit, usage = answer$usage,
+                              usage_source = "derived", usage_turns = .audit_derived(answer$audit)$usage_turns))
     summary <- answer$text
     if (is.null(summary) || !nzchar(summary)) {
         return("[summary unavailable]")
@@ -418,7 +420,9 @@ archival_summarize <- function(history_slice, style = "structured",
 archival_summarize_bg <- function(subagent_id, history_slice, style,
                                   provider, model, cwd = getwd(),
                                   timeout_seconds = 60L, audit_context = NULL) {
-    if (!is.null(audit_context)) audit_context$writer <- NULL
+    if (!is.null(audit_context)) {
+        audit_context$writer <- NULL
+    }
     callr::r_bg(
                 function(subagent_id, history_slice, style, provider, model,
                          cwd, timeout_seconds, audit_context) {
@@ -697,7 +701,9 @@ archival_first_line <- function(text) {
 maybe_archive_turn <- function(turn_session, prompt, pre_turn_len, result,
                                config, parent_session_id,
                                max_turns_hit = FALSE, depth = 0L, mark = NULL) {
-    if (.context_edit_pure(turn_session)) return(invisible())
+    if (.context_edit_pure(turn_session)) {
+        return(invisible())
+    }
     arc_cfg <- config$archival %||% list()
     if (!isTRUE(arc_cfg$enabled)) {
         return(invisible())

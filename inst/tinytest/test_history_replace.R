@@ -1345,7 +1345,7 @@ local({
         ".prepare_route_context :: args$history" = 1L,
         ".fallback_resume_args :: args$history" = 1L,
         ".journal_write_segment :: envelope$history" = 1L,
-        ".journal_load_after :: seg$history" = 1L)
+        "journal_load :: seg$history" = 1L)
 
     seen <- character()
     for (name in ls(ns, all.names = TRUE)) {

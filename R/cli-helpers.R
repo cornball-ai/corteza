@@ -312,14 +312,14 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text,
 
     tryCatch({
         .audit_model_call(chat_fn, list(
-                prompt = review_prompt,
-                provider = provider,
-                model = resolve_provider_model(provider, model),
-                system = paste(
-                               "You are performing code review on local changes.",
-                               "Findings must come first and should prioritize correctness over style."
-            ),
-                temperature = preferred_chat_temperature(provider, 0.1)
-        ), "review", session = session)
+                                        prompt = review_prompt,
+                                        provider = provider,
+                                        model = resolve_provider_model(provider, model),
+                                        system = paste(
+                    "You are performing code review on local changes.",
+                    "Findings must come first and should prioritize correctness over style."
+                ),
+                                        temperature = preferred_chat_temperature(provider, 0.1)
+            ), "review", session = session)
     }, error = function(e) e)
 }

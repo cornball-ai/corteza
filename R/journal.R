@@ -303,10 +303,6 @@ journal_turn_slice <- function(session, mark, pre_len) {
 #' left out. Missing pieces are NULL / empty.
 #' @noRd
 journal_load <- function(dir) {
-    .journal_load_after(dir, 0L)
-}
-
-.journal_load_after <- function(dir, since) {
     live <- .journal_read_live(dir)
     if (is.null(live)) {
         committed <- 0L
@@ -314,7 +310,7 @@ journal_load <- function(dir) {
         committed <- as.integer(live$seq %||% 0L)
     }
     seqs <- .journal_segment_seqs(dir)
-    seqs <- seqs[seqs > since & seqs <= committed]
+    seqs <- seqs[seqs <= committed]
     segments <- lapply(seqs, function(s) {
         .journal_read_json(.journal_segment_path(dir, s))
     })
@@ -434,7 +430,7 @@ journal_history <- function(dir) {
 # advances only once the live snapshot acknowledging the segment is on
 # disk; until then the segment is a stray the next rewrite overwrites.
 .journal_commit <- function(state, before, after, reason, summary = NULL,
-                             edits = NULL) {
+                            edits = NULL) {
     seq <- state$seq + 1L
     path <- .journal_write_segment(state, seq, before, after, reason,
                                    summary = summary, edits = edits)

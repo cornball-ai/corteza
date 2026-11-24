@@ -49,8 +49,7 @@
     # /spent still counts it.
     killed <- 0L
     for (sid in ls(.subagent_registry)) {
-        if (isTRUE(tryCatch(subagent_kill(sid),
-                            error = function(e) FALSE))) {
+        if (isTRUE(tryCatch(subagent_kill(sid), error = function(e) FALSE))) {
             killed <- killed + 1L
         }
     }

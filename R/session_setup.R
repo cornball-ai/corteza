@@ -68,12 +68,10 @@
 #'   extra \code{cwd}, \code{config} and \code{tool_table} fields and, for
 #'   an auto-built system prompt, a \code{context_manifest} field.
 #' @examples
-#' \dontrun{
-#' # Requires the relevant provider API key in the environment.
-#' s <- session_setup("cli", provider = "anthropic",
-#'                    load_project_context = FALSE)
-#' s$model
-#' }
+#' # Reads the user's config and builds the tool table; sends nothing.
+#' s <- session_setup("console", cwd = tempdir(), provider = "anthropic",
+#'                    load_project_context = FALSE, validate_api_key = FALSE)
+#' s$provider
 #' @export
 session_setup <- function(channel = c("cli", "console", "matrix"),
                           cwd = getwd(), provider = NULL, model = NULL,

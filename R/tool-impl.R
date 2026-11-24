@@ -858,7 +858,7 @@ tool_run_r <- function(code, envir = globalenv()) {
     }
     text <- paste(c(streams, text), collapse = "\n")
     .audit_safe(.audit_tool_payload(.audit_runtime$active,
-        paste(c(streams, outcome$printed), collapse = "\n"), text, "run_r", stage = "render"))
+                                    paste(c(streams, outcome$printed), collapse = "\n"), text, "run_r", stage = "render"))
 
     # The outer tool handler applies the same universal cap, but it does not
     # know which private evaluator produced this result. Admit it here first

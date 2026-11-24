@@ -422,7 +422,9 @@
     }
     .repl_jobs_setup(ctx)
     result <- tool_job_resume(parts[3L], ctx = list(session = ctx$session))
-    cat(paste(vapply(result$content, function(x) x$text %||% "", ""), collapse = "\n"), "\n")
+    cat(paste(vapply(result$content, function(x) x$text %||% "", ""),
+              collapse = "\n"),
+        "\n")
     invisible(NULL)
 }
 

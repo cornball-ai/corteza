@@ -310,7 +310,7 @@
     if (is.null(extra)) {
         extra <- list()
     } else if (!is.list(extra) || is.null(names(extra)) ||
-               any(!nzchar(names(extra)))) {
+        any(!nzchar(names(extra)))) {
         stop("config$", field, " must be a named list of ",
              "callr::r_session_options() arguments", call. = FALSE)
     }
@@ -471,7 +471,7 @@
         if (!is.null(audit) && !is.null(payload$audit_capture)) {
             audit$payload_bytes <- (audit$payload_bytes %||% 0) + payload$audit_capture$bytes
             .audit_append(audit$state, "tool_capture_child", turn_id = audit$id,
-                call_id = audit$current_call, capture = payload$audit_capture)
+                          call_id = audit$current_call, capture = payload$audit_capture)
         }
     })
     if (timed_out || isTRUE(payload$interrupted)) {
