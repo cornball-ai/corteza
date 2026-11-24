@@ -65,14 +65,17 @@ Every dependency is on CRAN, as in 0.8.0.
 
 `R CMD check --as-cran --run-donttest` on:
 
-* Ubuntu 24.04 LTS, R 4.6.1, from an empty home directory, once as CRAN
-  runs the tests and once with every test file: Status: OK, the home
-  still empty.
-* The Ubuntu and macOS GitHub Actions checks passed on earlier development
-  builds. Final Windows checks use the same source tarball as Linux.
-
-`R CMD check --as-cran --no-manual` on Windows 10, R 4.6.0: Status: 1
-NOTE (the note above).
+* Ubuntu 24.04.5 LTS, R 4.6.1, using released dependencies. With incoming
+  and network clock checks disabled, both runs returned Status: OK.
+  The CRAN selection passed 11,887 assertions and full mode passed 13,735.
+* Windows 10, R 4.6.0, on the same source tarball with incoming checks
+  enabled. Both runs returned Status: 1 NOTE (the archival notice above).
+  The CRAN selection passed 11,484 assertions and full mode passed 13,229.
+* Each run used a separate empty home and temporary directory. Both were
+  empty afterwards. All three R checks for leftover files also passed.
+* The same source tarball was uploaded to win-builder for R-devel on
+  2026-11-24 after the local Windows checks. The result is pending.
+* Ubuntu and macOS GitHub Actions passed on earlier development builds.
 
 ## Notes
 
