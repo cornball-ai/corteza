@@ -427,6 +427,11 @@ local({
     proj <- normalizePath(file.path(root, "proj"), winslash = "/")
     on.exit(unlink(root, recursive = TRUE), add = TRUE)
     writeLines("MARK-PROJECT-INSTRUCTIONS", file.path(proj, "AGENTS.md"))
+    # Each rebuild reads the briefing again. Hold that input constant so
+    # crossing a minute in saber's generated timestamp cannot change it.
+    reader <- ns$load_saber_briefing
+    utils::assignInNamespace("load_saber_briefing", function(cwd) "Fixture briefing", "corteza")
+    on.exit(utils::assignInNamespace("load_saber_briefing", reader, "corteza"), add = TRUE)
     s <- ns$session_setup("console", cwd = proj, provider = "anthropic",
                           model = "fixture", validate_api_key = FALSE)
     expect_false(isTRUE(s$project_trusted))
