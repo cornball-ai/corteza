@@ -25,9 +25,12 @@ start_guide <- function(ctx, topic) {
             "audit_payload_days, journal_segment_days or workspace_snapshot_days. Zero keeps them.",
             "Preview eligible files in R with corteza::sessions_prune(dry_run = TRUE)."))
     if (!length(topic)) {
-        cat("Getting to know corteza\n", "Current route: ", ctx$provider, " / ", ctx$model, "\n",
-            "Choose a topic:\n", sep = "")
-        for (key in names(topics)) cat(sprintf("  /guide %-10s %s\n", key, topics[[key]][1L]))
+        cat("Getting to know corteza\n")
+        if (!is.null(ctx)) cat("Current route: ", ctx$provider, " / ", ctx$model, "\n", sep = "")
+        command <- if (is.null(ctx)) "corteza guide" else "/guide"
+        for (key in names(topics)) {
+            cat(sprintf("  %s %-10s %s\n", command, key, topics[[key]][1L]))
+        }
     } else if (length(topic) == 1L && topic %in% names(topics)) {
         cat(topics[[topic]], sep = "\n")
     } else {

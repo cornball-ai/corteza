@@ -1,6 +1,6 @@
 # Age limits for individual records apply only when the user enables them.
 # Enumerate writer-owned layouts, including jobs under an external state root.
-retention_history <- function(config, dry_run, now = Sys.time()) {
+retention_history <- function(config, dry_run, now = Sys.time(), idle = NULL) {
     rows <- list()
     result <- function() {
         if (length(rows)) return(do.call(rbind, rows))
@@ -43,10 +43,13 @@ retention_history <- function(config, dry_run, now = Sys.time()) {
             }
         }
     }
+    whole <- idle$path[idle$kind == "journal"]
+    workers <- idle$path[idle$kind %in% c("worker", "checkpoint")]
+    if (length(workers)) whole <- c(whole, file.path(workers, "journal"))
     journal <- function(dir, root, id) {
         if (!dir.exists(dir) || !retention_within(dir, root)) return()
         audit(file.path(dir, "audit"), root, id)
-        if (config$journal_segment_days > 0) {
+        if (config$journal_segment_days > 0 && !dir %in% whole) {
             retention_segments(dir, root, id, config$journal_segment_days, now, record, dry_run)
         }
     }

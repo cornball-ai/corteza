@@ -200,9 +200,8 @@ sessions_prune <- function(dry_run = FALSE, days = NULL) {
         days < 0) {
         stop("`days` must be one non-negative number.", call. = FALSE)
     }
-    found <- rbind(retention_prune(days, dry_run = dry_run,
-                                  incomplete_days = cfg$incomplete_days),
-                   retention_history(cfg, dry_run = dry_run))
+    found <- retention_prune(days, dry_run = dry_run, incomplete_days = cfg$incomplete_days)
+    found <- rbind(found, retention_history(cfg, dry_run = dry_run, idle = found))
     message(retention_summary(found, days, dry_run))
     invisible(found)
 }
@@ -727,9 +726,8 @@ retention_tick <- function(keep = character(), now = Sys.time()) {
         }
         writeLines(format(now, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
                    retention_stamp_path())
-        found <- rbind(retention_prune(days, keep = keep, now = now,
-                                       incomplete_days = cfg$incomplete_days),
-                       retention_history(cfg, dry_run = FALSE, now = now))
+        found <- retention_prune(days, keep = keep, now = now, incomplete_days = cfg$incomplete_days)
+        found <- rbind(found, retention_history(cfg, dry_run = FALSE, now = now, idle = found))
         unknown <- found$path[found$kind == "unknown"]
         if (length(unknown)) {
             log_event("retention_unknown", paths = unknown)

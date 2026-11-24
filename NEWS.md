@@ -2,6 +2,7 @@
 
 - The terminal and `chat()` offer `/guide` at startup. It explains model
   subscriptions, tool approval, delegation, history, caching and storage.
+  Run `corteza guide` before choosing a provider or signing in.
 - Personal retention settings can expire unpinned audit payloads, older
   committed journal segments and legacy workspace snapshots. Each new age
   defaults to zero. Preview eligible files with `sessions_prune(dry_run = TRUE)`.

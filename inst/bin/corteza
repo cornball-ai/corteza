@@ -108,6 +108,7 @@ parse_args <- function() {
 corteza - An open-source interactive CLI agent
 
 Usage: corteza [options]
+       corteza guide [topic]
        corteza acp [--provider P] [--model M] [--tools T]
 
   acp             Serve an editor or another Agent Client Protocol client
@@ -890,6 +891,10 @@ run_agent <- function(opts) {
 # ============================================================================
 
 if (!interactive()) {
+  if (identical(commandArgs(trailingOnly = TRUE)[1L], "guide")) {
+    corteza:::start_guide(NULL, commandArgs(trailingOnly = TRUE)[-1L])
+    quit(save = "no", status = 0L)
+  }
   # `corteza acp`: the agent an Agent Client Protocol client starts
   # (R/acp.R). Standard input and output carry the protocol, so nothing
   # is asked and nothing printed here; each session the client opens

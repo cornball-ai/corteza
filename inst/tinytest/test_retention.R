@@ -975,6 +975,10 @@ local({
     preview <- suppressMessages(corteza::sessions_prune(dry_run = TRUE))
     expect_identical(sort(preview$kind),
                      sort(c("segment", "entry", "payload", rep("workspace snapshot", 2))))
+    overlapping <- ns$retention_history(ns$retention_config(), TRUE,
+        idle = data.frame(kind = "journal", path = j))
+    expect_false(any(overlapping$kind %in% c("segment", "entry")))
+    expect_true("payload" %in% overlapping$kind)
     expect_false(any(preview$removed))
     done <- suppressMessages(corteza::sessions_prune())
     expect_true(all(done$removed))
