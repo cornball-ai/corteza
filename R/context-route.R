@@ -28,7 +28,8 @@
     if (isTRUE(session$.protect_review_inputs)) {
         limit <- context_limit_for_model(args$model, args$provider)
         session$.review_limit <- min(limit, .window_value(session$context_window) %||% limit,
-                                     .window_value(config$context_window) %||% limit)
+                                     .window_value(config[["context_window"]]) %||% limit,
+                                     .window_value(config$context_window_cap) %||% limit)
         session$.review_prefix <- args[c("system", "tools", "max_tokens")]
         session$.review_route <- args[intersect(c("provider", "model", "system", "tools",
             "max_tokens", "web_search", "thinking", "reasoning_effort", "thinking_budget_tokens",

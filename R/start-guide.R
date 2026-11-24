@@ -15,7 +15,7 @@ start_guide <- function(ctx, topic) {
             'Set "task_list_enabled": true for task tools and /tasks.'),
         context = c("History and prompt caching",
             "/context shows the token budget. /context-edit status shows how history is managed.",
-            'Set "context_edit": {"enabled": true, "strategy": "clm"} for model-managed history.',
+            'For model-managed history set "context_edit": {"enabled": true, "cadence": "always", "strategy": "clm"}.',
             'Anthropic defaults to a 5-minute prompt cache. Set "cache" to "1h" for longer pauses',
             'or "none" to turn it off. The cache is separate from the journal on disk.'),
         storage = c("What stays on disk",

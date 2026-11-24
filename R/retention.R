@@ -70,6 +70,7 @@ retention_config <- function() {
             log_event("retention_config_invalid", key = key, level = "warn")
             days <- 0
         }
+        if (key == "journal_segment_days") days <- ceiling(days)
         out[[key]] <- as.numeric(days)
     }
     out
@@ -202,7 +203,7 @@ sessions_prune <- function(dry_run = FALSE, days = NULL) {
     }
     found <- retention_prune(days, dry_run = dry_run, incomplete_days = cfg$incomplete_days)
     found <- rbind(found, retention_history(cfg, dry_run = dry_run, idle = found))
-    message(retention_summary(found, days, dry_run))
+    message(retention_summary(found, days, dry_run, cfg))
     invisible(found)
 }
 
@@ -375,8 +376,10 @@ retention_rmdir <- function(dir) {
 }
 
 # One line for a person: what went, or would go.
-retention_summary <- function(found, days, dry_run) {
-    if (days <= 0 && !nrow(found)) {
+retention_summary <- function(found, days, dry_run, config = list()) {
+    history <- any(unlist(config[c("audit_payload_days", "journal_segment_days",
+                                   "workspace_snapshot_days")]) > 0)
+    if (days <= 0 && !history && !nrow(found)) {
         return("Retention is off: nothing is removed.")
     }
     session <- found$kind %in% c("journal", "trace", "attachments")
@@ -391,7 +394,11 @@ retention_summary <- function(found, days, dry_run) {
                                       retention_count(count, kind, if (kind == "entry") "entries" else paste0(kind, "s"))))
         }
     }
-    if (!length(lines)) {
+    if (!length(lines) && history && any(found$kind != "unknown")) {
+        lines <- "No eligible records were removed."
+    } else if (!length(lines) && history) {
+        lines <- "Nothing is old enough to expire."
+    } else if (!length(lines)) {
         lines <- sprintf("No session has gone unused for %s.",
                          retention_days(days))
     }
@@ -737,7 +744,7 @@ retention_tick <- function(keep = character(), now = Sys.time()) {
         }
         log_event("retention", removed = sum(found$removed),
                   bytes = sum(found$bytes[found$removed]))
-        invisible(retention_summary(found, days, dry_run = FALSE))
+        invisible(retention_summary(found, days, dry_run = FALSE, config = cfg))
     }, error = function(e) {
         tryCatch(log_event("retention_failed", error = conditionMessage(e),
                            level = "warn"), error = function(e) NULL)

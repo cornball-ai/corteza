@@ -148,6 +148,7 @@ local({
     expect_true(any(grepl("HELP TEXT", type(ctx, "/help"), fixed = TRUE)))
     expect_true(any(grepl("Getting to know corteza", type(ctx, "/guide"), fixed = TRUE)))
     expect_true(any(grepl("workspace_snapshot_days", type(ctx, "/guide storage"), fixed = TRUE)))
+    expect_true(any(grepl('"cadence": "always"', type(ctx, "/guide context"), fixed = TRUE)))
     # The talker's tools: it reads and hands work on.
     tools <- paste(type(ctx, "/tools"), collapse = "\n")
     expect_true(grepl("delegate", tools, fixed = TRUE))

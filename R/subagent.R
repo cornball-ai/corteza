@@ -1378,6 +1378,7 @@ subagent_live_token_count <- function(info) {
                        info$session$run(function() {
         subagent_state <- utils::getFromNamespace(".subagent_state", "corteza")
         request_parts <- utils::getFromNamespace("session_request_parts", "corteza")
+        trigger <- utils::getFromNamespace("context_trigger", "corteza")
         sess <- subagent_state$session
         if (is.null(sess)) {
             return(list(tokens = NA_integer_, limit = NA_integer_,
@@ -1397,10 +1398,7 @@ subagent_live_token_count <- function(info) {
                 list(history = sess$history),
                 system_prompt = parts$system, tools = parts$tools),
              limit = if (is.null(model)) NA_integer_ else
-             corteza::context_limit_for_model(
-                model,
-                provider = sess$provider
-            ),
+             trigger(sess, sess$config, model)$window,
              model = model)
     }),
                        error = function(e) list(tokens = NA_integer_, limit = NA_integer_,

@@ -774,6 +774,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_idle_minutes` | integer | `60` | Compact before a turn when the model last answered this long ago and the prompt cache has expired. `0` turns it off |
 | `context_idle_tokens` | integer | `100000` | The smallest context the idle rule compacts |
 | `context_window` | integer or null | null | The model's window in tokens (null = the package's table). Set it for a local model |
+| `context_window_cap` | integer or null | null | Upper bound for the working window. For example, `400000` gives a 1M route a 400k budget and keeps a 200k route at 200k. Applies to the meter, compaction, model-managed history pressure and reviewer budgets. Ordinary compaction still starts at the earlier configured threshold (200k tokens by default). |
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
@@ -1060,7 +1061,7 @@ number keeps everything that key governs.
 | `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` disables idle-session cleanup. |
 | `retention.incomplete_days` | number | `180` | Days a job chain that ended incomplete, and was never resumed, is kept for its resume snapshot. Never fewer than `session_days`. `0` keeps it |
 | `retention.audit_payload_days` | number | `0` | Days since an unpinned payload was last captured. Audit event records stay. |
-| `retention.journal_segment_days` | number | `0` | Days to keep earlier rewrites even in an active journal. The live snapshot and latest committed rewrite stay. New journals group shared entries by day for expiry. Older shared entries keep their original layout until idle-session cleanup. |
+| `retention.journal_segment_days` | number | `0` | Whole days to keep earlier rewrites in an active journal. Positive fractions round up. A running turn keeps the entries it needs. The live snapshot and latest committed rewrite stay. New journals group shared entries by day for expiry. Older shared entries keep their original layout until idle-session cleanup. |
 | `retention.workspace_snapshot_days` | number | `0` | Days to keep a legacy R workspace snapshot beside its transcript. |
 
 ### Skills

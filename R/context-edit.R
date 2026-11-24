@@ -427,9 +427,7 @@
 }
 
 .context_edit_pct <- function(session, extra = "") {
-    limit <- session$context_window %||% session$config$context_window %||%
-    context_limit_for_model(.resolve_model(session),
-                            provider = session$provider)
+    limit <- context_trigger(session, session$config, .resolve_model(session))$window
     if (is.null(limit) || !is.finite(limit) || limit <= 0) {
         return(0)
     }

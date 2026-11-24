@@ -40,6 +40,21 @@ expect_null(corteza:::.context_limit_row(NULL))
 expect_null(corteza:::.context_limit_row(NA_character_))
 expect_null(corteza:::.context_limit_row(""))
 
+# A cap follows the route without enlarging smaller windows on fallback.
+local({
+    s <- corteza::new_session(provider = "anthropic", model_map = list(cloud = "claude-sonnet-4-6"))
+    cfg <- list(context_window_cap = 400000)
+    capped <- corteza:::context_trigger(s, cfg)
+    expect_equal(capped$window, 400000)
+    expect_identical(capped$source, "cap")
+    expect_equal(capped$tokens, 200000)
+    expect_equal(corteza:::context_trigger(s, cfg, "claude-haiku-4-5")$window, 200000)
+    s$config <- cfg
+    pct <- corteza:::.context_edit_pct(s, "fixture")
+    s$config <- list()
+    expect_equal(pct, 2.5 * corteza:::.context_edit_pct(s, "fixture"))
+})
+
 # The numbers each provider publishes (sources in R/context-budget.R).
 expect_equal(corteza::context_limit_for_model("claude-fable-5-2"), 1000000L)
 expect_equal(corteza::context_limit_for_model("claude-opus-5-5"), 1000000L)

@@ -996,3 +996,34 @@ local({
     ns$journal_install(restarted, j)
     expect_identical(vapply(ns$journal_load(j)$segments, function(seg) seg$seq, 1L), 2:5)
 })
+
+# Expiry in another process while a turn waits. Both marks must still
+# read their entire suffix, including entries in segments already removed.
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore())
+    ns <- asNamespace("corteza")
+    set_config(fx, '{"retention":{"session_days":0,"journal_segment_days":0.1}}')
+    expect_equal(ns$retention_config()$journal_segment_days, 1)
+    expect_message(corteza::sessions_prune(dry_run = TRUE), "Nothing is old enough")
+    dir <- file.path(fx$data, "agents", "main", "sessions", "waiting.journal")
+    s <- corteza::new_session()
+    ns$journal_install(s, dir)
+    first <- ns$journal_mark(s)
+    entries <- lapply(1:4, function(i) list(role = "assistant", content = as.character(i)))
+    for (i in 1:4) {
+        s$history <- c(s$history, entries[i])
+        if (i == 2) second <- ns$journal_mark(s)
+        if (i < 4) {
+            ns$journal_rewrite(s, s$history, s$history, "context_index")
+            Sys.setFileTime(ns$.journal_segment_path(dir, i), Sys.time() - 2 * DAY)
+        }
+    }
+    gone <- callr::r(function() suppressMessages(corteza::sessions_prune()),
+                     user_profile = FALSE)
+    expect_equal(sum(gone$kind == "segment" & gone$removed), 2L)
+    expect_false(file.exists(ns$.journal_segment_path(dir, 1)))
+    expect_identical(ns$journal_turn_slice(s, first, 0L), entries)
+    expect_identical(ns$journal_entries_since(s, second), entries[3:4])
+    expect_false(ns$journal_rewritten_since(s, first, ignore = "context_index"))
+})

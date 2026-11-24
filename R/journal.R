@@ -216,6 +216,17 @@ journal_rewritten_since <- function(session, mark, ignore = character()) {
         return(TRUE)
     }
     seqs <- seq_len(state$seq)
+    # Expiry removes a prefix. The writer still has the reasons for
+    # those acknowledged rewrites while a reader holds this turn's mark.
+    cursor <- mark$cursor
+    kept <- .journal_segment_seqs(state$dir)
+    if (identical(mark$state, state) && length(kept) && kept[1L] > since + 1L) {
+        while (!is.null(cursor$following) && since + 1L < kept[1L]) {
+            if (!cursor$reason %in% ignore) return(TRUE)
+            since <- since + 1L
+            cursor <- cursor$following
+        }
+    }
     # Missing or corrupt metadata cannot prove that message positions stayed
     # stable. Conservatively skip archival while keeping this check no-throw.
     tryCatch(any(vapply(seqs[seqs > since], function(seq) {
@@ -233,8 +244,12 @@ journal_mark <- function(session) {
     if (is.null(state)) {
         return(NULL)
     }
-    list(seq = state$seq, live_len = length(session$history %||% list()),
-         state = state)
+    size <- length(session$history %||% list())
+    if (is.null(state$cursor)) {
+        state$cursor <- new.env(parent = emptyenv())
+        state$cursor$offset <- size
+    }
+    list(seq = state$seq, live_len = size, state = state, cursor = state$cursor)
 }
 
 # A mark's segment count, as the journal behind `state` counts. A mark
@@ -260,26 +275,16 @@ journal_entries_since <- function(session, mark) {
     if (is.null(state) || is.null(mark)) {
         return(.journal_tail(history, mark$live_len %||% 0L))
     }
-    out <- list()
-    since <- .journal_mark_seq(mark, state)
-    first <- TRUE
-    segments <- if (state$seq > since) .journal_load_after(state$dir, since)$segments else list()
-    for (seg in segments) {
-        if (is.null(seg$seq) || seg$seq <= since) next
-        skip <- if (first) {
-            as.integer(mark$live_len)
-        } else {
-            as.integer(seg$inherited %||% 0L)
-        }
-        out <- c(out, .journal_tail(seg$history %||% list(), skip))
-        first <- FALSE
+    chunks <- list()
+    cursor <- mark$cursor
+    skip <- mark$live_len
+    while (!is.null(cursor$following)) {
+        chunks[[length(chunks) + 1L]] <- .journal_tail(cursor$added, max(0L, skip - cursor$offset))
+        cursor <- cursor$following
+        skip <- cursor$offset
     }
-    if (first) {
-        skip <- as.integer(mark$live_len)
-    } else {
-        skip <- state$inherited
-    }
-    c(out, .journal_tail(history, skip))
+    chunks[[length(chunks) + 1L]] <- .journal_tail(history, skip)
+    do.call(c, chunks) %||% list()
 }
 
 #' The slice a turn added, with a fallback to length slicing for a
@@ -374,7 +379,11 @@ journal_history <- function(dir) {
         !.journal_removed(state)) {
         return(state)
     }
+    # An open turn outlives expiry, even if idle-session cleanup removed
+    # its whole journal. Only the same directory continues its marks.
+    cursor <- if (is.environment(state) && identical(state$dir, dir)) state$cursor
     state <- new.env(parent = emptyenv())
+    state$cursor <- cursor
     state$dir <- dir
     state$session <- session
     state$group_entries <- retention_config()$journal_segment_days > 0
@@ -430,6 +439,16 @@ journal_history <- function(dir) {
     path <- .journal_write_segment(state, seq, before, after, reason,
                                    summary = summary, edits = edits)
     .journal_write_live(state, after, inherited = length(after), seq = seq)
+    # Publish only acknowledged rewrites. The writer holds the newest node.
+    # Older nodes and their turn entries live only as long as a reader's mark.
+    if (!is.null(state$cursor)) {
+        following <- new.env(parent = emptyenv())
+        following$offset <- length(after)
+        state$cursor$added <- .journal_tail(before, state$cursor$offset)
+        state$cursor$reason <- reason
+        state$cursor$following <- following
+        state$cursor <- following
+    }
     state$seq <- seq
     state$inherited <- length(after)
     path
