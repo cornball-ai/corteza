@@ -282,6 +282,25 @@ expect_error(corteza:::harness_apply(
     list(list(action = "create", title = "Blocked", content = "blocked")),
     scope = "project", cwd = lock_dir), pattern = "locked")
 unlink(paste0(lock_path, ".lock"), recursive = TRUE)
+# An old lock that can be removed is available even with a zero wait.
+# Simulate an OS refusal too, so the deadline is tested on all platforms.
+local({
+    lock <- paste0(lock_path, ".lock")
+    dir.create(lock)
+    Sys.setFileTime(lock, Sys.time() - 120)
+    hold <- corteza:::harness_with_lock
+    failures <- 0L
+    environment(hold) <- list2env(list(unlink = function(...) {
+        failures <<- failures + 1L
+        if (failures > 1L) stop("retried after the deadline")
+        1L
+    }), parent = environment(hold))
+    expect_error(hold(lock_path, stop("lock not acquired"), timeout = 0),
+                 pattern = "locked by another process")
+    expect_identical(failures, 1L)
+    expect_true(corteza:::harness_with_lock(lock_path, TRUE, timeout = 0))
+    expect_false(dir.exists(lock))
+})
 # and succeeds once released
 expect_true(!is.null(corteza:::harness_apply(
     list(list(action = "create", title = "Unblocked", content = "ok now")),

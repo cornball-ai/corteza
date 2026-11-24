@@ -48,3 +48,37 @@ local({
     expect_equal(ns$approvals_saved(a), c("bash", "git_status"))
     expect_equal(ns$approvals_saved(b), "run_r")
 })
+
+# R expands "~" at process startup. Give the child its own home so even a
+# broken build can only strand locks and pins inside this test's fixture.
+local({
+    house <- tempfile("lock-home-")
+    dir.create(house)
+    on.exit(unlink(house, recursive = TRUE), add = TRUE)
+    result <- callr::r(function(house) {
+        stopifnot(identical(normalizePath("~"), normalizePath(house)))
+        # Brackets in the path must stay literal when the lock is removed.
+        Sys.setenv(R_USER_CONFIG_DIR = "~/settings[1]")
+        ns <- asNamespace("corteza")
+        first <- ns$approval_save(house, "read_file", timeout = 0)
+        second <- ns$approval_save(house, "grep_files", timeout = 0)
+        store <- "~/payloads/writer"
+        dir.create(store, recursive = TRUE)
+        raw <- charToRaw("fixture")
+        hash <- digest::digest(raw, "sha256", serialize = FALSE)
+        path <- file.path(store, hash)
+        writeBin(raw, path)
+        ref <- list(store = store, hash = hash, status = "stored")
+        corteza::audit_payload_pin(ref)
+        pinned <- file.exists(paste0(path, ".pin"))
+        corteza::audit_payload_pin(ref, FALSE)
+        list(saves = c(first, second), saved = ns$approvals_saved(house),
+             lock = dir.exists(paste0(ns$approvals_file(), ".lock")),
+             pins = c(pinned, file.exists(paste0(path, ".pin"))))
+    }, list(house), env = c(HOME = house, R_USER = house), timeout = 20,
+    user_profile = FALSE)
+    expect_identical(result$saves, c(TRUE, TRUE))
+    expect_equal(result$saved, c("grep_files", "read_file"))
+    expect_false(result$lock)
+    expect_identical(result$pins, c(TRUE, FALSE))
+})

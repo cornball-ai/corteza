@@ -208,4 +208,15 @@ local({
             system = "fixture", load_project_context = FALSE, validate_api_key = FALSE)
         expect_null(s$model_map$cloud)
     }
+
+    # The resume banner uses the same working window as /context. Exercise
+    # a model on each side of the cap through startup with a saved history.
+    writeLines('{"context_window_cap":400000,"context_warn_pct":0}', ".corteza/config.json")
+    for (model in c("claude-haiku-4-5", "claude-sonnet-4-6")) {
+        out <- run_cli("--session", "corteza:resume-fixture", "--provider", "anthropic",
+                       "--model", model)
+        window <- if (model == "claude-haiku-4-5") "200.0K" else "400.0K"
+        expect_true(said(out, paste("/", window, "tokens")))
+    }
+
 })

@@ -19,7 +19,7 @@
         is.na(ref$store)) {
         stop("Invalid audit payload reference", call. = FALSE)
     }
-    .windows_io_path(file.path(ref$store, ref$hash))
+    .windows_io_path(file.path(path.expand(ref$store), ref$hash))
 }
 
 .audit_payload_put <- function(audit, text, kind, format = "text") {
