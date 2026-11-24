@@ -13,7 +13,7 @@ retention_history <- function(config, dry_run, now = Sys.time(), idle = NULL) {
     agent <- NA_character_
     record <- function(paths, kind, id, remove) {
         for (p in paths) {
-            info <- file.info(p, extra_cols = FALSE)
+            info <- file.info(.windows_io_path(p), extra_cols = FALSE)
             if (is.na(info$mtime) || info$isdir) next
             row <- retention_row(agent, id, kind, p, info$mtime,
                                  retention_idle(now, info$mtime), info$size)

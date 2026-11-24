@@ -661,6 +661,7 @@ retention_within <- function(path, root = corteza_data_dir()) {
 # `part` at `here`: the real path of `here`, or NULL when it is a link
 # or resolves anywhere else.
 retention_step <- function(here, real, part) {
+    here <- .windows_io_path(here)
     if (retention_is_link(here)) {
         return(NULL)
     }

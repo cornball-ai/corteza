@@ -167,7 +167,7 @@ harness_with_lock <- function(path, expr, timeout = 5, stale = 60) {
                     units = "secs")),
                         error = function(e) 0)
         if (!is.na(age) && age > stale) {
-            unlink(lock, recursive = TRUE)
+            unlink(lock, recursive = TRUE, expand = FALSE)
             next
         }
         if (Sys.time() > deadline) {
@@ -176,7 +176,7 @@ harness_with_lock <- function(path, expr, timeout = 5, stale = 60) {
         }
         Sys.sleep(0.05)
     }
-    on.exit(unlink(lock, recursive = TRUE), add = TRUE)
+    on.exit(unlink(lock, recursive = TRUE, expand = FALSE), add = TRUE)
     force(expr)
 }
 

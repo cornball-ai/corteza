@@ -60,3 +60,26 @@ local({
     expect_false(report$torn_tail)
     expect_true(report$malformed_tail)
 })
+
+# The blob, its lock directory and its pin can exceed MAX_PATH in a room
+# journal. Exercise the public read, pin and expiry APIs in that layout.
+if (.Platform$OS.type == "windows") local({
+    parent <- normalizePath(tempdir(), winslash = "/")
+    root <- tempfile("audit-depth-", tmpdir = parent)
+    root <- file.path(root, strrep("a", max(1L, 195L - nchar(root))))
+    s <- new.env(parent = emptyenv())
+    s$audit_dir <- root
+    a <- corteza:::.audit_turn_begin(s)
+    ref <- corteza:::.audit_payload_put(a, "deep fixture", "context")
+    on.exit(unlink(dirname(root), recursive = TRUE), add = TRUE)
+    expect_true(nchar(file.path(ref$store, ref$hash)) >= 260L)
+    expect_identical(ref$status, "stored")
+    expect_identical(corteza::audit_payload_read(ref), "deep fixture")
+    corteza::audit_payload_pin(ref)
+    future <- Sys.time() + 31 * 86400
+    expect_identical(corteza::audit_payload_expire(ref$store, now = future), character())
+    corteza::audit_payload_pin(ref, FALSE)
+    expect_identical(corteza::audit_payload_expire(ref$store, now = future, dry_run = FALSE),
+                     ref$hash)
+    expect_error(corteza::audit_payload_read(ref), "missing or expired")
+})
