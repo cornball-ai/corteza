@@ -504,7 +504,11 @@ journal_history <- function(dir) {
             # ids it uses, so older segments with full digests still load.
             id <- substr(digest::digest(entry, algo = "sha256"), 1L, 32L)
             path <- file.path(entry_dir, paste0(id, ".json"))
-            if (!file.exists(path)) .journal_write_json(entry, path)
+            if (!file.exists(path)) {
+                # A valid Windows filename can be too long with another
+                # extension appended. Stage the immutable entry beside it.
+                .journal_write_json(entry, path, tmp = file.path(entry_dir, paste0(id, ".tmp")))
+            }
             id
         })
         envelope$reverse_delta <- lapply(before, function(entry) {
@@ -573,9 +577,8 @@ journal_history <- function(dir) {
 # never deleted: it may be the only copy of the commit marker, and a
 # retry that fails or a process that stops here leaves it for
 # .journal_read_live to fall back to. A landed replacement removes it.
-.journal_write_json <- function(x, path) {
+.journal_write_json <- function(x, path, tmp = paste0(path, ".tmp")) {
     json <- .history_json(x)
-    tmp <- paste0(path, ".tmp")
     written <- tryCatch({
         suppressWarnings(writeLines(json, tmp, useBytes = TRUE))
         TRUE
