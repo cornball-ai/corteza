@@ -1,3 +1,19 @@
+# corteza 0.8.0.53
+
+- The terminal and `chat()` offer `/guide` at startup. It explains model
+  subscriptions, tool approval, delegation, history, caching and storage.
+- Personal retention settings can expire unpinned audit payloads, older
+  committed journal segments and legacy workspace snapshots. Each new age
+  defaults to zero. Preview eligible files with `sessions_prune(dry_run = TRUE)`.
+- Warm approval reviewers can use a measured token count for a verified
+  request prefix. New inputs retain the conservative byte bound.
+- Idle subagents report their context usage in `/agents`. The runtime no
+  longer scans the global R environment or writes unused workspace copies
+  on exit. Old RDS snapshots can be recovered with `readRDS()`.
+- Removed the unused experimental context index, heartbeat, rate-limit
+  settings and their dedicated tests. The configuration vignette lists
+  the supported settings.
+
 # corteza 0.8.0.52
 
 - Foreground and background archive summaries and room consultation workers
