@@ -48,6 +48,9 @@ jobs:
           $env:R_LIBS = Rscript --vanilla -e 'cat(paste(.libPaths(), collapse=";"))'
           $env:R_USER = $testHome
           $env:HOME = $testHome
+          $env:R_USER_DATA_DIR = Join-Path $testHome "data"
+          $env:R_USER_CONFIG_DIR = Join-Path $testHome "config"
+          $env:R_USER_CACHE_DIR = Join-Path $testHome "cache"
           Rcmd.exe build --no-manual .
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $tar = (Get-Item corteza_*.tar.gz).FullName
