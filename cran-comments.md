@@ -66,12 +66,14 @@ Every dependency is on CRAN, as in 0.8.0.
 `R CMD check --as-cran --run-donttest` on:
 
 * Ubuntu 24.04.5 LTS, R 4.6.1, using released dependencies including
-  curl 8.2.0. Both runs returned Status: OK with incoming and network
+  curl 8.2.0. All four runs returned Status: OK with incoming and network
   clock checks disabled.
   The CRAN selection passed 11,893 assertions and full mode passed 13,749.
+  With `_R_CHECK_DEPENDS_ONLY_=true`, 10,474 assertions passed. With
+  SIGINT ignored and umask 077, 11,890 assertions passed.
 * Windows 10, R 4.6.0, on the same source tarball with incoming checks
   enabled. Both runs returned Status: 1 NOTE (the archival notice above).
-  The CRAN selection passed 11,490 assertions and full mode passed 13,243.
+  The CRAN selection passed 11,491 assertions and full mode passed 13,244.
 * Each run used a separate empty home and temporary directory. Both were
   empty afterwards. All three R checks for leftover files also passed.
 * The win-builder R-devel check of this source tarball is pending upload.
