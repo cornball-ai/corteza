@@ -430,12 +430,13 @@ local({
                       fixed = TRUE))
     expect_true(grepl(root, ns$bot_ls_command(cfg, op), fixed = TRUE))
     listed <- ns$bot_ls_command(cfg, op, root)
-    expect_true(grepl("- p01", listed, fixed = TRUE))
-    expect_true(grepl("- p50", listed, fixed = TRUE))
-    expect_false(grepl("- p51", listed, fixed = TRUE))
-    expect_true(grepl("and 5 more", listed, fixed = TRUE))
-    expect_false(grepl(".hidden", listed, fixed = TRUE))
-    expect_false(grepl("a-file", listed, fixed = TRUE))
+    lines <- strsplit(listed, "\n", fixed = TRUE)[[1L]]
+    expect_true("- p01" %in% lines)
+    expect_true("- p50" %in% lines)
+    expect_false("- p51" %in% lines)
+    expect_true("and 5 more" %in% lines)
+    expect_false("- .hidden" %in% lines)
+    expect_false("- a-file" %in% lines)
     expect_true(grepl("no directory inside a project root",
                       ns$bot_ls_command(cfg, op, top), fixed = TRUE))
     expect_true(grepl("has no directories", ns$bot_ls_command(cfg, op, "p01"),
