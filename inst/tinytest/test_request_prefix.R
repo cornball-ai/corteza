@@ -426,6 +426,10 @@ local({
     dir.create(file.path(root, "proj"), recursive = TRUE)
     proj <- normalizePath(file.path(root, "proj"), winslash = "/")
     on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    old_config <- Sys.getenv("R_USER_CONFIG_DIR", unset = NA_character_)
+    Sys.setenv(R_USER_CONFIG_DIR = file.path(root, "config"))
+    on.exit(if (is.na(old_config)) Sys.unsetenv("R_USER_CONFIG_DIR") else
+        Sys.setenv(R_USER_CONFIG_DIR = old_config), add = TRUE)
     writeLines("MARK-PROJECT-INSTRUCTIONS", file.path(proj, "AGENTS.md"))
     # Each rebuild reads the briefing again. Hold that input constant so
     # crossing a minute in saber's generated timestamp cannot change it.
@@ -440,7 +444,6 @@ local({
     s$config$approval_mode <- "deny"
     s$config$dry_run <- TRUE
     ns$project_trust_add(proj)
-    on.exit(unlink(ns$trust_file()), add = TRUE)
     ctx <- new.env(parent = emptyenv())
     ctx$session <- s
     ctx$cwd <- proj

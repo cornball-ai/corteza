@@ -287,7 +287,11 @@ unlink(paste0(lock_path, ".lock"), recursive = TRUE)
 local({
     lock <- paste0(lock_path, ".lock")
     dir.create(lock)
-    Sys.setFileTime(lock, Sys.time() - 120)
+    # Some filesystems cannot backdate a directory. Force an existing lock
+    # to count as stale there and exercise both outcomes of stale removal.
+    dated <- isTRUE(Sys.setFileTime(lock, Sys.time() - 120)) &&
+        isTRUE(file.mtime(lock) < Sys.time() - 100)
+    stale <- if (dated) 60 else -Inf
     hold <- corteza:::harness_with_lock
     failures <- 0L
     environment(hold) <- list2env(list(unlink = function(...) {
@@ -295,10 +299,10 @@ local({
         if (failures > 1L) stop("retried after the deadline")
         1L
     }), parent = environment(hold))
-    expect_error(hold(lock_path, stop("lock not acquired"), timeout = 0),
+    expect_error(hold(lock_path, stop("lock not acquired"), timeout = 0, stale = stale),
                  pattern = "locked by another process")
     expect_identical(failures, 1L)
-    expect_true(corteza:::harness_with_lock(lock_path, TRUE, timeout = 0))
+    expect_true(corteza:::harness_with_lock(lock_path, TRUE, timeout = 0, stale = stale))
     expect_false(dir.exists(lock))
 })
 # and succeeds once released
