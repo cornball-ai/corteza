@@ -51,7 +51,8 @@ local({
 # --- What bot_configure() saves and says ---
 # The transport's configure is replaced, so nothing logs in and nothing
 # is written.
-if (requireNamespace("chat.api", quietly = TRUE)) local({
+if (requireNamespace("chat.api", quietly = TRUE) &&
+    requireNamespace("mx.client", quietly = TRUE)) local({
     real <- get("chat_matrix_configure", asNamespace("chat.api"))
     on.exit(assignInNamespace("chat_matrix_configure", real, "chat.api"))
     calls <- list()

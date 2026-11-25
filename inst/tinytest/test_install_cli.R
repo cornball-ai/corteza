@@ -38,7 +38,7 @@ local({
     if (.Platform$OS.type == "windows") {
         expect_true(file.exists(file.path(bin, "corteza.cmd")))
     } else {
-        expect_identical(as.character(file.mode(dest)), "755")
+        expect_identical(file.mode(dest), as.octmode("755") & !Sys.umask())
         expect_false(file.exists(file.path(bin, "corteza.cmd")))
     }
 

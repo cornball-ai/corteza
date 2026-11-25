@@ -3,10 +3,12 @@ source("isolate.R", local = TRUE)
 
 library(tinytest)
 
-# Matrix config/extract helpers delegate to mx.client (Suggests). Skip
-# when it's not installed (e.g. R CMD check without the GitHub mirror).
+# The Matrix fixtures use mx.client for config and chat.api for messages.
 if (!requireNamespace("mx.client", quietly = TRUE)) {
     exit_file("mx.client not available")
+}
+if (!requireNamespace("chat.api", quietly = TRUE)) {
+    exit_file("chat.api not available")
 }
 
 expect_true(is.function(corteza::bot_configure))

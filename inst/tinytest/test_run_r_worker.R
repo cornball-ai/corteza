@@ -153,16 +153,14 @@ s$run_r_timeout_cap <- NULL
 expect_equal(call_worker(s, "exists('must_not_run', inherits = FALSE)")$content[[1]]$text,
              "[1] FALSE")
 
-# Interrupt is caught inside the worker. Partial assignments are explicit and
-# inspectable afterward; the process and generation remain the same.
+# A worker that catches the interrupt keeps its assignments. If it cannot
+# receive SIGINT, the deadline terminates the worker and discards its state.
 generation <- s$.run_r_worker_generation
 timed <- call_worker(s, "partial_value <- 7L; repeat {}", timeout = 0.2)
 expect_true(timed$isError)
-if (.Platform$OS.type == "windows" &&
-    identical(timed$execution$status, "killed")) {
-    # A Windows process with no console cannot be sent an interrupt, so the
-    # worker is terminated: the documented fallback, with the state lost.
+if (identical(timed$execution$status, "killed")) {
     expect_false(timed$execution$state_retained)
+    expect_null(s$.run_r_worker)
 } else {
     expect_equal(timed$execution$status, "timeout")
     expect_true(timed$execution$state_retained)
