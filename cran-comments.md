@@ -68,14 +68,13 @@ Every dependency is on CRAN, as in 0.8.0.
 * Ubuntu 24.04.5 LTS, R 4.6.1, using released dependencies including
   curl 8.2.0. Both runs returned Status: OK with incoming and network
   clock checks disabled.
-  The CRAN selection passed 11,893 assertions and full mode passed 13,745.
+  The CRAN selection passed 11,893 assertions and full mode passed 13,749.
 * Windows 10, R 4.6.0, on the same source tarball with incoming checks
   enabled. Both runs returned Status: 1 NOTE (the archival notice above).
-  The CRAN selection passed 11,490 assertions and full mode passed 13,239.
+  The CRAN selection passed 11,490 assertions and full mode passed 13,243.
 * Each run used a separate empty home and temporary directory. Both were
   empty afterwards. All three R checks for leftover files also passed.
-* The same source tarball was uploaded to win-builder for R-devel on
-  2026-11-24 after the local Windows checks. The result is pending.
+* The win-builder R-devel check of this source tarball is pending upload.
 * Ubuntu and macOS GitHub Actions passed on earlier development builds.
 
 ## Notes
