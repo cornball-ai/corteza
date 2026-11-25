@@ -212,6 +212,8 @@ audit_payload_expire <- function(store, days = 30, now = Sys.time(),
               identical(basename(dirname(store)), "payloads"),
               is.numeric(days), length(days) == 1L, !is.na(days), days >= 0)
     if (!isTRUE(dry_run) && !isFALSE(dry_run)) stop("dry_run must be TRUE or FALSE")
+    # A caller or an older payload reference may name the store with "~".
+    store <- path.expand(store)
     root <- dirname(dirname(store))
     if (!retention_within(store, root)) return(character())
     eligible <- function(path) {

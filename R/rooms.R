@@ -3580,9 +3580,9 @@ bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
 bot_signal_dir <- function() {
     env <- Sys.getenv("CORTEZA_STATE_DIR", "")
     if (nzchar(env)) {
-        return(env)
+        return(path.expand(env))
     }
-    file.path(tools::R_user_dir("corteza", "data"), "state")
+    corteza_data_path("state")
 }
 
 #' Ask the running matrix bot to archive its sessions

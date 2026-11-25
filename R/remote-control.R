@@ -9,9 +9,9 @@
 .remote_root <- function() {
     dir <- Sys.getenv("CORTEZA_REMOTE_DIR", "")
     if (nzchar(dir)) {
-        return(dir)
+        return(path.expand(dir))
     }
-    file.path(tools::R_user_dir("corteza", "data"), "remote-control")
+    corteza_data_path("remote-control")
 }
 
 .remote_read_file <- function(path) {
