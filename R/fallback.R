@@ -193,11 +193,6 @@
         grepl("exceeded request buffer", msg, ignore.case = TRUE))
 }
 
-.fallback_mark <- function(provider, minutes, now = Sys.time()) {
-    assign(provider, now + minutes * 60, envir = .fallback_state)
-    invisible(NULL)
-}
-
 .fallback_mark_until <- function(provider, until) {
     assign(provider, until, envir = .fallback_state)
     invisible(NULL)
@@ -290,33 +285,68 @@
 # shapes. Reasoning payloads are omitted; tool names and completed results are
 # kept, which is the information a fallback needs to continue safely.
 
-.fallback_portable_history <- function(history) {
+.fallback_portable_history <- function(history, edit = NULL) {
     out <- list()
+    append_text <- function(role, body) {
+        if (!nzchar(trimws(body))) return()
+        n <- length(out)
+        if (n && identical(out[[n]]$role, role)) {
+            out[[n]]$content <<- paste(out[[n]]$content, body, sep = "\n\n")
+        } else {
+            out[[n + 1L]] <<- list(role = role, content = body)
+        }
+    }
+
+    # The portable wire has no tool-result role. Keep observations with
+    # the assistant's work and retire only labels registered for that call.
+    labels <- list()
+    if (length(edit$calls)) {
+        for (call in llm.api::history_tool_calls(history)) {
+            key <- digest::digest(list(call$id, call$name, call$arguments))
+            labels[[call$id]] <- edit$calls[[key]]
+        }
+    }
+    tool_result <- function(body, id) {
+        label <- if (length(id) == 1L) labels[[id]]
+        if (!is.null(label) && identical(.context_edit_label(body, "r"), label)) {
+            body <- substring(body, nchar(label) + 4L)
+        }
+        append_text("assistant", paste0("<tool result>\n", body))
+    }
     for (entry in history %||% list()) {
         if (!is.list(entry)) {
             next
         }
-        role <- if (identical(entry$type, ".openai_codex_output")) {
-            "assistant"
-        } else if (identical(entry$type, "function_call_output") ||
+        if (identical(entry$type, "function_call_output") ||
             identical(entry$role, "tool")) {
-            "user"
-        } else {
-            entry$role %||% ""
+            tool_result(.compact_entry_body(entry), entry$call_id %||% entry$tool_call_id)
+            next
         }
+        if (identical(entry$role, "user") && is.list(entry$content) &&
+            any(vapply(entry$content, function(b) is.list(b) && identical(b$type, "tool_result"),
+                       logical(1)))) {
+            for (block in entry$content) {
+                body <- .compact_block_text(block)
+                if (is.list(block) && identical(block$type, "tool_result")) {
+                    tool_result(body, block$tool_use_id)
+                } else {
+                    append_text("user", body)
+                }
+            }
+            next
+        }
+        role <- if (identical(entry$type, ".openai_codex_output")) "assistant" else entry$role %||% ""
         if (!role %in% c("user", "assistant")) {
             next
         }
-        body <- trimws(.compact_entry_body(entry))
-        if (!nzchar(body)) {
-            next
+        body <- .compact_entry_body(entry)
+        if (identical(role, "assistant")) {
+            label <- .context_edit_label(body, "m")
+            if (!is.null(label) && identical(edit$messages[[label]], entry)) {
+                body <- substring(body, nchar(label) + 4L)
+            }
         }
-        n <- length(out)
-        if (n > 0L && identical(out[[n]]$role, role)) {
-            out[[n]]$content <- paste(out[[n]]$content, body, sep = "\n\n")
-        } else {
-            out[[n + 1L]] <- list(role = role, content = body)
-        }
+        append_text(role, body)
     }
     out
 }
@@ -325,11 +355,11 @@
 # current user prompt and completed tool results are already in the callback
 # snapshot, so turn the final user entry into the continuation prompt rather
 # than appending a duplicate or replaying the original request.
-.fallback_resume_args <- function(args, history) {
-    portable <- .fallback_portable_history(history)
+.fallback_resume_args <- function(args, history, edit = NULL) {
+    portable <- .fallback_portable_history(history, edit)
     instruction <- paste(
                          "Continue the interrupted request from the completed tool results",
-                         "included below. Do not repeat any completed tool call."
+                         "in the conversation. Do not repeat any completed tool call."
     )
     n <- length(portable)
     if (n > 0L && identical(portable[[n]]$role, "user")) {
@@ -396,11 +426,11 @@
             })
         shape <- .history_shape(history)
         if (resume) {
-            args <- .fallback_resume_args(args, history)
+            args <- .fallback_resume_args(args, history, session$.context_edit)
             message(sprintf("turn: resuming interrupted run on %s/%s",
                             cand$provider, cand$model))
         } else if (!.history_compatible(shape, cand$provider)) {
-            args$history <- .fallback_portable_history(history)
+            args$history <- .fallback_portable_history(history, session$.context_edit)
             message(sprintf("turn: bridged %s-shaped history for %s/%s",
                             shape, cand$provider, cand$model))
         }
@@ -433,8 +463,20 @@
         # A provider bridge is a history rewrite too. Preserve completed
         # native traffic before the next callback replaces the live snapshot.
         if (!identical(history, args$history)) {
-            args$history <- history_replace(session, args$history,
-                "provider_bridge", before = history)
+            history_replace(session, args$history, "provider_bridge", before = history)
+            if (!is.null(session$.context_edit)) {
+                last_id <- session$.context_edit$next_id
+                session$.context_edit <- NULL
+                state <- .context_edit_state(session)
+                state$next_id <- max(last_id, state$next_id)
+                if (.context_edit_enabled(session)) {
+                    indexed <- .context_edit_index(session, session$history, length(session$history) + 1L)
+                    if (!identical(indexed, session$history)) {
+                        history_replace(session, indexed, "context_index")
+                    }
+                }
+            }
+            args$history <- session$history
         }
         # A bridge back from Responses makes CLM available again. Decide
         # from the history this candidate will receive, not the old wire.
@@ -476,6 +518,7 @@
         if (!inherits(result, "error")) {
             # Before another candidate's usage is added to it.
             result$usage <- .usage_count_cached(result$usage, cand$provider)
+            .review_measure_request(session, args, result$usage)
             if (length(recovered_usage) || recovered_turns > 0L) {
                 result$usage <- .turn_add_usage(recovered_usage, result$usage)
                 result$turns <- recovered_turns + as.integer(result$turns %||% 0L)

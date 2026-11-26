@@ -108,6 +108,7 @@ parse_args <- function() {
 corteza - An open-source interactive CLI agent
 
 Usage: corteza [options]
+       corteza guide [topic]
        corteza acp [--provider P] [--model M] [--tools T]
 
   acp             Serve an editor or another Agent Client Protocol client
@@ -267,6 +268,7 @@ Tool output:
   /last [N]      Show tool output (1=most recent)
   /outputs       List recent tool outputs
   /help          Show this help
+  /guide [topic] Explore settings and alternatives
 
 "
 }
@@ -301,33 +303,6 @@ print_banner <- function(session_id = NULL, model = NULL,
         ""
       },
       "\n", sep = "")
-}
-
-print_tool <- function(name, args) {
-  # Function-style: tool_name("arg1", "arg2")
-  if (length(args) > 0) {
-    args_str <- paste(sapply(args, function(x) {
-      if (is.character(x)) {
-        s <- if (nchar(x) > 40) paste0(substr(x, 1, 37), "...") else x
-        sprintf('"%s"', s)
-      } else {
-        as.character(x)
-      }
-    }), collapse = ", ")
-    cat(sprintf("%s%s(%s)%s\n", color$dim, name, args_str, color$reset))
-  } else {
-    cat(sprintf("%s%s()%s\n", color$dim, name, color$reset))
-  }
-}
-
-print_result <- function(text) {
-  # Minimal output - just show line count, model will summarize
-  lines <- strsplit(text, "\n")[[1]]
-  n <- length(lines)
-  if (n > 1) {
-    cat(sprintf("%s(%d lines)%s\n", color$dim, n, color$reset))
-  }
-  # Single line results shown inline with tool call
 }
 
 print_response <- function(text) {
@@ -577,7 +552,6 @@ run_agent <- function(opts) {
 
   # Load or create session
   session <- NULL
-  ws_enabled <- isTRUE(config$workspace$enabled)
   route <- corteza:::.session_model_pair(opts$provider, opts$model, config)
 
   if (!is.null(opts$session)) {
@@ -603,26 +577,10 @@ run_agent <- function(opts) {
       }
       route <- corteza:::.session_model_pair(opts$provider, opts$model,
                                              config, saved = session)
-      # Restore workspace
-      if (ws_enabled) {
-        loaded <- corteza:::ws_load(session$sessionId)
-        if (loaded) {
-          cat(sprintf("%sWorkspace restored.%s\n", color$dim, color$reset))
-        }
-      }
     }
   } else {
     # No session key specified - create new session
     session <- corteza:::session_new(route$provider, route$model, cwd, surface = "cli")
-    # Scan globalenv for existing objects
-    if (ws_enabled && isTRUE(config$workspace$scan_globalenv)) {
-      registered <- corteza:::ws_scan_globalenv(
-        max_bytes = config$workspace$scan_max_bytes)
-      if (length(registered) > 0) {
-        cat(sprintf("%sWorkspace: registered %d objects%s\n",
-                    color$dim, length(registered), color$reset))
-      }
-    }
   }
 
   opts$provider <- session$provider <- route$provider
@@ -772,20 +730,18 @@ run_agent <- function(opts) {
                model = display_model,
                provider = provider,
                tools_count = length(tools))
+  cat("  /guide introduces the settings.\n")
 
   # Track estimated live context, not cumulative billed API usage.
   session_tokens <- estimate_live_context_tokens(session, system_prompt, tools)
   session$tokens <- session_tokens
-  # context_window in the config overrides the table here as it does
-  # for compaction, where it is a number above 0.
-  context_limit <- corteza:::.window_value(config$context_window) %||%
-    context_limit_for_model(display_model, provider = provider)
 
   # Show resumed message count
   if (length(session$messages) > 0) {
     cat(sprintf("%sResumed session with %d messages.%s\n",
                 color$dim, length(session$messages), color$reset))
     if (session_tokens > 0) {
+      context_limit <- corteza:::context_trigger(session, config, model = display_model)$window
       print_context_indicator(session_tokens, context_limit,
                               opts$context_warn_pct, opts$context_high_pct, opts$context_crit_pct)
     }
@@ -895,7 +851,6 @@ run_agent <- function(opts) {
   # is enabled in the config (corteza:::.repl_talker_default()).
   ctx$talker_default <- FALSE
   ctx$cwd <- cwd
-  ctx$ws_enabled <- ws_enabled
   ctx$provider <- provider
   ctx$model <- model
   ctx$pending_r_context <- character(0)
@@ -933,6 +888,10 @@ run_agent <- function(opts) {
 # ============================================================================
 
 if (!interactive()) {
+  if (identical(commandArgs(trailingOnly = TRUE)[1L], "guide")) {
+    corteza:::start_guide(NULL, commandArgs(trailingOnly = TRUE)[-1L])
+    quit(save = "no", status = 0L)
+  }
   # `corteza acp`: the agent an Agent Client Protocol client starts
   # (R/acp.R). Standard input and output carry the protocol, so nothing
   # is asked and nothing printed here; each session the client opens

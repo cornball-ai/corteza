@@ -65,7 +65,7 @@ repair_interrupted_tool_history <- function(history, provider, marker,
         identical(r$provider_shape, "responses")
     }, logical(1))
     history <- .append_responses_tool_results(history, unfinished[responses],
-                                              placeholder)
+        placeholder)
     unfinished <- unfinished[!responses]
 
     if (length(unfinished) > 0L) {
@@ -154,47 +154,6 @@ repair_interrupted_tool_history <- function(history, provider, marker,
 #
 # Returns the (possibly updated) session list. Idempotent on empty
 # slices and on slices with no completed tool calls.
-dump_completed_tools_summary <- function(turn_session, session, pre_turn_len,
-    max_result_chars = 500L) {
-    history <- turn_session$history %||% list()
-    pre_turn_len <- as.integer(pre_turn_len)
-    if (length(history) <= pre_turn_len) {
-        return(session)
-    }
-    slice <- history[(pre_turn_len + 1L):length(history)]
-
-    records <- tryCatch(llm.api::history_tool_calls(slice),
-                        error = function(e) list())
-    completed <- Filter(function(r) isTRUE(r$completed), records)
-    if (length(completed) == 0L) {
-        return(session)
-    }
-
-    summary_lines <- vapply(completed, function(r) {
-        args_str <- if (length(r$arguments %||% list()) > 0L) {
-            tryCatch(
-                     jsonlite::toJSON(r$arguments, auto_unbox = TRUE),
-                     error = function(e) "{...}"
-            )
-        } else {
-            "{}"
-        }
-        result_str <- as.character(r$result %||% "")
-        if (nchar(result_str) > max_result_chars) {
-            result_str <- paste0(substr(result_str, 1L, max_result_chars),
-                                 "...")
-        }
-        sprintf("[ran %s(%s) -> %s]", r$name %||% "?", args_str, result_str)
-    }, character(1))
-
-    summary <- paste(c("[Completed tool calls before exit:]", summary_lines),
-                     collapse = "\n")
-
-    session <- session_add_message(session, "assistant", summary)
-    transcript_append(session, "assistant", summary)
-    session
-}
-
 # One-stop shop used by every exit-marker site (chat() and CLI
 # interrupt handlers, chat() and CLI user-deny handlers). Mutates
 # session$history in place via repair_interrupted_tool_history().

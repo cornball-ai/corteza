@@ -156,7 +156,6 @@ auto_spend_since <- function(session, baseline) {
     main_cost <- sum(vapply(segs, function(s) s$cost %||% 0, numeric(1)))
     seg_tok <- vapply(segs, function(s) as.numeric(s$total_tokens %||% 0),
                       numeric(1))
-    seg_missing <- vapply(segs, function(s) isTRUE(s$cost_missing), logical(1))
     main_tok <- sum(seg_tok)
     sub <- tryCatch(subagent_spend_total(), error = function(e) list())
 
@@ -332,7 +331,9 @@ auto_autonomy_policy <- function() {
            "the usual posture of checking in whenever a task could go more than\n",
            "one way: here, pick the reasonable option and proceed within the\n",
            "existing permissions and approved scope. Use the available tools;\n",
-           "the supervisor still checks calls and can require a person.\n\n",
+           "the supervisor still checks calls and can require a person.\n",
+           "Each tool argument must fit in 2,000 characters as JSON.\n",
+           "A larger argument is refused. You can continue with a smaller call.\n\n",
            "Stop only for a genuine blocker: if you hit an ambiguity that\n",
            "would materially change the intended outcome -- a public interface\n",
            "or a behaviour choice -- do not guess, and do not report continue\n",

@@ -84,7 +84,8 @@ for f in "$pkg_dir"/inst/tinytest/test_*.R; do
                   sum(!as.logical(r))))' > "$log" 2>&1
   status=$?
   line=$(grep -a "^RESULTS " "$log" | tail -1)
-  wrote=$(cd "$home" && find . -type f | sed 's|^\./||')
+  # A test can delete the records it wrote and still leave their directories.
+  wrote=$(cd "$home" && find . -mindepth 1 | sed 's|^\./||')
   what=""
   if [ "$status" -ne 0 ] || [ -z "$line" ]; then
     what="stopped"
@@ -93,7 +94,7 @@ for f in "$pkg_dir"/inst/tinytest/test_*.R; do
   fi
   if [ -n "$wrote" ]; then
     n=$(echo "$wrote" | wc -l)
-    what="${what:+$what; }wrote $n file(s) under the home: $(echo "$wrote" | head -3 | tr '\n' ' ')"
+    what="${what:+$what; }left $n entries under the home: $(echo "$wrote" | head -3 | tr '\n' ' ')"
   fi
   if [ -n "$what" ]; then
     bad=$((bad + 1))

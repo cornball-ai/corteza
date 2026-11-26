@@ -21,7 +21,6 @@ empty_palette <- list(dim = "", reset = "", cyan = "", bold = "",
 
 base_ctx <- function(lines) {
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- empty_palette
     ctx$read_input <- scripted_input(lines)
     ctx$help_text <- function() "HELP"

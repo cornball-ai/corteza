@@ -6,8 +6,9 @@
         on.exit(llm.api::llm_base(old), add = TRUE)
     }
     answer <- .audit_model_call(.chat, snapshot$args, "consultant",
-        origin = snapshot$audit_origin, root = snapshot$audit_root,
-        context = snapshot$audit_context)
+                                origin = snapshot$audit_origin,
+                                root = snapshot$audit_root,
+                                context = snapshot$audit_context)
     text <- answer$content %||% ""
     if (identical(answer$finish_reason, "length")) {
         return(list(error = paste("The consultation reached its output limit; this answer is incomplete:",
@@ -29,7 +30,7 @@
         session_key = job$origin$session_key,
         session_id = snapshot$audit_context$identity$session_id)
     snapshot$audit_origin <- list(kind = "consultation", role = "consultant", job_id = id,
-        parent_turn = job$origin$audit_parent, room = job$origin$room, requester = job$requester)
+                                  parent_turn = job$origin$audit_parent, room = job$origin$room, requester = job$requester)
     .room_consult_answer(snapshot)
 }
 
@@ -37,7 +38,7 @@
     callr::r_bg(function(id) {
         get(".room_consult_child", envir = asNamespace("corteza"),
             inherits = FALSE)(id)
-    }, args = list(id = id), libpath = .libPaths(), supervise = TRUE,
+    }, args = list(id = id), libpath = .libPaths(), supervise = TRUE, user_profile = FALSE,
                 stdout = file.path(job_dir(id), "consultation.stdout"),
                 stderr = file.path(job_dir(id), "consultation.stderr"))
 }
@@ -75,7 +76,7 @@
             if (job$status == "done") job$outcome$result else
                job$outcome$error %||% job$outcome$reason %||% job$status)
     } else paste0("**Question for ", o$label, " from ", o$from$label, "** (", job$id, ")\n\n", job$task,
-        "\n\nThe answer uses ", o$label, "'s text context at the time of the request and returns to both conversations.")
+                  "\n\nThe answer uses ", o$label, "'s text context at the time of the request and returns to both conversations.")
     destinations <- list(target = list(room = o$room, key = o$session_key,
                                        thread = o$thread),
                          source = list(room = o$from$room, key = o$from$session_key, thread = o$from$thread))
@@ -133,10 +134,10 @@
                 .room_consult_close(j$id)
                 if (!is.null(answer$error)) {
                     job_settle(j$id, "failed", error = answer$error, usage = answer$usage,
-                        extra = .audit_derived(answer$audit))
+                               extra = .audit_derived(answer$audit))
                 } else {
                     job_settle(j$id, "done", result = answer$reply, usage = answer$usage,
-                        extra = .audit_derived(answer$audit))
+                               extra = .audit_derived(answer$audit))
                 }
             }
         }

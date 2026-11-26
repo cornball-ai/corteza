@@ -85,7 +85,11 @@
     } else {
         coverage <- "reported_turn_total"
     }
-    basis <- if (is.null(result)) "checkpoints" else "reported"
+    if (is.null(result)) {
+        basis <- "checkpoints"
+    } else {
+        basis <- "reported"
+    }
     request_coverage <- .audit_request_coverage(audit)
     if (identical(request_coverage, "complete") ||
         (is.null(result$usage) && length(audit$request_usage))) {

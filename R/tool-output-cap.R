@@ -9,10 +9,7 @@
 # guard at that chokepoint: it caps the model-facing text and stashes
 # the full output as a handle so nothing is lost.
 #
-# compact_message_text() is the sibling for /compact: do_compact()
-# pastes message bodies into one summarization prompt, so a giant result
-# already in history would blow that prompt too. Eliding oversized
-# bodies lets /compact recover an already-wedged session.
+# compact_message_text() bounds message bodies in a compaction prompt.
 
 # Caps. Constants for now; promote to config if tuning is needed.
 # Preview is intentionally a bit under the cap so the marker header
@@ -225,7 +222,9 @@ admit_tool_result <- function(text, tool = "tool", store = .handle_store,
         return(text)
     }
     admitted <- text
-    on.exit(.audit_safe(.audit_tool_payload(.audit_runtime$active, text, admitted, tool)), add = TRUE)
+    on.exit(.audit_safe(.audit_tool_payload(.audit_runtime$active, text,
+                admitted, tool)),
+            add = TRUE)
     n_chars <- nchar(text)
     lines <- strsplit(text, "\n", fixed = TRUE)[[1L]]
     n_lines <- length(lines)
@@ -253,16 +252,16 @@ admit_tool_result <- function(text, tool = "tool", store = .handle_store,
         paste(.tool_output_how_read(stash$handle, whole), "Or use /last.")
     }
     admitted <- sprintf(paste0(
-                   "[tool output truncated]\n",
-                   "tool: %s\n",
-                   "original: %d lines, %d chars\n",
-                   "showing: first %d lines / %d chars\n",
-                   "full output stored as: %s\n",
-                   "%s\n\n%s"
+                               "[tool output truncated]\n",
+                               "tool: %s\n",
+                               "original: %d lines, %d chars\n",
+                               "showing: first %d lines / %d chars\n",
+                               "full output stored as: %s\n",
+                               "%s\n\n%s"
         ),
-            tool, n_lines, n_chars,
-            shown, min(preview_chars, n_chars),
-            stash$handle, how_line, preview)
+                        tool, n_lines, n_chars,
+                        shown, min(preview_chars, n_chars),
+                        stash$handle, how_line, preview)
     admitted
 }
 
@@ -308,10 +307,7 @@ compact_message_text <- function(text,
 #' OpenAI chat messages carry a `role`; OpenAI Responses (codex)
 #' entries carry only a `type` (".openai_codex_output" holding the raw
 #' output items, "function_call_output" for tool results) and no role
-#' at all. sprintf() with a NULL argument returns character(0), so a
-#' role-less entry used to kill do_compact()'s vapply -- exactly when
-#' /compact was needed to recover a wedged session. This renderer
-#' guarantees a length-1 string for any shape.
+#' at all. The renderer returns one string for either shape.
 #'
 #' @param m One history entry (any provider-native shape).
 #' @return A length-1 character string.

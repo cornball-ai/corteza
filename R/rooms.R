@@ -125,10 +125,6 @@ bot_config_path <- function() {
                                       env_var = "CORTEZA_MATRIX_CONFIG")
 }
 
-bot_legacy_config_path <- function() {
-    chat.api::chat_matrix_config_path("corteza", legacy = TRUE)
-}
-
 # Strip the chat_config class and its bookkeeping attributes. Callers
 # that only read fields do not need it, and the loop reassigns cfg in
 # places where a class would have to be maintained by hand.
@@ -346,9 +342,8 @@ bot_send <- function(text, room_id = NULL, msgtype = "m.text",
     }
     posted <- .redact_text(text, .secret_values(cfg))
     bot_event_id(.audit_delivery(room_id, posted,
-        chat.api::chat_send(bot_chat_client(cfg), room_id, posted,
-                                     markup = bot_markup(markdown),
-                                     kind = kind), generated = text))
+                                 chat.api::chat_send(bot_chat_client(cfg), room_id, posted,
+                markup = bot_markup(markdown), kind = kind), generated = text))
 }
 
 # The poll loop's send. Everything goes through the transport contract,
@@ -385,9 +380,9 @@ bot_reply_send <- function(chat, room_id, text, markdown = FALSE,
         }
     }
     bot_event_id(.audit_delivery(room_id, text, chat.api::chat_send(chat, room_id, text,
-                                     markup = bot_markup(markdown),
-                                     thread = thread), session = session, thread = thread,
-        ref = audit, generated = generated))
+                markup = bot_markup(markdown),
+                thread = thread), session = session, thread = thread,
+                                 ref = audit, generated = generated))
 }
 
 # Matrix msgtype -> the contract's kind vocabulary, NA for a msgtype the
@@ -1408,11 +1403,6 @@ bot_room_context_bundle <- function(cfg, cwd, description = NULL,
     )
 }
 
-bot_room_system <- function(cfg, cwd, description = NULL, room_name = NULL) {
-    bot_room_context_bundle(cfg, cwd, description = description,
-                            room_name = room_name)$system
-}
-
 # A bot's directory is given to it, never made for it. Up to 0.8.0 a room
 # with no directory in its topic worked in ~/<localpart>, which this file
 # created on first use: a test config for "@bot:ex" left ~/bot in the
@@ -1796,7 +1786,7 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
         # model changing its mind.
         notice <- bot_no_approver_notice(call)
         tryCatch(.audit_delivery(room_id, notice,
-            chat.api::chat_send(chat, room_id, notice), ref = call$audit),
+                                 chat.api::chat_send(chat, room_id, notice), ref = call$audit),
                  error = function(e) NULL)
         return(FALSE)
     }
@@ -1816,7 +1806,7 @@ bot_reaction_approval <- function(cfg, call, decision, room_id = cfg$room_id,
 
     msg <- bot_approval_prompt(call, decision, timeout_sec)
     eid <- tryCatch(bot_event_id(.audit_delivery(room_id, msg,
-        chat.api::chat_send(chat, room_id, msg), ref = call$audit)),
+                chat.api::chat_send(chat, room_id, msg), ref = call$audit)),
                     error = function(e) NULL)
     if (is.null(eid)) {
         return(FALSE)
@@ -3590,9 +3580,9 @@ bot_run <- function(timeout = 30000L, system = NULL, model = NULL,
 bot_signal_dir <- function() {
     env <- Sys.getenv("CORTEZA_STATE_DIR", "")
     if (nzchar(env)) {
-        return(env)
+        return(path.expand(env))
     }
-    file.path(tools::R_user_dir("corteza", "data"), "state")
+    corteza_data_path("state")
 }
 
 #' Ask the running matrix bot to archive its sessions

@@ -176,45 +176,6 @@ provider_status <- function(provider, model = NULL) {
 
 # ---- /status, /config, /doctor formatters -----------------------------
 
-#' One-line-per-field snapshot for the /status slash command. Pure
-#' formatter — caller passes the already-resolved values (live token
-#' total, context-limit ceiling, etc.) so this function is trivially
-#' unit-testable without hitting any state.
-#' @noRd
-format_status_summary <- function(session, provider, display_model, tools,
-                                  opts, config, session_tokens,
-                                  context_limit, context_files, skill_docs) {
-    memory_mode <- if (isTRUE(config$context_include_memory_logs) ||
-        isTRUE(config$memory_flush_enabled)) {
-        "legacy corteza memory enabled"
-    } else {
-        "legacy corteza memory disabled"
-    }
-    paste(
-          c(
-            sprintf("Session: %s", session$sessionKey %||% "(unnamed)"),
-            sprintf("Model: %s @ %s", display_model %||% "(default)",
-                    provider %||% "(default)"),
-            sprintf("Tools: %d | Dry-run: %s",
-                    length(tools %||% list()),
-                if (isTRUE(opts$dry_run)) "on" else "off"),
-            sprintf("Context: %d project file(s) | %d skill doc(s) | %s",
-                    length(context_files %||% character()),
-                    length(skill_docs %||% character()), memory_mode),
-            sprintf("Legacy memory tools: %s",
-                if (isTRUE(config$legacy_memory_tools_enabled)) {
-                    "visible"
-                } else {
-                    "hidden"
-                }),
-            sprintf("Live context: %s / %s tokens",
-                    format_tokens(session_tokens %||% 0L),
-                    format_tokens(context_limit %||% 0L)),
-            sprintf("Approval mode: %s", config$approval_mode %||% "ask")
-        ),
-          collapse = "\n"
-    )
-}
 
 #' Multi-line printable snapshot of the runtime config the
 #' user/agent should care about. Pure formatter; doesn't read disk.
@@ -250,12 +211,6 @@ format_config_summary <- function(config, provider, display_model, opts) {
                     "enabled"
                 } else {
                     "disabled"
-                }),
-            sprintf("legacy memory tools: %s",
-                if (isTRUE(config$legacy_memory_tools_enabled)) {
-                    "visible"
-                } else {
-                    "hidden"
                 }),
             sprintf("approval mode: %s", config$approval_mode %||% "ask"),
             sprintf("dangerous tools: %s",
@@ -317,12 +272,6 @@ format_doctor_report <- function(cwd, session, provider, display_model,
                 } else {
                     "disabled"
                 }),
-            sprintf("legacy memory tools: %s",
-                if (isTRUE(config$legacy_memory_tools_enabled)) {
-                    "visible"
-                } else {
-                    "hidden"
-                }),
             sprintf("approval mode: %s", config$approval_mode %||% "ask"),
             sprintf("project approvals: %s", approvals_label(cwd))
         ),
@@ -363,85 +312,14 @@ run_review <- function(provider, model, diff_target, diff_status, diff_text,
 
     tryCatch({
         .audit_model_call(chat_fn, list(
-                prompt = review_prompt,
-                provider = provider,
-                model = resolve_provider_model(provider, model),
-                system = paste(
-                               "You are performing code review on local changes.",
-                               "Findings must come first and should prioritize correctness over style."
-            ),
-                temperature = preferred_chat_temperature(provider, 0.1)
-        ), "review", session = session)
+                                        prompt = review_prompt,
+                                        provider = provider,
+                                        model = resolve_provider_model(provider, model),
+                                        system = paste(
+                    "You are performing code review on local changes.",
+                    "Findings must come first and should prioritize correctness over style."
+                ),
+                                        temperature = preferred_chat_temperature(provider, 0.1)
+            ), "review", session = session)
     }, error = function(e) e)
-}
-
-# ---- /compact ----------------------------------------------------------
-
-#' The summarization prompt for whole-session compaction. Kept as
-#' package data so /compact (chat() and CLI) and any future surface
-#' that wants the same compaction shape can share one canonical
-#' phrasing.
-#' @noRd
-.compact_prompt <- "
-Summarize this conversation concisely, preserving:
-1. What was accomplished (completed tasks, files modified)
-2. Current work in progress
-3. Key decisions and constraints mentioned
-4. Pending tasks or next steps
-5. Any errors encountered and their resolution
-
-Be specific about file names, function names, and technical details.
-Format as a structured summary the assistant can use to continue the work.
-"
-
-#' Whole-session compaction: asks the configured provider for a
-#' single-paragraph summary of the conversation so far. Returns
-#' `list(summary, tokens)` on success and NULL on failure (the chat
-#' call already printed an error in the failure branch). Callers are
-#' responsible for replacing the session's history with the summary
-#' and persisting.
-#'
-#' For tests, `chat_fn` can be stubbed to avoid the network round-trip.
-#' @noRd
-do_compact <- function(session, provider, model, chat_fn = llm.api::chat,
-                       emit = function(...) cat(...)) {
-    emit("Auto-compacting conversation...\n")
-
-    # Elide oversized message bodies (e.g. a huge tool result already in
-    # history) so the summarization prompt itself can't blow the model
-    # limit -- this is what lets /compact recover an already-wedged
-    # session. .compact_render_entry() tolerates provider-native entry
-    # shapes (including role-less codex Responses items) and caps each
-    # body via compact_message_text(); .compact_trim_total() drops the
-    # oldest messages if the aggregate still overflows.
-    rendered <- vapply(session$messages %||% list(), .compact_render_entry,
-                       character(1L))
-    conv_text <- paste(.compact_trim_total(rendered), collapse = "\n\n")
-
-    summary_prompt <- sprintf("%s\n\n---\nConversation to summarize:\n%s",
-                              .compact_prompt, conv_text)
-
-    result <- tryCatch({
-        .audit_model_call(chat_fn, list(
-                prompt = summary_prompt,
-                provider = provider,
-                model = resolve_provider_model(provider, model),
-                system = "You are a helpful assistant that creates concise conversation summaries.",
-                temperature = preferred_chat_temperature(provider, 0.3)
-        ), "manual_compaction", session = if (is.environment(session)) session else NULL)
-    }, error = function(e) {
-        emit(sprintf("Compaction failed: %s\n", conditionMessage(e)))
-        NULL
-    })
-
-    if (is.null(result)) {
-        return(NULL)
-    }
-
-    summary <- result$content %||% ""
-    new_tokens <- estimate_text_tokens(summary)
-
-    emit(sprintf("Compacted to ~%s tokens\n", format_tokens(new_tokens)))
-
-    list(summary = summary, tokens = new_tokens)
 }

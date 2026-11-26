@@ -310,10 +310,12 @@
     if (is.null(extra)) {
         extra <- list()
     } else if (!is.list(extra) || is.null(names(extra)) ||
-               any(!nzchar(names(extra)))) {
+        any(!nzchar(names(extra)))) {
         stop("config$", field, " must be a named list of ",
              "callr::r_session_options() arguments", call. = FALSE)
     }
+    # Worker startup precedes tool approval, even in an untrusted directory.
+    extra$user_profile <- extra$user_profile %||% FALSE
     opts <- do.call(callr::r_session_options, extra)
     # A bare callr worker starts R with only `base` plus callr's own tools on
     # the search path, so common helpers from utils/stats/methods (str, tail,
@@ -469,7 +471,7 @@
         if (!is.null(audit) && !is.null(payload$audit_capture)) {
             audit$payload_bytes <- (audit$payload_bytes %||% 0) + payload$audit_capture$bytes
             .audit_append(audit$state, "tool_capture_child", turn_id = audit$id,
-                call_id = audit$current_call, capture = payload$audit_capture)
+                          call_id = audit$current_call, capture = payload$audit_capture)
         }
     })
     if (timed_out || isTRUE(payload$interrupted)) {

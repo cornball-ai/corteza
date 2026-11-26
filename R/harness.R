@@ -123,7 +123,7 @@ harness_save <- function(store, path) {
     # processes saving at once write the same file and one reads the
     # other's half-written bytes.
     tmp <- tempfile(paste0(basename(path), "."), tmpdir = dirname(path))
-    ok <- tryCatch({
+    tryCatch({
         writeLines(jsonlite::toJSON(store, auto_unbox = TRUE, null = "null",
                                     pretty = TRUE), tmp)
         Sys.chmod(tmp, "600")
@@ -152,8 +152,10 @@ harness_save <- function(store, path) {
 #' can't wedge the store permanently.
 #' @noRd
 harness_with_lock <- function(path, expr, timeout = 5, stale = 60) {
-    lock <- paste0(path, ".lock")
-    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    # Creation expands a leading tilde. Remove that same directory literally,
+    # including any brackets or Windows extended-path prefix in its name.
+    lock <- paste0(path.expand(path), ".lock")
+    dir.create(dirname(lock), recursive = TRUE, showWarnings = FALSE)
     deadline <- Sys.time() + timeout
     got <- FALSE
     repeat {
@@ -167,16 +169,16 @@ harness_with_lock <- function(path, expr, timeout = 5, stale = 60) {
                     units = "secs")),
                         error = function(e) 0)
         if (!is.na(age) && age > stale) {
-            unlink(lock, recursive = TRUE)
-            next
+            if (unlink(lock, recursive = TRUE, expand = FALSE) == 0L &&
+                dir.create(lock, showWarnings = FALSE)) break
         }
-        if (Sys.time() > deadline) {
+        if (Sys.time() >= deadline) {
             stop("harness store is locked by another process: ", lock,
                  call. = FALSE)
         }
         Sys.sleep(0.05)
     }
-    on.exit(unlink(lock, recursive = TRUE), add = TRUE)
+    on.exit(unlink(lock, recursive = TRUE, expand = FALSE), add = TRUE)
     force(expr)
 }
 

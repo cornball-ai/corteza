@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Continual harness store: round-trip, dedupe, versioning, snapshots,
 # rollback, validation, rendering, and the harness_note tool. All
 # offline; all writes confined to a tempdir project scope (the global
@@ -282,6 +287,29 @@ expect_error(corteza:::harness_apply(
     list(list(action = "create", title = "Blocked", content = "blocked")),
     scope = "project", cwd = lock_dir), pattern = "locked")
 unlink(paste0(lock_path, ".lock"), recursive = TRUE)
+# An old lock that can be removed is available even with a zero wait.
+# Simulate an OS refusal too, so the deadline is tested on all platforms.
+local({
+    lock <- paste0(lock_path, ".lock")
+    dir.create(lock)
+    # Some filesystems cannot backdate a directory. Force an existing lock
+    # to count as stale there and exercise both outcomes of stale removal.
+    dated <- isTRUE(Sys.setFileTime(lock, Sys.time() - 120)) &&
+        isTRUE(file.mtime(lock) < Sys.time() - 100)
+    stale <- if (dated) 60 else -Inf
+    hold <- corteza:::harness_with_lock
+    failures <- 0L
+    environment(hold) <- list2env(list(unlink = function(...) {
+        failures <<- failures + 1L
+        if (failures > 1L) stop("retried after the deadline")
+        1L
+    }), parent = environment(hold))
+    expect_error(hold(lock_path, stop("lock not acquired"), timeout = 0, stale = stale),
+                 pattern = "locked by another process")
+    expect_identical(failures, 1L)
+    expect_true(corteza:::harness_with_lock(lock_path, TRUE, timeout = 0, stale = stale))
+    expect_false(dir.exists(lock))
+})
 # and succeeds once released
 expect_true(!is.null(corteza:::harness_apply(
     list(list(action = "create", title = "Unblocked", content = "ok now")),

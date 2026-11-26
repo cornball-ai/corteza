@@ -532,8 +532,8 @@ and it also needs a channel with an approval prompt) and the memory
 flush ahead of an automatic compaction (`memory_flush_enabled`).
 **The prompt cache** has no default in `load_config()`:
 `.session_cache()` (`R/turn.R`) answers `"5m"` for a session on an
-Anthropic provider that sets none, and nothing for one that edits its
-own context, since such a session rewrites entries it has already sent.
+Anthropic provider that sets none, including a session using CLM. The
+user's explicit cache setting takes precedence.
 Anthropic counts cached input beside `input_tokens`, so a usage's
 `total_tokens` gets it added where the provider is known
 (`.usage_count_cached()`, `R/spend.R`): `/spent` and both token caps
@@ -563,7 +563,7 @@ summary reads 120,000 (`.compact_summary_budget()`).
 `run_r` is **stateful**. `tool_run_r` calls
 `eval(parse(text = code), envir = handle_eval_env(parent = globalenv()))`,
 so `<-` and `=` assignments land in `globalenv()` and persist across
-calls. The workspace auto-capture explicitly depends on this. Use
+calls. Use
 `run_r` for incremental exploration where intermediate results need to
 carry forward.
 
@@ -815,8 +815,7 @@ both help texts, and its surface's match.
 `/remember` and `/recall` no longer exist. `/flush` is the live memory
 command (manual memory flush), sharing one `run_memory_flush()`
 implementation (`R/chat-slash.R`) across both surfaces via
-`run_repl_loop()`. The legacy `memory_store` / `memory_search` tools are
-off by default behind `config$legacy_memory_tools_enabled`.
+`run_repl_loop()`.
 
 ## Project context loading
 
@@ -905,10 +904,9 @@ R/
 ├── tasks.R            # Task-tracker intercept in turn()
 ├── permissions.R      # /permissions surface helpers
 ├── plan-mode.R        # Plan-mode gate helpers
-├── workspace.R        # Workspace dir management
 ├── voice.R            # AgentVoice gRPC service (1:1 voice; voice-alloc.R, voice-auth.R)
 ├── voice-turn.R       # The voice brain: voice_turn(), voice_turn_report()
-└── (many more helpers: chunk.R, handles.R, retrieval.R, etc.)
+└── (many more helpers: chunk.R, handles.R, etc.)
 
 inst/
 ├── bin/corteza        # CLI binary (Rscript shebang)

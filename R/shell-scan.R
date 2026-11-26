@@ -668,4 +668,3 @@ shell_scan <- function(sx, text, depth = 0L) {
     }
     invisible(NULL)
 }
-

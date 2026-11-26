@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -49,7 +54,6 @@ talker_ctx <- function(talker = list(enabled = TRUE)) {
     ctx$provider <- "anthropic"
     ctx$disk_session <- list(session = disk, sessionId = disk$sessionId,
                              resumed = FALSE)
-    ctx$ws_enabled <- FALSE
     ctx$palette <- palette
     ctx$help_text <- function() "HELP TEXT"
     ctx$handle_copy <- function(x) ctx$copied <- x
@@ -147,6 +151,9 @@ local({
     before <- ns$job_worker_spec(s)
 
     expect_true(any(grepl("HELP TEXT", type(ctx, "/help"), fixed = TRUE)))
+    expect_true(any(grepl("Getting to know corteza", type(ctx, "/guide"), fixed = TRUE)))
+    expect_true(any(grepl("workspace_snapshot_days", type(ctx, "/guide storage"), fixed = TRUE)))
+    expect_true(any(grepl('"cadence": "always"', type(ctx, "/guide context"), fixed = TRUE)))
     # The talker's tools: it reads and hands work on.
     tools <- paste(type(ctx, "/tools"), collapse = "\n")
     expect_true(grepl("delegate", tools, fixed = TRUE))
@@ -551,9 +558,10 @@ local({
     queued <- ns$job_create("Never started.", workspace = ctx$cwd,
                             owner = s$job_owner,
                             origin = list(session_key = s$job_key))
-    out <- type(ctx, "/quit")
+    out <- with_stub("job_dispatch_next", function(session) list(), type(ctx, "/quit"))
     expect_true(any(grepl("Bye.", out, fixed = TRUE)))
     expect_identical(ns$job_read(queued)$status, "cancelled")
+    expect_null(ns$job_read(queued)$dispatch)
 })
 
 # ---- The table says what this file shows ------------------------------------------
@@ -571,7 +579,7 @@ local({
                dryrun = "both", paste = "talker", plan = "both",
                spent = "both", `context-edit` = "both", status = "both",
                compact = "talker", refine = "talker", flush = "talker",
-               doctor = "both", config = "both", last = "talker",
+               doctor = "both", config = "both", guide = "both", last = "talker",
                outputs = "talker", diff = "both", review = "doer",
                skill = "both", r = "talker")
     expect_true(setequal(names(shown), main$name),

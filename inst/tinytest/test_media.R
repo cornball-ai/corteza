@@ -64,30 +64,6 @@ expect_false(corteza:::bot_images_enabled(NULL))
 expect_true(corteza:::bot_images_enabled("ollama", list(images = TRUE)))
 expect_false(corteza:::bot_images_enabled("openai_codex", list(images = FALSE)))
 
-# ---- Which attachments are pictures worth fetching ----
-
-expect_identical(length(corteza:::bot_image_attachments(msg(att()))), 1L)
-expect_identical(length(corteza:::bot_image_attachments(msg())), 0L)
-
-# A PDF or a voice note is left alone. Handing a model a spreadsheet as
-# an image would be worse than not handing it anything.
-expect_identical(length(corteza:::bot_image_attachments(
-    msg(att(mime = "application/pdf", name = "notes.pdf")))), 0L)
-expect_identical(length(corteza:::bot_image_attachments(
-    msg(att(mime = NA_character_)))), 0L)
-
-# Too big to send is worth saying so about before spending the fetch.
-local({
-    big <- msg(att(bytes = 20L * 1024L * 1024L))
-    expect_message(out <- corteza:::bot_image_attachments(big), "over the")
-    expect_identical(length(out), 0L)
-})
-
-# An unknown size is not a reason to refuse: the server did not say, and
-# the post-download check catches an actual oversize file.
-expect_identical(length(corteza:::bot_image_attachments(
-    msg(att(bytes = NA_integer_)))), 1L)
-
 # The limit is configurable.
 # The ceiling is per provider, because they differ by 4x. One
 # conservative number chosen from the strictest provider refused the

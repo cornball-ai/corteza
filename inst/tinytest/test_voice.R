@@ -638,7 +638,7 @@ local({
 # cannot hold the synchronous server past the configured timeouts.
 # ---------------------------------------------------------------
 
-if (at_home()) {
+if (at_home() || identical(Sys.getenv("NOT_CRAN"), "true")) {
     local({
         t0 <- Sys.time()
         # 10.255.255.1 is non-routable: the connect stalls until the

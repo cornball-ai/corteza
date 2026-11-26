@@ -23,6 +23,29 @@ journal_session <- function(dir = NULL, history = list(),
 
 user_msg <- function(text) list(role = "user", content = text)
 
+# A 256-character entry path on Windows must have an equally short
+# staging path, regardless of the host on which this test runs.
+local({
+    dir <- journal_tmp()
+    on.exit(unlink(dir, recursive = TRUE))
+    ns <- asNamespace("corteza")
+    rename <- ns$.journal_rename
+    staged <- character()
+    assignInNamespace(".journal_rename", function(from, to) {
+        if (basename(dirname(to)) == "entries") {
+            staged <<- from
+            if (nchar(from) > nchar(to)) return(FALSE)
+        }
+        rename(from, to)
+    }, "corteza")
+    on.exit(assignInNamespace(".journal_rename", rename, "corteza"), add = TRUE)
+    history <- list(user_msg("fixture"))
+    s <- journal_session(dir, history)
+    ns$journal_rewrite(s, history, history, "context_edit", edits = list())
+    expect_true(length(staged) == 1L)
+    expect_identical(ns$journal_load(dir)$segments[[1L]]$after, history)
+})
+
 summary_msg <- function(text, role = "user") {
     list(role = role, content = paste0("[compacted history]\n\n", text))
 }

@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Supervised run_r keeps a private persistent workspace and enforces a real
 # wall-clock deadline without changing direct tool_run_r() behavior.
 
@@ -153,16 +158,14 @@ s$run_r_timeout_cap <- NULL
 expect_equal(call_worker(s, "exists('must_not_run', inherits = FALSE)")$content[[1]]$text,
              "[1] FALSE")
 
-# Interrupt is caught inside the worker. Partial assignments are explicit and
-# inspectable afterward; the process and generation remain the same.
+# A worker that catches the interrupt keeps its assignments. If it cannot
+# receive SIGINT, the deadline terminates the worker and discards its state.
 generation <- s$.run_r_worker_generation
 timed <- call_worker(s, "partial_value <- 7L; repeat {}", timeout = 0.2)
 expect_true(timed$isError)
-if (.Platform$OS.type == "windows" &&
-    identical(timed$execution$status, "killed")) {
-    # A Windows process with no console cannot be sent an interrupt, so the
-    # worker is terminated: the documented fallback, with the state lost.
+if (identical(timed$execution$status, "killed")) {
     expect_false(timed$execution$state_retained)
+    expect_null(s$.run_r_worker)
 } else {
     expect_equal(timed$execution$status, "timeout")
     expect_true(timed$execution$state_retained)
@@ -199,23 +202,30 @@ corteza:::.run_r_worker_close(s)
 expect_null(s$.run_r_worker)
 
 # config$skill_timeout now reaches the shared wrapper for ordinary skills.
-slow_skill <- corteza:::skill_spec(
-    "slow_test_skill", "test", list(),
-    function(args, ctx) {
-        started <- Sys.time()
-        repeat {
-            for (i in 1:5000) value <- i * i
-            if (as.numeric(difftime(Sys.time(), started,
-                                    units = "secs")) >= 0.2) break
+local({
+    registry <- corteza:::.skill_registry
+    previous <- registry[["slow_test_skill"]]
+    on.exit({
+        if (is.null(previous)) rm("slow_test_skill", envir = registry) else registry[["slow_test_skill"]] <- previous
+    }, add = TRUE)
+    slow_skill <- corteza:::skill_spec(
+        "slow_test_skill", "test", list(),
+        function(args, ctx) {
+            started <- Sys.time()
+            repeat {
+                for (i in 1:5000) value <- i * i
+                if (as.numeric(difftime(Sys.time(), started,
+                                        units = "secs")) >= 0.2) break
+            }
+            corteza:::ok("finished")
         }
-        corteza:::ok("finished")
-    }
-)
-corteza:::register_skill(slow_skill)
-cfg_session <- corteza::new_session("cli")
-cfg_session$config <- list(skill_timeout = 0.02)
-limited <- corteza:::call_skill(
-    "slow_test_skill", list(), ctx = list(session = cfg_session)
-)
-expect_true(limited$isError)
-expect_true(grepl("timed out", limited$content[[1L]]$text, fixed = TRUE))
+    )
+    corteza:::register_skill(slow_skill)
+    cfg_session <- corteza::new_session("cli")
+    cfg_session$config <- list(skill_timeout = 0.02)
+    limited <- corteza:::call_skill(
+        "slow_test_skill", list(), ctx = list(session = cfg_session)
+    )
+    expect_true(limited$isError)
+    expect_true(grepl("timed out", limited$content[[1L]]$text, fixed = TRUE))
+})

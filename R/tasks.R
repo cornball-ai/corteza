@@ -48,27 +48,6 @@
     idx >= 1L && idx <= length(tasks)
 }
 
-#' Apply task_create to a session. Replaces any existing task list.
-#' Each new task starts as `pending`.
-#'
-#' Mutates `session$tasks` in place (session is an environment).
-#' Returns the new list-of-list for the caller's logging.
-#' @noRd
-task_create_apply <- function(session, tasks) {
-    if (is.list(tasks)) {
-        tasks <- unlist(tasks, use.names = FALSE)
-    }
-    if (!is.character(tasks) || length(tasks) == 0L) {
-        stop("tasks must be a non-empty character vector", call. = FALSE)
-    }
-    new_list <- lapply(tasks, function(t) {
-        list(text = as.character(t), status = "pending")
-    })
-    session$tasks <- new_list
-    session$tasks_dirty <- TRUE
-    new_list
-}
-
 #' Apply task_update. When promoting a task to `in_progress`, any
 #' other `in_progress` task is auto-demoted to `pending` so the
 #' "exactly one active" invariant holds without rejecting valid

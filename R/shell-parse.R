@@ -325,4 +325,3 @@ shell_verb <- function(words) {
     }
     list(verb = basename(w), args = args, privileged = priv, word = w)
 }
-

@@ -62,7 +62,7 @@ CONTEXT_IDLE_TOKENS <- 100000L
 #'   is not finite means automatic compaction is off, and the cap and
 #'   the idle trigger with it.
 #' @return A list: `window` (tokens) and its `source` ("session",
-#'   "config", "table" or "fallback"), `pct`, `cap` (NULL when it does
+#'   "config", "table", "cap" or "fallback"), `pct`, `cap` (NULL when it does
 #'   not apply), `tokens` (the estimated context at which a compaction
 #'   starts; Inf when none can), `rule` ("pct", "cap" or "off"),
 #'   `effective_pct` (`tokens` as a share of the window; 100 when the
@@ -77,7 +77,7 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     window <- .window_value(session$context_window)
     source <- "session"
     if (is.null(window)) {
-        window <- .window_value(config$context_window)
+        window <- .window_value(config[["context_window"]])
         source <- "config"
     }
     if (is.null(window)) {
@@ -87,6 +87,11 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     if (is.null(window)) {
         window <- CONTEXT_LIMIT_FALLBACK
         source <- "fallback"
+    }
+    window_cap <- .window_value(config$context_window_cap)
+    if (!is.null(window_cap) && window_cap < window) {
+        window <- window_cap
+        source <- "cap"
     }
     if (is.null(pct)) {
         pct <- if (isTRUE(session$is_subagent)) {
@@ -237,6 +242,7 @@ context_trigger <- function(session, config, model = NULL, pct = NULL) {
     window <- switch(trigger$source,
                      session = "Window set on the session.",
                      config = "Window from context_window.",
+                     cap = "Working window limited by context_window_cap.",
                      fallback = sprintf(
                                         "No window known for this model: %s assumed.",
                                         format_tokens(CONTEXT_LIMIT_FALLBACK)))

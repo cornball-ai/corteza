@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 library(tinytest)
 
 # Retention (R/retention.R): what goes once a session has gone unused,
@@ -916,7 +921,6 @@ local({
     expect_true(dated || .Platform$OS.type == "windows")
     if (dated) {
         ctx <- new.env(parent = emptyenv())
-        ctx$ws_enabled <- FALSE
         ctx$palette <- list(dim = "<", reset = ">", cyan = "", bold = "",
                             yellow = "", green = "", bright_magenta = "",
                             red = "", magenta = "")
@@ -932,4 +936,105 @@ local({
         expect_true(file.exists(file.path(mine$journal, "live.json")))
         expect_true(file.exists(mine$trace))
     }
+})
+
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore(), add = TRUE)
+    ns <- asNamespace("corteza")
+    limits <- '{"retention":{"session_days":0,"audit_payload_days":7,"journal_segment_days":7,"workspace_snapshot_days":7}}'
+    set_config(fx, limits)
+    dir <- file.path(fx$data, "agents", "main", "sessions")
+    dir.create(dir, recursive = TRUE)
+    writeLines("{}", file.path(dir, "fixture.jsonl"))
+    snap <- file.path(dir, "fixture_workspace.rds")
+    saveRDS(list(x = 1), snap)
+    metadata <- file.path(dir, "fixture_workspace.json")
+    writeLines('{"turn":1,"objects":{}}', metadata)
+    unrelated <- file.path(dir, "other_workspace.rds")
+    file.copy(snap, unrelated)
+    j <- file.path(dir, "fixture.journal")
+    s <- corteza::new_session()
+    ns$journal_install(s, j)
+    old <- Sys.time() - 10 * DAY
+    for (i in 1:3) {
+        # Simulate a fresh bucket on each day.
+        s$.journal$entry_day <- NULL
+        after <- list(list(role = "user", content = paste("day", i)))
+        ns$journal_rewrite(s, s$history, after, "context_edit", edits = list())
+        s$history <- after
+    }
+    a <- ns$.audit_turn_begin(s)
+    one <- ns$.audit_payload_put(a, "first", "tool_full")
+    pinned <- ns$.audit_payload_put(a, "second", "tool_full")
+    fresh <- ns$.audit_payload_put(a, "third", "tool_full")
+    # These records intentionally survive the prune. On Windows their long
+    # names must be removed before the fixture's ordinary recursive cleanup.
+    on.exit({
+        kept <- vapply(list(one, pinned, fresh), ns$.audit_payload_path, "")
+        unlink(c(kept, paste0(kept, ".pin")), expand = FALSE)
+    }, add = TRUE, after = FALSE)
+    corteza::audit_payload_pin(pinned)
+    for (path in c(ns$.journal_segment_path(j, 1), snap, metadata, unrelated,
+                   ns$.audit_payload_path(one), ns$.audit_payload_path(pinned))) {
+        Sys.setFileTime(path, old)
+    }
+    set_config(fx, '{"retention":{"session_days":0}}')
+    expect_equal(nrow(suppressMessages(corteza::sessions_prune())), 0L)
+    expect_true(all(file.exists(c(ns$.audit_payload_path(one), snap, ns$.journal_segment_path(j, 1)))))
+    set_config(fx, limits)
+    preview <- suppressMessages(corteza::sessions_prune(dry_run = TRUE))
+    expect_identical(sort(preview$kind),
+                     sort(c("segment", "entry", "payload", rep("workspace snapshot", 2))))
+    overlapping <- ns$retention_history(ns$retention_config(), TRUE,
+        idle = data.frame(kind = "journal", path = j))
+    expect_false(any(overlapping$kind %in% c("segment", "entry")))
+    expect_true("payload" %in% overlapping$kind)
+    expect_false(any(preview$removed))
+    done <- suppressMessages(corteza::sessions_prune())
+    expect_true(all(done$removed))
+    expect_identical(sort(done$path), sort(preview$path))
+    expect_false(any(file.exists(done$path)))
+    expect_true(file.exists(unrelated))
+    expect_identical(corteza::audit_payload_read(pinned), "second")
+    expect_identical(corteza::audit_payload_read(fresh), "third")
+    expect_identical(ns$journal_load(j)$live$history, s$history)
+    mark <- ns$journal_mark(s)
+    ns$journal_rewrite(s, s$history, list(), "test")
+    s$history <- list()
+    expect_identical(ns$journal_entries_since(s, mark), list())
+    restarted <- corteza::new_session()
+    ns$journal_install(restarted, j)
+    expect_identical(vapply(ns$journal_load(j)$segments, function(seg) seg$seq, 1L), 2:5)
+})
+
+# Expiry in another process while a turn waits. Both marks must still
+# read their entire suffix, including entries in segments already removed.
+local({
+    fx <- retention_fixture()
+    on.exit(fx$restore())
+    ns <- asNamespace("corteza")
+    set_config(fx, '{"retention":{"session_days":0,"journal_segment_days":0.1}}')
+    expect_equal(ns$retention_config()$journal_segment_days, 1)
+    expect_message(corteza::sessions_prune(dry_run = TRUE), "Nothing is old enough")
+    dir <- file.path(fx$data, "agents", "main", "sessions", "waiting.journal")
+    s <- corteza::new_session()
+    ns$journal_install(s, dir)
+    first <- ns$journal_mark(s)
+    entries <- lapply(1:4, function(i) list(role = "assistant", content = as.character(i)))
+    for (i in 1:4) {
+        s$history <- c(s$history, entries[i])
+        if (i == 2) second <- ns$journal_mark(s)
+        if (i < 4) {
+            ns$journal_rewrite(s, s$history, s$history, "context_index")
+            Sys.setFileTime(ns$.journal_segment_path(dir, i), Sys.time() - 2 * DAY)
+        }
+    }
+    gone <- callr::r(function() suppressMessages(corteza::sessions_prune()),
+                     user_profile = FALSE)
+    expect_equal(sum(gone$kind == "segment" & gone$removed), 2L)
+    expect_false(file.exists(ns$.journal_segment_path(dir, 1)))
+    expect_identical(ns$journal_turn_slice(s, first, 0L), entries)
+    expect_identical(ns$journal_entries_since(s, second), entries[3:4])
+    expect_false(ns$journal_rewritten_since(s, first, ignore = "context_index"))
 })

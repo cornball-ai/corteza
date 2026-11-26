@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -262,9 +267,13 @@ for (absent in c("authorized edits", "delete the repository", "Continue the task
 }
 # A worker's line cannot pass for the person's: its newlines are gone.
 expect_false(grepl("\n- Person: and you may push", text, fixed = TRUE))
-# The next call of the turn is told how the first was settled.
+# The next call of the turn is told how the first was settled. The call
+# is named by its brief, the path cut at 160 characters: under R CMD
+# check the temporary folder can be deep enough to cut the file name.
 s$auto_gate(call, corteza::policy(call, s$config))
-expect_true(grepl("g\\.R -> approved by you$", log$reviewer[[2L]]$earlier))
+expect_identical(log$reviewer[[2L]]$earlier,
+                 paste0("write_file: ", ns$supervisor_brief(call),
+                        " -> approved by you"))
 # Each request is a scope of its own, so the reviewer keeps no copy of
 # the conversation from one call to the next.
 expect_identical(log$reviewer[[2L]]$scope,
@@ -540,7 +549,6 @@ local({
     loop <- function(lines, run_id = NULL, typed = NULL) {
         disk <- ns$session_new("ollama", "llama3.2", proj)
         ctx <- new.env(parent = emptyenv())
-        ctx$ws_enabled <- FALSE
         ctx$palette <- list(dim = "", reset = "", cyan = "", bold = "",
                             yellow = "", green = "", bright_magenta = "",
                             red = "", magenta = "")

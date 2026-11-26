@@ -1002,8 +1002,7 @@ new_session <- function(channel = c("cli", "console", "matrix"),
 }
 
 # Silent-streak narration guard -------------------------------------
-# corteza-owned and session-scoped (never the package-global .heartbeat,
-# which can't serve concurrent console/Matrix/subagent sessions). Uses
+# Each session counts its own silent turns, using
 # the llm.api per-call context snapshot (call$model_context): a model
 # turn is "silent" when it made tool calls with no assistant narration.
 # Keyed on call_index == 1 so a multi-call batch counts once; the nudge
@@ -1347,7 +1346,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     .audit_safe(.audit_turn_end(session, audit, result))
     if (!is.null(audit) && isTRUE(audit$request_seen)) {
         result$usage_coverage <- .audit_request_coverage(audit)
-        if (identical(result$usage_coverage, "complete")) result$usage <- audit$request_usage
+        if (identical(result$usage_coverage, "complete")) {
+            result$usage <- audit$request_usage
+        }
     }
     result$audit <- if (!is.null(audit)) audit$ref
     result
@@ -1405,14 +1406,9 @@ turn <- function(prompt, session, tool_executor = NULL, tools = NULL) {
     compact_session_history <- function(history, force = FALSE,
                                         reason = "threshold") {
         session$history <- history %||% list()
-        args <- list(
-                     session = session,
-                     config = compact_config,
-                     kind = session$kind %||% NULL,
-                     tools = tools,
-                     system = system,
-                     reason = reason
-        )
+        args <- list(session = session, config = compact_config,
+                     kind = session$kind %||% NULL, tools = tools,
+                     system = system, reason = reason)
         if (isTRUE(force)) {
             args$threshold <- 0
             args$min_messages <- 2L

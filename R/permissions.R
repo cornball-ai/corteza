@@ -168,23 +168,6 @@ validate_path <- function(path, config, operation = "access") {
     list(ok = TRUE, message = NULL)
 }
 
-#' Validate multiple paths
-#'
-#' @param paths Character vector of paths
-#' @param config Config list
-#' @param operation Operation type for error messages
-#' @return List with ok and message (first error if any)
-#' @noRd
-validate_paths <- function(paths, config, operation = "access") {
-    for (p in paths) {
-        result <- validate_path(p, config, operation)
-        if (!result$ok) {
-            return(result)
-        }
-    }
-    list(ok = TRUE, message = NULL)
-}
-
 #' Check if a command is safe (basic heuristics)
 #'
 #' Checks for obviously dangerous patterns in shell commands.

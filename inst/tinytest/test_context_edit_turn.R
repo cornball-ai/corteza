@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -241,7 +246,6 @@ local({
     ctx <- new.env(parent = emptyenv())
     ctx$session <- s
     ctx$config <- cfg
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "")
     lines <- c("/context-edit off", "/context-edit status", "/context-edit on")
     n <- 0L

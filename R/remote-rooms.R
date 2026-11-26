@@ -14,12 +14,17 @@
     matches <- Filter(function(room) {
         state <- chat.api::chat_get_state(chat, room, "m.room.create")
         saved <- state[["ai.cornball.corteza.remote"]]
-        identical(saved$owner, marker$owner) && identical(saved$session_id, marker$session_id)
+        identical(saved$owner, marker$owner) &&
+        identical(saved$session_id, marker$session_id)
     }, chat.api::chat_channels(chat))
     if (length(matches) > 1L) {
         stop("Multiple rooms claim this CLI session; choose a room explicitly.")
     }
-    if (length(matches)) matches[[1L]] else NULL
+    if (length(matches)) {
+        matches[[1L]]
+    } else {
+        NULL
+    }
 }
 
 .remote_room <- function(request, cfg, chat, operators) {
@@ -28,7 +33,8 @@
         stop("A durable CLI session ID is required to create its room.")
     }
     caps <- chat.api::chat_capabilities(chat)
-    if (!all(vapply(c("channel_create", "channel_invite", "set_state", "channels"),
+    if (!all(vapply(c("channel_create", "channel_invite", "set_state",
+                      "channels"),
                     function(x) isTRUE(caps[[x]]), TRUE))) {
         stop("Session rooms need chat.api >= 0.2.0 and a transport with room creation, ",
              "invitations and state. Update the courier or specify an existing room.")
@@ -52,20 +58,24 @@
     if (is.null(binding$room)) {
         .remote_room_write(path, binding)
         topic <- paste("CLI session", id)
-        if (!is.null(request$cwd)) topic <- paste(request$cwd, topic, sep = " | ")
+        if (!is.null(request$cwd)) {
+            topic <- paste(request$cwd, topic, sep = " | ")
+        }
         binding$room <- chat.api::chat_channel_create(chat, binding$name,
             topic = topic, visibility = "private", preset = "private_chat",
             invite = character(),
             creation_content = list("ai.cornball.corteza.remote" = marker))
         if (!is.character(binding$room) || length(binding$room) != 1L ||
-            is.na(binding$room) || !nzchar(binding$room)) stop("Room creation returned no ID.")
+            is.na(binding$room) || !nzchar(binding$room)) {
+            stop("Room creation returned no ID.")
+        }
     }
     # Save the ID before encryption or invitations, so a partial setup is
     # resumed in the same room. Invite only after encryption is established.
     .remote_room_write(path, binding)
     if (isTRUE(cfg$e2ee) && !isTRUE(binding$encrypted)) {
         chat.api::chat_set_state(chat, binding$room, "m.room.encryption",
-            list(algorithm = "m.megolm.v1.aes-sha2"))
+                                 list(algorithm = "m.megolm.v1.aes-sha2"))
         binding$encrypted <- TRUE
         .remote_room_write(path, binding)
     }
@@ -84,14 +94,14 @@
 .remote_room_invite <- function(chat, room, operator) {
     present <- function() {
         membership <- chat.api::chat_get_state(chat, room, "m.room.member",
-                                               state_key = operator)$membership
+            state_key = operator)$membership
         isTRUE(membership %in% c("join", "invite"))
     }
     if (!present()) {
         tryCatch(chat.api::chat_channel_invite(chat, room, operator),
-            error = function(e) {
-                if (!present()) stop(e)
-            })
+                 error = function(e) {
+            if (!present()) stop(e)
+        })
     }
     invisible(NULL)
 }
@@ -100,7 +110,9 @@
 .remote_room_offline <- function(m, cfg, chat) {
     index <- .remote_room_index(bot_job_owner(cfg))
     path <- index[[m$channel]]
-    if (is.null(path)) return(FALSE)
+    if (is.null(path)) {
+        return(FALSE)
+    }
     binding <- .remote_read_file(path)
     if (is.null(binding) || !identical(binding$owner, bot_job_owner(cfg)) ||
         !identical(binding$room, m$channel)) {
@@ -111,8 +123,10 @@
     if (!is.null(chat) && isTRUE(binding$ready) && !isTRUE(m$is_self) &&
         m$sender %in% bot_operators(cfg) && !file.exists(seen)) {
         sent <- bot_reply_send(chat, m$channel,
-            "This CLI session is disconnected. Resume it in the terminal and run /rc to continue.")
-        if (!is.null(sent)) .remote_write(seen, list(event_id = sent))
+                               "This CLI session is disconnected. Resume it in the terminal and run /rc to continue.")
+        if (!is.null(sent)) {
+            .remote_write(seen, list(event_id = sent))
+        }
     }
     TRUE
 }

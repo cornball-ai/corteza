@@ -378,8 +378,7 @@ bot_record_conversation <- function(path, approvers, budget = 100000L) {
         return(unread("the record holds no message from the people who may approve"))
     }
     if (sum(nchar(lines)) > budget) {
-        return(unread(sprintf("the conversation runs past the %s characters it reads",
-                              format(budget, big.mark = ","))))
+        return(unread(.review_record_limit_reason(budget)))
     }
     list(lines = lines, why = NULL)
 }

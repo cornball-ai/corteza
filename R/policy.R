@@ -405,11 +405,8 @@ default_policy <- function(call) {
         approval <- "deny"
     }
 
-    list(
-         model = .default_model_route(data_class),
-         approval = approval,
-         reason = sprintf("default: %s/%s/%s", data_class, op, channel)
-    )
+    list(model = .default_model_route(data_class), approval = approval,
+         reason = sprintf("default: %s/%s/%s", data_class, op, channel))
 }
 
 # ---- Main entry point ----

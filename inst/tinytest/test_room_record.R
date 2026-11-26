@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -248,13 +253,14 @@ local({
 # ---- A session's record ------------------------------------------------------
 # A room's sessions are built for real (ollama: no key to refuse), on a
 # loopback client, working in `root`.
+have_chat <- requireNamespace("chat.api", quietly = TRUE)
 patch_room <- function(lo, root) {
     p <- patching()
     p$set("bot_chat_client", function(...) lo)
     p$set("bot_room_cwd", function(...) root)
     p$undo
 }
-local({
+if (have_chat) local({
     done <- with_state()
     on.exit(done(), add = TRUE)
     root <- tempfile("room-root-")
@@ -322,7 +328,7 @@ local({
 })
 
 # ---- /clear through the bot's loop -------------------------------------------
-local({
+if (have_chat) local({
     done <- with_state()
     on.exit(done(), add = TRUE)
     root <- tempfile("room-root-")
@@ -377,6 +383,7 @@ send <- function(lo, body) {
     chat.api::chat_send(lo, room, body, identity = list(name = person))
 }
 with_room <- function(code) {
+    if (!have_chat) return(invisible(NULL))
     done <- with_state()
     on.exit(done(), add = TRUE)
     root <- tempfile("room-root-")
@@ -720,7 +727,7 @@ local({
 })
 
 # ---- An attachment's receipt, kept apart -------------------------------------
-local({
+if (have_chat) local({
     p <- patching()
     on.exit(p$undo(), add = TRUE)
     p$set("chat_capabilities", function(...) list(attachments = FALSE), "chat.api")

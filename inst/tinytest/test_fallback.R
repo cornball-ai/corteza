@@ -83,7 +83,7 @@ expect_false(lim("Tool error: bash exited 1"))
 corteza:::.fallback_reset()
 t0 <- as.POSIXct("2026-09-01 12:00:00", tz = "UTC")
 expect_false(corteza:::.fallback_limited("anthropic_claude", now = t0))
-corteza:::.fallback_mark("anthropic_claude", minutes = 30, now = t0)
+corteza:::.fallback_mark_until("anthropic_claude", t0 + 30 * 60)
 expect_true(corteza:::.fallback_limited("anthropic_claude", now = t0 + 29 * 60))
 expect_false(corteza:::.fallback_limited("anthropic_claude", now = t0 + 31 * 60))
 expect_false(corteza:::.fallback_limited("openai_codex", now = t0))
@@ -248,12 +248,57 @@ run <- with_msgs(corteza:::.agent_with_fallback(base_args, s_prog,
 expect_equal(run$value$content, "resumed")
 expect_equal(vapply(log$calls, `[[`, "", "provider"),
              c("anthropic_claude", "openai_codex"))
-expect_true(grepl("file contents", log$calls[[2L]]$prompt, fixed = TRUE))
+observation <- tail(log$calls[[2L]]$history, 1L)[[1L]]
+expect_identical(observation$role, "assistant")
+expect_true(grepl("<tool result>\nfile contents", observation$content, fixed = TRUE))
 expect_true(grepl("Do not repeat", log$calls[[2L]]$prompt, fixed = TRUE))
 expect_false(grepl("secret", paste(unlist(log$calls[[2L]]$history),
                                    collapse = " "), fixed = TRUE))
 expect_true(any(grepl("resuming interrupted run", run$msgs)))
 expect_true(corteza:::.fallback_limited("anthropic_claude"))
+
+# Index a native conversation, then send the portable history through the
+# fallback entry point. Preserve a literal label the person typed, retire
+# the native result labels, and allocate fresh ids above the old ones.
+local({
+    ns <- asNamespace("corteza")
+    ns$.fallback_reset()
+    on.exit(ns$.fallback_reset(), add = TRUE)
+    s <- corteza::new_session(provider = "openai_codex",
+        context_edit = list(enabled = TRUE, strategy = "clm", cadence = "always"))
+    ns$journal_install(s, tempfile("bridge-"))
+    typed <- "[r42]\nPlease compare the notes."
+    s$history <- list(list(role = "user", content = typed),
+        list(role = "assistant", content = list(
+            list(type = "tool_use", id = "read", name = "read_file", input = list(path = "a")))),
+        list(role = "user", content = list(
+            list(type = "tool_result", tool_use_id = "read", content = "File text"))),
+        list(role = "assistant", content = list(list(type = "text", text = "Reply"))))
+    ns$.context_edit_prepare(s)
+    state <- s$.context_edit
+    expect_equal(length(state$calls), 1L)
+    expect_equal(length(state$messages), 1L)
+    req <- list(model = "fixture", provider = "openai_codex", history = s$history,
+                prompt = "What next?", web_search = FALSE)
+    res <- suppressMessages(ns$.agent_with_fallback(req, s, .call = identity))
+    expect_identical(res$history[[1L]], list(role = "user", content = typed))
+    expect_equal(sum(vapply(res$history, ns$.context_edit_human, logical(1))), 1L)
+    expect_true(grepl("File text", res$history[[2L]]$content, fixed = TRUE))
+    expect_true(grepl("Reply", res$history[[2L]]$content, fixed = TRUE))
+    for (id in c(unlist(state$calls), names(state$messages))) {
+        expect_false(grepl(paste0("[", id, "]"), res$history[[2L]]$content, fixed = TRUE))
+    }
+    expect_true(s$.context_edit$next_id > state$next_id)
+    expect_equal(length(s$.context_edit$messages), 1L)
+    fresh_id <- ns$.context_edit_label(res$history[[2L]]$content, "m")
+    expect_identical(s$.context_edit$messages[[fresh_id]], res$history[[2L]])
+    mixed <- list(role = "user", content = list(
+        list(type = "tool_result", tool_use_id = "read", content = typed),
+        list(type = "text", text = "My follow-up")))
+    roles <- ns$.fallback_portable_history(list(mixed))
+    expect_identical(roles[[1L]], list(role = "assistant", content = paste0("<tool result>\n", typed)))
+    expect_identical(roles[[2L]], list(role = "user", content = "My follow-up"))
+})
 
 # Native web search is dropped for a fallback provider that lacks it.
 corteza:::.fallback_reset()

@@ -208,19 +208,9 @@ local({
             catalog, "project:only-b"
         ), pattern = "not in this session catalog")
 
-    # Building the new catalog must not mutate the old process-global docs
-    # registry or the executable tool registry.
-    corteza:::clear_skill_docs()
-    legacy <- file.path(root, "legacy")
-    dir.create(legacy)
-    writeLines(c("---", "name: legacy", "description: old", "---",
-                 "LEGACY-BODY-SENTINEL"), file.path(legacy, "legacy.md"))
-    corteza:::load_skill_docs(legacy)
-    before_docs <- corteza:::format_skill_docs()
+    # Building a catalog leaves the executable registry intact.
     before_tools <- corteza:::list_skills()
     invisible(corteza:::build_instruction_catalog(project))
-    expect_identical(corteza:::format_skill_docs(), before_docs)
-    expect_true(grepl("LEGACY-BODY-SENTINEL", before_docs, fixed = TRUE))
     expect_identical(corteza:::list_skills(), before_tools)
 
     cache_home <- file.path(root, "cache-home")
@@ -427,3 +417,15 @@ expect_identical(corteza:::classify_op("skill_instructions"), "read")
 file_tool_names <- vapply(corteza::schema_from_registry("file"),
                           function(x) x$name, character(1L))
 expect_true("skill_instructions" %in% file_tool_names)
+local({
+    root <- tempfile("instruction-discovery-")
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    for (dir in c(".archive/old", "synced/current", "normal/.backup/old")) {
+        dir.create(file.path(root, dir), recursive = TRUE)
+        writeLines("fixture", file.path(root, dir, "SKILL.md"))
+    }
+    walk <- function(path) corteza:::instruction_walk_root(path, aliases = TRUE)$skills
+    expect_identical(walk(root), normalizePath(file.path(root, "synced/current/SKILL.md"),
+                                               winslash = "/"))
+    expect_equal(length(walk(file.path(root, ".archive"))), 1L)
+})

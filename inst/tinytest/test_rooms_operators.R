@@ -29,11 +29,11 @@ local({
 # So these need no chat.api and reach no server.
 local({
     expect_error(
-        corteza::bot_configure("https://example", "bot", "pw", "!r:ex",
+        corteza::bot_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                operators = "troy"),
         "operators must be full Matrix IDs")
     expect_error(suppressWarnings(
-        corteza::matrix_configure("https://example", "bot", "pw", "!r:ex",
+        corteza::matrix_configure("https://ex.invalid", "bot", "pw", "!r:ex",
                                   operators = "troy")),
         "operators must be full Matrix IDs")
 
@@ -51,7 +51,8 @@ local({
 # --- What bot_configure() saves and says ---
 # The transport's configure is replaced, so nothing logs in and nothing
 # is written.
-if (requireNamespace("chat.api", quietly = TRUE)) local({
+if (requireNamespace("chat.api", quietly = TRUE) &&
+    requireNamespace("mx.client", quietly = TRUE)) local({
     real <- get("chat_matrix_configure", asNamespace("chat.api"))
     on.exit(assignInNamespace("chat_matrix_configure", real, "chat.api"))
     calls <- list()
@@ -62,7 +63,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
     }, "chat.api")
     configure <- function(...) {
         said <- capture.output(
-            cfg <- corteza::bot_configure("https://example", "bot", "pw",
+            cfg <- corteza::bot_configure("https://ex.invalid", "bot", "pw",
                                           "!r:example.org", ...),
             type = "message")
         list(cfg = cfg, said = said, extra = calls[[length(calls)]]$extra)
@@ -89,7 +90,7 @@ if (requireNamespace("chat.api", quietly = TRUE)) local({
     # The deprecated name forwards it.
     before <- length(calls)
     suppressMessages(suppressWarnings(
-        corteza::matrix_configure("https://example", "bot", "pw",
+        corteza::matrix_configure("https://ex.invalid", "bot", "pw",
                                   "!r:example.org",
                                   operators = "@troy:example.org")))
     expect_equal(length(calls), before + 1L)

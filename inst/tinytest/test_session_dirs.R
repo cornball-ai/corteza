@@ -476,7 +476,6 @@ scripted_input <- function(lines) {
 }
 loop_ctx <- function(lines, cwd, disk) {
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "", cyan = "", bold = "",
                         yellow = "", green = "", bright_magenta = "",
                         red = "", magenta = "")

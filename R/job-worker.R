@@ -360,6 +360,10 @@ job_worker_context <- function(system, cwd = getwd(), scope = "full") {
                            context_edit = spec$context_edit)
     }
     init(spec)
+    child <- .subagent_state$session
+    if (identical(spec$role, "monitor") && !is.null(child) && !journal_enabled(child)) {
+        child$context_edit <- list(enabled = FALSE)
+    }
     .job_worker_state$approval_timeout <- spec$approval_timeout %||% 600
     # A monitor's stand-in for its model, as `run_fn` is a doer's.
     .job_worker_state$monitor_run_fn <- if (identical(spec$role, "monitor")) {

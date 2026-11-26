@@ -9,9 +9,9 @@
 .remote_root <- function() {
     dir <- Sys.getenv("CORTEZA_REMOTE_DIR", "")
     if (nzchar(dir)) {
-        return(dir)
+        return(path.expand(dir))
     }
-    file.path(tools::R_user_dir("corteza", "data"), "remote-control")
+    corteza_data_path("remote-control")
 }
 
 .remote_read_file <- function(path) {
@@ -64,7 +64,8 @@
     }))
 }
 
-.remote_request <- function(owner, room, controllers, session_id = NULL, cwd = NULL) {
+.remote_request <- function(owner, room, controllers, session_id = NULL,
+                            cwd = NULL) {
     id <- job_new_id()
     dir <- file.path(.remote_root(), "sessions", id)
     .remote_write(file.path(dir, "request.json"), list(
@@ -103,7 +104,8 @@
             ctx$remote_flush()
         }
         .remote_append(dir, "out",
-                       list(type = "text", text = paste(text, collapse = "\n"), audit = audit))
+                       list(type = "text", text = paste(text, collapse = "\n"),
+                            audit = audit))
     }
     invisible(NULL)
 }

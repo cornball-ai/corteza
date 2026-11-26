@@ -13,15 +13,15 @@
 # a side effect.
 
 corteza_config_dir <- function() {
-    tools::R_user_dir("corteza", "config")
+    path.expand(tools::R_user_dir("corteza", "config"))
 }
 
 corteza_data_dir <- function() {
-    tools::R_user_dir("corteza", "data")
+    path.expand(tools::R_user_dir("corteza", "data"))
 }
 
 corteza_cache_dir <- function() {
-    tools::R_user_dir("corteza", "cache")
+    path.expand(tools::R_user_dir("corteza", "cache"))
 }
 
 corteza_config_path <- function(file) {

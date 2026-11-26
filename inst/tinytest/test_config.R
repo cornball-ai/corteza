@@ -26,7 +26,6 @@ expect_false(isTRUE(config$context_include_memory_logs))
 expect_identical(config$memory_flush_enabled, FALSE)
 expect_identical(config$task_list_enabled, FALSE)
 expect_null(config$cache)
-expect_false(isTRUE(config$legacy_memory_tools_enabled))
 expect_true("write_file" %in% config$dangerous_tools)
 expect_equal(config$port, 7850L)
 expect_equal(config$context_compact_bytes, 900000L)
@@ -41,6 +40,14 @@ expect_false(isTRUE(config$subagents$expose_over_mcp))
 expect_equal(config$subagents$mcp_spend_cap_usd, 5.00)
 expect_true(is.na(config$subagents$mcp_spend_cap_tokens))
 
+# Follow the no-preset spawn path, including defaults supplied by load_config().
+spawn_tools <- function(config) {
+    corteza:::resolve_subagent_tools(
+        default_tools = corteza:::get_subagent_config(config)$default_tools)
+}
+expect_identical(spawn_tools(config), c("read_file", "skill_instructions", "grep_files",
+                                        "r_help", "web_search", "fetch_url"))
+
 # Test project config is loaded
 dir.create(file.path(testdir, ".corteza"), showWarnings = FALSE)
 writeLines('{"provider": "ollama", "model": "llama3.2"}',
@@ -49,6 +56,10 @@ writeLines('{"provider": "ollama", "model": "llama3.2"}',
 config <- corteza:::load_config(testdir)
 expect_equal(config$provider, "ollama")
 expect_equal(config$model, "llama3.2")
+
+writeLines('{"subagents":{"default_tools":["read_file","list_files"]}}',
+    file.path(testdir, ".corteza", "config.json"))
+expect_identical(spawn_tools(corteza:::load_config(testdir)), c("read_file", "list_files"))
 
 # The memory flush ahead of a compaction and the task list are off by
 # default (asserted above), and a config turns each on. A prompt cache
@@ -67,10 +78,6 @@ writeLines('{"context_files": ["README.md", "CUSTOM.md"]}',
 
 config <- corteza:::load_config(testdir)
 expect_equal(config$context_files, c("README.md", "CUSTOM.md"))
-
-# Test get_context_files uses config
-files <- corteza:::get_context_files(testdir)
-expect_equal(files, c("README.md", "CUSTOM.md"))
 
 # Test invalid JSON is handled gracefully (falls back to empty)
 writeLines('not valid json', file.path(testdir, ".corteza", "config.json"))

@@ -3,27 +3,6 @@ source("isolate.R", local = TRUE)
 
 library(tinytest)
 
-# format_status_summary is a pure formatter — it should produce
-# something printable from a tame fake session even if /context
-# helpers haven't been wired yet.
-status <- corteza:::format_status_summary(
-    session = list(sessionKey = "abc123"),
-    provider = "anthropic",
-    display_model = "claude-sonnet-4-6",
-    tools = list(list(name = "read_file"), list(name = "write_file")),
-    opts = list(dry_run = FALSE),
-    config = list(approval_mode = "ask"),
-    session_tokens = 1234,
-    context_limit = 200000,
-    context_files = c("a.md", "b.md"),
-    skill_docs = c("s1")
-)
-expect_true(grepl("Session: abc123", status, fixed = TRUE))
-expect_true(grepl("anthropic", status, fixed = TRUE))
-expect_true(grepl("Tools: 2", status, fixed = TRUE))
-expect_true(grepl("Dry-run: off", status, fixed = TRUE))
-expect_true(grepl("Approval mode: ask", status, fixed = TRUE))
-
 config_text <- corteza:::format_config_summary(
     config = list(approval_mode = "ask",
                   dangerous_tools = c("bash", "write_file")),
@@ -128,97 +107,6 @@ expect_true(grepl("diff body", captured$prompt, fixed = TRUE))
 expect_identical(captured$model,
                  llm.api::provider_default_model("anthropic"))
 
-# do_compact with a stubbed chat_fn proves it assembles the summary
-# prompt and returns the structured result without hitting the
-# network.
-captured2 <- NULL
-fake_chat2 <- function(prompt, provider, model, system, temperature, ...) {
-    captured2 <<- prompt
-    list(content = "summary text here")
-}
-sess <- list(
-             messages = list(
-                             list(role = "user", content = "hello"),
-                             list(role = "assistant",
-                                  content = list(list(type = "text", text = "hi there")))
-    )
-)
-emitted <- character()
-fake_emit <- function(msg) emitted <<- c(emitted, msg)
-result <- corteza:::do_compact(sess, "anthropic", NULL,
-                               chat_fn = fake_chat2, emit = fake_emit)
-expect_identical(result$summary, "summary text here")
-expect_true(result$tokens > 0L)
-expect_true(any(grepl("Auto-compacting", emitted)))
-expect_true(any(grepl("Compacted to", emitted)))
-expect_true(grepl("[user]: hello", captured2, fixed = TRUE))
-expect_true(grepl("[assistant]: hi there", captured2, fixed = TRUE))
-
-# do_compact returns NULL when the chat call errors.
-fail_result <- corteza:::do_compact(
-                                    sess, "anthropic", NULL,
-                                    chat_fn = function(...) stop("simulated failure"),
-                                    emit = function(...) invisible()
-)
-expect_null(fail_result)
-
-# do_compact must survive role-less provider-native history entries.
-# The codex (OpenAI Responses) provider stores assistant turns as
-# {type: ".openai_codex_output", output: [...]} and tool results as
-# {type: "function_call_output", ...} -- neither has a role, and
-# sprintf("[%s]", NULL) returns character(0), which used to kill the
-# render vapply exactly when /compact was needed to recover a wedged
-# session.
-local({
-    sess_codex <- list(messages = list(
-                                       list(role = "user", content = "list the files"),
-                                       list(type = ".openai_codex_output", output = list(
-                    list(type = "reasoning", encrypted_content = "opaque"),
-                    list(type = "message", content = list(
-                            list(type = "output_text",
-                                 text = "Sure, listing now."))),
-                    list(type = "function_call", name = "shell",
-                         call_id = "c1", arguments = "{\"cmd\":\"ls\"}")
-                )),
-                                       list(type = "function_call_output", call_id = "c1",
-                output = "DESCRIPTION\nNAMESPACE"),
-                                       # OpenAI chat-completions assistant turn with tool_calls
-                                       list(role = "assistant", content = "",
-                tool_calls = list(list(`function` = list(name = "run_r")))),
-                                       # Anthropic-style blocks: text + tool_use, then a tool_result
-                                       list(role = "assistant", content = list(
-                    list(type = "text", text = "Running it."),
-                    list(type = "tool_use", name = "grep_files", input = list())
-                )),
-                                       list(role = "user", content = list(
-                    list(type = "tool_result", tool_use_id = "t1",
-                         content = list(list(type = "text", text = "3 matches")))
-                ))
-        ))
-    captured_codex <- NULL
-    fake_chat_codex <- function(prompt, provider, model, system, temperature,
-                                ...) {
-        captured_codex <<- prompt
-        list(content = "codex summary")
-    }
-    res <- corteza:::do_compact(sess_codex, "openai-codex", NULL,
-                                chat_fn = fake_chat_codex,
-                                emit = function(...) invisible())
-    expect_identical(res$summary, "codex summary")
-    expect_true(grepl("[user]: list the files", captured_codex, fixed = TRUE))
-    # codex assistant text and tool call surface under the type label
-    expect_true(grepl("[.openai_codex_output]: Sure, listing now.",
-                      captured_codex, fixed = TRUE))
-    expect_true(grepl("<tool call: shell>", captured_codex, fixed = TRUE))
-    expect_true(grepl("[function_call_output]: DESCRIPTION",
-                      captured_codex, fixed = TRUE))
-    # reasoning payloads stay out of the summary prompt
-    expect_false(grepl("opaque", captured_codex, fixed = TRUE))
-    expect_true(grepl("<tool call: run_r>", captured_codex, fixed = TRUE))
-    expect_true(grepl("<tool call: grep_files>", captured_codex, fixed = TRUE))
-    expect_true(grepl("3 matches", captured_codex, fixed = TRUE))
-})
-
 # .compact_render_entry never errors on degenerate entries.
 local({
     expect_true(is.character(corteza:::.compact_render_entry(NULL)))
@@ -237,32 +125,6 @@ local({
     out <- corteza:::compact_message_text(big)
     expect_true(grepl("large message elided", out, fixed = TRUE))
     expect_true(nchar(out) < nchar(big))
-})
-
-# Emergency compaction: a giant tool-result body already in history must
-# not blow the summary prompt. do_compact() elides it to a marker so
-# /compact can recover an already-wedged session.
-local({
-    huge <- paste(sprintf("row %d", 1:50000), collapse = "\n")
-    sess_big <- list(messages = list(
-                                     list(role = "user", content = "run the thing"),
-                                     # stand-in for a huge tool_result already mirrored into history
-                                     list(role = "user", content = huge)
-        ))
-    captured_big <- NULL
-    fake_chat_big <- function(prompt, provider, model, system, temperature,
-                              ...) {
-        captured_big <<- prompt
-        list(content = "ok")
-    }
-    res <- corteza:::do_compact(sess_big, "anthropic", NULL,
-                                chat_fn = fake_chat_big,
-                                emit = function(...) invisible())
-    expect_false(is.null(res))
-    expect_true(nchar(captured_big) < nchar(huge))
-    expect_true(grepl("large message elided", captured_big, fixed = TRUE))
-    # the small message survives verbatim
-    expect_true(grepl("[user]: run the thing", captured_big, fixed = TRUE))
 })
 
 # .compact_trim_total: drops oldest rendered messages when the aggregate

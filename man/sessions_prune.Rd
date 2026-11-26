@@ -12,17 +12,20 @@ go.}
 \item{days}{Sessions unused for at least this many days lose their
 journal, trace and attachments, and job records, worker folders and
 remote-control sessions unchanged for as long go. Default:
-\code{retention$session_days} from the user's config. 0 removes
-nothing.}
+\code{retention$session_days} from the user's config. Zero disables
+idle-session cleanup. Separately configured payload, segment and
+workspace lifetimes still apply.}
 }
 \value{
 A data frame with one row per journal, trace, attachments
   folder, job folder, worker folder, remote-control session or unknown
-  folder, invisibly: \code{agent} (\code{NA} outside a session's
+  folder, or file eligible under a separate lifetime, invisibly:
+  \code{agent} (\code{NA} outside a session's
   files), \code{session} (for a job, its chain's newest job),
   \code{kind} (\code{"journal"}, \code{"trace"}, \code{"attachments"},
-  \code{"job"}, \code{"worker"}, \code{"checkpoint"}, \code{"remote"} or
-  \code{"unknown"}), \code{path}, \code{last_use}, \code{idle_days},
+  \code{"job"}, \code{"worker"}, \code{"checkpoint"}, \code{"remote"},
+  \code{"segment"}, \code{"entry"}, \code{"payload"}, \code{"workspace snapshot"}
+  or \code{"unknown"}), \code{path}, \code{last_use}, \code{idle_days},
   \code{bytes}, \code{incomplete} (a job chain kept longer for its
   resume snapshot) and \code{removed}.
 }
@@ -63,14 +66,17 @@ A worker's folder stays, whatever its age, while its worker process
 is alive, while its session is open in the process doing the removing,
 and while a job is open in its directory.
 
-Transcripts, session stores, the terminal's saved workspaces, config,
-audit records and crypto state are never removed. A session whose journal is gone still
+Transcripts, session stores, configuration, audit events and crypto state
+are kept. A session whose journal is gone still
 resumes from its transcript. A chat room that restores its context
 from its journal starts its next conversation fresh.
 
 A session's audit records are kept in its journal folder, under
-\code{audit/}, and a job's in its own folder. They stay, and so does
-the folder that holds them: see \code{\link{audit_payload_expire}}.
+\code{audit/}, and a job's in its own folder. Separate personal retention
+settings opt into expiring unpinned payloads (\code{audit_payload_days}),
+old journal segments (\code{journal_segment_days}) and legacy R workspace
+snapshots beside a transcript (\code{workspace_snapshot_days}). Each
+defaults to zero. The latest committed segment and live history stay.
 
 A session was last used when its journal, its trace, its transcript or
 its attachments last changed, whichever is newest. A symbolic link is

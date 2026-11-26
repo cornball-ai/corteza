@@ -32,33 +32,9 @@ for (chunk in chunks) {
     expect_false(endsWith(chunk, " "))
 }
 
-# Test chunk_by_paragraph with paragraphs
-paragraphs <- "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
-chunks <- corteza:::chunk_by_paragraph(paragraphs, 50)
-expect_true(length(chunks) >= 1)
-
-# Test chunk_by_paragraph packs small paragraphs
-small_paras <- "One.\n\nTwo.\n\nThree."
-chunks <- corteza:::chunk_by_paragraph(small_paras, 100)
-expect_equal(length(chunks), 1)  # Should fit in one chunk
-
-# Test chunk_by_paragraph splits large paragraphs
-large_para <- paste(rep("word ", 100), collapse = "")  # ~500 chars
-chunks <- corteza:::chunk_by_paragraph(large_para, 100)
-expect_true(length(chunks) > 1)
-
-# Test chunk_text_with_mode dispatches correctly
-text <- "Para one.\n\nPara two."
-length_chunks <- corteza:::chunk_text_with_mode(text, 100, "length")
-newline_chunks <- corteza:::chunk_text_with_mode(text, 100, "newline")
-expect_equal(length(length_chunks), 1)  # Fits in one
-expect_equal(length(newline_chunks), 1)  # Also fits
-
 # Test empty/null input
 expect_equal(length(corteza:::chunk_text(NULL, 100)), 0)
 expect_equal(length(corteza:::chunk_text("", 100)), 0)
-expect_equal(length(corteza:::chunk_by_paragraph(NULL, 100)), 0)
-expect_equal(length(corteza:::chunk_by_paragraph("", 100)), 0)
 
 # Test find_break_point
 expect_equal(corteza:::find_break_point("hello\nworld"), 6)  # Position of \n

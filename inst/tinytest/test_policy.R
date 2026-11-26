@@ -72,8 +72,8 @@ expect_equal(corteza:::resolve_paths(list(tool = "my_skill",
              character())
 
 expect_equal(
-    corteza:::resolve_urls(list(args = list(url = "https://example"))),
-    "https://example"
+    corteza:::resolve_urls(list(args = list(url = "https://ex.invalid"))),
+    "https://ex.invalid"
 )
 expect_equal(corteza:::resolve_urls(list(args = list(path = "x"))),
              character())

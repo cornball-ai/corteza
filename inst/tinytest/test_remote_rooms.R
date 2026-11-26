@@ -140,7 +140,6 @@ local({
     }, "corteza")
     ctx$session <- corteza::new_session("cli", provider = "ollama")
     ctx$session$history <- list(list(role = "user", content = "Previous task"))
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "")
     disk <- corteza:::session_new("ollama", "fixture", root)
     ctx$disk_session <- list(session = disk, sessionId = disk$sessionId)

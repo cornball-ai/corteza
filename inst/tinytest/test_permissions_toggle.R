@@ -95,7 +95,6 @@ scripted_input <- function(lines) {
 
 toggle_ctx <- function(lines, mode = "ask") {
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "", cyan = "", bold = "",
                         yellow = "", green = "", bright_magenta = "",
                         red = "", magenta = "")

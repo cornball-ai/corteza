@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -40,7 +45,6 @@ empty_palette <- list(dim = "", reset = "", cyan = "", bold = "",
 # A ctx shaped like chat()'s, with the turn function stubbed.
 auto_ctx <- function(turn_fn) {
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- empty_palette
     ctx$help_text <- function() "HELP"
     ctx$handle_copy <- function(x) invisible(NULL)

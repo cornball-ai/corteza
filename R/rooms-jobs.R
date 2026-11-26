@@ -311,7 +311,7 @@ bot_job_settled <- function(chat, s, job, sessions = NULL) {
     if (!is.null(job$origin$delegation)) {
         .delegation_worker_reply(chat, job)
         s$history <- c(s$history %||% list(), list(list(role = "assistant",
-            content = bot_job_result_text(job))))
+                    content = bot_job_result_text(job))))
         .context_room_snapshot(s)
         return(invisible(NULL))
     }
@@ -863,7 +863,7 @@ bot_job_ask_person <- function(chat, cfg, s, job, req) {
     approvers <- bot_approvers(cfg, members, bot_known_bots(cfg, self_id))
     if (!is.null(job$origin$delegation)) {
         approvers <- setdiff(approvers, c(job$origin$delegation$peer,
-            bot_known_bots(cfg, self_id)))
+                bot_known_bots(cfg, self_id)))
     }
     call <- job_request_call(req)
     if (!length(approvers)) {

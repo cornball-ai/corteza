@@ -47,7 +47,7 @@
 # direct turn() callers with their own persistence see no change.
 
 JOURNAL_LIVE <- "live.json"
-JOURNAL_SEGMENT_PATTERN <- "^segment-[0-9]{4}[.]json$"
+JOURNAL_SEGMENT_PATTERN <- "^segment-[0-9]{4,}[.]json$"
 
 #' Install a journal on a session.
 #'
@@ -216,6 +216,17 @@ journal_rewritten_since <- function(session, mark, ignore = character()) {
         return(TRUE)
     }
     seqs <- seq_len(state$seq)
+    # Expiry removes a prefix. The writer still has the reasons for
+    # those acknowledged rewrites while a reader holds this turn's mark.
+    cursor <- mark$cursor
+    kept <- .journal_segment_seqs(state$dir)
+    if (identical(mark$state, state) && length(kept) && kept[1L] > since + 1L) {
+        while (!is.null(cursor$following) && since + 1L < kept[1L]) {
+            if (!cursor$reason %in% ignore) return(TRUE)
+            since <- since + 1L
+            cursor <- cursor$following
+        }
+    }
     # Missing or corrupt metadata cannot prove that message positions stayed
     # stable. Conservatively skip archival while keeping this check no-throw.
     tryCatch(any(vapply(seqs[seqs > since], function(seq) {
@@ -233,8 +244,12 @@ journal_mark <- function(session) {
     if (is.null(state)) {
         return(NULL)
     }
-    list(seq = state$seq, live_len = length(session$history %||% list()),
-         state = state)
+    size <- length(session$history %||% list())
+    if (is.null(state$cursor)) {
+        state$cursor <- new.env(parent = emptyenv())
+        state$cursor$offset <- size
+    }
+    list(seq = state$seq, live_len = size, state = state, cursor = state$cursor)
 }
 
 # A mark's segment count, as the journal behind `state` counts. A mark
@@ -260,27 +275,16 @@ journal_entries_since <- function(session, mark) {
     if (is.null(state) || is.null(mark)) {
         return(.journal_tail(history, mark$live_len %||% 0L))
     }
-    out <- list()
-    seqs <- seq_len(state$seq)
-    seqs <- seqs[seqs > .journal_mark_seq(mark, state)]
-    first <- TRUE
-    segments <- if (length(seqs)) journal_load(state$dir)$segments else list()
-    for (s in seqs) {
-        seg <- segments[[s]]
-        skip <- if (first) {
-            as.integer(mark$live_len)
-        } else {
-            as.integer(seg$inherited %||% 0L)
-        }
-        out <- c(out, .journal_tail(seg$history %||% list(), skip))
-        first <- FALSE
+    chunks <- list()
+    cursor <- mark$cursor
+    skip <- mark$live_len
+    while (!is.null(cursor$following)) {
+        chunks[[length(chunks) + 1L]] <- .journal_tail(cursor$added, max(0L, skip - cursor$offset))
+        cursor <- cursor$following
+        skip <- cursor$offset
     }
-    if (first) {
-        skip <- as.integer(mark$live_len)
-    } else {
-        skip <- state$inherited
-    }
-    c(out, .journal_tail(history, skip))
+    chunks[[length(chunks) + 1L]] <- .journal_tail(history, skip)
+    do.call(c, chunks) %||% list()
 }
 
 #' The slice a turn added, with a fallback to length slicing for a
@@ -319,7 +323,11 @@ journal_load <- function(dir) {
         if (!is.null(seg$reverse_delta)) {
             seg$after <- lapply(seg$after_refs, function(id) {
                 if (!exists(id, entries, inherits = FALSE)) {
-                    assign(id, .journal_read_json(file.path(dir, "entries", paste0(id, ".json"))), entries)
+                    from <- file.path(dir, "entries")
+                    if (!is.null(seg$entry_group)) {
+                        from <- file.path(from, .journal_group_name(seg$entry_group))
+                    }
+                    assign(id, .journal_read_json(file.path(from, paste0(id, ".json"))), entries)
                 }
                 get(id, entries, inherits = FALSE)
             })
@@ -367,9 +375,14 @@ journal_history <- function(dir) {
         !.journal_removed(state)) {
         return(state)
     }
+    # An open turn outlives expiry, even if idle-session cleanup removed
+    # its whole journal. Only the same directory continues its marks.
+    cursor <- if (is.environment(state) && identical(state$dir, dir)) state$cursor
     state <- new.env(parent = emptyenv())
+    state$cursor <- cursor
     state$dir <- dir
     state$session <- session
+    state$group_entries <- retention_config()$journal_segment_days > 0
     if (!dir.exists(dir)) {
         dir.create(dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
     }
@@ -417,11 +430,21 @@ journal_history <- function(dir) {
 # advances only once the live snapshot acknowledging the segment is on
 # disk; until then the segment is a stray the next rewrite overwrites.
 .journal_commit <- function(state, before, after, reason, summary = NULL,
-                             edits = NULL) {
+                            edits = NULL) {
     seq <- state$seq + 1L
     path <- .journal_write_segment(state, seq, before, after, reason,
                                    summary = summary, edits = edits)
     .journal_write_live(state, after, inherited = length(after), seq = seq)
+    # Publish only acknowledged rewrites. The writer holds the newest node.
+    # Older nodes and their turn entries live only as long as a reader's mark.
+    if (!is.null(state$cursor)) {
+        following <- new.env(parent = emptyenv())
+        following$offset <- length(after)
+        state$cursor$added <- .journal_tail(before, state$cursor$offset)
+        state$cursor$reason <- reason
+        state$cursor$following <- following
+        state$cursor <- following
+    }
     state$seq <- seq
     state$inherited <- length(after)
     path
@@ -438,7 +461,13 @@ journal_history <- function(dir) {
         return(integer())
     }
     files <- list.files(dir, pattern = JOURNAL_SEGMENT_PATTERN)
-    sort(as.integer(sub("^segment-([0-9]{4})[.]json$", "\\1", files)))
+    sort(as.integer(sub("^segment-([0-9]+)[.]json$", "\\1", files)))
+}
+
+.journal_group_name <- function(seq) {
+    if (!is.numeric(seq) || length(seq) != 1L || !is.finite(seq) ||
+        seq < 1 || seq != as.integer(seq)) stop("Invalid journal entry group")
+    paste0("from-", as.integer(seq))
 }
 
 .journal_write_segment <- function(state, seq, before, after, reason,
@@ -456,6 +485,17 @@ journal_history <- function(dir) {
     if (!is.null(edits)) {
         hashes <- vapply(after, digest::digest, character(1))
         entry_dir <- file.path(state$dir, "entries")
+        # Once a writer moves on, it never adds to the previous group.
+        # The starting sequence distinguishes restarts and clock changes.
+        if (isTRUE(state$group_entries)) {
+            day <- as.character(Sys.Date())
+            if (!identical(state$entry_day, day)) {
+                state$entry_day <- day
+                state$entry_group <- seq
+            }
+            envelope$entry_group <- state$entry_group
+            entry_dir <- file.path(entry_dir, .journal_group_name(state$entry_group))
+        }
         dir.create(entry_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
         envelope$after_refs <- lapply(after, function(entry) {
             # Half a SHA-256 names an entry: 128 bits is ample within one
@@ -464,7 +504,11 @@ journal_history <- function(dir) {
             # ids it uses, so older segments with full digests still load.
             id <- substr(digest::digest(entry, algo = "sha256"), 1L, 32L)
             path <- file.path(entry_dir, paste0(id, ".json"))
-            if (!file.exists(path)) .journal_write_json(entry, path)
+            if (!file.exists(path)) {
+                # A valid Windows filename can be too long with another
+                # extension appended. Stage the immutable entry beside it.
+                .journal_write_json(entry, path, tmp = file.path(entry_dir, paste0(id, ".tmp")))
+            }
             id
         })
         envelope$reverse_delta <- lapply(before, function(entry) {
@@ -533,9 +577,8 @@ journal_history <- function(dir) {
 # never deleted: it may be the only copy of the commit marker, and a
 # retry that fails or a process that stops here leaves it for
 # .journal_read_live to fall back to. A landed replacement removes it.
-.journal_write_json <- function(x, path) {
+.journal_write_json <- function(x, path, tmp = paste0(path, ".tmp")) {
     json <- .history_json(x)
-    tmp <- paste0(path, ".tmp")
     written <- tryCatch({
         suppressWarnings(writeLines(json, tmp, useBytes = TRUE))
         TRUE

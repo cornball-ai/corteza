@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -39,6 +44,21 @@ expect_equal(corteza::context_limit_for_model("no-such-model-9"), 128000L)
 expect_null(corteza:::.context_limit_row(NULL))
 expect_null(corteza:::.context_limit_row(NA_character_))
 expect_null(corteza:::.context_limit_row(""))
+
+# A cap follows the route without enlarging smaller windows on fallback.
+local({
+    s <- corteza::new_session(provider = "anthropic", model_map = list(cloud = "claude-sonnet-4-6"))
+    cfg <- list(context_window_cap = 400000)
+    capped <- corteza:::context_trigger(s, cfg)
+    expect_equal(capped$window, 400000)
+    expect_identical(capped$source, "cap")
+    expect_equal(capped$tokens, 200000)
+    expect_equal(corteza:::context_trigger(s, cfg, "claude-haiku-4-5")$window, 200000)
+    s$config <- cfg
+    pct <- corteza:::.context_edit_pct(s, "fixture")
+    s$config <- list()
+    expect_equal(pct, 2.5 * corteza:::.context_edit_pct(s, "fixture"))
+})
 
 # The numbers each provider publishes (sources in R/context-budget.R).
 expect_equal(corteza::context_limit_for_model("claude-fable-5-2"), 1000000L)
@@ -409,7 +429,6 @@ expect_true(grepl("(compact at 20%)", corteza:::.repl_context_indicator(
 repl_ctx <- function(lines, config) {
     i <- 0L
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- stats::setNames(as.list(rep("", 9L)),
                                    c("dim", "reset", "cyan", "bold",
                                      "yellow", "green", "bright_magenta",

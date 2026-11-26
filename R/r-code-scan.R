@@ -160,7 +160,11 @@ r_path_like <- function(s) {
 # A path with the separators the scan reads. Only Windows takes a
 # backslash for a separator; elsewhere it is a character in a name.
 r_path_slashes <- function(s, windows = .Platform$OS.type == "windows") {
-    if (windows) gsub("\\", "/", s, fixed = TRUE) else s
+    if (windows) {
+        gsub("\\", "/", s, fixed = TRUE)
+    } else {
+        s
+    }
 }
 
 # Read R code: what it calls, where its string constants point, and the
@@ -267,4 +271,3 @@ r_code_scan <- function(sx, code, depth = 0L) {
     }
     invisible(NULL)
 }
-

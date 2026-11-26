@@ -236,10 +236,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         tolower(trimws(ans)) %in% c("", "y", "yes")
     }
 
-    # Workspace setup (session-scoped, resumed from disk when appropriate)
-    ws_enabled <- isTRUE(config$workspace$enabled %||% TRUE)
-    chat_workspace_init(disk_session, ws_enabled, config)
-
     # Register observers: progress printer + trace row per tool call.
     add_observer(turn_session, observer_progress())
     add_observer(turn_session, chat_trace_observer(turn_session))
@@ -251,23 +247,11 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     attr(tool_buf_obs, "kind") <- "tool_buffer"
     add_observer(turn_session, tool_buf_obs)
 
-    # Optional experimental layers -- off by default; opt in via options.
-    if (isTRUE(getOption("corteza.experimental_ce", FALSE))) {
-        ce_init(cwd, config)
-        for (i in seq_along(history)) {
-            ce_index_turn(i, history[[i]]$role, history[[i]]$content %||% "")
-        }
-        on.exit(ce_shutdown(), add = TRUE)
-    }
-    if (isTRUE(getOption("corteza.experimental_heartbeat", FALSE))) {
-        hb_init(config)
-    }
-
     set_log_enabled(FALSE)
     on.exit(set_log_enabled(TRUE), add = TRUE)
 
     # The tools the session sends, composed now, once (R/request-prefix.R).
-    n_tools <- length(session_request_parts(turn_session)$tools)
+    session_request_parts(turn_session)
     # Resolve a placeholder NULL model to the provider's default name
     # (from llm.api's table) so the banner shows the actual model the
     # agent is about to call, matching the CLI's display.
@@ -302,6 +286,7 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
         session_line,
         retention_line,
         directory_line,
+        "  /guide introduces the settings.\n",
         "\n",
         sep = "")
 
@@ -320,7 +305,6 @@ chat <- function(provider = NULL, model = NULL, tools = NULL, session = NULL,
     ctx$disk_session <- disk_session
     ctx$config <- config
     ctx$cwd <- cwd
-    ctx$ws_enabled <- ws_enabled
     ctx$provider <- provider
     ctx$model <- model
     ctx$pending_r_context <- pending_r_context
@@ -467,23 +451,6 @@ disk_messages_to_history <- function(messages) {
         }
         list(role = m$role, content = text)
     })
-}
-
-# Load or clear the workspace to match the (possibly resumed) disk session.
-chat_workspace_init <- function(disk_session, ws_enabled, config) {
-    if (isTRUE(disk_session$resumed)) {
-        ws_load(disk_session$sessionId)
-    } else {
-        ws_clear()
-        if (ws_enabled && isTRUE(config$workspace$scan_globalenv %||% TRUE)) {
-            scan_limit <- config$workspace$scan_max_bytes %||% 50e6
-            registered <- ws_scan_globalenv(max_bytes = scan_limit)
-            if (length(registered) > 0L) {
-                cat(sprintf("Workspace: registered %d objects from R session\n",
-                            length(registered)))
-            }
-        }
-    }
 }
 
 # Build a trace observer that records each tool call against the on-disk

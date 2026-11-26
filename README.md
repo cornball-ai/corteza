@@ -60,11 +60,10 @@ corteza --provider openai_codex  # ChatGPT subscription (log in once, see API Ke
 corteza --provider anthropic_claude  # Claude subscription (log in once, see API Keys)
 ```
 
-The terminal answers as a talker: it reads and answers itself, and hands
-work that needs edits, commands or tests to a doer, an R process of the
-conversation's own, then prints the doer's steps and result as they come.
-`"talker": {"enabled": false}` in the config turns this off; see
-`vignette("configuration")`.
+The terminal and `chat()` run tools directly by default. Set
+`"talker": {"enabled": true}` to have a talker answer while a separate
+R process runs edits, commands and tests. The terminal prints the doer's
+steps and result as they arrive. See `vignette("configuration")`.
 
 Context indicators are configurable. By default, the CLI starts showing
 live-context warnings at 75% and auto-compacts at 90%. Override these per
@@ -243,7 +242,7 @@ corteza is a standalone agent runtime. `chat()` runs inside your R session. The 
 
 ## Design Philosophy
 
-- **Small enough to understand**: a handful of imports (curl, jsonlite, processx, codetools, llm.api, saber), readable source
+- **Small enough to understand**: a handful of imports (curl, jsonlite, processx, llm.api, saber), readable source
 - **Model-agnostic**: Anthropic, OpenAI, Moonshot, Ollama
 - **R-native**: packages are skills, `install.packages()` is the marketplace
 - **Hackable**: add tools by writing R functions

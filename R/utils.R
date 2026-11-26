@@ -5,8 +5,6 @@
 #'
 #' @importFrom utils capture.output head installed.packages object.size packageVersion str tail
 #' @importFrom stats setNames
-#' @importFrom codetools findGlobals
-#' @importFrom llm.api mcp_connect mcp_close mcp_call
 #' @keywords internal
 "_PACKAGE"
 

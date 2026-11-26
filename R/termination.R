@@ -17,8 +17,8 @@
         if (!length(warnings)) return(invisible(NULL))
         emitter <- parents[[tail(warnings, 1L)]]
         if (emitter > 0L && identical(sys.function(emitter), agent) &&
-            parents[[emitter]] > 0L &&
-            identical(frames[[parents[[emitter]]]], invocation)) {
+                                    parents[[emitter]] > 0L &&
+                                    identical(frames[[parents[[emitter]]]], invocation)) {
             max_turns <<- TRUE
             invokeRestart("muffleWarning")
         }
@@ -63,8 +63,9 @@ job_result_body <- function(job) {
            incomplete = paste(Filter(nzchar, c(o$result %||% "", o$reason %||% "",
                     if (isTRUE(o$resume$ready)) {
                         paste0("No automatic continuation was started. Use /job resume ", job$id,
-                            " to request a new attempt. Tool handles and any listed unrestorable objects will be unavailable.")
-                    } else paste("Resume unavailable:", o$resume$error %||% "no per-job snapshot was saved."))),
+                               " to request a new attempt. Tool handles and any listed unrestorable objects will be unavailable.")
+                    } else paste("Resume unavailable:",
+                                 o$resume$error %||% "no per-job snapshot was saved."))),
                               collapse = "\n\n"),
            o$reason %||% "")
 }

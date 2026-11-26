@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Temporary user folders for this file, however it is run (isolate.R).
 source("isolate.R", local = TRUE)
 
@@ -545,7 +550,6 @@ local({
     }
     repl <- function(lines, session) {
         ctx <- new.env(parent = emptyenv())
-        ctx$ws_enabled <- FALSE
         ctx$palette <- list(dim = "", reset = "", cyan = "", bold = "",
                             yellow = "", green = "", bright_magenta = "",
                             red = "", magenta = "")
@@ -931,11 +935,8 @@ local({
     naming <- sort(fns[vapply(fns, function(n) names_folder(get(n, ns)), NA)])
     builders <- c("project_approvals_path", "project_config_path",
                   "project_harness_path", "project_skills_dir")
-    # .room_media_send refuses to send a file from the folder, the scan
-    # functions route a write to it to a person, and sessions_dir_local
-    # is an unused leftover that reads nothing.
-    rules <- c(".room_media_send", "r_code_scan", "scan_sensitive", "scan_zone",
-               "sessions_dir_local")
+    # The room file sender and the policy scanner also recognize this directory.
+    rules <- c(".room_media_send", "r_code_scan", "scan_sensitive", "scan_zone")
     expect_equal(naming, sort(c(builders, rules)))
 
     # Who calls each builder. The reads are in the first of each line.

@@ -9,9 +9,7 @@ local({
     old_env <- Sys.getenv(env_names, unset = NA_character_)
     do.call(Sys.setenv, as.list(setNames(file.path(root, env_names), env_names)))
     old_wd <- setwd(root)
-    old_opts <- options(corteza.experimental_ce = FALSE,
-                        corteza.experimental_heartbeat = FALSE,
-                        corteza.trace = FALSE)
+    old_opts <- options(corteza.trace = FALSE)
     old_tools <- getOption("corteza.tools")
     on.exit({
         setwd(old_wd)
@@ -28,7 +26,7 @@ local({
     # (R/trust.R). The list is kept in the config directory set above.
     corteza:::project_trust_add(root)
     writeLines('{"provider":"anthropic","model":"claude-config", "web_search":false,
-        "workspace":{"enabled":false}, "context_edit":{"enabled":false}}',
+        "context_edit":{"enabled":false}}',
         ".corteza/config.json")
 
     ns <- asNamespace("corteza")
@@ -89,7 +87,6 @@ local({
         args$validate_api_key <- FALSE
         do.call(corteza::session_setup, args)
     }
-    console$chat_workspace_init <- function(...) invisible(NULL)
     chat <- corteza::chat
     environment(chat) <- console
 
@@ -211,4 +208,15 @@ local({
             system = "fixture", load_project_context = FALSE, validate_api_key = FALSE)
         expect_null(s$model_map$cloud)
     }
+
+    # The resume banner uses the same working window as /context. Exercise
+    # a model on each side of the cap through startup with a saved history.
+    writeLines('{"context_window_cap":400000,"context_warn_pct":0}', ".corteza/config.json")
+    for (model in c("claude-haiku-4-5", "claude-sonnet-4-6")) {
+        out <- run_cli("--session", "corteza:resume-fixture", "--provider", "anthropic",
+                       "--model", model)
+        window <- if (model == "claude-haiku-4-5") "200.0K" else "400.0K"
+        expect_true(said(out, paste("/", window, "tokens")))
+    }
+
 })

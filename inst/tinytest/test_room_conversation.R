@@ -432,7 +432,6 @@ local({
                               ns = "corteza"), add = TRUE)
     # The terminal's (R/repl-clear.R).
     ctx <- new.env(parent = emptyenv())
-    ctx$ws_enabled <- FALSE
     ctx$palette <- list(dim = "", reset = "", cyan = "", yellow = "")
     ctx$session <- new.env(parent = emptyenv())
     ctx$session$on_tool <- list()

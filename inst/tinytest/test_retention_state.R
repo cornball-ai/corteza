@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 library(tinytest)
 
 # Retention, part 2 (R/retention-state.R): job chains, worker folders and
@@ -645,10 +650,20 @@ local({
 
 # ---- Links ----
 # A link is never removed, nor anything behind one, and a folder holding
-# one stays. Skipped where a link cannot be made, and on Windows, where R
-# makes links that its unlink() cannot remove (the reparse point's tag
-# does not match), so a test could not undo its own.
-if (.Platform$OS.type != "windows") local({
+# one stays. A directory junction works without symlink privileges on Windows.
+make_dir_link <- function(target, link) {
+    if (.Platform$OS.type == "windows") isTRUE(Sys.junction(target, link)) else
+        isTRUE(file.symlink(target, link))
+}
+drop_dir_link <- function(link) {
+    if (.Platform$OS.type == "windows") {
+        path <- file.path(normalizePath(dirname(link), winslash = "/", mustWork = TRUE),
+                          basename(link))
+        status <- system2("cmd", c("/c", "rmdir", shQuote(chartr("/", "\\", path), type = "cmd")))
+        stopifnot(status == 0L)
+    } else unlink(link)
+}
+local({
     fx <- state_fixture()
     on.exit(fx$restore(), add = TRUE)
     away <- file.path(fx$root, "away")
@@ -656,7 +671,8 @@ if (.Platform$OS.type != "windows") local({
     writeLines("keep", file.path(away, "precious.txt"))
     job <- make_job(fx, jid(1))
     linked <- file.path(job, "linked")
-    if (isTRUE(file.symlink(away, linked))) {
+    if (make_dir_link(away, linked)) {
+        on.exit(if (dir.exists(linked)) drop_dir_link(linked), add = TRUE, after = FALSE)
         found <- corteza:::retention_prune(90, now = fx$later)
         expect_true(found$removed)
         expect_identical(list.files(job, all.files = TRUE, no.. = TRUE),
@@ -667,7 +683,7 @@ if (.Platform$OS.type != "windows") local({
         expect_identical(paste(found$kind, found$session),
                          paste("unknown", jid(1)))
         expect_true(file.exists(file.path(away, "precious.txt")))
-        unlink(linked)
+        drop_dir_link(linked)
     }
     # An entry of the ledger that is a link, to a job's folder elsewhere:
     # not listed, and nothing behind it touched.
@@ -675,12 +691,13 @@ if (.Platform$OS.type != "windows") local({
     write_record(file.path(outside, "intent.json"), list(id = jid(3)))
     write_record(file.path(outside, "outcome.json"), list(status = "done"))
     entry <- file.path(fx$state, "jobs", jid(3))
-    if (isTRUE(file.symlink(outside, entry))) {
+    if (make_dir_link(outside, entry)) {
+        on.exit(if (dir.exists(entry)) drop_dir_link(entry), add = TRUE, after = FALSE)
         found <- corteza:::retention_prune(90, now = fx$later + DAY)
         expect_false(jid(3) %in% found$session)
         expect_true(file.exists(file.path(outside, "intent.json")))
         expect_true(file.exists(file.path(outside, "outcome.json")))
-        unlink(entry)
+        drop_dir_link(entry)
     }
     # A store reached through a link is not read at all.
     elsewhere <- file.path(fx$root, "elsewhere")
@@ -689,17 +706,19 @@ if (.Platform$OS.type != "windows") local({
                  list(status = "done"))
     jobs <- file.path(fx$state, "jobs")
     unlink(jobs, recursive = TRUE)
-    if (isTRUE(file.symlink(elsewhere, jobs))) {
+    if (make_dir_link(elsewhere, jobs)) {
+        on.exit(if (dir.exists(jobs)) drop_dir_link(jobs), add = TRUE, after = FALSE)
         found <- corteza:::retention_prune(90, now = fx$later)
         expect_identical(nrow(found), 0L)
         expect_true(file.exists(file.path(elsewhere, jid(2), "intent.json")))
     }
-    unlink(jobs)
+    if (dir.exists(jobs)) drop_dir_link(jobs)
     workers <- file.path(fx$state, "workers")
     named <- file.path(elsewhere, strrep("a", 24), "journal")
     dir.create(named, recursive = TRUE)
     writeLines("{}", file.path(named, "live.json"))
-    if (isTRUE(file.symlink(elsewhere, workers))) {
+    if (make_dir_link(elsewhere, workers)) {
+        on.exit(drop_dir_link(workers), add = TRUE, after = FALSE)
         found <- corteza:::retention_prune(90, now = fx$later)
         expect_identical(nrow(found), 0L)
         expect_true(file.exists(file.path(named, "live.json")))
@@ -710,9 +729,8 @@ if (.Platform$OS.type != "windows") local({
 # not read as a job, and nothing of it goes, so a finished job never
 # reads as queued. A removal refuses a folder whose intent is a link by
 # the time it gets there. An outcome that is a link counts as none, and
-# a remote session's request or closed record likewise. Skipped where a
-# link cannot be made, and on Windows (above).
-if (.Platform$OS.type != "windows") local({
+# a remote session's request or closed record likewise.
+local({
     fx <- state_fixture()
     on.exit(fx$restore(), add = TRUE)
     away <- file.path(fx$root, "away")
@@ -720,8 +738,21 @@ if (.Platform$OS.type != "windows") local({
     relink <- function(record, target) {
         write_record(target, corteza:::job_read_file(record))
         unlink(record)
-        isTRUE(file.symlink(target, record))
+        made <- isTRUE(suppressWarnings(file.symlink(target, record)))
+        if (made) links <<- c(links, record)
+        made
     }
+    links <- character()
+    remove_file_link <- function(path) {
+        if (.Platform$OS.type == "windows") {
+            win <- file.path(normalizePath(dirname(path), winslash = "/"), basename(path))
+            status <- system2("cmd", c("/c", "del", "/q", shQuote(chartr("/", "\\", win), type = "cmd")))
+            stopifnot(status == 0L)
+        } else unlink(path)
+    }
+    on.exit(for (p in links) {
+        if (file.exists(p) && !dir.exists(p)) remove_file_link(p)
+    }, add = TRUE, after = FALSE)
 
     job <- make_job(fx, jid(1))
     intent <- file.path(job, "intent.json")
@@ -740,7 +771,7 @@ if (.Platform$OS.type != "windows") local({
         expect_true(file.exists(file.path(away, "intent-1.json")))
         expect_identical(corteza:::job_read(jid(1))$status, "done")
         # So does a folder in place of the intent.
-        unlink(intent)
+        remove_file_link(intent)
         dir.create(intent)
         writeLines("{}", file.path(intent, "x.json"))
         expect_false(corteza:::retention_state_remove(job, "job"))
@@ -779,15 +810,16 @@ if (.Platform$OS.type != "windows") local({
 })
 
 # The state folder itself may be a link, as the data folder may: it is
-# read from where it points. Not on Windows (above).
-if (.Platform$OS.type != "windows") local({
+# read from where it points.
+local({
     root <- tempfile("corteza_state_link_")
     dir.create(root)
     on.exit(unlink(root, recursive = TRUE), add = TRUE)
     real_state <- file.path(root, "real-state")
     dir.create(real_state)
     link <- file.path(root, "state")
-    if (isTRUE(file.symlink(real_state, link))) {
+    if (make_dir_link(real_state, link)) {
+        on.exit(drop_dir_link(link), add = TRUE, after = FALSE)
         fx <- state_fixture(state = link)
         on.exit(fx$restore(), add = TRUE)
         job <- make_job(fx, jid(1))
@@ -821,17 +853,17 @@ local({
         dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
         writeLines(json, path)
     }
-    expect_identical(corteza:::retention_config(),
-                     list(session_days = 90, incomplete_days = 180))
+    limits <- function() corteza:::retention_config()[c("session_days", "incomplete_days")]
+    expect_identical(limits(), list(session_days = 90, incomplete_days = 180))
     set_config('{"retention": {"incomplete_days": 30}}')
-    expect_identical(corteza:::retention_config(),
+    expect_identical(limits(),
                      list(session_days = 90, incomplete_days = 30))
     # A value it cannot read keeps what it governs.
     set_config('{"retention": {"incomplete_days": "soon"}}')
-    expect_identical(corteza:::retention_config(),
+    expect_identical(limits(),
                      list(session_days = 90, incomplete_days = 0))
     set_config('{"retention": {"incomplete_days": -1, "session_days": 30}}')
-    expect_identical(corteza:::retention_config(),
+    expect_identical(limits(),
                      list(session_days = 30, incomplete_days = 0))
 
     # The daily run reads it: an incomplete chain stays at 200 days.

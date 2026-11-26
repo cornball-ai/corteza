@@ -47,7 +47,6 @@ make_ctx <- function(lines, run_fn, talker = TRUE, seen = NULL) {
     ctx$session <- s
     ctx$config <- s$config
     ctx$cwd <- s$cwd
-    ctx$ws_enabled <- FALSE
     ctx$palette <- palette
     ctx$read_input <- scripted_input(lines, seen)
     ctx$help_text <- function() "HELP"

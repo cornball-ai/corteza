@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 library(tinytest)
 
 # config$run_r_worker_options reaches callr::r_session_options(), so a host
@@ -10,6 +15,9 @@ library(tinytest)
 default <- corteza:::.run_r_worker_session_options(NULL)
 expect_true(is.list(default))
 expect_equal(names(default), names(callr::r_session_options()))
+expect_identical(default$user_profile, FALSE)
+expect_identical(corteza:::.run_r_worker_session_options(NULL, "job_worker_options")$user_profile,
+                 FALSE)
 opts <- corteza:::.run_r_worker_session_options(list(
     run_r_worker_options = list(
         env = c(TERM = "dumb", CORTEZA_WORKER_OPTION_TEST = "set"))))

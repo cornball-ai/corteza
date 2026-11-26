@@ -156,6 +156,10 @@ session and writes no file. The lessons tool refuses the project's store and
 keeps a lesson only under scope `global`, and `/refine` lists the global
 store and runs no review pass.
 
+R can read the working directory's `.Rprofile` before the terminal or
+`chat()` can ask about trust. The worker startup settings are described
+under **Skills** below.
+
 Trust decides what corteza loads by itself. It does not confine the agent:
 a tool can still read a file in an untrusted directory when asked, and what
 it reads comes back as a tool result under the approval settings below.
@@ -218,6 +222,12 @@ continue tools, and writes that name no path the monitor can check are
 also omitted rather than offered to the model and then stopping the run
 when selected. Path, credential, policy, and monitor checks still apply to
 every dispatched call.
+
+The monitor reads each tool argument in full. If any one argument exceeds
+2,000 characters in JSON, `/auto` refuses that call before asking the monitor.
+The worker receives the reason and can continue with a smaller call.
+This includes the content of a file write, even when your config allows the
+tool. JSON quotes and escapes count toward the limit.
 
 When a run stops, auto mode is off. Ordinary messages do not restart it.
 `/permissions` controls ordinary tool approvals separately from `/auto`.
@@ -764,6 +774,7 @@ All keys shown with type and default, current as of corteza 0.6.3. Most defaults
 | `context_idle_minutes` | integer | `60` | Compact before a turn when the model last answered this long ago and the prompt cache has expired. `0` turns it off |
 | `context_idle_tokens` | integer | `100000` | The smallest context the idle rule compacts |
 | `context_window` | integer or null | null | The model's window in tokens (null = the package's table). Set it for a local model |
+| `context_window_cap` | integer or null | null | Upper bound for the working window. For example, `400000` gives a 1M route a 400k budget and keeps a 200k route at 200k. Applies to the meter, compaction, model-managed history pressure and reviewer budgets. Ordinary compaction still starts at the earlier configured threshold (200k tokens by default). |
 | `context_compact_bytes` | integer | `900000` | Serialized-history compaction guard for the Codex transport |
 | `context_request_buffer_retries` | integer | `3` | Forced compact-and-continue attempts after a Codex request-buffer error |
 | `journal_enabled` | boolean | `true` | Keep the provider-native history journal (`<id>.journal/`: a live snapshot plus a segment per compaction) beside the session transcript |
@@ -812,9 +823,8 @@ payload store. Explicit omission records name the limit reached or a capture
 failure. `audit_payload_pin()` protects incident/evaluation evidence from
 explicit expiry; pinned bytes still count toward quota. `audit_payload_expire()`
 defaults to a dry run with a 30-day horizon. It writes expiry records before
-deleting unpinned payloads. There is no automatic pruning of payloads or event
-metadata. The 365-day metadata retention value is planning guidance, not an
-automatic deletion policy. See `vignette("audit-records")` for the record format.
+deleting unpinned payloads. A positive `retention.audit_payload_days` enables
+automatic expiry. Event metadata stays. See `vignette("audit-records")`.
 
 ### Safety
 
@@ -931,10 +941,22 @@ with its reason. These still prompt without it:
   transcript does not mark what you typed. `/clear` starts a
   conversation it can read; in an editor, a new session does.
 
-The reviewer uses CLM for its own notes and tool results. A fresh reviewer
+Room and terminal reviewers send a call to a person when any JSON argument
+exceeds 2,000 characters, the worker's explanation exceeds 1,500 characters,
+or the delegated task exceeds 4,000 characters. The reviewer reads the
+delegated task in full whenever it rules on a job's call. The next eligible
+call can use the same verified conversation. In `/auto`, an oversized
+argument is refused and the run can continue.
+
+The reviewer uses CLM for its own notes and tool results. With
+`journal_enabled: false`, it reads the complete record afresh for each call.
+A fresh reviewer
 reads up to 100,000 characters. A warm reviewer can take another batch of
 that size if its earlier inputs are intact and its model has room for the
-request. A changed record starts a fresh review.
+request. On Claude and Codex, an unchanged request prefix can use the
+provider's measured token total. New material and unmeasured requests use a
+conservative byte bound. Both reserve room for the reply. A changed record
+starts a fresh review.
 
 A tool you allowed always runs without asking it. Plan mode still
 refuses what it refuses. A reviewer that fails, or has not ruled by
@@ -979,8 +1001,8 @@ unused for `retention.session_days`. A session was last used when its
 journal, its trace or its transcript last changed. The terminal says
 what it removed.
 
-Transcripts, session stores, the terminal's saved workspaces, config and
-audit records stay.
+Transcripts, session stores, config and audit event records stay. Old
+terminal workspaces and unpinned audit payloads have separate opt-in ages.
 A session whose journal is gone still resumes from its transcript, and
 says what is gone. A room that restores its context from its journal
 starts its next conversation fresh. A room's records of its
@@ -988,8 +1010,8 @@ conversations go with its journal, and the room's calls then go to a
 person until `/clear`.
 
 A session's audit records are kept in its journal folder, under
-`audit/`. Retention leaves them and the folder in place:
-`audit_payload_expire()` removes audit payloads, and only when called.
+`audit/`. The event stream stays. You can expire unpinned payloads
+with `audit_payload_expire()` or the personal retention setting below.
 
 The same run clears corteza's state folder (`state/` beside the sessions,
 or `CORTEZA_STATE_DIR`) and its remote-control folder:
@@ -1036,19 +1058,35 @@ number keeps everything that key governs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` keeps everything |
+| `retention.session_days` | number | `90` | Days a session goes unused before its journal and tool trace are removed, and days a job chain, worker folder or remote-control session goes unchanged before it is removed. `0` disables idle-session cleanup. |
 | `retention.incomplete_days` | number | `180` | Days a job chain that ended incomplete, and was never resumed, is kept for its resume snapshot. Never fewer than `session_days`. `0` keeps it |
+| `retention.audit_payload_days` | number | `0` | Days since an unpinned payload was last captured. Audit event records stay. |
+| `retention.journal_segment_days` | number | `0` | Whole days to keep earlier rewrites in an active journal. Positive fractions round up. A running turn keeps the entries it needs. The live snapshot and latest committed rewrite stay. New journals group shared entries by day for expiry. Older shared entries keep their original layout until idle-session cleanup. |
+| `retention.workspace_snapshot_days` | number | `0` | Days to keep a legacy R workspace snapshot beside its transcript. |
 
 ### Skills
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `skill_paths` | string[] | `[]` | Legacy executable/file-skill configuration |
 | `skill_packages` | object[] | `[]` | R package functions registered as tools, as in `[{"package": "utils", "functions": ["head"], "class": "read"}]`. An entry's `class` applies to all its functions; an entry without one leaves them asking. Up to 0.8.0 the default registered 8 functions of base and utils |
 | `skill_timeout` | number | `30` | Default skill execution timeout (seconds) |
 | `skill_timeout_max` | number | `1800` | Host ceiling for a model-requested supervised `run_r` timeout |
 | `run_r_mode` | string | `"in_process"` | `"in_process"` preserves the caller's R workspace; `"worker"` uses a private persistent `callr::r_session` with enforceable deadlines |
 | `run_r_worker_options` | object | `{}` | Named arguments for `callr::r_session_options()` when `run_r_mode` is `"worker"`: `env`, `libpath`, `cmdargs`, `arch`, ... |
+| `job_worker_options` | object | `{}` | Named arguments for `callr::r_session_options()` for doers, reviewers and monitors |
+
+Job workers, supervised `run_r` workers and spawned subagents skip the
+working directory's `.Rprofile` by default. This includes any options that
+file sets, such as `options(corteza.policy = ...)`. To load the profile for
+a job or supervised `run_r` worker, set `user_profile` to `"project"` in
+that worker's options. Spawned subagents, archive summaries (foreground
+and background) and room consultations always skip the project profile.
+
+A project using `renv` can instead supply `job_worker_options.libpath` or
+`run_r_worker_options.libpath`. This list replaces the worker's library
+search path. Put the project library first, followed by the libraries
+containing corteza and its dependencies. The initial R process and the
+approved `run_r_script` tool follow their ordinary startup rules.
 
 `skill_timeout` is the default for ordinary skills and for self-bounded tools
 such as `bash`, `cmd`, and `run_r_script`. An explicit tool argument still wins.
@@ -1118,22 +1156,15 @@ late interrupt in unrelated host code.
 | `dry_run` | boolean | `false` | Preview tools without executing |
 | `trace` | boolean | `false` | Emit structured trace events |
 
-### Rate limiting
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `rate_limits` | object | `{}` | Per-provider limits |
-
 ### Subagents
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `subagents.enabled` | boolean | `true` | Enable subagent commands |
 | `subagents.max_concurrent` | integer | `3` | Max parallel subagents |
-| `subagents.timeout_minutes` | integer | `30` | Subagent kill timeout |
+| `subagents.timeout_minutes` | integer | `30` | A query after this deadline ends the child. `/agents` shows the deadline. |
 | `subagents.allow_nested` | boolean | `false` | Allow nested subagents |
-| `subagents.default_tools` | string[] | `["read_file", "grep_files", "r_help", "web_search", "fetch_url"]` | Tools available to subagents when no preset is given |
-| `subagents.base_port` | integer | `7851` | Starting port for subagent MCP servers |
+| `subagents.default_tools` | string[] | `["read_file", "skill_instructions", "grep_files", "r_help", "web_search", "fetch_url"]` | Tools available to subagents when no preset is given |
 
 **Presets.** `/spawn --preset <name>` picks a fixed tool list at spawn time:
 
@@ -1145,17 +1176,12 @@ late interrupt in unrelated host code.
 
 **Permission model.** Subagents have no interactive approval channel back to the parent or user. A child's tool list is fixed at spawn time — via the `--preset` or `--tools` flags on `/spawn`, or the `preset` / `tools` arguments to `subagent_spawn()`. There is no mid-run path to escalate to a riskier capability: the child's approval callback denies by default, and the parent cannot grant new tools after the fact. If a task may need shell, write, or network capability, choose a preset or explicit tool list that includes it at spawn time; otherwise the child should report that it is blocked.
 
-### Workspace
+### Recovering old R workspace snapshots
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `workspace.enabled` | boolean | `true` | Enable managed workspace |
-| `workspace.budget_chars` | integer | `32000` | Context budget in characters |
-| `workspace.capture_results` | boolean | `true` | Promote large results to handles |
-| `workspace.max_result_size` | integer | `50000` | Max result size before handle promotion |
-| `workspace.scan_globalenv` | boolean | `true` | Scan `.GlobalEnv` on startup |
-| `workspace.scan_max_bytes` | integer | `52428800` | Max bytes to scan from `.GlobalEnv` (50 MB) |
-| `workspace.max_object_summary_chars` | integer | `2000` | Max summary length per object |
+Versions through 0.8.0 saved a list of R objects in `<session>_workspace.rds`
+under the agent's sessions directory. Use `readRDS(path)` to recover that list.
+New sessions keep live `run_r` bindings in their evaluator. Conversation
+history and delegated job checkpoints have their own storage.
 
 ### Channels
 
@@ -1273,7 +1299,6 @@ of their own they use the saved `cwd`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `legacy_memory_tools_enabled` | boolean | `false` | Show memory slash commands |
 | `memory_flush_enabled` | boolean | `false` | Run the memory flush ahead of an automatic compaction in the terminal. `/flush` runs it by hand either way |
 | `context_include_memory_logs` | boolean | `false` | Include daily logs in context |
 
@@ -1347,8 +1372,10 @@ standard compaction when it selects Responses.
 
 ## Instruction skills
 
-Instruction skills are exact `SKILL.md` files discovered recursively at
-session startup. Built-in roots are:
+At session startup, corteza looks for files named exactly `SKILL.md` under
+each instruction root. It skips subdirectories whose names start with a dot,
+such as `.archive/`. An explicitly configured root can itself be hidden.
+The built-in roots are listed below.
 
 | Scope | Path |
 |-------|------|

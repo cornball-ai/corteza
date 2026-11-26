@@ -246,22 +246,6 @@ skill_run <- function(skill, args, ctx = list(), timeout = 30L,
     log_tool_result(skill$name, success = success, result_lines = result_lines,
                     elapsed_ms = round(elapsed_ms))
 
-    # Capture result into workspace (skip run_r, it handles its own capture)
-    if (skill$name != "run_r" && !is.null(result$content[[1]]$text)) {
-        result_text_ws <- result$content[[1]]$text
-        ws_capture_tool_result(skill$name, args, result_text_ws,
-                               ws_current_turn())
-
-        # File write invalidation
-        if (skill$name == "base::writeLines" && !is.null(args$con)) {
-            ws_invalidate_file(args$con)
-        }
-        if (skill$name %in% c("write_file", "replace_in_file") &&
-            !is.null(args$path)) {
-            ws_invalidate_file(args$path)
-        }
-    }
-
     # Add trace entry if session context available
     if (!is.null(ctx$session_id)) {
         result_text <- if (!is.null(result$content[[1]]$text)) {
@@ -681,65 +665,6 @@ load_skill_docs <- function(path) {
 #' @noRd
 list_skill_docs <- function() {
     ls(.skill_docs)
-}
-
-#' Get a skill doc by name
-#'
-#' @param name Skill name
-#' @return Skill doc list or NULL
-#' @noRd
-get_skill_doc <- function(name) {
-    if (exists(name, envir = .skill_docs, inherits = FALSE)) {
-        .skill_docs[[name]]
-    } else {
-        NULL
-    }
-}
-
-#' Clear all skill docs
-#'
-#' @return Invisible NULL
-#' @noRd
-clear_skill_docs <- function() {
-    rm(list = ls(.skill_docs), envir = .skill_docs)
-    invisible(NULL)
-}
-
-#' Format skill docs for context injection
-#'
-#' Creates markdown text suitable for system prompt.
-#'
-#' @param names Optional character vector of skill names to include.
-#'   If NULL, includes all loaded skills.
-#' @return Character string with formatted skill docs
-#' @noRd
-format_skill_docs <- function(names = NULL) {
-    if (is.null(names)) {
-        names <- list_skill_docs()
-    }
-
-    if (length(names) == 0) {
-        return("")
-    }
-
-    parts <- character()
-
-    for (name in names) {
-        skill <- get_skill_doc(name)
-        if (is.null(skill)) {
-            next
-        }
-
-        # Format as markdown section
-        header <- sprintf("## Skill: %s", skill$name)
-        if (nchar(skill$description) > 0) {
-            header <- paste0(header, "\n\n", skill$description)
-        }
-
-        parts <- c(parts, header, "", skill$body, "")
-    }
-
-    paste(parts, collapse = "\n")
 }
 
 # ============================================================================

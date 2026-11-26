@@ -121,10 +121,9 @@ in another turn verifies it again.
 quota, so a full pinned store causes future capture omissions. Explicit
 `audit_payload_expire(ref$store, days = 30)` previews expiry using last-capture
 time. Passing `dry_run = FALSE` logs expiry intents/results and removes eligible
-unpinned bytes. Missing end records leave maintenance unresolved too. No expiry
-runs automatically, and event streams are not deleted by this function. A
-365-day event-retention horizon is planning guidance until an explicit
-event-retention policy is selected.
+unpinned bytes. Missing end records leave maintenance unresolved too.
+Set `retention.audit_payload_days` in personal config to enable automatic
+payload expiry at that age. The default is zero. Event streams stay on disk.
 
 New audit writes are observational: they emit one process notice on failure,
 count missed events, and append a `gap` on recovery. A recording failure cannot

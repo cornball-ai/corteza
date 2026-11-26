@@ -38,7 +38,7 @@ local({
     if (.Platform$OS.type == "windows") {
         expect_true(file.exists(file.path(bin, "corteza.cmd")))
     } else {
-        expect_identical(as.character(file.mode(dest)), "755")
+        expect_identical(file.mode(dest), as.octmode("755") & !Sys.umask())
         expect_false(file.exists(file.path(bin, "corteza.cmd")))
     }
 
@@ -102,7 +102,12 @@ local({
                      c("@echo off",
                        sprintf("Rscript \"%s\" %%*", got[["script"]])))
 
-    unix <- corteza:::cli_write(src, bin, windows = FALSE)
+    # A folder of its own: the Windows form keeps the mode of the installed
+    # script, which a read-only library leaves without write permission.
+    unix_bin <- tempfile("cli-unix-")
+    dir.create(unix_bin)
+    on.exit(unlink(unix_bin, recursive = TRUE), add = TRUE)
+    unix <- corteza:::cli_write(src, unix_bin, windows = FALSE)
     expect_identical(names(unix), "script")
 })
 

@@ -9,7 +9,7 @@
 # ctx fields:
 #   Mutable state (reassigned in the loop): disk_session,
 #     pending_r_context, last_assistant_response, provider, model
-#   Read state: config, cwd, ws_enabled, session (the turn_session env)
+#   Read state: config, cwd, session (the turn_session env)
 #   Hooks: read_input(prompt_str), palette (color list),
 #     render_reply(text), help_text(), new_session_fn(),
 #     handle_copy(text), format_tools(session), turn_fn(prompt, session)
@@ -211,11 +211,6 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
                 if (!keep_jobs) {
                     .repl_jobs_shutdown(ctx)
                 }
-                if (ctx$ws_enabled) {
-                    ws_prune()
-                    tryCatch(ws_save(ctx$disk_session$sessionId),
-                             error = function(e) NULL)
-                }
                 cat(sprintf("%sBye.%s\n", ctx$palette$dim, ctx$palette$reset))
                 break
             }
@@ -225,6 +220,10 @@ run_repl_loop <- function(ctx, keep_jobs = FALSE) {
             }
             if (cmd == "/help") {
                 cat(ctx$help_text())
+                next
+            }
+            if (cmd == "/guide") {
+                start_guide(ctx, parts[-1L])
                 next
             }
             if (cmd == "/jobs") {
