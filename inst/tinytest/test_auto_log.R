@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # The auto-run log: every run writes run_start first and run_end last,
 # gate decisions carry the authority that made them, and the ids join
 # the run log to the session trace and the monitor's transcript.

@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Drift tests between tool function signatures and their derived
 # schemas. Runs schema_from_fn() against every registered tool and
 # verifies the roxygen @param docs match the function's formals.

@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Supervised run_r keeps a private persistent workspace and enforces a real
 # wall-clock deadline without changing direct tool_run_r() behavior.
 

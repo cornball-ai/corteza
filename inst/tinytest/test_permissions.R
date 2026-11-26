@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Test permission system
 
 # get_tool_permission is a tool's permissions entry, or NULL. It allows

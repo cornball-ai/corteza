@@ -1,3 +1,8 @@
+# Slow. Skipped on CRAN for check time; CI sets NOT_CRAN.
+if (!tinytest::at_home() && !identical(Sys.getenv("NOT_CRAN"), "true")) {
+    exit_file("slow; runs at home and in CI")
+}
+
 # Continual harness store: round-trip, dedupe, versioning, snapshots,
 # rollback, validation, rendering, and the harness_note tool. All
 # offline; all writes confined to a tempdir project scope (the global
