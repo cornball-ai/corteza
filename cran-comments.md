@@ -77,15 +77,18 @@ Every dependency is on CRAN, as in 0.8.0.
   check took 4 minutes 6 seconds. Full mode passed 13,244 assertions.
 * Each run used a separate empty home and temporary directory. Both were
   empty afterwards. All three R checks for leftover files also passed.
-* The win-builder R-devel check of this source tarball is pending upload.
-* Ubuntu and macOS GitHub Actions passed on earlier development builds.
+* On 2026-11-26, win-builder passed 6,853 assertions on both R-devel
+  (r90926) and R-release (4.6.2). Both reported 0 errors, 0 warnings
+  and 1 incoming NOTE. The NOTE records the archival and flags the
+  abbreviation "MCP", expanded in DESCRIPTION as "Model Context Protocol".
+  R-devel took 53 seconds to install and 374 seconds to check. R-release
+  took 37 seconds to install and 393 seconds to check.
 
 ## Notes
 
 * The default selection still runs the empty-home regression for `~/bot`.
-  To shorten check time, 37 longer test files covering workers, rooms,
-  approvals, tools and context now run in full mode. CI selects the full
-  suite with `NOT_CRAN=true`.
+  It skips 37 longer test files covering workers, rooms, approvals, tools
+  and context. CI runs these files in the full suite with `NOT_CRAN=true`.
 * 20 help pages keep `\dontrun`. 6 need a Matrix homeserver and a
   bot account (`bot_configure()` also writes the bot's configuration,
   and `bot_run()` blocks). 1, `bot_archive_all()`, acts on a running
