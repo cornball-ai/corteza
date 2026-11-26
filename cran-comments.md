@@ -68,12 +68,13 @@ Every dependency is on CRAN, as in 0.8.0.
 * Ubuntu 24.04.5 LTS, R 4.6.1, using released dependencies including
   curl 8.2.0. All four runs returned Status: OK with incoming and network
   clock checks disabled.
-  The CRAN selection passed 11,893 assertions and full mode passed 13,749.
-  With `_R_CHECK_DEPENDS_ONLY_=true`, 10,474 assertions passed. With
-  SIGINT ignored and umask 077, 11,890 assertions passed.
+  The CRAN selection passed 6,974 assertions and full mode passed 13,749.
+  With `_R_CHECK_DEPENDS_ONLY_=true`, 6,388 assertions passed. With
+  SIGINT ignored and umask 077, 6,974 assertions passed.
 * Windows 10, R 4.6.0, on the same source tarball with incoming checks
   enabled. Both runs returned Status: 1 NOTE (the archival notice above).
-  The CRAN selection passed 11,491 assertions and full mode passed 13,244.
+  The CRAN selection passed 6,855 assertions in 51 seconds. The entire
+  check took 4 minutes 6 seconds. Full mode passed 13,244 assertions.
 * Each run used a separate empty home and temporary directory. Both were
   empty afterwards. All three R checks for leftover files also passed.
 * The win-builder R-devel check of this source tarball is pending upload.
@@ -81,8 +82,10 @@ Every dependency is on CRAN, as in 0.8.0.
 
 ## Notes
 
-* The default test selection skips longer worker-process tests. Full-mode
-  checks also exercise these tests with `NOT_CRAN=true`.
+* The default selection still runs the empty-home regression for `~/bot`.
+  To shorten check time, 37 longer test files covering workers, rooms,
+  approvals, tools and context now run in full mode. CI selects the full
+  suite with `NOT_CRAN=true`.
 * 20 help pages keep `\dontrun`. 6 need a Matrix homeserver and a
   bot account (`bot_configure()` also writes the bot's configuration,
   and `bot_run()` blocks). 1, `bot_archive_all()`, acts on a running
